@@ -15,10 +15,17 @@ pub struct WatchRuleRow {
 }
 
 pub async fn insert_rule(pool: &SqlitePool, row: &WatchRuleRow) -> Result<(), sqlx::Error> {
+    insert_rule_and_event(pool, row).await.map(|_| ())
+}
+
+pub async fn insert_rule_and_event(
+    pool: &SqlitePool,
+    row: &WatchRuleRow,
+) -> Result<crate::runtime_event::RuntimeEvent, sqlx::Error> {
     let mut tx = pool.begin().await?;
     insert_rule_tx(&mut tx, row).await?;
     let condition: serde_json::Value = serde_json::from_str(&row.condition).unwrap_or(serde_json::Value::Null);
-    crate::runtime_event::append_runtime_event_tx(
+    let event = crate::runtime_event::append_runtime_event_tx(
         &mut tx,
         crate::runtime_event::RuntimeEventInput {
             event_id: format!("watch:{}:created", row.id),
@@ -43,7 +50,7 @@ pub async fn insert_rule(pool: &SqlitePool, row: &WatchRuleRow) -> Result<(), sq
     .await
     .map_err(|error| sqlx::Error::Protocol(error.to_string()))?;
     tx.commit().await?;
-    Ok(())
+    Ok(event)
 }
 
 /// 事务内插入（场景包实例化与 market 导入整包回滚）。
@@ -80,6 +87,17 @@ pub async fn complete_task_watch(
     id: &str,
     wake: &tinyiothub_core::agent_task::TaskWake,
 ) -> Result<bool, sqlx::Error> {
+    complete_task_watch_and_event(pool, workspace_id, id, wake)
+        .await
+        .map(|(completed, _)| completed)
+}
+
+pub async fn complete_task_watch_and_event(
+    pool: &SqlitePool,
+    workspace_id: &str,
+    id: &str,
+    wake: &tinyiothub_core::agent_task::TaskWake,
+) -> Result<(bool, Option<crate::runtime_event::RuntimeEvent>), sqlx::Error> {
     let mut tx = pool.begin().await?;
     let deleted = sqlx::query("DELETE FROM watch_rules WHERE workspace_id = ? AND id = ? AND owner_task_id = ?")
         .bind(workspace_id)
@@ -89,7 +107,7 @@ pub async fn complete_task_watch(
         .await?
         .rows_affected();
     if deleted == 0 {
-        return Ok(false);
+        return Ok((false, None));
     }
     sqlx::query(
         "INSERT INTO task_wake_outbox
@@ -106,7 +124,7 @@ pub async fn complete_task_watch(
     .bind(wake.resolved_at)
     .execute(&mut *tx)
     .await?;
-    crate::runtime_event::append_runtime_event_tx(
+    let event = crate::runtime_event::append_runtime_event_tx(
         &mut tx,
         crate::runtime_event::RuntimeEventInput {
             event_id: format!("watch:{id}:completed"),
@@ -128,25 +146,103 @@ pub async fn complete_task_watch(
     .await
     .map_err(|error| sqlx::Error::Protocol(error.to_string()))?;
     tx.commit().await?;
-    Ok(true)
+    Ok((true, Some(event)))
+}
+
+async fn append_watch_deleted_events(
+    tx: &mut Transaction<'_, Sqlite>,
+    rows: &[WatchRuleRow],
+) -> Result<Vec<crate::runtime_event::RuntimeEvent>, sqlx::Error> {
+    let mut events = Vec::with_capacity(rows.len());
+    for row in rows {
+        let condition: serde_json::Value = serde_json::from_str(&row.condition).unwrap_or(serde_json::Value::Null);
+        let event = crate::runtime_event::append_runtime_event_tx(
+            tx,
+            crate::runtime_event::RuntimeEventInput {
+                event_id: format!("watch:{}:deleted", row.id),
+                event_type: "watch.deleted".into(),
+                occurred_at: chrono::Utc::now(),
+                workspace_id: row.workspace_id.clone(),
+                task_id: row.owner_task_id.clone(),
+                run_id: None,
+                tool_call_id: None,
+                job_id: None,
+                approval_id: None,
+                device_id: condition
+                    .get("thing_id")
+                    .and_then(serde_json::Value::as_str)
+                    .map(str::to_string),
+                source_id: None,
+                source_seq: None,
+                evidence_id: None,
+                data: serde_json::json!({"watchId": row.id}),
+            },
+        )
+        .await
+        .map_err(|error| sqlx::Error::Protocol(error.to_string()))?;
+        events.push(event);
+    }
+    Ok(events)
 }
 
 pub async fn delete_task_watches(pool: &SqlitePool, workspace_id: &str, task_id: &str) -> Result<u64, sqlx::Error> {
-    let result = sqlx::query("DELETE FROM watch_rules WHERE workspace_id = ? AND owner_task_id = ?")
+    delete_task_watches_and_events(pool, workspace_id, task_id)
+        .await
+        .map(|events| events.len() as u64)
+}
+
+pub async fn delete_task_watches_and_events(
+    pool: &SqlitePool,
+    workspace_id: &str,
+    task_id: &str,
+) -> Result<Vec<crate::runtime_event::RuntimeEvent>, sqlx::Error> {
+    let mut tx = pool.begin().await?;
+    let rows = sqlx::query_as::<_, WatchRuleRow>(
+        "SELECT id, workspace_id, kind, condition, persistent, timeout_secs, created_at, owner_task_id
+         FROM watch_rules WHERE workspace_id = ? AND owner_task_id = ? ORDER BY created_at, id",
+    )
+    .bind(workspace_id)
+    .bind(task_id)
+    .fetch_all(&mut *tx)
+    .await?;
+    sqlx::query("DELETE FROM watch_rules WHERE workspace_id = ? AND owner_task_id = ?")
         .bind(workspace_id)
         .bind(task_id)
-        .execute(pool)
+        .execute(&mut *tx)
         .await?;
-    Ok(result.rows_affected())
+    let events = append_watch_deleted_events(&mut tx, &rows).await?;
+    tx.commit().await?;
+    Ok(events)
 }
 
 pub async fn delete_rule(pool: &SqlitePool, workspace_id: &str, id: &str) -> Result<u64, sqlx::Error> {
-    let r = sqlx::query("DELETE FROM watch_rules WHERE workspace_id = ? AND id = ?")
+    delete_rule_and_event(pool, workspace_id, id)
+        .await
+        .map(|event| u64::from(event.is_some()))
+}
+
+pub async fn delete_rule_and_event(
+    pool: &SqlitePool,
+    workspace_id: &str,
+    id: &str,
+) -> Result<Option<crate::runtime_event::RuntimeEvent>, sqlx::Error> {
+    let mut tx = pool.begin().await?;
+    let row = sqlx::query_as::<_, WatchRuleRow>(
+        "SELECT id, workspace_id, kind, condition, persistent, timeout_secs, created_at, owner_task_id
+         FROM watch_rules WHERE workspace_id = ? AND id = ?",
+    )
+    .bind(workspace_id)
+    .bind(id)
+    .fetch_optional(&mut *tx)
+    .await?;
+    sqlx::query("DELETE FROM watch_rules WHERE workspace_id = ? AND id = ?")
         .bind(workspace_id)
         .bind(id)
-        .execute(pool)
+        .execute(&mut *tx)
         .await?;
-    Ok(r.rows_affected())
+    let events = append_watch_deleted_events(&mut tx, row.as_slice()).await?;
+    tx.commit().await?;
+    Ok(events.into_iter().next())
 }
 
 /// E3 账本读面：一行 hub_ledger。
@@ -253,6 +349,120 @@ mod tests {
 
     async fn test_pool() -> SqlitePool {
         crate::test_helpers::test_pool().await
+    }
+
+    async fn owned_watch_fixture() -> SqlitePool {
+        let pool = test_pool().await;
+        sqlx::query(
+            "INSERT OR IGNORE INTO subscription_plans (id, name, display_name) VALUES ('plan_free','free','Free')",
+        )
+        .execute(&pool)
+        .await
+        .expect("seed plan");
+        sqlx::query("INSERT INTO tenants (id, name, slug) VALUES ('t1','tenant','t1')")
+            .execute(&pool)
+            .await
+            .expect("seed tenant");
+        sqlx::query(
+            "INSERT INTO workspaces (id, name, tenant_id, created_at, updated_at) VALUES ('ws1','ws1','t1','now','now')",
+        )
+        .execute(&pool)
+        .await
+        .expect("seed workspace");
+        sqlx::query(
+            "INSERT INTO agent_tasks
+                 (id, workspace_id, idempotency_key, objective, session_key, created_by,
+                  status, current_run_id, state_version, created_at, updated_at, ended_at)
+             VALUES ('task1','ws1','idem1','inspect','session1','user1','active',NULL,0,'now','now',NULL)",
+        )
+        .execute(&pool)
+        .await
+        .expect("seed task");
+        pool
+    }
+
+    fn owned_watch(id: &str) -> WatchRuleRow {
+        WatchRuleRow {
+            id: id.into(),
+            workspace_id: "ws1".into(),
+            kind: "property".into(),
+            condition: r#"{"thing_id":"device1","v":1}"#.into(),
+            persistent: 0,
+            timeout_secs: 600,
+            created_at: "2026-10-20T00:00:00Z".into(),
+            owner_task_id: Some("task1".into()),
+        }
+    }
+
+    #[tokio::test]
+    async fn watch_deletions_commit_stable_events_and_replay_in_order() {
+        let pool = owned_watch_fixture().await;
+        insert_rule(&pool, &owned_watch("r1")).await.expect("first watch");
+        insert_rule(&pool, &owned_watch("r2")).await.expect("second watch");
+        let deleted = delete_task_watches_and_events(&pool, "ws1", "task1")
+            .await
+            .expect("cancel watches");
+        assert_eq!(deleted.len(), 2);
+        assert_eq!(deleted[0].event_id, "watch:r1:deleted");
+        assert_eq!(deleted[1].event_id, "watch:r2:deleted");
+        assert!(deleted[0].cursor < deleted[1].cursor);
+        assert!(deleted.iter().all(|event| event.event_type == "watch.deleted"));
+        assert!(deleted.iter().all(|event| event.task_id.as_deref() == Some("task1")));
+        assert!(list_rules(&pool).await.expect("deleted").is_empty());
+        assert!(
+            delete_task_watches_and_events(&pool, "ws1", "task1")
+                .await
+                .expect("idempotent cancellation")
+                .is_empty()
+        );
+        insert_rule(&pool, &owned_watch("r3"))
+            .await
+            .expect("generic delete watch");
+        let generic = delete_rule_and_event(&pool, "ws1", "r3")
+            .await
+            .expect("delete rule")
+            .expect("deletion event");
+        assert_eq!(generic.event_id, "watch:r3:deleted");
+        let replayed = crate::Db::new(pool)
+            .runtime_events_after("ws1", None, Some("task1"), 20)
+            .await
+            .expect("replay")
+            .into_iter()
+            .filter(|event| event.event_type == "watch.deleted")
+            .map(|event| event.event_id)
+            .collect::<Vec<_>>();
+        assert_eq!(replayed, ["watch:r1:deleted", "watch:r2:deleted", "watch:r3:deleted"]);
+    }
+
+    #[tokio::test]
+    async fn watch_deletion_rolls_back_when_event_append_fails() {
+        let pool = owned_watch_fixture().await;
+        insert_rule(&pool, &owned_watch("r1")).await.expect("first watch");
+        insert_rule(&pool, &owned_watch("r2")).await.expect("second watch");
+        sqlx::query(
+            "CREATE TRIGGER fail_watch_deleted BEFORE INSERT ON hub_ledger
+             WHEN NEW.kind = 'runtime.v1' AND json_extract(NEW.payload, '$.eventType') = 'watch.deleted'
+             BEGIN SELECT RAISE(ABORT, 'injected watch deletion event failure'); END",
+        )
+        .execute(&pool)
+        .await
+        .expect("failure trigger");
+        delete_task_watches(&pool, "ws1", "task1")
+            .await
+            .expect_err("cancellation event failure");
+        assert_eq!(list_rules(&pool).await.expect("cancellation rollback").len(), 2);
+        delete_rule(&pool, "ws1", "r1")
+            .await
+            .expect_err("generic deletion event failure");
+        assert_eq!(list_rules(&pool).await.expect("delete rollback").len(), 2);
+        let deletion_events: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM hub_ledger
+             WHERE kind = 'runtime.v1' AND json_extract(payload, '$.eventType') = 'watch.deleted'",
+        )
+        .fetch_one(&pool)
+        .await
+        .expect("event count");
+        assert_eq!(deletion_events, 0);
     }
 
     #[tokio::test]

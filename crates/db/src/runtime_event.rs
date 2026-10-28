@@ -14,6 +14,7 @@ pub const RUNTIME_EVENT_KIND: &str = "runtime.v1";
 #[derive(Debug, Default)]
 pub struct RuntimeProjectionProbe {
     armed: std::sync::atomic::AtomicBool,
+    attempts: std::sync::atomic::AtomicUsize,
     task_read: tokio::sync::Notify,
     release: tokio::sync::Notify,
 }
@@ -28,11 +29,16 @@ impl RuntimeProjectionProbe {
         self.task_read.notified().await;
     }
 
+    pub fn attempts(&self) -> usize {
+        self.attempts.load(std::sync::atomic::Ordering::SeqCst)
+    }
+
     pub fn release(&self) {
         self.release.notify_one();
     }
 
     async fn after_task_read(&self) {
+        self.attempts.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         if self.armed.swap(false, std::sync::atomic::Ordering::SeqCst) {
             self.task_read.notify_one();
             self.release.notified().await;
@@ -331,95 +337,97 @@ impl Db {
     }
 
     pub async fn runtime_projection(&self, workspace_id: &str, task_id: &str) -> Result<Option<TaskProjection>> {
-        loop {
-            let started_cursor = crate::watch::max_ledger_id(self.pool(), workspace_id).await?;
-            let Some(task) = self.get_task(workspace_id, task_id).await.map_err(internal)? else {
-                return Ok(None);
-            };
-            #[cfg(feature = "testing")]
-            if let Some(probe) = &self.runtime_projection_probe {
-                probe.after_task_read().await;
-            }
-            let runs = sqlx::query_as::<_, TaskRunProjection>(
-                "SELECT id, status, outcome, summary, created_at FROM agent_runs
-             WHERE workspace_id = ? AND task_id = ? ORDER BY created_at, rowid",
-            )
+        let mut tx = self.pool().begin().await?;
+        let cursor = sqlx::query_scalar::<_, i64>("SELECT COALESCE(MAX(id), 0) FROM hub_ledger WHERE workspace_id = ?")
             .bind(workspace_id)
-            .bind(task_id)
-            .fetch_all(self.pool())
+            .fetch_one(&mut *tx)
             .await?;
-            let jobs = sqlx::query_as::<_, crate::device_job::DeviceJobRow>(
-                "SELECT id, workspace_id, device_id, tool, args_json, state, stop_requested_at,
+        let Some(task) = crate::runtime_task::find_task(&mut tx, workspace_id, task_id)
+            .await
+            .map_err(internal)?
+        else {
+            return Ok(None);
+        };
+        #[cfg(feature = "testing")]
+        if let Some(probe) = &self.runtime_projection_probe {
+            probe.after_task_read().await;
+        }
+        let runs = sqlx::query_as::<_, TaskRunProjection>(
+            "SELECT id, status, outcome, summary, created_at FROM agent_runs
+             WHERE workspace_id = ? AND task_id = ? ORDER BY created_at, rowid",
+        )
+        .bind(workspace_id)
+        .bind(task_id)
+        .fetch_all(&mut *tx)
+        .await?;
+        let jobs = sqlx::query_as::<_, crate::device_job::DeviceJobRow>(
+            "SELECT id, workspace_id, device_id, tool, args_json, state, stop_requested_at,
                     progress_json, result_json, task_id, run_id, tool_call_id, driver_call_id,
                     timeout_ms, started_at, ended_at
              FROM device_jobs WHERE workspace_id = ? AND task_id = ? ORDER BY started_at, id",
-            )
-            .bind(workspace_id)
-            .bind(task_id)
-            .fetch_all(self.pool())
-            .await?
-            .into_iter()
-            .map(DeviceJob::try_from)
-            .collect::<std::result::Result<Vec<_>, _>>()
-            .map_err(internal)?;
-            let watch_rows = sqlx::query_as::<_, crate::watch::WatchRuleRow>(
-                "SELECT id, workspace_id, kind, condition, persistent, timeout_secs, created_at, owner_task_id
+        )
+        .bind(workspace_id)
+        .bind(task_id)
+        .fetch_all(&mut *tx)
+        .await?
+        .into_iter()
+        .map(DeviceJob::try_from)
+        .collect::<std::result::Result<Vec<_>, _>>()
+        .map_err(internal)?;
+        let watch_rows = sqlx::query_as::<_, crate::watch::WatchRuleRow>(
+            "SELECT id, workspace_id, kind, condition, persistent, timeout_secs, created_at, owner_task_id
              FROM watch_rules WHERE workspace_id = ? AND owner_task_id = ? ORDER BY created_at, id",
-            )
-            .bind(workspace_id)
-            .bind(task_id)
-            .fetch_all(self.pool())
-            .await?;
-            let watches = watch_rows
-                .into_iter()
-                .map(|row| {
-                    Ok(TaskWatchProjection {
-                        id: row.id,
-                        condition: serde_json::from_str(&row.condition)?,
-                        persistent: row.persistent != 0,
-                        timeout_secs: row.timeout_secs,
-                        created_at: row.created_at,
-                    })
+        )
+        .bind(workspace_id)
+        .bind(task_id)
+        .fetch_all(&mut *tx)
+        .await?;
+        let watches = watch_rows
+            .into_iter()
+            .map(|row| {
+                Ok(TaskWatchProjection {
+                    id: row.id,
+                    condition: serde_json::from_str(&row.condition)?,
+                    persistent: row.persistent != 0,
+                    timeout_secs: row.timeout_secs,
+                    created_at: row.created_at,
                 })
-                .collect::<Result<Vec<_>>>()?;
-            let evidence_rows = sqlx::query_as::<_, (String, String, i64, DateTime<Utc>)>(
-                "SELECT id, mime, source_seq, media_time FROM media_evidence
+            })
+            .collect::<Result<Vec<_>>>()?;
+        let evidence_rows = sqlx::query_as::<_, (String, String, i64, DateTime<Utc>)>(
+            "SELECT id, mime, source_seq, media_time FROM media_evidence
              WHERE workspace_id = ? AND task_id = ? ORDER BY created_at, id",
-            )
-            .bind(workspace_id)
-            .bind(task_id)
-            .fetch_all(self.pool())
-            .await?;
-            let evidence = evidence_rows
-                .into_iter()
-                .map(|(evidence_id, mime, source_seq, media_time)| {
-                    Ok(EvidenceRef {
-                        evidence_id,
-                        mime,
-                        source_seq: u64::try_from(source_seq).map_err(internal)?,
-                        media_time,
-                    })
+        )
+        .bind(workspace_id)
+        .bind(task_id)
+        .fetch_all(&mut *tx)
+        .await?;
+        let evidence = evidence_rows
+            .into_iter()
+            .map(|(evidence_id, mime, source_seq, media_time)| {
+                Ok(EvidenceRef {
+                    evidence_id,
+                    mime,
+                    source_seq: u64::try_from(source_seq).map_err(internal)?,
+                    media_time,
                 })
-                .collect::<Result<Vec<_>>>()?;
-            let summary = runs
-                .iter()
-                .rev()
-                .find(|run| run.status == "completed")
-                .map(|run| run.summary.clone());
-            let cursor = crate::watch::max_ledger_id(self.pool(), workspace_id).await?;
-            if cursor != started_cursor {
-                continue;
-            }
-            return Ok(Some(TaskProjection {
-                task,
-                runs,
-                jobs,
-                watches,
-                evidence,
-                summary,
-                cursor,
-            }));
-        }
+            })
+            .collect::<Result<Vec<_>>>()?;
+        let summary = runs
+            .iter()
+            .rev()
+            .find(|run| run.status == "completed")
+            .map(|run| run.summary.clone());
+        tx.commit().await?;
+        Ok(Some(TaskProjection {
+            task,
+            runs,
+            jobs,
+            watches,
+            evidence,
+            summary,
+            cursor,
+        }))
     }
 
     pub async fn runtime_outbox(
@@ -764,6 +772,54 @@ mod tests {
         }
         assert_eq!(replayed.len(), 301);
         assert_eq!(replayed.last().map(String::as_str), Some("history-299"));
+    }
+
+    #[tokio::test]
+    async fn projection_uses_one_consistent_snapshot_during_sustained_unrelated_writes() {
+        let path = std::env::temp_dir().join(format!("tinyiothub-projection-{}.db", uuid::Uuid::new_v4()));
+        let options = sqlx::sqlite::SqliteConnectOptions::new()
+            .filename(&path)
+            .create_if_missing(true)
+            .journal_mode(sqlx::sqlite::SqliteJournalMode::Wal);
+        let pool = sqlx::sqlite::SqlitePoolOptions::new()
+            .connect_with(options)
+            .await
+            .expect("wal pool");
+        crate::test_helpers::run_all_migrations(&pool)
+            .await
+            .expect("migrations");
+        seed_workspace(&pool, "ws-1").await;
+        let db = Db::new(pool);
+        seed_task(&db, "ws-1", "task-1").await;
+        let cursor = db
+            .runtime_projection("ws-1", "task-1")
+            .await
+            .expect("initial projection")
+            .expect("task")
+            .cursor;
+        let probe = std::sync::Arc::new(crate::runtime_event::RuntimeProjectionProbe::default());
+        let db = db.with_runtime_projection_probe(probe.clone());
+        probe.arm();
+        let projecting = tokio::spawn({
+            let db = db.clone();
+            async move { db.runtime_projection("ws-1", "task-1").await }
+        });
+        probe.wait_for_task_read().await;
+        for index in 0..64 {
+            db.append_runtime_event(event(&format!("unrelated-{index}"), "other-task"))
+                .await
+                .expect("unrelated write");
+        }
+        probe.release();
+        let projection = tokio::time::timeout(std::time::Duration::from_secs(1), projecting)
+            .await
+            .expect("projection completes")
+            .expect("join")
+            .expect("projection")
+            .expect("task");
+        assert_eq!(probe.attempts(), 1);
+        assert_eq!(projection.cursor, cursor);
+        assert_eq!(projection.task.status, TaskStatus::Active);
     }
 
     #[tokio::test]

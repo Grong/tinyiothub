@@ -31,9 +31,9 @@ impl DbTaskStore {
         self
     }
 
-    async fn publish(&self, workspace_id: &str, event_id: String) {
+    fn publish(&self, event: tinyiothub_storage::runtime_event::RuntimeEvent) {
         if let Some(recorder) = &self.recorder {
-            recorder.publish_persisted(workspace_id, &event_id).await;
+            recorder.publish(event);
         }
     }
 }
@@ -45,9 +45,8 @@ impl TaskStore for DbTaskStore {
         task: &AgentTask,
         wake: &TaskWake,
     ) -> Result<CreateTaskOutcome, TaskStoreError> {
-        let outcome = self.db.create_task_with_wake(task, wake).await?;
-        self.publish(&outcome.task.workspace_id, format!("task:{}:created", outcome.task.id))
-            .await;
+        let (outcome, event) = self.db.create_task_with_wake_and_event(task, wake).await?;
+        self.publish(event);
         Ok(outcome)
     }
 
@@ -87,15 +86,11 @@ impl TaskStore for DbTaskStore {
         next: TaskStatus,
         wake: Option<&TaskWake>,
     ) -> Result<AgentTask, TaskStoreError> {
-        let task = self
+        let (task, event) = self
             .db
-            .transition_task(workspace_id, task_id, expected_version, next, wake)
+            .transition_task_and_event(workspace_id, task_id, expected_version, next, wake)
             .await?;
-        self.publish(
-            &task.workspace_id,
-            format!("task:{}:v{}:{}", task.id, task.state_version, task.status.as_str()),
-        )
-        .await;
+        self.publish(event);
         Ok(task)
     }
 
@@ -105,27 +100,25 @@ impl TaskStore for DbTaskStore {
         expected_version: i64,
         run_id: Option<&str>,
     ) -> Result<AgentTask, TaskStoreError> {
-        let task = self.db.bind_current_run(task_id, expected_version, run_id).await?;
-        self.publish(
-            &task.workspace_id,
-            format!("task:{}:v{}:run_bound", task.id, task.state_version),
-        )
-        .await;
+        let (task, event) = self
+            .db
+            .bind_current_run_and_event(task_id, expected_version, run_id)
+            .await?;
+        self.publish(event);
         Ok(task)
     }
 
     async fn begin_run(&self, task: &AgentTask, wake_event_id: &str, run_id: &str) -> Result<bool, TaskStoreError> {
-        let started = self.db.begin_run(task, wake_event_id, run_id).await?;
-        if started {
-            self.publish(&task.workspace_id, format!("run:{run_id}:started")).await;
+        let (started, event) = self.db.begin_run_and_event(task, wake_event_id, run_id).await?;
+        if let Some(event) = event {
+            self.publish(event);
         }
         Ok(started)
     }
 
     async fn finish_run(&self, report: &RunReport) -> Result<(), TaskStoreError> {
-        self.db.finish_run(report).await?;
-        self.publish(&report.workspace_id, format!("run:{}:finished", report.run_id))
-            .await;
+        let event = self.db.finish_run_and_event(report).await?;
+        self.publish(event);
         Ok(())
     }
 

@@ -107,9 +107,9 @@ impl DbDeviceJobStore {
         self
     }
 
-    async fn publish(&self, workspace_id: &str, event_id: String) {
+    fn publish(&self, event: tinyiothub_storage::runtime_event::RuntimeEvent) {
         if let Some(recorder) = &self.recorder {
-            recorder.publish_persisted(workspace_id, &event_id).await;
+            recorder.publish(event);
         }
     }
 }
@@ -117,9 +117,8 @@ impl DbDeviceJobStore {
 #[async_trait]
 impl DeviceJobStore for DbDeviceJobStore {
     async fn create_job(&self, job: &DeviceJob) -> Result<(), DeviceJobError> {
-        self.db.create_job(job).await?;
-        self.publish(&job.workspace_id, format!("job:{}:{}", job.id, job.state.as_str()))
-            .await;
+        let event = self.db.create_job_and_event(job).await?;
+        self.publish(event);
         Ok(())
     }
 
@@ -137,8 +136,8 @@ impl DeviceJobStore for DbDeviceJobStore {
     }
 
     async fn mark_running(&self, job_id: &str, driver_call_id: &str) -> Result<DeviceJob, DeviceJobError> {
-        let job = self.db.mark_running(job_id, driver_call_id).await?;
-        self.publish(&job.workspace_id, format!("job:{}:running", job.id)).await;
+        let (job, event) = self.db.mark_running_and_event(job_id, driver_call_id).await?;
+        self.publish(event);
         Ok(job)
     }
 
@@ -149,39 +148,24 @@ impl DeviceJobStore for DbDeviceJobStore {
         result: &serde_json::Value,
         wake: Option<&TaskWake>,
     ) -> Result<bool, DeviceJobError> {
-        let finished = self.db.finish_job(job_id, state, result, wake).await?;
-        if finished {
-            match self.db.get_job_by_id(job_id).await {
-                Ok(Some(job)) => {
-                    self.publish(&job.workspace_id, format!("job:{}:{}", job.id, state.as_str()))
-                        .await
-                }
-                Ok(None) => tracing::error!(job_id, "persisted Job missing during runtime publish"),
-                Err(error) => tracing::error!(job_id, %error, "load Job for runtime publish failed"),
-            }
+        let (finished, event) = self.db.finish_job_and_event(job_id, state, result, wake).await?;
+        if let Some(event) = event {
+            self.publish(event);
         }
         Ok(finished)
     }
 
     async fn update_progress(&self, job_id: &str, progress: &serde_json::Value) -> Result<bool, DeviceJobError> {
-        let revision = self.db.update_progress_revision(job_id, progress).await?;
-        if let Some(revision) = revision {
-            match self.db.get_job_by_id(job_id).await {
-                Ok(Some(job)) => {
-                    self.publish(&job.workspace_id, format!("job:{}:progress:v{revision}", job.id))
-                        .await;
-                }
-                Ok(None) => tracing::error!(job_id, "persisted Job missing during progress publish"),
-                Err(error) => tracing::error!(job_id, %error, "load Job for progress publish failed"),
-            }
+        let (revision, event) = self.db.update_progress_revision_and_event(job_id, progress).await?;
+        if let Some(event) = event {
+            self.publish(event);
         }
         Ok(revision.is_some())
     }
 
     async fn request_stop(&self, workspace_id: &str, task_id: &str, job_id: &str) -> Result<DeviceJob, DeviceJobError> {
-        let job = self.db.request_stop(workspace_id, task_id, job_id).await?;
-        self.publish(&job.workspace_id, format!("job:{}:stop_requested", job.id))
-            .await;
+        let (job, event) = self.db.request_stop_and_event(workspace_id, task_id, job_id).await?;
+        self.publish(event);
         Ok(job)
     }
 
@@ -783,9 +767,9 @@ impl WatchRuleStoreAdapter {
         self
     }
 
-    async fn publish(&self, workspace_id: &str, event_id: String) {
+    fn publish(&self, event: tinyiothub_storage::runtime_event::RuntimeEvent) {
         if let Some(recorder) = &self.recorder {
-            recorder.publish_persisted(workspace_id, &event_id).await;
+            recorder.publish(event);
         }
     }
 }
@@ -854,19 +838,22 @@ impl tinyiothub_runtime::ports::WatchRuleStore for WatchRuleStoreAdapter {
             created_at: rule.created_at.clone(),
             owner_task_id: rule.owner_task_id.clone(),
         };
-        tinyiothub_storage::watch::insert_rule(self.db.pool(), &row)
+        let event = tinyiothub_storage::watch::insert_rule_and_event(self.db.pool(), &row)
             .await
             .map_err(|e| e.to_string())?;
-        self.publish(&rule.workspace_id, format!("watch:{}:created", rule.id))
-            .await;
+        self.publish(event);
         Ok(())
     }
 
     async fn delete(&self, workspace_id: &str, id: &str) -> Result<bool, String> {
-        let affected = tinyiothub_storage::watch::delete_rule(self.db.pool(), workspace_id, id)
+        let event = tinyiothub_storage::watch::delete_rule_and_event(self.db.pool(), workspace_id, id)
             .await
             .map_err(|e| e.to_string())?;
-        Ok(affected > 0)
+        let deleted = event.is_some();
+        if let Some(event) = event {
+            self.publish(event);
+        }
+        Ok(deleted)
     }
 
     async fn complete_task_watch(
@@ -875,20 +862,25 @@ impl tinyiothub_runtime::ports::WatchRuleStore for WatchRuleStoreAdapter {
         id: &str,
         wake: &tinyiothub_core::agent_task::TaskWake,
     ) -> Result<bool, String> {
-        let completed = tinyiothub_storage::watch::complete_task_watch(self.db.pool(), workspace_id, id, wake)
-            .await
-            .map_err(|e| e.to_string())?;
-        if completed {
-            self.publish(workspace_id, format!("watch:{id}:completed")).await;
+        let (completed, event) =
+            tinyiothub_storage::watch::complete_task_watch_and_event(self.db.pool(), workspace_id, id, wake)
+                .await
+                .map_err(|e| e.to_string())?;
+        if let Some(event) = event {
+            self.publish(event);
         }
         Ok(completed)
     }
 
     async fn delete_task_watches(&self, workspace_id: &str, task_id: &str) -> Result<usize, String> {
-        tinyiothub_storage::watch::delete_task_watches(self.db.pool(), workspace_id, task_id)
+        let events = tinyiothub_storage::watch::delete_task_watches_and_events(self.db.pool(), workspace_id, task_id)
             .await
-            .map(|count| count as usize)
-            .map_err(|e| e.to_string())
+            .map_err(|e| e.to_string())?;
+        let count = events.len();
+        for event in events {
+            self.publish(event);
+        }
+        Ok(count)
     }
 }
 
@@ -1108,6 +1100,97 @@ mod runtime_job_event_tests {
         assert_eq!(events[0].event_type, "watch.created");
         assert_eq!(events[1].event_type, "watch.completed");
         assert!(events.iter().all(|event| event.task_id.as_deref() == Some("task-1")));
+    }
+    #[tokio::test]
+    async fn watch_adapter_publishes_and_replays_cancellation_and_generic_deletion() {
+        let (db, recorder, hub) = fixture().await;
+        let store = WatchRuleStoreAdapter::new((*db).clone()).with_recorder(recorder);
+        let mut connection = hub
+            .connect(db.clone(), "ws-job", "task-1", None)
+            .await
+            .expect("connect runtime stream");
+        assert!(matches!(
+            connection.next_frame().await,
+            Some(crate::domains::agent::runtime::stream::RuntimeFrame::Snapshot { .. })
+        ));
+        let rule = |id: &str| tinyiothub_core::watch::WatchRule {
+            id: id.into(),
+            workspace_id: "ws-job".into(),
+            condition: tinyiothub_core::watch::WatchCondition::Availability {
+                thing_id: "device-1".into(),
+                online: true,
+            },
+            persistent: false,
+            timeout_secs: 60,
+            created_at: chrono::Utc::now().to_rfc3339(),
+            owner_task_id: Some("task-1".into()),
+        };
+        store.insert(&rule("watch-cancel-1")).await.expect("first watch");
+        store.insert(&rule("watch-cancel-2")).await.expect("second watch");
+        for id in ["watch-cancel-1", "watch-cancel-2"] {
+            let Some(crate::domains::agent::runtime::stream::RuntimeFrame::Event { event }) =
+                connection.next_frame().await
+            else {
+                panic!("expected live creation");
+            };
+            assert_eq!(event.event_id, format!("watch:{id}:created"));
+        }
+        assert_eq!(
+            store
+                .delete_task_watches("ws-job", "task-1")
+                .await
+                .expect("cancel watches"),
+            2
+        );
+        for id in ["watch-cancel-1", "watch-cancel-2"] {
+            let Some(crate::domains::agent::runtime::stream::RuntimeFrame::Event { event }) =
+                connection.next_frame().await
+            else {
+                panic!("expected live cancellation");
+            };
+            assert_eq!(event.event_id, format!("watch:{id}:deleted"));
+            assert_eq!(event.event_type, "watch.deleted");
+        }
+        store.insert(&rule("watch-generic")).await.expect("generic watch");
+        assert!(matches!(
+            connection.next_frame().await,
+            Some(crate::domains::agent::runtime::stream::RuntimeFrame::Event { .. })
+        ));
+        assert!(store.delete("ws-job", "watch-generic").await.expect("generic delete"));
+        let Some(crate::domains::agent::runtime::stream::RuntimeFrame::Event { event }) = connection.next_frame().await
+        else {
+            panic!("expected live generic deletion");
+        };
+        assert_eq!(event.event_id, "watch:watch-generic:deleted");
+        assert!(
+            !store
+                .delete("ws-job", "watch-generic")
+                .await
+                .expect("idempotent delete")
+        );
+        assert_eq!(
+            store
+                .delete_task_watches("ws-job", "task-1")
+                .await
+                .expect("empty cancel"),
+            0
+        );
+        let replayed = db
+            .runtime_events_after("ws-job", None, Some("task-1"), 20)
+            .await
+            .expect("persisted replay")
+            .into_iter()
+            .filter(|event| event.event_type == "watch.deleted")
+            .map(|event| event.event_id)
+            .collect::<Vec<_>>();
+        assert_eq!(
+            replayed,
+            [
+                "watch:watch-cancel-1:deleted",
+                "watch:watch-cancel-2:deleted",
+                "watch:watch-generic:deleted",
+            ]
+        );
     }
 }
 

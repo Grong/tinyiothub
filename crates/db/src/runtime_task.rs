@@ -48,7 +48,7 @@ fn unavailable(error: impl std::fmt::Display) -> TaskStoreError {
     TaskStoreError::Unavailable(error.to_string())
 }
 
-async fn find_task(
+pub(crate) async fn find_task(
     executor: &mut sqlx::SqliteConnection,
     workspace_id: &str,
     task_id: &str,
@@ -123,6 +123,16 @@ impl Db {
         task: &AgentTask,
         wake: &TaskWake,
     ) -> Result<CreateTaskOutcome, TaskStoreError> {
+        self.create_task_with_wake_and_event(task, wake)
+            .await
+            .map(|(outcome, _)| outcome)
+    }
+
+    pub async fn create_task_with_wake_and_event(
+        &self,
+        task: &AgentTask,
+        wake: &TaskWake,
+    ) -> Result<(CreateTaskOutcome, crate::runtime_event::RuntimeEvent), TaskStoreError> {
         let signal: serde_json::Value = serde_json::from_str(&wake.signal_json)
             .map_err(|error| TaskStoreError::Validation(format!("invalid wake signal: {error}")))?;
         let signal_workspace = signal
@@ -165,34 +175,40 @@ impl Db {
             if original.objective != task.objective {
                 return Err(TaskStoreError::ObjectiveConflict);
             }
-            append_runtime_event_tx(
+            let event = append_runtime_event_tx(
                 &mut tx,
                 task_event(&original, "task.created", format!("task:{}:created", original.id)),
             )
             .await
             .map_err(unavailable)?;
             tx.commit().await.map_err(unavailable)?;
-            return Ok(CreateTaskOutcome {
-                task: original,
-                deduplicated: true,
-            });
+            return Ok((
+                CreateTaskOutcome {
+                    task: original,
+                    deduplicated: true,
+                },
+                event,
+            ));
         }
 
         if wake.task_id != task.id {
             return Err(TaskStoreError::Validation("task and wake task id differ".to_string()));
         }
         insert_wake(&mut tx, wake).await?;
-        append_runtime_event_tx(
+        let event = append_runtime_event_tx(
             &mut tx,
             task_event(task, "task.created", format!("task:{}:created", task.id)),
         )
         .await
         .map_err(unavailable)?;
         tx.commit().await.map_err(unavailable)?;
-        Ok(CreateTaskOutcome {
-            task: task.clone(),
-            deduplicated: false,
-        })
+        Ok((
+            CreateTaskOutcome {
+                task: task.clone(),
+                deduplicated: false,
+            },
+            event,
+        ))
     }
 
     pub async fn get_task(&self, workspace_id: &str, task_id: &str) -> Result<Option<AgentTask>, TaskStoreError> {
@@ -292,6 +308,19 @@ impl Db {
         next: tinyiothub_core::agent_task::TaskStatus,
         wake: Option<&TaskWake>,
     ) -> Result<AgentTask, TaskStoreError> {
+        self.transition_task_and_event(workspace_id, task_id, expected_version, next, wake)
+            .await
+            .map(|(task, _)| task)
+    }
+
+    pub async fn transition_task_and_event(
+        &self,
+        workspace_id: &str,
+        task_id: &str,
+        expected_version: i64,
+        next: tinyiothub_core::agent_task::TaskStatus,
+        wake: Option<&TaskWake>,
+    ) -> Result<(AgentTask, crate::runtime_event::RuntimeEvent), TaskStoreError> {
         if let Some(wake) = wake {
             validate_wake(workspace_id, task_id, wake)?;
         }
@@ -335,7 +364,7 @@ impl Db {
         let task = find_task(&mut tx, workspace_id, task_id)
             .await?
             .ok_or_else(|| TaskStoreError::Unavailable("updated task disappeared".to_string()))?;
-        append_runtime_event_tx(
+        let event = append_runtime_event_tx(
             &mut tx,
             task_event(
                 &task,
@@ -346,7 +375,7 @@ impl Db {
         .await
         .map_err(unavailable)?;
         tx.commit().await.map_err(unavailable)?;
-        Ok(task)
+        Ok((task, event))
     }
 
     pub async fn bind_current_run(
@@ -355,6 +384,17 @@ impl Db {
         expected_version: i64,
         run_id: Option<&str>,
     ) -> Result<AgentTask, TaskStoreError> {
+        self.bind_current_run_and_event(task_id, expected_version, run_id)
+            .await
+            .map(|(task, _)| task)
+    }
+
+    pub async fn bind_current_run_and_event(
+        &self,
+        task_id: &str,
+        expected_version: i64,
+        run_id: Option<&str>,
+    ) -> Result<(AgentTask, crate::runtime_event::RuntimeEvent), TaskStoreError> {
         let mut tx = self.pool().begin().await.map_err(unavailable)?;
         let affected = sqlx::query(
             "UPDATE agent_tasks
@@ -375,7 +415,7 @@ impl Db {
         let task = find_task_by_id(&mut tx, task_id)
             .await?
             .ok_or_else(|| TaskStoreError::Unavailable("updated task disappeared".to_string()))?;
-        append_runtime_event_tx(
+        let event = append_runtime_event_tx(
             &mut tx,
             task_event(
                 &task,
@@ -386,10 +426,21 @@ impl Db {
         .await
         .map_err(unavailable)?;
         tx.commit().await.map_err(unavailable)?;
-        Ok(task)
+        Ok((task, event))
     }
 
     pub async fn begin_run(&self, task: &AgentTask, wake_event_id: &str, run_id: &str) -> Result<bool, TaskStoreError> {
+        self.begin_run_and_event(task, wake_event_id, run_id)
+            .await
+            .map(|(started, _)| started)
+    }
+
+    pub async fn begin_run_and_event(
+        &self,
+        task: &AgentTask,
+        wake_event_id: &str,
+        run_id: &str,
+    ) -> Result<(bool, Option<crate::runtime_event::RuntimeEvent>), TaskStoreError> {
         let mut tx = self.pool().begin().await.map_err(unavailable)?;
         let inserted = sqlx::query(
             "INSERT INTO agent_runs
@@ -408,7 +459,7 @@ impl Db {
         .map_err(unavailable)?
         .rows_affected();
         if inserted == 1 {
-            append_runtime_event_tx(
+            let event = append_runtime_event_tx(
                 &mut tx,
                 RuntimeEventInput {
                     event_id: format!("run:{run_id}:started"),
@@ -430,7 +481,7 @@ impl Db {
             .await
             .map_err(unavailable)?;
             tx.commit().await.map_err(unavailable)?;
-            return Ok(true);
+            return Ok((true, Some(event)));
         }
         let duplicate: Option<(String,)> =
             sqlx::query_as("SELECT id FROM agent_runs WHERE task_id = ? AND wake_event_id = ?")
@@ -441,7 +492,7 @@ impl Db {
                 .map_err(unavailable)?;
         if duplicate.is_some() {
             tx.commit().await.map_err(unavailable)?;
-            Ok(false)
+            Ok((false, None))
         } else {
             Err(TaskStoreError::Unavailable(
                 "agent run conflict was not a task/wake replay".to_string(),
@@ -450,6 +501,13 @@ impl Db {
     }
 
     pub async fn finish_run(&self, report: &tinyiothub_core::agent_runs::RunReport) -> Result<(), TaskStoreError> {
+        self.finish_run_and_event(report).await.map(|_| ())
+    }
+
+    pub async fn finish_run_and_event(
+        &self,
+        report: &tinyiothub_core::agent_runs::RunReport,
+    ) -> Result<crate::runtime_event::RuntimeEvent, TaskStoreError> {
         let mut report_json = serde_json::to_value(report).map_err(unavailable)?;
         report_json["action_count"] = serde_json::json!(report.actions.len());
         let mut tx = self.pool().begin().await.map_err(unavailable)?;
@@ -475,7 +533,7 @@ impl Db {
         if affected == 0 {
             return Err(TaskStoreError::ConcurrentUpdate);
         }
-        append_runtime_event_tx(
+        let event = append_runtime_event_tx(
             &mut tx,
             RuntimeEventInput {
                 event_id: format!("run:{}:finished", report.run_id),
@@ -497,7 +555,7 @@ impl Db {
         .await
         .map_err(unavailable)?;
         tx.commit().await.map_err(unavailable)?;
-        Ok(())
+        Ok(event)
     }
 
     pub async fn latest_task_run(

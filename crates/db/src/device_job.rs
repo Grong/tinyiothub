@@ -123,6 +123,13 @@ fn validate_job_wake(job: &DeviceJob, wake: &TaskWake) -> Result<(), DeviceJobEr
 
 impl Db {
     pub async fn create_job(&self, job: &DeviceJob) -> Result<(), DeviceJobError> {
+        self.create_job_and_event(job).await.map(|_| ())
+    }
+
+    pub async fn create_job_and_event(
+        &self,
+        job: &DeviceJob,
+    ) -> Result<crate::runtime_event::RuntimeEvent, DeviceJobError> {
         let mut tx = self.pool().begin().await.map_err(storage)?;
         sqlx::query(
             "INSERT INTO device_jobs
@@ -161,7 +168,7 @@ impl Db {
         .execute(&mut *tx)
         .await
         .map_err(create_error)?;
-        append_runtime_event_tx(
+        let event = append_runtime_event_tx(
             &mut tx,
             job_event(
                 job,
@@ -172,7 +179,7 @@ impl Db {
         .await
         .map_err(storage)?;
         tx.commit().await.map_err(storage)?;
-        Ok(())
+        Ok(event)
     }
 
     pub async fn get_job(&self, workspace_id: &str, job_id: &str) -> Result<Option<DeviceJob>, DeviceJobError> {
@@ -217,6 +224,16 @@ impl Db {
     }
 
     pub async fn mark_running(&self, job_id: &str, driver_call_id: &str) -> Result<DeviceJob, DeviceJobError> {
+        self.mark_running_and_event(job_id, driver_call_id)
+            .await
+            .map(|(job, _)| job)
+    }
+
+    pub async fn mark_running_and_event(
+        &self,
+        job_id: &str,
+        driver_call_id: &str,
+    ) -> Result<(DeviceJob, crate::runtime_event::RuntimeEvent), DeviceJobError> {
         let mut tx = self.pool().begin().await.map_err(storage)?;
         let updated = sqlx::query_as::<_, DeviceJobRow>(
             "UPDATE device_jobs SET state = 'running', driver_call_id = ?
@@ -232,14 +249,14 @@ impl Db {
         .map(DeviceJob::try_from)
         .transpose()?;
         if let Some(job) = updated {
-            append_runtime_event_tx(
+            let event = append_runtime_event_tx(
                 &mut tx,
                 job_event(&job, "running", serde_json::json!({"state":"running"})),
             )
             .await
             .map_err(storage)?;
             tx.commit().await.map_err(storage)?;
-            return Ok(job);
+            return Ok((job, event));
         }
         let current = find_job_by_id(&mut tx, job_id).await?.ok_or(DeviceJobError::NotFound)?;
         Err(DeviceJobError::Conflict(format!(
@@ -256,6 +273,18 @@ impl Db {
         result: &Value,
         wake: Option<&TaskWake>,
     ) -> Result<bool, DeviceJobError> {
+        self.finish_job_and_event(job_id, state, result, wake)
+            .await
+            .map(|(finished, _)| finished)
+    }
+
+    pub async fn finish_job_and_event(
+        &self,
+        job_id: &str,
+        state: DeviceJobState,
+        result: &Value,
+        wake: Option<&TaskWake>,
+    ) -> Result<(bool, Option<crate::runtime_event::RuntimeEvent>), DeviceJobError> {
         if !state.is_terminal() {
             return Err(DeviceJobError::Validation(
                 "terminal result has an active state".to_string(),
@@ -264,7 +293,7 @@ impl Db {
         let mut tx = self.pool().begin().await.map_err(storage)?;
         let current = find_job_by_id(&mut tx, job_id).await?.ok_or(DeviceJobError::NotFound)?;
         if current.state.is_terminal() {
-            return Ok(false);
+            return Ok((false, None));
         }
         if let Some(wake) = wake {
             validate_job_wake(&current, wake)?;
@@ -282,19 +311,19 @@ impl Db {
         .map_err(storage)?
         .rows_affected();
         if updated == 0 {
-            return Ok(false);
+            return Ok((false, None));
         }
         if let Some(wake) = wake {
             insert_job_wake(&mut tx, wake).await?;
         }
-        append_runtime_event_tx(
+        let event = append_runtime_event_tx(
             &mut tx,
             job_event(&current, state.as_str(), serde_json::json!({"state":state.as_str()})),
         )
         .await
         .map_err(storage)?;
         tx.commit().await.map_err(storage)?;
-        Ok(true)
+        Ok((true, Some(event)))
     }
 
     pub async fn update_progress(&self, job_id: &str, progress: &Value) -> Result<bool, DeviceJobError> {
@@ -306,6 +335,16 @@ impl Db {
         job_id: &str,
         progress: &Value,
     ) -> Result<Option<i64>, DeviceJobError> {
+        self.update_progress_revision_and_event(job_id, progress)
+            .await
+            .map(|(revision, _)| revision)
+    }
+
+    pub async fn update_progress_revision_and_event(
+        &self,
+        job_id: &str,
+        progress: &Value,
+    ) -> Result<(Option<i64>, Option<crate::runtime_event::RuntimeEvent>), DeviceJobError> {
         let progress_json = serde_json::to_string(progress).map_err(storage)?;
         let mut tx = self.pool().begin().await.map_err(storage)?;
         let updated = sqlx::query(
@@ -326,7 +365,7 @@ impl Db {
                 return Err(DeviceJobError::NotFound);
             }
             tx.commit().await.map_err(storage)?;
-            return Ok(None);
+            return Ok((None, None));
         }
         let job = find_job_by_id(&mut tx, job_id).await?.ok_or(DeviceJobError::NotFound)?;
         let revision = sqlx::query_scalar::<_, i64>("SELECT progress_revision FROM device_jobs WHERE id = ?")
@@ -340,9 +379,9 @@ impl Db {
             serde_json::json!({"revision":revision,"progress":progress}),
         );
         input.event_type = "job.progress".into();
-        append_runtime_event_tx(&mut tx, input).await.map_err(storage)?;
+        let event = append_runtime_event_tx(&mut tx, input).await.map_err(storage)?;
         tx.commit().await.map_err(storage)?;
-        Ok(Some(revision))
+        Ok((Some(revision), Some(event)))
     }
 
     pub async fn request_stop(
@@ -351,6 +390,17 @@ impl Db {
         task_id: &str,
         job_id: &str,
     ) -> Result<DeviceJob, DeviceJobError> {
+        self.request_stop_and_event(workspace_id, task_id, job_id)
+            .await
+            .map(|(job, _)| job)
+    }
+
+    pub async fn request_stop_and_event(
+        &self,
+        workspace_id: &str,
+        task_id: &str,
+        job_id: &str,
+    ) -> Result<(DeviceJob, crate::runtime_event::RuntimeEvent), DeviceJobError> {
         let mut tx = self.pool().begin().await.map_err(storage)?;
         let updated = sqlx::query_as::<_, DeviceJobRow>(
             "UPDATE device_jobs SET stop_requested_at = COALESCE(stop_requested_at, ?)
@@ -384,7 +434,7 @@ impl Db {
             .transpose()?
             .ok_or(DeviceJobError::NotFound)?,
         };
-        append_runtime_event_tx(
+        let event = append_runtime_event_tx(
             &mut tx,
             job_event(
                 &job,
@@ -395,7 +445,7 @@ impl Db {
         .await
         .map_err(storage)?;
         tx.commit().await.map_err(storage)?;
-        Ok(job)
+        Ok((job, event))
     }
 
     pub async fn active_jobs(

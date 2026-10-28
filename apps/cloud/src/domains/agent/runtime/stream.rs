@@ -125,12 +125,8 @@ impl RuntimeRecorder {
         Ok(event)
     }
 
-    pub async fn publish_persisted(&self, workspace_id: &str, event_id: &str) {
-        match self.db.runtime_event_by_id(workspace_id, event_id).await {
-            Ok(Some(event)) => self.hub.publish(event),
-            Ok(None) => tracing::error!(workspace_id, event_id, "persisted runtime event missing during publish"),
-            Err(error) => tracing::error!(workspace_id, event_id, %error, "load persisted runtime event failed"),
-        }
+    pub fn publish(&self, event: RuntimeEvent) {
+        self.hub.publish(event);
     }
 }
 
@@ -295,6 +291,11 @@ impl RuntimeConnection {
                     {
                         continue;
                     }
+                    if event.cursor > self.last_cursor + 1 && self.missed_task_event_before(&event).await? {
+                        let frame = self.resync("out_of_order").await?;
+                        self.pending.push_back(frame);
+                        continue;
+                    }
                     if self.projection_mismatch(&event).await? {
                         let frame = self.resync("projection_mismatch").await?;
                         self.pending.push_back(frame);
@@ -312,6 +313,15 @@ impl RuntimeConnection {
                 Err(RecvError::Closed) => return None,
             }
         }
+    }
+
+    async fn missed_task_event_before(&self, event: &RuntimeEvent) -> Option<bool> {
+        let rows = self
+            .db
+            .runtime_events_after(&self.workspace_id, Some(self.last_cursor), Some(&self.task_id), 2)
+            .await
+            .ok()?;
+        Some(rows.first().is_some_and(|first| first.cursor != event.cursor))
     }
 
     async fn projection_mismatch(&self, event: &RuntimeEvent) -> Option<bool> {
@@ -357,6 +367,26 @@ mod tests {
 
     async fn fixture(capacity: usize) -> (Arc<Db>, Arc<RuntimeStreamHub>) {
         let pool = tinyiothub_storage::test_helpers::test_pool().await;
+        fixture_with_pool(pool, capacity).await
+    }
+
+    async fn wal_fixture(capacity: usize) -> (Arc<Db>, Arc<RuntimeStreamHub>) {
+        let path = std::env::temp_dir().join(format!("tinyiothub-stream-{}.db", uuid::Uuid::new_v4()));
+        let options = sqlx::sqlite::SqliteConnectOptions::new()
+            .filename(path)
+            .create_if_missing(true)
+            .journal_mode(sqlx::sqlite::SqliteJournalMode::Wal);
+        let pool = sqlx::sqlite::SqlitePoolOptions::new()
+            .connect_with(options)
+            .await
+            .expect("wal pool");
+        tinyiothub_storage::test_helpers::run_all_migrations(&pool)
+            .await
+            .expect("migrations");
+        fixture_with_pool(pool, capacity).await
+    }
+
+    async fn fixture_with_pool(pool: sqlx::SqlitePool, capacity: usize) -> (Arc<Db>, Arc<RuntimeStreamHub>) {
         sqlx::query(
             "INSERT OR IGNORE INTO subscription_plans (id, name, display_name) VALUES ('plan_free','free','Free')",
         )
@@ -419,6 +449,19 @@ mod tests {
             source_seq: None,
             evidence_id: None,
             data: json!({"stateVersion":1}),
+        }
+    }
+
+    fn owned_watch(id: &str) -> tinyiothub_storage::watch::WatchRuleRow {
+        tinyiothub_storage::watch::WatchRuleRow {
+            id: id.into(),
+            workspace_id: "ws-1".into(),
+            kind: "availability".into(),
+            condition: json!({"type":"availability","thing_id":"device-1","online":true}).to_string(),
+            persistent: 0,
+            timeout_secs: 60,
+            created_at: Utc::now().to_rfc3339(),
+            owner_task_id: Some("task-1".into()),
         }
     }
 
@@ -550,8 +593,84 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn fresh_connection_retries_projection_when_task_commits_during_snapshot() {
+    async fn established_connection_recovers_when_live_publication_arrives_in_reverse() {
         let (db, hub) = fixture(16).await;
+        let mut connection = hub.connect(db.clone(), "ws-1", "task-1", None).await.expect("connect");
+        assert!(matches!(
+            connection.next_frame().await,
+            Some(RuntimeFrame::Snapshot { .. })
+        ));
+        db.transition_task("ws-1", "task-1", 1, TaskStatus::Paused, None)
+            .await
+            .expect("commit version two");
+        db.transition_task("ws-1", "task-1", 2, TaskStatus::Active, None)
+            .await
+            .expect("commit version three");
+        let second = db
+            .runtime_event_by_id("ws-1", "task:task-1:v3:active")
+            .await
+            .expect("load newer")
+            .expect("newer event");
+        let first = db
+            .runtime_event_by_id("ws-1", "task:task-1:v2:paused")
+            .await
+            .expect("load older")
+            .expect("older event");
+        hub.publish(second);
+        hub.publish(first);
+
+        let frame = connection.next_frame().await.expect("recovery frame");
+        let RuntimeFrame::Resync {
+            snapshot,
+            cursor,
+            reason,
+        } = frame
+        else {
+            panic!("expected out-of-order live recovery");
+        };
+        assert_eq!(reason, "out_of_order");
+        assert_eq!(snapshot.task.state_version, 3);
+        assert!(cursor >= 3);
+    }
+
+    #[tokio::test]
+    async fn post_commit_publication_read_failure_cannot_leave_live_connection_stale() {
+        let (db, hub) = fixture(16).await;
+        let recorder = RuntimeRecorder::new(db.clone(), hub.clone());
+        let mut connection = hub.connect(db.clone(), "ws-1", "task-1", None).await.expect("connect");
+        assert!(matches!(
+            connection.next_frame().await,
+            Some(RuntimeFrame::Snapshot { .. })
+        ));
+        let (_, event) = db
+            .transition_task_and_event("ws-1", "task-1", 1, TaskStatus::Paused, None)
+            .await
+            .expect("commit paused Task");
+        sqlx::query("ALTER TABLE hub_ledger RENAME TO hub_ledger_hidden")
+            .execute(db.pool())
+            .await
+            .expect("inject publication read failure");
+        recorder.publish(event);
+        sqlx::query("ALTER TABLE hub_ledger_hidden RENAME TO hub_ledger")
+            .execute(db.pool())
+            .await
+            .expect("restore ledger");
+        let frame = tokio::time::timeout(Duration::from_millis(100), connection.next_frame())
+            .await
+            .expect("live correction despite publication read failure")
+            .expect("correction frame");
+        assert!(matches!(
+            frame,
+            RuntimeFrame::Event { .. } | RuntimeFrame::Resync { .. }
+        ));
+    }
+
+    #[tokio::test]
+    async fn fresh_connection_uses_coherent_snapshot_then_receives_committed_watch_deletion() {
+        let (db, hub) = wal_fixture(16).await;
+        tinyiothub_storage::watch::insert_rule(db.pool(), &owned_watch("watch-race"))
+            .await
+            .expect("insert watch");
         let probe = Arc::new(tinyiothub_storage::runtime_event::RuntimeProjectionProbe::default());
         let db = Arc::new(db.with_runtime_projection_probe(probe.clone()));
         probe.arm();
@@ -561,31 +680,29 @@ mod tests {
             async move { hub.connect(db, "ws-1", "task-1", None).await }
         });
         probe.wait_for_task_read().await;
-        let paused = db
-            .transition_task("ws-1", "task-1", 1, TaskStatus::Paused, None)
+        let deleted = tinyiothub_storage::watch::delete_task_watches_and_events(db.pool(), "ws-1", "task-1")
             .await
-            .expect("commit next Task version");
-        let mut correction_input = input("task:task-1:v2:paused");
-        correction_input.event_type = "task.paused".into();
-        correction_input.data = json!({"stateVersion":paused.state_version});
-        let correction = db
-            .append_runtime_event(correction_input)
-            .await
-            .expect("persist correction");
-        hub.publish(correction.clone());
+            .expect("delete during snapshot");
+        assert_eq!(deleted.len(), 1);
+        hub.publish(deleted[0].clone());
         probe.release();
         let mut connection = connecting.await.expect("join connection").expect("connect");
         let Some(RuntimeFrame::Snapshot { snapshot, cursor }) = connection.next_frame().await else {
             panic!("expected initial snapshot");
         };
-        assert_eq!(snapshot.task.state_version, paused.state_version);
-        assert_eq!(snapshot.task.status, TaskStatus::Paused);
-        assert_eq!(cursor, correction.cursor);
+        assert_eq!(probe.attempts(), 1);
+        assert_eq!(snapshot.watches.len(), 1);
+        assert!(cursor < deleted[0].cursor);
+        let Some(RuntimeFrame::Event { event }) = connection.next_frame().await else {
+            panic!("expected deletion correction");
+        };
+        assert_eq!(event.event_id, "watch:watch-race:deleted");
+        assert_eq!(event.cursor, deleted[0].cursor);
     }
 
     #[tokio::test]
-    async fn resync_retries_projection_when_task_commits_during_resync() {
-        let (db, hub) = fixture(1).await;
+    async fn resync_uses_coherent_snapshot_then_receives_committed_task_correction() {
+        let (db, hub) = wal_fixture(2).await;
         let probe = Arc::new(tinyiothub_storage::runtime_event::RuntimeProjectionProbe::default());
         let db = Arc::new(db.with_runtime_projection_probe(probe.clone()));
         let mut connection = hub.connect(db.clone(), "ws-1", "task-1", None).await.expect("connect");
@@ -596,25 +713,19 @@ mod tests {
         probe.arm();
         hub.publish(db.append_runtime_event(input("lag-1")).await.expect("first lag event"));
         hub.publish(db.append_runtime_event(input("lag-2")).await.expect("second lag event"));
+        hub.publish(db.append_runtime_event(input("lag-3")).await.expect("third lag event"));
         let resyncing = tokio::spawn(async move {
             let frame = connection.next_frame().await;
             (connection, frame)
         });
         probe.wait_for_task_read().await;
-        let paused = db
-            .transition_task("ws-1", "task-1", 1, TaskStatus::Paused, None)
+        let (paused, correction) = db
+            .transition_task_and_event("ws-1", "task-1", 1, TaskStatus::Paused, None)
             .await
             .expect("commit next Task version");
-        let mut correction_input = input("task:task-1:v2:paused");
-        correction_input.event_type = "task.paused".into();
-        correction_input.data = json!({"stateVersion":paused.state_version});
-        let correction = db
-            .append_runtime_event(correction_input)
-            .await
-            .expect("persist correction");
         hub.publish(correction.clone());
         probe.release();
-        let (_connection, frame) = resyncing.await.expect("join resync");
+        let (mut connection, frame) = resyncing.await.expect("join resync");
         let Some(RuntimeFrame::Resync {
             snapshot,
             cursor,
@@ -624,9 +735,23 @@ mod tests {
             panic!("expected resync");
         };
         assert_eq!(reason, "lagged");
-        assert_eq!(snapshot.task.state_version, paused.state_version);
-        assert_eq!(snapshot.task.status, TaskStatus::Paused);
-        assert_eq!(cursor, correction.cursor);
+        assert_eq!(probe.attempts(), 2);
+        assert_eq!(snapshot.task.state_version, 1);
+        assert_eq!(snapshot.task.status, TaskStatus::Active);
+        assert!(cursor < correction.cursor);
+        match connection.next_frame().await {
+            Some(RuntimeFrame::Event { event }) => {
+                assert_eq!(event.event_id, correction.event_id);
+                assert_eq!(event.data["stateVersion"], paused.state_version);
+            }
+            Some(RuntimeFrame::Resync { snapshot, cursor, .. }) => {
+                assert_eq!(snapshot.task.state_version, paused.state_version);
+                assert_eq!(snapshot.task.status, TaskStatus::Paused);
+                assert!(cursor >= correction.cursor);
+            }
+            Some(RuntimeFrame::Snapshot { .. }) => panic!("unexpected second initial snapshot"),
+            None => panic!("stream closed before committed Task correction"),
+        }
     }
 
     #[tokio::test]
