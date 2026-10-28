@@ -41,6 +41,8 @@ pub trait DeviceJobStore: Send + Sync {
         task_id: &str,
         job_id: &str,
     ) -> Result<Option<DeviceJob>, DeviceJobError>;
+    async fn get_job_by_tool_call(&self, tool_call_id: &str) -> Result<Option<DeviceJob>, DeviceJobError>;
+    async fn submit_approved_job(&self, job: &DeviceJob) -> Result<(Option<DeviceJob>, bool), DeviceJobError>;
     async fn mark_running(&self, job_id: &str, driver_call_id: &str) -> Result<DeviceJob, DeviceJobError>;
     async fn finish_job(
         &self,

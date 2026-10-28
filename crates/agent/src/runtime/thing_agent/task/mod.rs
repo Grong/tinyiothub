@@ -1,3 +1,4 @@
+pub mod approval;
 pub mod coordinator;
 pub mod prompt;
 pub mod state;

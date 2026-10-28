@@ -41,6 +41,17 @@ impl DeviceJobStore for DbStore {
         self.0.get_task_job(workspace_id, task_id, job_id).await
     }
 
+    async fn get_job_by_tool_call(&self, tool_call_id: &str) -> Result<Option<DeviceJob>, DeviceJobError> {
+        self.0.get_job_by_tool_call(tool_call_id).await
+    }
+
+    async fn submit_approved_job(&self, job: &DeviceJob) -> Result<(Option<DeviceJob>, bool), DeviceJobError> {
+        self.0
+            .submit_approved_job_and_events(job)
+            .await
+            .map(|(job, inserted, _)| (job, inserted))
+    }
+
     async fn mark_running(&self, job_id: &str, driver_call_id: &str) -> Result<DeviceJob, DeviceJobError> {
         self.0.mark_running(job_id, driver_call_id).await
     }

@@ -21,6 +21,7 @@ pub mod memory;
 pub mod models;
 pub mod notification_types;
 pub mod policy;
+pub mod task_approval;
 pub mod types;
 pub mod version;
 pub mod watch;

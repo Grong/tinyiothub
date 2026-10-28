@@ -10,6 +10,7 @@ use tokio_util::sync::CancellationToken;
 
 use super::prompt::build_task_prompt;
 use super::state::validate_transition;
+use crate::port::approval::TaskApprovalStore;
 use crate::port::task::TaskStore;
 use crate::runtime::events::{AgentEventBus, AgentEventKind};
 use crate::runtime::thing_agent::active_runs::{ActiveRunGuard, ActiveRunRegistry};
@@ -49,6 +50,7 @@ pub struct CancelOutcome {
 #[derive(Clone)]
 pub struct TaskCoordinator {
     store: Arc<dyn TaskStore>,
+    approvals: Option<Arc<dyn TaskApprovalStore>>,
     jobs: Option<JobService>,
     watches: Arc<dyn WatchRuleStore>,
     watch_cmds: Arc<DashMap<String, tokio::sync::mpsc::Sender<WatchCommand>>>,
@@ -73,6 +75,7 @@ impl TaskCoordinator {
     ) -> Self {
         Self {
             store,
+            approvals: None,
             jobs,
             watches,
             watch_cmds,
@@ -82,6 +85,11 @@ impl TaskCoordinator {
             agent_provider,
             reports: Arc::new(DashMap::new()),
         }
+    }
+
+    pub fn with_approvals(mut self, approvals: Arc<dyn TaskApprovalStore>) -> Self {
+        self.approvals = Some(approvals);
+        self
     }
 
     pub async fn pause(&self, workspace_id: &str, task_id: &str) -> Result<AgentTask, TaskError> {
@@ -131,6 +139,16 @@ impl TaskCoordinator {
         {
             return Ok(Some(TaskStatus::WaitingJob));
         }
+        if let Some(approvals) = &self.approvals
+            && approvals
+                .list_recoverable(Some(workspace_id))
+                .await
+                .map_err(|error| TaskStoreError::Unavailable(error.to_string()))?
+                .iter()
+                .any(|approval| approval.task_id == task_id)
+        {
+            return Ok(Some(TaskStatus::NeedsApproval));
+        }
         let watches = self.watches.list_all().await.map_err(TaskStoreError::Unavailable)?;
         if watches
             .iter()
@@ -156,10 +174,16 @@ impl TaskCoordinator {
         }
         validate_transition(task.status, TaskStatus::Cancelling)
             .map_err(|error| TaskStoreError::Validation(error.to_string()))?;
-        let task = self
-            .store
-            .transition_task(workspace_id, task_id, task.state_version, TaskStatus::Cancelling, None)
-            .await?;
+        let task = if let Some(approvals) = &self.approvals {
+            approvals
+                .cancel(workspace_id, task_id, task.state_version, chrono::Utc::now())
+                .await
+                .map_err(|error| TaskStoreError::Unavailable(error.to_string()))?
+        } else {
+            self.store
+                .transition_task(workspace_id, task_id, task.state_version, TaskStatus::Cancelling, None)
+                .await?
+        };
         if let Some(run_id) = task.current_run_id.as_deref() {
             self.active_runs.cancel(run_id);
         }
@@ -180,7 +204,9 @@ impl TaskCoordinator {
             .delete_task_watches(workspace_id, task_id)
             .await
             .map_err(TaskStoreError::Unavailable)?;
-        self.store.resolve_task_wakes(task_id).await?;
+        if self.approvals.is_none() {
+            self.store.resolve_task_wakes(task_id).await?;
+        }
         if let Some(jobs) = &self.jobs {
             for job in jobs
                 .task_jobs(workspace_id, task_id, false)
@@ -316,14 +342,20 @@ impl TaskCoordinator {
                 .wake_by_id(task_id, wake_event_id)
                 .await?
                 .ok_or(TaskError::WakeNotFound)?;
-            let signal: WakeSignal =
+            let raw_signal: serde_json::Value =
                 serde_json::from_str(&wake.signal_json).map_err(|error| TaskError::InvalidWake(error.to_string()))?;
-            let task = self
+            let approval_decision =
+                raw_signal.get("kind").and_then(serde_json::Value::as_str) == Some("approval_decided");
+            let workspace_id = raw_signal
+                .get("workspace_id")
+                .and_then(serde_json::Value::as_str)
+                .ok_or_else(|| TaskError::InvalidWake("wake workspace is missing".into()))?;
+            let mut task = self
                 .store
-                .get_task(&signal.workspace_id, task_id)
+                .get_task(workspace_id, task_id)
                 .await?
                 .ok_or(TaskError::NotFound)?;
-            if signal.workspace_id != task.workspace_id {
+            if workspace_id != task.workspace_id {
                 return Err(TaskError::CrossWorkspace);
             }
             if task.status == TaskStatus::Paused {
@@ -336,6 +368,28 @@ impl TaskCoordinator {
                 self.finish_cancellation(&task).await?;
                 return Ok(Advance::Recorded);
             }
+            let signal: WakeSignal = if approval_decision {
+                if task.status == TaskStatus::NeedsApproval {
+                    task = self
+                        .store
+                        .transition_task(workspace_id, task_id, task.state_version, TaskStatus::Active, None)
+                        .await?;
+                }
+                WakeSignal {
+                    workspace_id: task.workspace_id.clone(),
+                    priority: crate::runtime::thing_agent::types::Priority::Normal,
+                    dedup_key: Some(format!("task:{task_id}:approval:{wake_event_id}")),
+                    source: crate::runtime::thing_agent::types::TriggerSource::UserDirective {
+                        user_id: task.created_by.clone(),
+                        text: "Continue after the recorded approval decision.".into(),
+                        session_key: task.session_key.clone(),
+                        source: Some("approval_decided".into()),
+                        problem_key: None,
+                    },
+                }
+            } else {
+                serde_json::from_value(raw_signal).map_err(|error| TaskError::InvalidWake(error.to_string()))?
+            };
             if let Some(run_id) = task.current_run_id.as_deref() {
                 return self.steer_existing(run_id, wake_event_id, signal).await;
             }
@@ -1206,6 +1260,21 @@ pub(crate) mod tests {
                 .cloned())
         }
 
+        async fn get_job_by_tool_call(&self, tool_call_id: &str) -> Result<Option<DeviceJob>, DeviceJobError> {
+            Ok(self
+                .jobs
+                .lock()
+                .expect("jobs")
+                .values()
+                .find(|job| job.tool_call_id.as_deref() == Some(tool_call_id))
+                .cloned())
+        }
+
+        async fn submit_approved_job(&self, job: &DeviceJob) -> Result<(Option<DeviceJob>, bool), DeviceJobError> {
+            self.jobs.lock().expect("jobs").insert(job.id.clone(), job.clone());
+            Ok((Some(job.clone()), true))
+        }
+
         async fn mark_running(&self, job_id: &str, driver_call_id: &str) -> Result<DeviceJob, DeviceJobError> {
             let mut jobs = self.jobs.lock().expect("jobs");
             let job = jobs.get_mut(job_id).ok_or(DeviceJobError::NotFound)?;
@@ -1504,6 +1573,51 @@ pub(crate) mod tests {
             Arc::new(ArbitrationRegistry::default()),
         );
         (service, store, worker)
+    }
+
+    #[tokio::test]
+    async fn approval_decision_wake_defers_while_paused_and_resumes_without_execution_replay() {
+        let paused = Fixture::new(task(TaskStatus::Paused));
+        paused.store.insert_wake(TaskWake {
+            signal_json:
+                json!({"kind":"approval_decided","workspace_id":"ws_1","task_id":"task_1","approval_id":"approval_1"})
+                    .to_string(),
+            ..wake("decision_1")
+        });
+        assert_eq!(
+            paused
+                .coordinator
+                .advance("task_1", "decision_1")
+                .await
+                .expect("paused"),
+            Advance::Deferred
+        );
+        assert_eq!(
+            paused
+                .store
+                .get_task("ws_1", "task_1")
+                .await
+                .expect("task")
+                .expect("present")
+                .status,
+            TaskStatus::Paused
+        );
+
+        let decided = Fixture::new(task(TaskStatus::NeedsApproval));
+        decided.store.insert_wake(TaskWake {
+            signal_json:
+                json!({"kind":"approval_decided","workspace_id":"ws_1","task_id":"task_1","approval_id":"approval_1"})
+                    .to_string(),
+            ..wake("decision_1")
+        });
+        assert!(matches!(
+            decided
+                .coordinator
+                .advance("task_1", "decision_1")
+                .await
+                .expect("resume"),
+            Advance::Started { .. }
+        ));
     }
 
     #[tokio::test]

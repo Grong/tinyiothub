@@ -31,6 +31,7 @@ impl TaskStatus {
                 Self::Active
                     | Self::WaitingJob
                     | Self::WaitingWatch
+                    | Self::NeedsApproval
                     | Self::Paused
                     | Self::Cancelling
                     | Self::Completed

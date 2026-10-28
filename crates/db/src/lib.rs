@@ -96,6 +96,7 @@ pub mod settings;
 pub mod sql_security;
 /// Tag + tag binding persistence and row types.
 pub mod tag;
+pub mod task_approval;
 /// Tenant + API key persistence and row types.
 pub mod tenant;
 /// Thing persistence (things 表唯一入口：Thing 视图 + 原 device.rs 全部内容).

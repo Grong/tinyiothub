@@ -118,6 +118,14 @@ where
             "/{id}/agent/tasks/{task_id}/jobs/{job_id}/stop",
             post(crate::domains::agent::runtime::controls::stop_job),
         )
+        .route(
+            "/{id}/agent/tasks/{task_id}/approvals/{approval_id}/approve",
+            post(crate::domains::agent::runtime::approvals::approve),
+        )
+        .route(
+            "/{id}/agent/tasks/{task_id}/approvals/{approval_id}/reject",
+            post(crate::domains::agent::runtime::approvals::reject),
+        )
         .route("/{id}/agent/runs", get(list_runs))
         .route("/{id}/agent/runs/{run_id}/ack", post(ack_run))
         .route("/{id}/agent/policy", get(get_policy).put(update_policy))

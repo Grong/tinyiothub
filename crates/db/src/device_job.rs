@@ -59,7 +59,7 @@ fn parse_json(raw: &str) -> Result<Value, DeviceJobError> {
     serde_json::from_str(raw).map_err(|error| DeviceJobError::Storage(error.to_string()))
 }
 
-fn storage(error: impl std::fmt::Display) -> DeviceJobError {
+pub(crate) fn storage(error: impl std::fmt::Display) -> DeviceJobError {
     DeviceJobError::Storage(error.to_string())
 }
 
@@ -200,6 +200,20 @@ impl Db {
     pub async fn get_job_by_id(&self, job_id: &str) -> Result<Option<DeviceJob>, DeviceJobError> {
         let mut connection = self.pool().acquire().await.map_err(storage)?;
         find_job_by_id(&mut connection, job_id).await
+    }
+
+    pub async fn get_job_by_tool_call(&self, tool_call_id: &str) -> Result<Option<DeviceJob>, DeviceJobError> {
+        sqlx::query_as::<_, DeviceJobRow>(
+            "SELECT id, workspace_id, device_id, tool, args_json, state, stop_requested_at,
+                    progress_json, result_json, task_id, run_id, tool_call_id, driver_call_id, timeout_ms, started_at, ended_at
+             FROM device_jobs WHERE tool_call_id = ?",
+        )
+        .bind(tool_call_id)
+        .fetch_optional(self.pool())
+        .await
+        .map_err(storage)?
+        .map(DeviceJob::try_from)
+        .transpose()
     }
 
     pub async fn get_task_job(

@@ -10,7 +10,7 @@ use crate::error::{DbError, Result};
 
 pub const RUNTIME_EVENT_KIND: &str = "runtime.v1";
 
-#[cfg(feature = "testing")]
+#[cfg(any(test, feature = "testing"))]
 #[derive(Debug, Default)]
 pub struct RuntimeProjectionProbe {
     armed: std::sync::atomic::AtomicBool,
@@ -19,7 +19,7 @@ pub struct RuntimeProjectionProbe {
     release: tokio::sync::Notify,
 }
 
-#[cfg(feature = "testing")]
+#[cfg(any(test, feature = "testing"))]
 impl RuntimeProjectionProbe {
     pub fn arm(&self) {
         self.armed.store(true, std::sync::atomic::Ordering::SeqCst);
@@ -149,6 +149,7 @@ pub struct TaskProjection {
     pub task: AgentTask,
     pub runs: Vec<TaskRunProjection>,
     pub jobs: Vec<DeviceJob>,
+    pub approvals: Vec<tinyiothub_core::task_approval::TaskApproval>,
     pub watches: Vec<TaskWatchProjection>,
     pub evidence: Vec<EvidenceRef>,
     pub summary: Option<String>,
@@ -204,7 +205,7 @@ fn decode_event(row: RuntimeLedgerRow) -> Result<RuntimeEvent> {
 }
 
 pub(crate) async fn append_runtime_event_tx(
-    tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+    connection: &mut sqlx::SqliteConnection,
     input: RuntimeEventInput,
 ) -> Result<RuntimeEvent> {
     if input.event_id.trim().is_empty() || input.event_type.trim().is_empty() || input.workspace_id.trim().is_empty() {
@@ -254,7 +255,7 @@ pub(crate) async fn append_runtime_event_tx(
     .bind(&event.workspace_id)
     .bind(RUNTIME_EVENT_KIND)
     .bind(&event.event_id)
-    .fetch_optional(&mut **tx)
+    .fetch_optional(&mut *connection)
     .await?;
     let row = match inserted {
         Some(row) => row,
@@ -267,7 +268,7 @@ pub(crate) async fn append_runtime_event_tx(
             .bind(&event.workspace_id)
             .bind(RUNTIME_EVENT_KIND)
             .bind(&event.event_id)
-            .fetch_one(&mut **tx)
+            .fetch_one(&mut *connection)
             .await?
         }
     };
@@ -348,7 +349,7 @@ impl Db {
         else {
             return Ok(None);
         };
-        #[cfg(feature = "testing")]
+        #[cfg(any(test, feature = "testing"))]
         if let Some(probe) = &self.runtime_projection_probe {
             probe.after_task_read().await;
         }
@@ -372,6 +373,18 @@ impl Db {
         .await?
         .into_iter()
         .map(DeviceJob::try_from)
+        .collect::<std::result::Result<Vec<_>, _>>()
+        .map_err(internal)?;
+        let approvals = sqlx::query_as::<_, crate::task_approval::TaskApprovalRow>(sqlx::AssertSqlSafe(format!(
+            "SELECT {} FROM task_approvals WHERE workspace_id = ? AND task_id = ? ORDER BY requested_at, id",
+            crate::task_approval::APPROVAL_COLUMNS
+        )))
+        .bind(workspace_id)
+        .bind(task_id)
+        .fetch_all(&mut *tx)
+        .await?
+        .into_iter()
+        .map(tinyiothub_core::task_approval::TaskApproval::try_from)
         .collect::<std::result::Result<Vec<_>, _>>()
         .map_err(internal)?;
         let watch_rows = sqlx::query_as::<_, crate::watch::WatchRuleRow>(
@@ -423,6 +436,7 @@ impl Db {
             task,
             runs,
             jobs,
+            approvals,
             watches,
             evidence,
             summary,

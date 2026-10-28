@@ -10,6 +10,7 @@ use tinyiothub_core::agent_task::{TaskWake, WakeDispatchState};
 use tinyiothub_core::device_job::{DeviceJob, DeviceJobError, DeviceJobState};
 use tinyiothub_core::error::Error;
 use tinyiothub_core::models::thing_command::ThingCommand;
+use tinyiothub_core::task_approval::ApprovedToolCall;
 use tokio::sync::watch;
 
 use super::worker_adapter::{JobResultSink, JobWorkerLocator};
@@ -217,6 +218,117 @@ impl JobService {
             return Err(DeviceJobError::Validation(error.to_string()));
         }
         Ok(job)
+    }
+
+    pub async fn submit_approved(&self, call: ApprovedToolCall) -> Result<Option<DeviceJob>, DeviceJobError> {
+        let validated = self
+            .inner
+            .validator
+            .validate(&call.workspace_id, &call.device_id, &call.tool, Some(&call.args_json))
+            .await
+            .map_err(|error| DeviceJobError::Validation(error.to_string()))?;
+        let matches = |job: &DeviceJob| {
+            job.workspace_id == call.workspace_id
+                && job.task_id.as_deref() == Some(call.task_id.as_str())
+                && job.run_id.as_deref() == Some(call.run_id.as_str())
+                && job.tool_call_id.as_deref() == Some(call.tool_call_id.as_str())
+                && job.device_id == call.device_id
+                && job.tool == call.tool
+                && job.args_json == call.args_json
+        };
+        if let Some(existing) = self.inner.store.get_job_by_tool_call(&call.tool_call_id).await? {
+            if !matches(&existing) {
+                return Err(DeviceJobError::ExecutionConflict);
+            }
+            self.inner
+                .workspaces
+                .insert(existing.id.clone(), existing.workspace_id.clone());
+            self.notification(&existing.id);
+            if existing.state.is_active() {
+                self.restore_deadline(&existing);
+            }
+            return Ok(Some(existing));
+        }
+        let claims = self
+            .inner
+            .resources
+            .resolve_action(&call.workspace_id, &call.device_id, &call.tool)
+            .await
+            .map_err(DeviceJobError::Validation)?;
+        let specs = claims
+            .into_iter()
+            .map(|claim| ResourceSpec {
+                id: claim.id,
+                mode: if claim.exclusive {
+                    ResourceMode::Exclusive
+                } else {
+                    ResourceMode::Shared
+                },
+                capacity: claim.capacity,
+            })
+            .collect::<Vec<_>>();
+        let job_id = tinyiothub_core::generate_id();
+        let timeout = Duration::from_millis(validated.timeout_ms);
+        let lease = self
+            .inner
+            .arbitration
+            .try_acquire_resources(&call.device_id, format!("device_job:{job_id}"), &specs, timeout)
+            .map_err(|_| DeviceJobError::ExecutionConflict)?;
+        let job = DeviceJob {
+            id: job_id,
+            workspace_id: call.workspace_id.clone(),
+            device_id: call.device_id.clone(),
+            tool: call.tool.clone(),
+            args_json: call.args_json.clone(),
+            state: DeviceJobState::Accepted,
+            stop_requested_at: None,
+            progress_json: None,
+            result_json: None,
+            task_id: Some(call.task_id.clone()),
+            run_id: Some(call.run_id.clone()),
+            tool_call_id: Some(call.tool_call_id.clone()),
+            driver_call_id: None,
+            timeout_ms: validated.timeout_ms,
+            started_at: Utc::now(),
+            ended_at: None,
+        };
+        let (job, inserted) = self.inner.store.submit_approved_job(&job).await?;
+        let Some(job) = job else {
+            return Ok(None);
+        };
+        if !matches(&job) {
+            return Err(DeviceJobError::ExecutionConflict);
+        }
+        self.inner.workspaces.insert(job.id.clone(), job.workspace_id.clone());
+        self.notification(&job.id);
+        self.restore_deadline(&job);
+        if !inserted {
+            return Ok(Some(job));
+        }
+        let cmd = ThingCommand {
+            id: job.id.clone(),
+            thing_id: job.device_id.clone(),
+            name: job.tool.clone(),
+            display_name: None,
+            description: None,
+            parameters: Some(job.args_json.to_string()),
+            created_at: job.started_at.to_rfc3339(),
+        };
+        let submission = self
+            .inner
+            .workers
+            .worker_for(&job.device_id)
+            .ok_or_else(|| Error::Internal("device worker unavailable".into()))
+            .and_then(|worker| worker.submit(cmd, &job.id, Some(lease)));
+        if let Err(error) = submission {
+            let result = json!({"error": error.to_string()});
+            self.inner
+                .store
+                .finish_job(&job.id, DeviceJobState::Rejected, &result, self.wake_for(&job).as_ref())
+                .await?;
+            return Err(DeviceJobError::Validation(error.to_string()));
+        }
+        Ok(Some(job))
     }
 
     fn wake_for(&self, job: &DeviceJob) -> Option<TaskWake> {
@@ -542,6 +654,29 @@ mod tests {
                 .get(job_id)
                 .filter(|job| job.workspace_id == workspace_id && job.task_id.as_deref() == Some(task_id))
                 .cloned())
+        }
+
+        async fn get_job_by_tool_call(&self, tool_call_id: &str) -> Result<Option<DeviceJob>, DeviceJobError> {
+            Ok(self
+                .jobs
+                .lock()
+                .expect("jobs lock")
+                .values()
+                .find(|job| job.tool_call_id.as_deref() == Some(tool_call_id))
+                .cloned())
+        }
+
+        async fn submit_approved_job(&self, job: &DeviceJob) -> Result<(Option<DeviceJob>, bool), DeviceJobError> {
+            let mut jobs = self.jobs.lock().expect("jobs lock");
+            if let Some(existing) = jobs
+                .values()
+                .find(|existing| existing.tool_call_id == job.tool_call_id)
+                .cloned()
+            {
+                return Ok((Some(existing), false));
+            }
+            jobs.insert(job.id.clone(), job.clone());
+            Ok((Some(job.clone()), true))
         }
 
         async fn mark_running(&self, job_id: &str, driver_call_id: &str) -> Result<DeviceJob, DeviceJobError> {
@@ -1000,6 +1135,83 @@ mod tests {
         let second = fixture.service.recover().await.expect("repeat recovery");
         assert_eq!(second.interrupted, 0);
         assert_eq!(fixture.wake_count("task_lost").await, 1);
+    }
+
+    #[tokio::test]
+    async fn approved_submission_is_idempotent_and_never_replays_terminal_or_unknown_jobs() {
+        for terminal in [
+            DeviceJobState::Done,
+            DeviceJobState::Interrupted,
+            DeviceJobState::CancelledUnknown,
+        ] {
+            let mut fixture = JobFixture::new().await;
+            let call = tinyiothub_core::task_approval::ApprovedToolCall {
+                workspace_id: "ws_1".into(),
+                task_id: "task_approved".into(),
+                run_id: "run_approved".into(),
+                tool_call_id: format!("call_{terminal:?}"),
+                device_id: "dev_1".into(),
+                tool: "set_speed".into(),
+                args_json: json!({"speed": 9}),
+            };
+            let first = fixture
+                .service
+                .submit_approved(call.clone())
+                .await
+                .expect("approved")
+                .expect("job");
+            assert_eq!(first.args_json, call.args_json);
+            let duplicate = fixture
+                .service
+                .submit_approved(call.clone())
+                .await
+                .expect("duplicate")
+                .expect("existing");
+            assert_eq!(duplicate.id, first.id);
+            fixture
+                .service
+                .finish(
+                    &first.id,
+                    match terminal {
+                        DeviceJobState::Done => JobFinal::Done(json!({"ok":true})),
+                        DeviceJobState::Interrupted => JobFinal::Interrupted("lost".into()),
+                        DeviceJobState::CancelledUnknown => JobFinal::Cancelled { within_grace: false },
+                        _ => unreachable!(),
+                    },
+                )
+                .await
+                .expect("terminal");
+            fixture.restart();
+            let recovered = fixture
+                .service
+                .submit_approved(call)
+                .await
+                .expect("recover")
+                .expect("terminal fact");
+            assert_eq!(recovered.id, first.id);
+            assert_eq!(recovered.state, terminal);
+            assert_eq!(fixture.worker.submitted.lock().expect("submitted lock").len(), 1);
+        }
+    }
+
+    #[tokio::test]
+    async fn approved_submission_rejects_frozen_execution_conflicts() {
+        let fixture = JobFixture::new().await;
+        fixture.accepted_job("job_conflict", "task_conflict").await;
+        let call = tinyiothub_core::task_approval::ApprovedToolCall {
+            workspace_id: "ws_1".into(),
+            task_id: "task_conflict".into(),
+            run_id: "run_task_conflict".into(),
+            tool_call_id: "call_job_conflict".into(),
+            device_id: "dev_1".into(),
+            tool: "set_speed".into(),
+            args_json: json!({"speed": 999}),
+        };
+        assert!(matches!(
+            fixture.service.submit_approved(call).await,
+            Err(DeviceJobError::ExecutionConflict)
+        ));
+        assert_eq!(fixture.worker.submitted.lock().expect("submitted lock").len(), 1);
     }
 
     #[tokio::test]

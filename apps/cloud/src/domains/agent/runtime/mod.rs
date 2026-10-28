@@ -9,6 +9,7 @@ use tinyiothub_core::agent_task::{
 use tinyiothub_storage::Db;
 
 pub mod admin;
+pub mod approvals;
 pub mod controls;
 pub mod projection;
 pub mod stream;

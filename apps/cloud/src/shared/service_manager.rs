@@ -650,6 +650,10 @@ impl ServiceManager {
                         crate::domains::agent::runtime::DbTaskStore::new(app_state.db.clone())
                             .with_recorder(app_state.runtime_recorder.clone()),
                     ),
+                    approvals: Some(Arc::new(
+                        crate::domains::agent::runtime::approvals::DbApprovalStore::new(app_state.db.clone())
+                            .with_recorder(app_state.runtime_recorder.clone()),
+                    )),
                     watches: Arc::new(
                         crate::shared::runtime_ports::WatchRuleStoreAdapter::new((*app_state.db).clone())
                             .with_recorder(app_state.runtime_recorder.clone()),

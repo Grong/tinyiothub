@@ -1,5 +1,6 @@
 //! 自有 agent 引擎接口面（反腐败层）。形状 vendored 自 zeroclaw-api ——
 //! 它们是合理的库级设计，且既有工具实现/ScriptedProvider 已长在该形状上。
+pub mod approval;
 pub mod attribution;
 pub mod events;
 pub mod memory;

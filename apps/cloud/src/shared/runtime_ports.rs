@@ -135,6 +135,18 @@ impl DeviceJobStore for DbDeviceJobStore {
         self.db.get_task_job(workspace_id, task_id, job_id).await
     }
 
+    async fn get_job_by_tool_call(&self, tool_call_id: &str) -> Result<Option<DeviceJob>, DeviceJobError> {
+        self.db.get_job_by_tool_call(tool_call_id).await
+    }
+
+    async fn submit_approved_job(&self, job: &DeviceJob) -> Result<(Option<DeviceJob>, bool), DeviceJobError> {
+        let (job, inserted, events) = self.db.submit_approved_job_and_events(job).await?;
+        for event in events {
+            self.publish(event);
+        }
+        Ok((job, inserted))
+    }
+
     async fn mark_running(&self, job_id: &str, driver_call_id: &str) -> Result<DeviceJob, DeviceJobError> {
         let (job, event) = self.db.mark_running_and_event(job_id, driver_call_id).await?;
         self.publish(event);

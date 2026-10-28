@@ -40,6 +40,7 @@ use crate::runtime::thing_agent::pushback::deliver;
 use crate::runtime::thing_agent::registry::RunRegistry;
 use crate::runtime::thing_agent::runner::{AgentHandle, RunContext, RunContextInner, Runner};
 use crate::runtime::thing_agent::scheduler::{EnqueueError, Scheduler, SchedulerHandle};
+use crate::runtime::thing_agent::task::approval::ApprovalExecutor;
 use crate::runtime::thing_agent::task::coordinator::{CancelOutcome, TaskCoordinator, TaskError};
 use crate::runtime::thing_agent::task::wake::WakeRouter;
 use crate::runtime::thing_agent::traits::{
@@ -79,6 +80,7 @@ pub trait AutonomousAgentProvider: Send + Sync {
 
 pub struct TaskRuntimeDeps {
     pub store: Arc<dyn crate::port::task::TaskStore>,
+    pub approvals: Option<Arc<dyn crate::port::approval::TaskApprovalStore>>,
     pub watches: Arc<dyn tinyiothub_runtime::ports::WatchRuleStore>,
     pub jobs: Option<tinyiothub_runtime::job::service::JobService>,
 }
@@ -273,18 +275,38 @@ impl ThingAgentManager {
         {
             return Ok(());
         }
-        let coordinator = Arc::new(TaskCoordinator::new(
+        let jobs = deps.jobs.clone();
+        let mut coordinator = TaskCoordinator::new(
             deps.store.clone(),
-            deps.jobs,
+            jobs.clone(),
             deps.watches,
             self.watch_cmds.clone(),
             self.deps.events.clone(),
             self.deps.active_runs.clone(),
             self.deps.runner.clone(),
             self.deps.agent_provider.clone(),
-        ));
+        );
+        if let Some(approvals) = &deps.approvals {
+            coordinator = coordinator.with_approvals(approvals.clone());
+        }
+        let coordinator = Arc::new(coordinator);
         coordinator.recover().await?;
-        let router = Arc::new(WakeRouter::new(deps.store, coordinator.clone()));
+        let approval_executor = match (deps.approvals, jobs) {
+            (Some(store), Some(jobs)) => {
+                let executor = Arc::new(ApprovalExecutor::new(store, Arc::new(jobs), coordinator.clone()));
+                executor
+                    .recover(None)
+                    .await
+                    .map_err(|error| tinyiothub_core::agent_task::TaskStoreError::Unavailable(error.to_string()))?;
+                Some(executor)
+            }
+            _ => None,
+        };
+        let mut router = WakeRouter::new(deps.store, coordinator.clone());
+        if let Some(executor) = approval_executor {
+            router = router.with_approvals(executor);
+        }
+        let router = Arc::new(router);
         let router_task = tokio::spawn(async move {
             let mut interval = tokio::time::interval(Duration::from_millis(25));
             interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
@@ -2524,6 +2546,7 @@ pub(crate) mod tests {
             .manager
             .start_task_runtime(crate::runtime::thing_agent::manager::TaskRuntimeDeps {
                 store,
+                approvals: None,
                 watches: Arc::new(StubWatchRuleStore { rules: vec![] }),
                 jobs: None,
             })
@@ -2550,6 +2573,7 @@ pub(crate) mod tests {
             .manager
             .start_task_runtime(TaskRuntimeDeps {
                 store,
+                approvals: None,
                 watches: Arc::new(StubWatchRuleStore { rules: vec![] }),
                 jobs: None,
             })
@@ -2906,6 +2930,7 @@ pub(crate) mod tests {
         manager
             .start_task_runtime(TaskRuntimeDeps {
                 store: store.clone(),
+                approvals: None,
                 watches,
                 jobs: None,
             })

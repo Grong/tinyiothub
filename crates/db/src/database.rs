@@ -6,7 +6,7 @@ use crate::config::DatabaseConfig;
 #[derive(Debug, Clone)]
 pub struct Db {
     pool: SqlitePool,
-    #[cfg(feature = "testing")]
+    #[cfg(any(test, feature = "testing"))]
     pub(crate) runtime_projection_probe: Option<std::sync::Arc<crate::runtime_event::RuntimeProjectionProbe>>,
 }
 
@@ -14,12 +14,12 @@ impl Db {
     pub fn new(pool: SqlitePool) -> Self {
         Self {
             pool,
-            #[cfg(feature = "testing")]
+            #[cfg(any(test, feature = "testing"))]
             runtime_projection_probe: None,
         }
     }
 
-    #[cfg(feature = "testing")]
+    #[cfg(any(test, feature = "testing"))]
     pub fn with_runtime_projection_probe(
         &self,
         probe: std::sync::Arc<crate::runtime_event::RuntimeProjectionProbe>,
