@@ -10,6 +10,25 @@ use tinyiothub_core::task_approval::{
 use crate::Db;
 use crate::runtime_event::{RuntimeEvent, RuntimeEventInput, append_runtime_event_tx, task_event};
 
+#[cfg(test)]
+tokio::task_local! {
+    static CANCEL_LOCK_TEST_PAUSE: (
+        std::sync::Arc<tokio::sync::Notify>,
+        std::sync::Arc<tokio::sync::Notify>,
+        std::sync::Arc<std::sync::atomic::AtomicBool>,
+    );
+}
+
+#[cfg(test)]
+async fn pause_cancel_for_lock_test() {
+    if let Ok((paused, resume, attempted)) = CANCEL_LOCK_TEST_PAUSE.try_with(Clone::clone)
+        && !attempted.swap(true, std::sync::atomic::Ordering::Relaxed)
+    {
+        paused.notify_one();
+        resume.notified().await;
+    }
+}
+
 #[derive(Debug, sqlx::FromRow)]
 pub(crate) struct TaskApprovalRow {
     id: String,
@@ -67,6 +86,18 @@ impl TryFrom<TaskApprovalRow> for TaskApproval {
 
 fn storage(error: impl std::fmt::Display) -> TaskApprovalStoreError {
     TaskApprovalStoreError::Storage(error.to_string())
+}
+
+fn is_transient_lock(error: &TaskApprovalStoreError) -> bool {
+    match error {
+        TaskApprovalStoreError::Storage(message) => {
+            message.contains("(code: 5)")
+                || message.contains("(code: 6)")
+                || message.contains("database is locked")
+                || message.contains("database is deadlocked")
+        }
+        _ => false,
+    }
 }
 
 pub(crate) const APPROVAL_COLUMNS: &str = "id, workspace_id, task_id, run_id, tool_call_id, device_id, tool, args_json,
@@ -606,12 +637,46 @@ impl Db {
         expected_version: i64,
         now: DateTime<Utc>,
     ) -> Result<(AgentTask, Vec<RuntimeEvent>), TaskApprovalStoreError> {
-        let mut connection = begin_immediate(self.pool()).await?;
+        const MAX_LOCK_RETRIES: u32 = 8;
+        let mut retries = 0;
+        loop {
+            let connection = match begin_immediate(self.pool()).await {
+                Ok(connection) => connection,
+                Err(error) if retries < MAX_LOCK_RETRIES && is_transient_lock(&error) => {
+                    retries += 1;
+                    tokio::time::sleep(std::time::Duration::from_millis(5 * u64::from(retries))).await;
+                    continue;
+                }
+                Err(error) => return Err(error),
+            };
+            let result = self
+                .cancel_task_approvals_and_events_once(connection, workspace_id, task_id, expected_version, now)
+                .await;
+            match result {
+                Err(error) if retries < MAX_LOCK_RETRIES && is_transient_lock(&error) => {
+                    retries += 1;
+                    tokio::time::sleep(std::time::Duration::from_millis(5 * u64::from(retries))).await;
+                }
+                other => return other,
+            }
+        }
+    }
+
+    async fn cancel_task_approvals_and_events_once(
+        &self,
+        mut connection: SqliteConnection,
+        workspace_id: &str,
+        task_id: &str,
+        expected_version: i64,
+        now: DateTime<Utc>,
+    ) -> Result<(AgentTask, Vec<RuntimeEvent>), TaskApprovalStoreError> {
         let result = async {
             let task = crate::runtime_task::find_task(&mut connection, workspace_id, task_id)
                 .await
                 .map_err(storage)?
                 .ok_or(TaskApprovalStoreError::NotFound)?;
+            #[cfg(test)]
+            pause_cancel_for_lock_test().await;
             if task.state_version != expected_version || !task.status.can_transition_to(TaskStatus::Cancelling) {
                 return Err(TaskApprovalStoreError::Storage("task changed concurrently".into()));
             }
@@ -740,6 +805,21 @@ mod tests {
                 .filename(&path)
                 .create_if_missing(true)
                 .journal_mode(sqlx::sqlite::SqliteJournalMode::Wal);
+            Self::with_pool(path, options).await
+        }
+
+        async fn new_in_memory() -> Self {
+            let pool = crate::test_helpers::test_pool().await;
+            seed_workspace(&pool, "ws_1").await;
+            seed_workspace(&pool, "ws_other").await;
+            Self {
+                db: Db::new(pool),
+                next: 0,
+                path: std::path::PathBuf::new(),
+            }
+        }
+
+        async fn with_pool(path: std::path::PathBuf, options: sqlx::sqlite::SqliteConnectOptions) -> Self {
             let pool = sqlx::sqlite::SqlitePoolOptions::new()
                 .max_connections(5)
                 .connect_with(options)
@@ -1122,6 +1202,57 @@ mod tests {
             .await
             .expect("job count");
         assert_eq!(count, 0);
+    }
+
+    #[tokio::test]
+    async fn cancel_retries_a_transient_task_update_deadlock_atomically() {
+        let mut fixture = Fixture::new_in_memory().await;
+        let pending = fixture.pending_approval().await;
+        let mut writer = fixture.db.pool().begin().await.expect("writer transaction");
+        sqlx::query("SELECT id FROM agent_tasks WHERE id = ?")
+            .bind(&pending.task_id)
+            .fetch_optional(&mut *writer)
+            .await
+            .expect("hold Task read lock");
+
+        let paused = std::sync::Arc::new(tokio::sync::Notify::new());
+        let resume = std::sync::Arc::new(tokio::sync::Notify::new());
+        let attempted = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let cancel = super::CANCEL_LOCK_TEST_PAUSE.scope(
+            (paused.clone(), resume.clone(), attempted),
+            fixture
+                .db
+                .cancel_task_approvals_and_events("ws_1", &pending.task_id, 1, Utc::now()),
+        );
+        let deadlock = async {
+            paused.notified().await;
+            let mut upgrade = Box::pin(
+                sqlx::query("UPDATE agent_tasks SET updated_at = updated_at WHERE id = ?")
+                    .bind(&pending.task_id)
+                    .execute(&mut *writer),
+            );
+            tokio::select! {
+                result = &mut upgrade => panic!("reader upgrade should wait for cancellation: {result:?}"),
+                () = tokio::time::sleep(std::time::Duration::from_millis(10)) => {}
+            }
+            resume.notify_one();
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+            drop(upgrade);
+            writer.rollback().await.expect("release writer lock");
+        };
+        let (result, ()) = tokio::join!(cancel, deadlock);
+        let (task, events) = result.expect("cancellation survives the transient lock deadlock");
+        assert_eq!(task.status, TaskStatus::Cancelling);
+        assert_eq!(events.len(), 2);
+        assert_eq!(fixture.get(&pending).await.state, ApprovalState::Unavailable);
+        let resolved: Option<chrono::DateTime<Utc>> =
+            sqlx::query_scalar("SELECT resolved_at FROM task_wake_outbox WHERE task_id = ? AND event_id = ?")
+                .bind(&pending.task_id)
+                .bind(&pending.decision_event_id)
+                .fetch_one(fixture.db.pool())
+                .await
+                .expect("decision wake");
+        assert!(resolved.is_some());
     }
 
     #[tokio::test]
