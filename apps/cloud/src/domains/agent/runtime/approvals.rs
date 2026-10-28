@@ -356,12 +356,14 @@ mod tests {
         prompts: Arc<Mutex<Vec<String>>>,
         block_next: Arc<AtomicBool>,
         release: Arc<tokio::sync::Notify>,
+        started: Arc<tokio::sync::Notify>,
     }
 
     struct RuntimeAgent {
         prompts: Arc<Mutex<Vec<String>>>,
         block_next: Arc<AtomicBool>,
         release: Arc<tokio::sync::Notify>,
+        started: Arc<tokio::sync::Notify>,
     }
 
     #[async_trait]
@@ -373,6 +375,7 @@ mod tests {
             _cancel: Option<tokio_util::sync::CancellationToken>,
         ) -> anyhow::Result<String> {
             self.prompts.lock().expect("prompts").push(message.into());
+            self.started.notify_one();
             if self.block_next.swap(false, Ordering::SeqCst) {
                 self.release.notified().await;
             }
@@ -404,6 +407,7 @@ mod tests {
                 prompts: self.prompts.clone(),
                 block_next: self.block_next.clone(),
                 release: self.release.clone(),
+                started: self.started.clone(),
             })))
         }
 
@@ -761,6 +765,9 @@ mod tests {
             .expect("task row");
         let run_id = task.current_run_id.clone().expect("continuation run");
         assert!(runtime.active.get(&run_id).is_some());
+        tokio::time::timeout(std::time::Duration::from_secs(5), provider.started.notified())
+            .await
+            .expect("continuation prompt starts");
         let prompts = provider.prompts.lock().expect("prompts");
         assert_eq!(prompts.len(), 1);
         assert!(prompts[0].contains(&pending.id));
