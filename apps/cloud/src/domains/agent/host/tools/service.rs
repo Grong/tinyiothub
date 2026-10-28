@@ -41,6 +41,7 @@ pub fn chat_builtin_tools_provider(
     resources: Option<Arc<dyn tinyiothub_runtime::access::resources::ResourceResolver>>,
     demand: Option<Arc<dyn tinyiothub_runtime::access::DemandRecorder>>,
     evidence: Option<Arc<tinyiothub_runtime::media::evidence::EvidenceService>>,
+    runtime_recorder: crate::domains::agent::runtime::stream::RuntimeRecorder,
 ) -> ToolProvider {
     Arc::new(move |workspace_id: &str, runtime: &ToolRuntimeContext| {
         let mut tools: Vec<(Box<dyn Tool>, ToolSafety)> = Vec::new();
@@ -64,6 +65,7 @@ pub fn chat_builtin_tools_provider(
                 demand: demand.clone(),
                 run_ctx: None,
                 evidence: evidence.clone(),
+                runtime_recorder: Some(runtime_recorder.clone()),
             },
         ));
 

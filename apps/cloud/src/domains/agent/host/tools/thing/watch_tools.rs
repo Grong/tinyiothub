@@ -219,6 +219,7 @@ pub(super) struct UnwatchTool {
     pub(super) pool: SqlitePool,
     pub(super) workspace_id: String,
     pub(super) manager: ManagerSlot,
+    pub(super) runtime_recorder: Option<crate::domains::agent::runtime::stream::RuntimeRecorder>,
 }
 
 impl Attributable for UnwatchTool {
@@ -259,9 +260,12 @@ impl Tool for UnwatchTool {
         }
         let input: Input = serde_json::from_value(args).map_err(|e| anyhow::anyhow!("参数解析失败: {e}"))?;
 
-        match tinyiothub_storage::watch::delete_rule(&self.pool, &self.workspace_id, &input.rule_id).await {
-            Ok(0) => tool_err(format!("watch 不存在：{}", input.rule_id)),
-            Ok(_) => {
+        match tinyiothub_storage::watch::delete_rule_and_event(&self.pool, &self.workspace_id, &input.rule_id).await {
+            Ok(None) => tool_err(format!("watch 不存在：{}", input.rule_id)),
+            Ok(Some(event)) => {
+                if let Some(recorder) = &self.runtime_recorder {
+                    recorder.publish(event);
+                }
                 self.manager.remove(&self.workspace_id, &input.rule_id);
                 tool_ok(json!({ "v": 1, "status": "removed", "ruleId": input.rule_id }))
             }

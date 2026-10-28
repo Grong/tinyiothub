@@ -366,6 +366,7 @@ impl ServiceManager {
                     .clone()
                     .map(|a| a as Arc<dyn tinyiothub_runtime::access::DemandRecorder>),
                 Some(evidence.clone()),
+                app_state.runtime_recorder.clone(),
             ));
             tool_registry.set_external_tool_factory(Arc::new(|| {
                 crate::domains::agent::host::ports::external_tool_registry()
@@ -429,6 +430,7 @@ impl ServiceManager {
                                     .map(|a| a as Arc<dyn tinyiothub_runtime::access::DemandRecorder>),
                                 run_ctx: None,
                                 evidence: Some(evidence.clone()),
+                                runtime_recorder: Some(app_state.runtime_recorder.clone()),
                             },
                         ),
                     ),

@@ -203,6 +203,8 @@ pub struct ThingToolContext {
     pub run_ctx: Option<super::RunContextSlot>,
     /// T4 durable model-image evidence; chat/autonomous share one service.
     pub evidence: Option<Arc<tinyiothub_runtime::media::evidence::EvidenceService>>,
+    /// Publish exact persisted Task events produced directly by host tools.
+    pub runtime_recorder: Option<crate::domains::agent::runtime::stream::RuntimeRecorder>,
 }
 
 /// E4c：runtime 的声明解析结果 → agent 仲裁规格（agent 资源类型不进
@@ -296,6 +298,7 @@ pub fn create_thing_tools(
             pool: pool.clone(),
             workspace_id: ws.clone(),
             manager,
+            runtime_recorder: runtime.runtime_recorder.clone(),
         })),
         // ── 非设备工具（独立类别）──
         read_only(Box::new(GetThingTreeTool {
@@ -638,6 +641,7 @@ mod tests {
             pool: pool.clone(),
             workspace_id: "ws".into(),
             manager: ManagerSlot::default(),
+            runtime_recorder: None,
         };
         let out = unwatch.execute(serde_json::json!({"ruleId": rule_id})).await.unwrap();
         assert!(out.success, "{}", out.error.unwrap_or_default());
@@ -694,6 +698,93 @@ mod tests {
             .unwrap();
         assert!(!out.success);
         assert_eq!(tinyiothub_storage::watch::list_rules(&pool).await.unwrap().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn task_owned_unwatch_publishes_deletion_to_established_runtime_connection() {
+        let pool = SqlitePool::connect("sqlite::memory:").await.expect("pool");
+        tinyiothub_storage::test_helpers::run_all_migrations(&pool)
+            .await
+            .expect("migrations");
+        crate::domains::agent::host::test_utils::seed_test_workspace(&pool, "tenant-1", "ws").await;
+        sqlx::query("INSERT INTO things (id, name, workspace_id, thing_type) VALUES ('t1','T1','ws','device')")
+            .execute(&pool)
+            .await
+            .expect("thing");
+        sqlx::query(
+            "INSERT INTO agent_tasks
+                 (id, workspace_id, idempotency_key, objective, session_key, created_by,
+                  status, current_run_id, state_version, created_at, updated_at, ended_at)
+             VALUES ('task_1','ws','idem_unwatch','inspect','session_1','user_1','active',NULL,0,'2026-10-27T00:00:00Z','2026-10-27T00:00:00Z',NULL)",
+        )
+        .execute(&pool)
+        .await
+        .expect("task");
+        let inner = Arc::new(tokio::sync::RwLock::new(
+            tinyiothub_agent::runtime::thing_agent::RunContextInner {
+                task_id: Some("task_1".into()),
+                task_session_key: Some("session_1".into()),
+                ..Default::default()
+            },
+        ));
+        let watch = watch_tools::WatchTool {
+            pool: pool.clone(),
+            workspace_id: "ws".into(),
+            manager: ManagerSlot::default(),
+            run_ctx: Some(crate::domains::agent::host::tools::new_run_context_slot(inner)),
+        };
+        let created = watch
+            .execute(serde_json::json!({"thingId":"t1","online":true}))
+            .await
+            .expect("watch execution");
+        assert!(created.success, "{}", created.error.unwrap_or_default());
+        let payload: serde_json::Value = serde_json::from_str(&created.output).expect("watch payload");
+        let rule_id = payload["ruleId"].as_str().expect("rule id").to_string();
+
+        let db = Arc::new(tinyiothub_storage::Db::new(pool.clone()));
+        let hub = Arc::new(crate::domains::agent::runtime::stream::RuntimeStreamHub::default());
+        let mut connection = hub
+            .connect(db.clone(), "ws", "task_1", None)
+            .await
+            .expect("runtime connection");
+        let Some(crate::domains::agent::runtime::stream::RuntimeFrame::Snapshot { snapshot, .. }) =
+            connection.next_frame().await
+        else {
+            panic!("expected initial watch snapshot");
+        };
+        assert_eq!(snapshot.watches.len(), 1);
+
+        let unwatch = watch_tools::UnwatchTool {
+            pool: pool.clone(),
+            workspace_id: "ws".into(),
+            manager: ManagerSlot::default(),
+            runtime_recorder: Some(crate::domains::agent::runtime::stream::RuntimeRecorder::new(
+                db.clone(),
+                hub,
+            )),
+        };
+        let removed = unwatch
+            .execute(serde_json::json!({"ruleId":rule_id}))
+            .await
+            .expect("unwatch execution");
+        assert!(removed.success, "{}", removed.error.unwrap_or_default());
+        let replayed = db
+            .runtime_events_after("ws", None, Some("task_1"), 20)
+            .await
+            .expect("durable replay");
+        assert!(
+            replayed
+                .iter()
+                .any(|event| event.event_id == format!("watch:{rule_id}:deleted"))
+        );
+        let frame = tokio::time::timeout(std::time::Duration::from_millis(100), connection.next_frame())
+            .await
+            .expect("live unwatch deletion")
+            .expect("open runtime connection");
+        let crate::domains::agent::runtime::stream::RuntimeFrame::Event { event } = frame else {
+            panic!("expected exact live deletion event");
+        };
+        assert_eq!(event.event_id, format!("watch:{rule_id}:deleted"));
     }
 
     /// E2 read_device：live 摘要存在时一次返回 state+health+zone+text。
