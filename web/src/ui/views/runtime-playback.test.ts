@@ -135,6 +135,57 @@ describe('runtime-playback ownership and cleanup', () => {
     expect(load).toHaveBeenCalled();
   });
 
+  it('cleans native HLS when switching to MJPEG', async () => {
+    vi.spyOn(HTMLMediaElement.prototype, 'canPlayType').mockReturnValue('maybe');
+    const element = await mount(descriptor('native'));
+    const oldVideo = element.shadowRoot?.querySelector('video') as HTMLVideoElement;
+    const pause = vi.spyOn(oldVideo, 'pause');
+    const load = vi.spyOn(oldVideo, 'load');
+
+    element.descriptor = descriptor('frame', 'mjpeg');
+    await element.updateComplete;
+
+    expect(pause).toHaveBeenCalled();
+    expect(load).toHaveBeenCalled();
+    expect(oldVideo.hasAttribute('src')).toBe(false);
+  });
+
+  it('cleans native HLS when the descriptor is cleared', async () => {
+    vi.spyOn(HTMLMediaElement.prototype, 'canPlayType').mockReturnValue('maybe');
+    const element = await mount(descriptor('native'));
+    const oldVideo = element.shadowRoot?.querySelector('video') as HTMLVideoElement;
+    const pause = vi.spyOn(oldVideo, 'pause');
+    const load = vi.spyOn(oldVideo, 'load');
+
+    element.descriptor = undefined;
+    await element.updateComplete;
+
+    expect(pause).toHaveBeenCalled();
+    expect(load).toHaveBeenCalled();
+    expect(oldVideo.hasAttribute('src')).toBe(false);
+  });
+
+  it('cleans MJPEG when switching to HLS', async () => {
+    const element = await mount(descriptor('old-frame', 'mjpeg'));
+    const oldImage = element.shadowRoot?.querySelector('img') as HTMLImageElement;
+
+    element.descriptor = descriptor('live');
+    await element.updateComplete;
+
+    expect(oldImage.hasAttribute('src')).toBe(false);
+    expect(FakeHls.activeCount).toBe(1);
+  });
+
+  it('cleans MJPEG when the descriptor is cleared', async () => {
+    const element = await mount(descriptor('old-frame', 'mjpeg'));
+    const oldImage = element.shadowRoot?.querySelector('img') as HTMLImageElement;
+
+    element.descriptor = undefined;
+    await element.updateComplete;
+
+    expect(oldImage.hasAttribute('src')).toBe(false);
+  });
+
   it('does not start an independent descriptor refresh interval', async () => {
     vi.useFakeTimers();
     const element = await mount(descriptor('owned-by-task'));

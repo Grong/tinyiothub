@@ -103,7 +103,7 @@ pub async fn jwt_auth_middleware(
     mut request: Request,
     next: Next,
 ) -> Response {
-    let uri = request.uri().to_string();
+    let uri = request.uri().path().to_string();
     tracing::debug!("JWT middleware called for: {}", uri);
 
     // Extract token from Authorization header or query string ?token=xxx
@@ -146,5 +146,68 @@ pub async fn jwt_auth_middleware(
             )
                 .into_response()
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::jwt_auth_middleware;
+    use axum::{Router, body::Body, middleware, routing::get};
+    use std::sync::{Arc, Mutex};
+    use tower::ServiceExt;
+    use tracing_subscriber::fmt::MakeWriter;
+
+    #[derive(Clone, Default)]
+    struct LogBuf(Arc<Mutex<Vec<u8>>>);
+
+    impl std::io::Write for LogBuf {
+        fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+            self.0.lock().expect("log buffer").extend_from_slice(buf);
+            Ok(buf.len())
+        }
+
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    impl<'a> MakeWriter<'a> for LogBuf {
+        type Writer = LogBuf;
+
+        fn make_writer(&self) -> Self::Writer {
+            self.clone()
+        }
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn jwt_logs_never_include_query_token_or_signed_query() {
+        let (state, _pool) = crate::test_utils::setup_test_app_with_pool().await;
+        let app = Router::new()
+            .route("/workspaces/ws/evidence/evidence-1", get(|| async {}))
+            .layer(middleware::from_fn_with_state(state.clone(), jwt_auth_middleware))
+            .with_state(state);
+        let buf = LogBuf::default();
+        let subscriber = tracing_subscriber::fmt()
+            .with_max_level(tracing::Level::DEBUG)
+            .with_writer(buf.clone())
+            .with_ansi(false)
+            .finish();
+        let _guard = tracing::subscriber::set_default(subscriber);
+
+        let response = app
+            .oneshot(
+                axum::http::Request::builder()
+                    .uri("/workspaces/ws/evidence/evidence-1?token=synthetic-query-token&sig=synthetic-signed-query")
+                    .body(Body::empty())
+                    .expect("request"),
+            )
+            .await
+            .expect("response");
+
+        assert_eq!(response.status(), axum::http::StatusCode::UNAUTHORIZED);
+        let logs = String::from_utf8(buf.0.lock().expect("log buffer").clone()).expect("UTF-8 logs");
+        assert!(logs.contains("/workspaces/ws/evidence/evidence-1"));
+        assert!(!logs.contains("synthetic-query-token"), "logged query token");
+        assert!(!logs.contains("synthetic-signed-query"), "logged signed query");
     }
 }

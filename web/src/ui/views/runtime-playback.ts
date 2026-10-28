@@ -10,6 +10,7 @@ export class RuntimePlayback extends LitElement {
   @state() private unavailable = false;
 
   private hls?: Hls;
+  private media?: HTMLVideoElement | HTMLImageElement;
   private loadAbort?: AbortController;
   private generation = 0;
 
@@ -45,6 +46,7 @@ export class RuntimePlayback extends LitElement {
       descriptor.protocol === 'mjpeg' ? 'img' : 'video',
     );
     if (!media) return;
+    this.media = media;
     media.addEventListener('error', () => this.showUnavailable(generation));
 
     if (descriptor.protocol === 'mjpeg') {
@@ -75,11 +77,15 @@ export class RuntimePlayback extends LitElement {
     this.hls?.destroy();
     this.hls = undefined;
 
-    const video = this.renderRoot.querySelector('video');
-    video?.pause();
-    video?.removeAttribute('src');
-    video?.load();
-    this.renderRoot.querySelector('img')?.removeAttribute('src');
+    const media = this.media;
+    this.media = undefined;
+    if (media instanceof HTMLVideoElement) {
+      media.pause();
+      media.removeAttribute('src');
+      media.load();
+    } else {
+      media?.removeAttribute('src');
+    }
   }
 
   render() {
