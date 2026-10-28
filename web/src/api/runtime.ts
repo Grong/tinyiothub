@@ -105,10 +105,15 @@ export class RuntimeCreateModel {
   private key = '';
 
   keyFor(objective: string): string {
-    if (objective !== this.objective) {
+    if (objective !== this.objective || !this.key) {
       this.objective = objective;
       this.key = crypto.randomUUID();
     }
     return this.key;
+  }
+
+  reset(): void {
+    this.objective = null;
+    this.key = '';
   }
 }

@@ -1,5 +1,7 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { ApiClient } from "../api/client.js";
 import "./app.js";
+import "./views/ai-ops.js";
 import "./views/runtime-list.js";
 import "./views/runtime-new.js";
 import "./views/runtime-task.js";
@@ -79,6 +81,79 @@ describe("app router · Runtime hash routes (default-off Workbench)", () => {
     el.runtimeWorkbenchEnabled = true;
     el.handleRoute();
     expect(el.currentRoute).toBe("login");
+  });
+});
+
+describe("app Runtime production composition", () => {
+  let app: any;
+
+  afterEach(() => {
+    app?.remove();
+    app = undefined;
+    localStorage.clear();
+    sessionStorage.clear();
+    vi.restoreAllMocks();
+    window.history.pushState({}, "", "/");
+  });
+
+  function mockWorkspaceConfig(config: unknown) {
+    vi.spyOn(ApiClient, "get").mockImplementation(async (endpoint: string) => ({
+      code: 0,
+      msg: "",
+      result: endpoint.endsWith("/heartbeat/config")
+        ? config
+        : endpoint === "/agents"
+          ? { agents: [{ id: "agent-1", workspaceId: "ws-enabled" }] }
+          : null,
+    }) as never);
+  }
+
+  it("loads the selected workspace flag to enable Runtime routes and the AI-center link", async () => {
+    mockWorkspaceConfig({ runtimeWorkbenchEnabled: true });
+    sessionStorage.setItem("auth-token", "token");
+    localStorage.setItem("workspace-id", "ws-enabled");
+    window.history.pushState({}, "", "/dashboard");
+    window.location.hash = "#/runtime";
+    app = document.createElement("tinyiothub-app");
+    document.body.append(app);
+
+    await vi.waitFor(() => expect(app.currentRoute).toBe("runtime"));
+    expect(ApiClient.get).toHaveBeenCalledWith("/workspaces/ws-enabled/heartbeat/config");
+    app.currentRoute = "ai-ops";
+    await app.updateComplete;
+    const aiOps = app.querySelector("view-ai-ops");
+    aiOps.wsLoading = false;
+    aiOps.selectedWsId = "ws-enabled";
+    await aiOps.updateComplete;
+    expect(aiOps.runtimeWorkbenchEnabled).toBe(true);
+    await vi.waitFor(() => expect(aiOps.querySelector('a[href="#/runtime"]')).not.toBeNull());
+  });
+
+  it("fails closed for an absent flag and reloads when the selected workspace changes", async () => {
+    mockWorkspaceConfig(null);
+    sessionStorage.setItem("auth-token", "token");
+    localStorage.setItem("workspace-id", "ws-default");
+    window.history.pushState({}, "", "/dashboard");
+    window.location.hash = "#/runtime";
+    app = document.createElement("tinyiothub-app");
+    document.body.append(app);
+
+    await vi.waitFor(() => expect(ApiClient.get).toHaveBeenCalledWith("/workspaces/ws-default/heartbeat/config"));
+    expect(app.runtimeWorkbenchEnabled).toBe(false);
+    expect(app.currentRoute).toBe("dashboard");
+    expect(app.runtimeRoute).toBeNull();
+
+    vi.mocked(ApiClient.get).mockImplementation(async (endpoint: string) => ({
+      code: 0,
+      msg: "",
+      result: endpoint === "/workspaces/ws-enabled/heartbeat/config"
+        ? { runtimeWorkbenchEnabled: true }
+        : null,
+    }) as never);
+    localStorage.setItem("workspace-id", "ws-enabled");
+    window.dispatchEvent(new CustomEvent("workspace-changed"));
+    await vi.waitFor(() => expect(app.currentRoute).toBe("runtime"));
+    expect(app.runtimeWorkbenchEnabled).toBe(true);
   });
 });
 

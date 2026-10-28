@@ -42,7 +42,9 @@ export class RuntimeTaskView extends LitElement {
   }
 
   willUpdate(changed: PropertyValues<this>): void {
-    if (changed.has('taskId') && changed.get('taskId') !== undefined) {
+    const taskChanged = changed.has('taskId') && changed.get('taskId') !== undefined;
+    const historyChanged = changed.has('history') && changed.get('history') !== undefined;
+    if (taskChanged || historyChanged) {
       this.cleanupTask();
       if (this.taskId) void this.load();
     }
@@ -55,6 +57,7 @@ export class RuntimeTaskView extends LitElement {
     this.abort?.abort();
     this.abort = null;
     this.querySelector<RuntimePlayback>('runtime-playback')?.destroy();
+    this.descriptor = undefined;
     this.projection = null;
   }
 

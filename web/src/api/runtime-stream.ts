@@ -102,7 +102,9 @@ export function connectRuntimeStream(input: RuntimeStreamInput): () => void {
       return;
     }
     if (frame.projection.task.id !== taskId) return;
-    cursor = frame.cursor;
+    // A snapshot is newer than the replay that follows it; only delivered events
+    // acknowledge durable replay progress. Resync is an authoritative cursor reset.
+    if (frame.type === 'resync') cursor = frame.cursor;
     eventIds.clear();
     if (frame.type === 'snapshot') callbacks.snapshot(frame.projection, frame.cursor);
     else callbacks.resync(frame.projection, frame.cursor);
@@ -124,7 +126,15 @@ export function connectRuntimeStream(input: RuntimeStreamInput): () => void {
           headers, credentials: 'include', signal,
         });
         if (!active()) break;
-        if (!response.ok || !response.body) throw new Error(`HTTP ${response.status}`);
+        if (!response.ok || !response.body) {
+          try {
+            await response.body?.cancel();
+          } catch {
+            // The response body may already be closed.
+          }
+          controller.abort();
+          throw new Error(`HTTP ${response.status}`);
+        }
         opened = true;
         retry = baseDelayMs;
         callbacks.connection('online');

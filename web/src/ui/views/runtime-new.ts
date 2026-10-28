@@ -33,9 +33,11 @@ export class RuntimeNewView extends LitElement {
         objective,
         this.model.keyFor(objective),
       );
+      this.model.reset();
       if (!response.result) throw new ApiError(500, 'Task creation response missing');
       replaceRuntimeTask(response.result.taskId);
     } catch (error) {
+      if (error instanceof ApiError) this.model.reset();
       this.error = error instanceof ApiError
         ? error.message
         : 'Network error; retry with the same objective';

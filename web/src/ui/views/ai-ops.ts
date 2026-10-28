@@ -19,6 +19,7 @@ interface HeartbeatConfig {
   workspaceId: string;
   agentId: string;
   tasks: HeartbeatTask[];
+  runtimeWorkbenchEnabled?: boolean;
 }
 
 interface HeartbeatTask {

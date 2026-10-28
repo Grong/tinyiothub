@@ -39,8 +39,20 @@ function controlledResponse() {
     start(value) { controller = value; },
     cancel() { cancelled = true; },
   });
+  const readerCancel = vi.fn();
+  const getReader = body.getReader.bind(body);
+  Object.defineProperty(body, 'getReader', { value: () => {
+    const reader = getReader();
+    const cancel = reader.cancel.bind(reader);
+    reader.cancel = (reason?: unknown) => {
+      readerCancel();
+      return cancel(reason);
+    };
+    return reader;
+  } });
   return {
     response: new Response(body, { status: 200 }),
+    readerCancel,
     push(text: string) { controller?.enqueue(encoder.encode(text)); },
     error() { controller?.error(new Error('aborted')); },
     get cancelled() { return cancelled; },
@@ -120,7 +132,9 @@ describe('Runtime SSE cursor client', () => {
       'connection:connecting', 'connection:online', 'snapshot:4', 'event:event_5', 'resync:8',
     ]);
     close();
+    await flush();
     expect((mock.mock.calls[0] as unknown as [string, RequestInit])[1].signal?.aborted).toBe(true);
+    expect(streams[0].readerCancel).toHaveBeenCalledOnce();
   });
 
   it('reconnects from the last cursor with bounded exponential backoff', async () => {
@@ -184,6 +198,79 @@ describe('Runtime SSE cursor client', () => {
 
     expect(handler.calls).toEqual(['connection:connecting', 'connection:online']);
     expect(log).not.toHaveBeenCalled();
+    close();
+  });
+
+  it('delivers replay events overlapping the snapshot without acknowledging them early', async () => {
+    const { mock, streams } = streamingFetch();
+    vi.stubGlobal('fetch', mock);
+    const handler = callbacks();
+    const close = connectRuntimeStream({
+      workspaceId: 'ws', taskId: 'task_1', after: 10, callbacks: handler,
+    });
+    await flush();
+    streams[0].push(frame('snapshot', {
+      snapshot: snapshotWithNoDevices({ cursor: 20 }), cursor: 20,
+    }));
+    streams[0].push(frame('event', { event: runtimeEvent('event_11', 'read_device', {}, { cursor: 11 }) }));
+    streams[0].push(frame('event', { event: runtimeEvent('event_12', 'read_device', {}, { cursor: 12 }) }));
+    await flush();
+
+    expect(handler.calls).toEqual([
+      'connection:connecting', 'connection:online', 'snapshot:20', 'event:event_11', 'event:event_12',
+    ]);
+    close();
+  });
+
+  it('reconnects from the last delivered replay event after a partial replay', async () => {
+    vi.useFakeTimers();
+    const first = controlledResponse();
+    const second = controlledResponse();
+    const mock = vi.fn()
+      .mockImplementationOnce(() => Promise.resolve(first.response))
+      .mockImplementation(() => Promise.resolve(second.response));
+    vi.stubGlobal('fetch', mock);
+    const handler = callbacks();
+    const close = connectRuntimeStream({
+      workspaceId: 'ws', taskId: 'task_1', after: 10, callbacks: handler, baseDelayMs: 1000, jitterMs: 0,
+    });
+    await vi.advanceTimersByTimeAsync(0);
+    first.push(frame('snapshot', {
+      snapshot: snapshotWithNoDevices({ cursor: 20 }), cursor: 20,
+    }));
+    first.push(frame('event', { event: runtimeEvent('event_11', 'read_device', {}, { cursor: 11 }) }));
+    await vi.advanceTimersByTimeAsync(0);
+    first.error();
+    await vi.advanceTimersByTimeAsync(1000);
+
+    expect(mock.mock.calls[1][0]).toContain('after=11');
+    second.push(frame('snapshot', {
+      snapshot: snapshotWithNoDevices({ cursor: 20 }), cursor: 20,
+    }));
+    for (let cursor = 12; cursor <= 20; cursor += 1) {
+      second.push(frame('event', {
+        event: runtimeEvent(`event_${cursor}`, 'read_device', {}, { cursor }),
+      }));
+    }
+    await vi.advanceTimersByTimeAsync(0);
+
+    const delivered = handler.calls.filter((call) => call.startsWith('event:'));
+    expect(delivered).toEqual(Array.from({ length: 10 }, (_, index) => `event:event_${index + 11}`));
+    close();
+  });
+
+  it('cancels a non-OK response body before reconnecting', async () => {
+    vi.useFakeTimers();
+    const response = controlledResponse();
+    const nonOk = new Response(response.response.body, { status: 500 });
+    const mock = vi.fn(() => Promise.resolve(nonOk));
+    vi.stubGlobal('fetch', mock);
+    const close = connectRuntimeStream({
+      workspaceId: 'ws', taskId: 'task_1', callbacks: callbacks(), jitterMs: 0,
+    });
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(response.cancelled).toBe(true);
     close();
   });
 

@@ -100,6 +100,47 @@ describe('Runtime Task detail shell', () => {
 
     expect(order).toEqual(['get:task_1', 'close', 'destroy', 'get:task_2']);
     expect(view.querySelector('h1')?.textContent).toBe('Objective task_2');
+    expect(view.descriptor).toBeUndefined();
+    expect(view.querySelector('runtime-playback')).toBeNull();
+  });
+
+  it('closes live SSE and freezes a fresh projection for same-Task history navigation', async () => {
+    get.mockResolvedValue({ code: 0, msg: '', result: snapshot() });
+    await mount();
+    const liveCallbacks = streamCallbacks;
+
+    view.history = { event: 'event_1' };
+    await view.updateComplete;
+    await Promise.resolve();
+    await view.updateComplete;
+
+    expect(close).toHaveBeenCalledOnce();
+    expect(get).toHaveBeenCalledTimes(2);
+    expect(connect).toHaveBeenCalledOnce();
+    expect(view.textContent).toContain('History');
+    liveCallbacks.event({
+      cursor: 1, eventId: 'stale_live', eventType: 'read_device', occurredAt: '2026-10-27T10:01:00Z',
+      workspaceId: 'ws_1', taskId: 'task_1', runId: null, toolCallId: null, jobId: null,
+      approvalId: null, deviceId: 'dev_stale', sourceId: null, sourceSeq: null, evidenceId: null, data: {},
+    } satisfies RuntimeEvent);
+    await view.updateComplete;
+    expect(view.querySelector('[data-projection="steps"]')?.textContent).toBe('Steps: 0');
+    expect(view.querySelector('[data-projection="devices"]')?.textContent).not.toContain('dev_stale');
+  });
+
+  it('reloads a live projection and opens fresh SSE when leaving same-Task history', async () => {
+    get.mockResolvedValue({ code: 0, msg: '', result: snapshot() });
+    await mount({ event: 'event_1' });
+    expect(connect).not.toHaveBeenCalled();
+
+    view.history = null;
+    await view.updateComplete;
+    await Promise.resolve();
+    await view.updateComplete;
+
+    expect(get).toHaveBeenCalledTimes(2);
+    expect(connect).toHaveBeenCalledOnce();
+    expect(view.textContent).not.toContain('History');
   });
 
   it('freezes history without opening SSE and cleans up on disconnect', async () => {

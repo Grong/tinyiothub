@@ -82,6 +82,25 @@ describe('Runtime new Task shell', () => {
     expect(view.querySelector('textarea')?.value).toBe('Inspect pumps');
   });
 
+  it.each([400, 409])('rotates the key after HTTP %s even when the objective is unchanged', async (status) => {
+    create.mockRejectedValueOnce(new ApiError(status, `HTTP ${status}`));
+    await update();
+    setObjective('Inspect pumps');
+    submit();
+    await update();
+    await update();
+    const firstKey = create.mock.calls[0][2];
+
+    create.mockRejectedValueOnce(new ApiError(status, `HTTP ${status}`));
+    submit();
+    await update();
+    await update();
+
+    expect(create).toHaveBeenCalledTimes(2);
+    expect(create.mock.calls[1][2]).not.toBe(firstKey);
+    expect(view.textContent).toContain(`HTTP ${status}`);
+  });
+
   it('reuses the key for a manual network retry and replace-navigates after acceptance', async () => {
     create.mockRejectedValueOnce(new TypeError('network down'));
     await update();

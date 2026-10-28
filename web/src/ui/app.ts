@@ -1,6 +1,6 @@
 import { LitElement, html, nothing } from 'lit';
 import { customElement, state } from 'lit/decorators.js';
-import { ApiClient, getAuthToken } from '../api/client.js';
+import { ApiClient, getAuthToken, getWorkspaceId } from '../api/client.js';
 import { loadSettings, saveSettings, type UiSettings } from './storage.js';
 import { startThemeTransition, type ThemeTransitionContext } from './theme-transition.js';
 import { resolveTheme, type ThemeMode, type ResolvedTheme } from './theme.js';
@@ -177,13 +177,14 @@ export class TinyIoTHubApp extends LitElement {
   @state() loadError: string | null = null;
   /** T13：run 详情页 hash 路由参数（#/ai-ops/runs/{id}；id 容忍冒号如 patrol:p1） */
   @state() runDetailId = '';
-  /** Runtime Workbench remains default-off until its host supplies the workspace flag. */
+  /** Persisted per-workspace flag; missing, false, and failed loads remain off. */
   @state() runtimeWorkbenchEnabled = false;
   @state() runtimeRoute: RuntimeRoute | null = null;
   /** E4：处置中心未读角标（needsYou 计数；「例外响亮」的前提是例外能到人） */
   @state() dispositionNeedsYou = 0;
 
   private loadSeq = 0;
+  private runtimeConfigGeneration = 0;
   private themeMediaQuery: MediaQueryList | null = null;
   private themeChangeHandler = () => {
     if (this.theme === 'system') {
@@ -193,6 +194,10 @@ export class TinyIoTHubApp extends LitElement {
   };
   private boundHandleRoute = () => this.handleRoute();
   private handleAuthError = () => this.logout();
+  private handleWorkspaceChange = () => void this.loadRuntimeWorkbenchFlag();
+  private handleStorage = (event: StorageEvent) => {
+    if (event.key === 'workspace-id') this.handleWorkspaceChange();
+  };
 
   createRenderRoot() {
     return this;
@@ -204,8 +209,11 @@ export class TinyIoTHubApp extends LitElement {
     this.checkAuth();
     this.setupRouter();
     window.addEventListener('auth-error', this.handleAuthError);
+    window.addEventListener('workspace-changed', this.handleWorkspaceChange);
+    window.addEventListener('storage', this.handleStorage);
     if (this.isAuthenticated) {
       this.loadUserInfo();
+      void this.loadRuntimeWorkbenchFlag();
     }
     // Notify skeleton screen that app has bootstrapped
     requestAnimationFrame(() => {
@@ -235,6 +243,9 @@ export class TinyIoTHubApp extends LitElement {
     window.removeEventListener('popstate', this.boundHandleRoute);
     window.removeEventListener('hashchange', this.boundHandleRoute);
     window.removeEventListener('auth-error', this.handleAuthError);
+    window.removeEventListener('workspace-changed', this.handleWorkspaceChange);
+    window.removeEventListener('storage', this.handleStorage);
+    this.runtimeConfigGeneration += 1;
     if (this.themeMediaQuery) {
       this.themeMediaQuery.removeEventListener('change', this.themeChangeHandler);
     }
@@ -293,6 +304,26 @@ export class TinyIoTHubApp extends LitElement {
     this.isAuthenticated = !!token;
   }
 
+  private async loadRuntimeWorkbenchFlag(): Promise<void> {
+    const generation = ++this.runtimeConfigGeneration;
+    const workspaceId = getWorkspaceId();
+    this.runtimeWorkbenchEnabled = false;
+    this.handleRoute();
+    if (!this.isAuthenticated || !workspaceId) return;
+
+    try {
+      const response = await ApiClient.get<{ runtimeWorkbenchEnabled?: boolean }>(
+        `/workspaces/${encodeURIComponent(workspaceId)}/heartbeat/config`,
+      );
+      if (generation !== this.runtimeConfigGeneration || workspaceId !== getWorkspaceId()) return;
+      this.runtimeWorkbenchEnabled = response.result?.runtimeWorkbenchEnabled === true;
+    } catch {
+      if (generation !== this.runtimeConfigGeneration || workspaceId !== getWorkspaceId()) return;
+      this.runtimeWorkbenchEnabled = false;
+    }
+    this.handleRoute();
+  }
+
   async loadUserInfo() {
     try {
       const res = await ApiClient.get<any>('/users/me');
@@ -311,6 +342,8 @@ export class TinyIoTHubApp extends LitElement {
     sessionStorage.removeItem('auth-token');
     localStorage.removeItem('auth-token');
     thingCache.clearCache();
+    this.runtimeConfigGeneration += 1;
+    this.runtimeWorkbenchEnabled = false;
     this.isAuthenticated = false;
     toastError('登录已过期，请重新登录');
     this.navigate('login');
