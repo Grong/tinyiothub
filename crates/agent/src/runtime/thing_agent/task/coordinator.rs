@@ -187,11 +187,10 @@ impl TaskCoordinator {
             .get_task(workspace_id, task_id)
             .await?
             .ok_or(TaskError::NotFound)?;
-        // Cancellation resolves the Task's wakes, so any in-memory report can
-        // never be retried. Drop it rather than retaining the full report for
-        // the process lifetime.
-        self.drop_pending_staging_for(task_id);
         if task.status.is_terminal() {
+            // A terminal Task's wakes are already resolved, so a retained
+            // report is unreachable.
+            self.drop_pending_staging_for(task_id);
             return Ok(CancelOutcome { accepted: false });
         }
         if task.status == TaskStatus::Cancelling {
@@ -216,6 +215,10 @@ impl TaskCoordinator {
         if self.approvals.is_none() {
             self.store.resolve_task_wakes(task_id).await?;
         }
+        // Only now are the `Cancelling` transition and wake resolution both
+        // durable. Dropping earlier would discard the only copy of an
+        // unpersisted report when a failed cancel leaves the Task Active.
+        self.drop_pending_staging_for(task_id);
         if let Some(jobs) = &self.jobs {
             for job in jobs
                 .task_jobs(workspace_id, task_id, false)
@@ -298,6 +301,10 @@ impl TaskCoordinator {
             .iter()
             .map(|intent| intent.task_id.as_str())
             .collect::<HashSet<&str>>();
+        let pending_intent_runs = pending_intents
+            .iter()
+            .map(|intent| (intent.task_id.as_str(), intent.run_id.as_str()))
+            .collect::<HashSet<(&str, &str)>>();
         self.store.interrupt_unfinished_runs(&known_active).await?;
         if let Some(jobs) = &self.jobs {
             jobs.recover()
@@ -308,8 +315,15 @@ impl TaskCoordinator {
         for mut task in self.store.list_nonterminal_tasks(None).await? {
             // The pending intent's wake is the durable work item; the router
             // drives it through `retry_finalize`. Leave the Run bound and do
-            // not create a competing recovery Run.
-            if task.status == TaskStatus::Active && pending_intent_tasks.contains(task.id.as_str()) {
+            // not create a competing recovery Run. Only the Run the intent
+            // names is protected: a newer Run must fall through to normal
+            // recovery, or it would stay interrupted-but-bound forever.
+            let owns_bound_intent = match task.current_run_id.as_deref() {
+                None => true,
+                Some(run_id) => pending_intent_runs.contains(&(task.id.as_str(), run_id)),
+            };
+            if task.status == TaskStatus::Active && pending_intent_tasks.contains(task.id.as_str()) && owns_bound_intent
+            {
                 continue;
             }
             if let Some(run_id) = task.current_run_id.as_deref() {
@@ -3510,6 +3524,45 @@ pub(crate) mod tests {
     }
 
     #[tokio::test]
+    async fn recovery_does_not_skip_an_active_task_bound_to_a_newer_run_than_the_intent() {
+        let mut running = task(TaskStatus::Active);
+        running.current_run_id = Some("run-2".into());
+        let mut fixture = Fixture::new(running);
+        fixture._guard = None;
+        fixture.token = None;
+        fixture.add_wake("event_finalize");
+        fixture.store.state.lock().expect("tasks").intents.insert(
+            ("task_1".into(), "event_finalize".into()),
+            intent("run-1", "event_finalize"),
+        );
+
+        assert_eq!(fixture.coordinator.recover().await.expect("recover"), 1);
+        assert_eq!(
+            fixture.store.state.lock().expect("tasks").interrupted_runs,
+            vec!["run-2".to_string()],
+            "the newer Run is not protected by the older intent"
+        );
+        tokio::time::timeout(std::time::Duration::from_secs(1), async {
+            while *fixture.provider.calls.lock().expect("calls") == 0 {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("recovery run started");
+        assert!(
+            fixture
+                .store
+                .state
+                .lock()
+                .expect("tasks")
+                .runs
+                .iter()
+                .any(|(task_id, event_id)| task_id == "task_1" && event_id.starts_with("recovery:task_1:")),
+            "falling through recovery must start a replacement Run"
+        );
+    }
+
+    #[tokio::test]
     async fn complete_intent_failure_after_emit_does_not_emit_twice() {
         let (jobs, job_store, _worker) = jobs();
         job_store
@@ -3622,6 +3675,26 @@ pub(crate) mod tests {
         // The running Job keeps the Task winding down in `cancelling`, so this
         // drop is cancel's own, not one performed by `finish_cancellation`.
         assert_eq!(fixture.store.task("task_1").status, TaskStatus::Cancelling);
+    }
+
+    #[tokio::test]
+    async fn cancel_failure_keeps_retained_in_memory_staging() {
+        let fixture = Fixture::new(task(TaskStatus::Active));
+        fixture.add_wake("event_staged");
+        fixture.coordinator.pending_staging.insert(
+            ("task_1".into(), "event_staged".into()),
+            intent("run_1", "event_staged"),
+        );
+        *fixture.store.transition_failures.lock().expect("failures") = 1;
+
+        assert!(fixture.coordinator.cancel("ws_1", "task_1").await.is_err());
+
+        assert_eq!(
+            fixture.coordinator.pending_staging_len(),
+            1,
+            "a failed cancellation leaves the Task Active and the wake retryable"
+        );
+        assert_eq!(fixture.store.task("task_1").status, TaskStatus::Active);
     }
 
     #[tokio::test]

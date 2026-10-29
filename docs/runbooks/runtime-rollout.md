@@ -306,6 +306,9 @@ claimed as covered.
   A partial store outage can produce repeated staging warnings; the
   `memory_count`/`staging_dropped` fields and rate-limited alerting are the only
   signal (in-memory retry currently has no backoff).
+  A Paused or otherwise blocked Task that owns a live finalize intent keeps its
+  Run `running` until the intent settles; a long-paused Task can therefore leave
+  a `running` row in `agent_runs` indefinitely, and that is expected.
 - `[gauge]` `outbox.oldestPendingAgeSecs > 60` **only while
   `tasks.paused == 0`**. Paused Tasks deliberately keep decision wakes pending
   until resume (section 3 step 5), so a paused Task must not page continuously.
