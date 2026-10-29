@@ -188,6 +188,22 @@ impl TaskStore for DbTaskStore {
         self.db.complete_finalize_intent(task_id, event_id).await
     }
 
+    async fn put_finalize_intent(&self, intent: &TaskFinalizeIntent) -> Result<(), TaskStoreError> {
+        self.db.put_finalize_intent(intent).await
+    }
+
+    async fn completed_run_report(&self, run_id: &str) -> Result<Option<RunReport>, TaskStoreError> {
+        self.db.completed_run_report(run_id).await
+    }
+
+    async fn count_finalize_intents(&self) -> Result<i64, TaskStoreError> {
+        self.db.count_finalize_intents().await
+    }
+
+    async fn prune_finalize_intents(&self, older_than: chrono::DateTime<chrono::Utc>) -> Result<usize, TaskStoreError> {
+        self.db.prune_finalize_intents(older_than).await
+    }
+
     async fn retry_dead_wake(&self, workspace_id: &str, event_id: &str) -> Result<bool, TaskStoreError> {
         self.db.retry_dead_wake(workspace_id, event_id).await
     }

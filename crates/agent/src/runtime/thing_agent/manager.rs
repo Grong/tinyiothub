@@ -329,6 +329,9 @@ impl ThingAgentManager {
                             Ok(count) => tracing::info!(metric = "runtime_approval_expired", count, "approval expiry"),
                             Err(error) => tracing::warn!(%error, "Approval expiry sweep failed"),
                         }
+                        if let Err(error) = router.sweep_finalize_intents(chrono::Utc::now()).await {
+                            tracing::warn!(%error, "Finalize intent sweep failed");
+                        }
                     }
                 }
             }

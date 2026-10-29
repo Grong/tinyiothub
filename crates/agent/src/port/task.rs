@@ -47,6 +47,18 @@ pub trait TaskStore: Send + Sync {
         event_id: &str,
     ) -> Result<Option<TaskFinalizeIntent>, TaskStoreError>;
     async fn complete_finalize_intent(&self, task_id: &str, event_id: &str) -> Result<(), TaskStoreError>;
+    /// Persist a finalize intent without touching its wake. Used by the
+    /// in-memory staging retry: the wake is already claimed/pending, so only
+    /// the durable intent write needs to be re-attempted.
+    async fn put_finalize_intent(&self, intent: &TaskFinalizeIntent) -> Result<(), TaskStoreError>;
+    /// The completed Run report for `run_id`, used to distinguish a lost
+    /// `finish_run` acknowledgement from a genuine newer-owner conflict.
+    async fn completed_run_report(&self, run_id: &str) -> Result<Option<RunReport>, TaskStoreError>;
+    /// Observability gauge for retained finalize intents.
+    async fn count_finalize_intents(&self) -> Result<i64, TaskStoreError>;
+    /// Bounded retention sweep: remove intents older than `older_than` whose
+    /// wake is resolved/dead/missing or whose Task is terminal.
+    async fn prune_finalize_intents(&self, older_than: chrono::DateTime<chrono::Utc>) -> Result<usize, TaskStoreError>;
     async fn retry_dead_wake(&self, workspace_id: &str, event_id: &str) -> Result<bool, TaskStoreError>;
     async fn list_nonterminal_tasks(&self, workspace_id: Option<&str>) -> Result<Vec<AgentTask>, TaskStoreError>;
 }

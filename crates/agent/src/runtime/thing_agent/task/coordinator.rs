@@ -1,4 +1,5 @@
 use std::sync::Arc;
+use std::time::Duration;
 
 use dashmap::DashMap;
 use tinyiothub_core::agent_runs::{EndReason, Outcome, RunReport};
@@ -48,6 +49,12 @@ pub struct CancelOutcome {
     pub accepted: bool,
 }
 
+/// Bounded retries for the atomic intent+wake staging write. SQLITE_BUSY and
+/// short IO failures are transient; a resolved wake (`ConcurrentUpdate`) is not
+/// retried.
+const FINALIZE_STAGE_ATTEMPTS: usize = 3;
+const FINALIZE_STAGE_RETRY_DELAY_MS: u64 = 10;
+
 #[derive(Clone)]
 pub struct TaskCoordinator {
     store: Arc<dyn TaskStore>,
@@ -60,6 +67,10 @@ pub struct TaskCoordinator {
     runner: Arc<Runner>,
     agent_provider: Arc<dyn AutonomousAgentProvider>,
     reports: Arc<DashMap<String, Vec<RunReport>>>,
+    /// Finalize intents whose atomic staging write failed after the bounded
+    /// retries. They are retried from memory before any model work, so the
+    /// report is never silently lost and the model is never re-run.
+    pending_staging: Arc<DashMap<(String, String), TaskFinalizeIntent>>,
 }
 
 impl TaskCoordinator {
@@ -85,6 +96,7 @@ impl TaskCoordinator {
             runner,
             agent_provider,
             reports: Arc::new(DashMap::new()),
+            pending_staging: Arc::new(DashMap::new()),
         }
     }
 
@@ -282,7 +294,17 @@ impl TaskCoordinator {
                 task = self.store.bind_current_run(&task.id, task.state_version, None).await?;
             }
             if task.status == TaskStatus::Cancelling {
-                self.finish_cancellation(&task).await?;
+                // Watch-rule storage is a separate subsystem. A discovery blip
+                // must not abort service startup for every workspace; leave the
+                // Task Cancelling for the next recovery or explicit cancel().
+                if let Err(error) = self.finish_cancellation(&task).await {
+                    tracing::warn!(
+                        task_id = %task.id,
+                        %error,
+                        metric = "runtime_cancel_recovery_deferred",
+                        "Cancelling Task recovery deferred"
+                    );
+                }
                 continue;
             }
             if task.status != TaskStatus::Active {
@@ -350,6 +372,14 @@ impl TaskCoordinator {
         Ok(started)
     }
 
+    /// True while a failed atomic stage write is retained in memory for this
+    /// wake. The router uses this to keep the wake retryable instead of
+    /// counting the outage toward the dead-letter threshold.
+    pub(crate) fn has_pending_staging(&self, task_id: &str, wake_event_id: &str) -> bool {
+        self.pending_staging
+            .contains_key(&(task_id.to_string(), wake_event_id.to_string()))
+    }
+
     pub fn advance<'a>(
         &'a self,
         task_id: &'a str,
@@ -370,13 +400,42 @@ impl TaskCoordinator {
                 .get("workspace_id")
                 .and_then(serde_json::Value::as_str)
                 .ok_or_else(|| TaskError::InvalidWake("wake workspace is missing".into()))?;
-            let mut task = self
-                .store
-                .get_task(workspace_id, task_id)
-                .await?
-                .ok_or(TaskError::NotFound)?;
+            let staging_key = (task_id.to_string(), wake_event_id.to_string());
+            let mut task = match self.store.get_task(workspace_id, task_id).await? {
+                Some(task) => task,
+                None => {
+                    self.pending_staging.remove(&staging_key);
+                    return Err(TaskError::NotFound);
+                }
+            };
             if workspace_id != task.workspace_id {
                 return Err(TaskError::CrossWorkspace);
+            }
+            // The atomic stage write failed after its bounded retries. Retry
+            // the durable intent write only; on success continue with the
+            // normal finalize path without re-running the model.
+            if let Some(intent) = self
+                .pending_staging
+                .get(&staging_key)
+                .map(|entry| entry.value().clone())
+            {
+                match self.store.put_finalize_intent(&intent).await {
+                    Ok(()) => {
+                        self.pending_staging.remove(&staging_key);
+                        return self.retry_finalize(task, intent).await;
+                    }
+                    Err(TaskStoreError::ConcurrentUpdate) => {
+                        self.pending_staging.remove(&staging_key);
+                        tracing::warn!(
+                            task_id,
+                            wake_event_id,
+                            metric = "runtime_task_finalize_stage_abandoned",
+                            "finalize intent staging abandoned after the wake was resolved"
+                        );
+                        return Ok(Advance::Recorded);
+                    }
+                    Err(error) => return Err(error.into()),
+                }
             }
             // A wake requeued after its Run finished but before teardown
             // completed must retry only that teardown. It must never steer or
@@ -748,10 +807,20 @@ impl TaskCoordinator {
         let current = match self.store.get_task(&task.workspace_id, &task.id).await {
             Ok(Some(current)) => current,
             Ok(None) => {
-                tracing::warn!(task_id = %task.id, "Task run teardown found no Task");
-                self.stage_finalize_intent(task, report, true, true, undelivered, wake_event_id)
-                    .await;
-                return Err(TaskError::NotFound);
+                // The Task no longer exists, so an intent row would violate the
+                // task FK on every retry. Resolve its wakes and stop: there is
+                // no Task to finalize.
+                tracing::warn!(
+                    task_id = %task.id,
+                    metric = "runtime_task_finalize_task_missing",
+                    "Task run teardown found no Task"
+                );
+                self.pending_staging
+                    .remove(&(task.id.clone(), wake_event_id.to_string()));
+                if let Err(error) = self.store.resolve_task_wakes(&task.id).await {
+                    tracing::warn!(task_id = %task.id, %error, "Deleted Task wake resolution failed");
+                }
+                return Ok(());
             }
             Err(error) => {
                 tracing::warn!(task_id = %task.id, %error, "Task run teardown read failed");
@@ -796,7 +865,9 @@ impl TaskCoordinator {
         if task.status.is_terminal() {
             // The Task already settled (possibly by another actor). Finish the
             // idempotent watch cleanup and drop the intent without re-emitting.
-            self.cleanup_terminal_watches(&task).await;
+            // A discovery failure leaves the intent for the next retry instead
+            // of deleting ownership rows blind.
+            self.cleanup_terminal_watches(&task).await?;
             self.store
                 .complete_finalize_intent(&intent.task_id, &intent.wake_event_id)
                 .await?;
@@ -832,27 +903,30 @@ impl TaskCoordinator {
         }
         if !intent.report_persisted {
             match self.store.finish_run(&intent.report).await {
-                Ok(()) => {
-                    self.reports
-                        .entry(task.id.clone())
-                        .or_default()
-                        .push(intent.report.clone());
-                    self.events.emit(AgentEventKind::RunRecorded {
-                        report: Box::new(intent.report.clone()),
-                        problem_key: None,
-                        dedup_key: None,
-                    });
-                }
+                Ok(()) => {}
                 Err(TaskStoreError::ConcurrentUpdate) => {
-                    // The Run row is no longer `running` (a cancel/restart won);
-                    // do not invent a terminal report for it.
-                    self.store
-                        .complete_finalize_intent(&intent.task_id, &intent.wake_event_id)
-                        .await?;
-                    return Ok(Advance::Recorded);
+                    // `ConcurrentUpdate` is ambiguous: the earlier write may
+                    // have committed and lost only its acknowledgement, or a
+                    // newer owner may have settled the Run. Only a completed
+                    // row for this exact Run/Task/wake is our report.
+                    if !self.report_is_persisted(&intent.report).await? {
+                        self.store
+                            .complete_finalize_intent(&intent.task_id, &intent.wake_event_id)
+                            .await?;
+                        return Ok(Advance::Recorded);
+                    }
                 }
                 Err(error) => return Err(error.into()),
             }
+            self.reports
+                .entry(task.id.clone())
+                .or_default()
+                .push(intent.report.clone());
+            self.events.emit(AgentEventKind::RunRecorded {
+                report: Box::new(intent.report.clone()),
+                problem_key: None,
+                dedup_key: None,
+            });
         } else if !intent.report_emitted {
             self.reports
                 .entry(task.id.clone())
@@ -889,6 +963,16 @@ impl TaskCoordinator {
                 Err(error)
             }
         }
+    }
+
+    /// True when the store already holds this exact report as the completed
+    /// report of its Run. Other completed rows (a newer owner) do not count.
+    async fn report_is_persisted(&self, report: &RunReport) -> Result<bool, TaskError> {
+        Ok(self
+            .store
+            .completed_run_report(&report.run_id)
+            .await?
+            .is_some_and(|stored| stored.task_id == report.task_id && stored.wake_event_id == report.wake_event_id))
     }
 
     async fn finalize_bound_task(
@@ -1017,24 +1101,25 @@ impl TaskCoordinator {
         }
     }
 
-    async fn cleanup_terminal_watches(&self, task: &AgentTask) {
-        match self.collect_owned_watches(&task.workspace_id, &task.id).await {
-            Ok(owned_rules) if !owned_rules.is_empty() => {
-                self.send_watch_removals(&task.workspace_id, &owned_rules).await;
-            }
-            Ok(_) => {}
-            Err(error) => {
-                tracing::warn!(task_id = %task.id, %error, "Terminal Task watch discovery failed");
-            }
+    async fn cleanup_terminal_watches(&self, task: &AgentTask) -> Result<(), TaskError> {
+        // Discovery must succeed before any durable ownership row is deleted:
+        // a discovery failure means we cannot prove which live rules the rows
+        // belong to, so leave them (and the intent) for the next retry.
+        let owned_rules = self.collect_owned_watches(&task.workspace_id, &task.id).await?;
+        if !owned_rules.is_empty() {
+            self.send_watch_removals(&task.workspace_id, &owned_rules).await;
         }
         if let Err(error) = self.delete_owned_watch_rows(&task.workspace_id, &task.id).await {
             tracing::warn!(task_id = %task.id, %error, "Terminal Task watch cleanup failed");
         }
+        Ok(())
     }
 
     /// Persist the report/undelivered context and requeue its wake in one store
-    /// write. A failure here falls back to a plain requeue so the wake is not
-    /// lost, though the retry then has only the wake signal to go on.
+    /// write. Transient failures are retried a bounded number of times. If the
+    /// write still fails, the intent is kept in memory, the wake is left
+    /// `Pending`, and the next `advance` retries the durable write before any
+    /// model work. A resolved wake (`ConcurrentUpdate`) is never retried.
     async fn stage_finalize_intent(
         &self,
         task: &AgentTask,
@@ -1044,6 +1129,7 @@ impl TaskCoordinator {
         undelivered: Vec<String>,
         wake_event_id: &str,
     ) {
+        let key = (task.id.clone(), wake_event_id.to_string());
         let intent = TaskFinalizeIntent {
             task_id: task.id.clone(),
             workspace_id: task.workspace_id.clone(),
@@ -1054,29 +1140,55 @@ impl TaskCoordinator {
             report_emitted,
             undelivered,
         };
-        if let Err(error) = self.store.requeue_with_finalize_intent(&intent).await {
-            tracing::warn!(task_id = %task.id, event_id = wake_event_id, %error, "Task finalize intent staging failed");
-            self.requeue_wake(&task.id, wake_event_id).await;
+        let mut last_error = None;
+        for attempt in 1..=FINALIZE_STAGE_ATTEMPTS {
+            match self.store.requeue_with_finalize_intent(&intent).await {
+                Ok(()) => {
+                    self.pending_staging.remove(&key);
+                    return;
+                }
+                Err(TaskStoreError::ConcurrentUpdate) => {
+                    // The wake is resolved/dead; there is nothing safe to
+                    // retry. Do not leave an unreachable intent behind.
+                    self.pending_staging.remove(&key);
+                    tracing::warn!(
+                        task_id = %task.id,
+                        event_id = wake_event_id,
+                        "Task finalize intent staging found no live wake"
+                    );
+                    return;
+                }
+                Err(error) => {
+                    last_error = Some(error);
+                    if attempt < FINALIZE_STAGE_ATTEMPTS {
+                        tokio::time::sleep(Duration::from_millis(FINALIZE_STAGE_RETRY_DELAY_MS * attempt as u64)).await;
+                    }
+                }
+            }
         }
-    }
-
-    /// Put a wake back on the outbox after a transient teardown failure so the
-    /// router can retry. `mark_wake` never overwrites an explicit requeue with
-    /// a later "dispatched" acknowledgement from the original dispatch.
-    async fn requeue_wake(&self, task_id: &str, event_id: &str) {
-        if event_id.is_empty() {
-            return;
-        }
+        let error = last_error
+            .map(|error| error.to_string())
+            .unwrap_or_else(|| "staging failed without an error".into());
+        tracing::warn!(
+            task_id = %task.id,
+            event_id = wake_event_id,
+            %error,
+            metric = "runtime_task_finalize_stage_deferred",
+            "Task finalize intent staging deferred to memory"
+        );
+        self.pending_staging.insert(key, intent);
+        // Leave the wake retryable rather than acknowledging (or dead-lettering)
+        // a wake whose report is not durable yet.
         if let Err(error) = self
             .store
             .mark_wake(
-                task_id,
-                event_id,
+                &task.id,
+                wake_event_id,
                 tinyiothub_core::agent_task::WakeDispatchState::Pending,
             )
             .await
         {
-            tracing::warn!(%task_id, event_id, %error, "Task wake requeue failed");
+            tracing::warn!(task_id = %task.id, event_id = wake_event_id, %error, "Task finalize intent requeue failed");
         }
     }
 
@@ -1170,6 +1282,8 @@ pub(crate) mod tests {
         get_task_failures: Mutex<usize>,
         transition_conflicts: Mutex<usize>,
         transition_failures: Mutex<usize>,
+        requeue_intent_failures: Mutex<usize>,
+        put_intent_failures: Mutex<usize>,
     }
 
     impl MemoryTasks {
@@ -1506,6 +1620,13 @@ pub(crate) mod tests {
         }
 
         async fn requeue_with_finalize_intent(&self, intent: &TaskFinalizeIntent) -> Result<(), TaskStoreError> {
+            {
+                let mut failures = self.requeue_intent_failures.lock().expect("requeue intent failures");
+                if *failures > 0 {
+                    *failures -= 1;
+                    return Err(TaskStoreError::Unavailable("injected finalize staging failure".into()));
+                }
+            }
             let mut state = self.state.lock().expect("tasks");
             let key = (intent.task_id.clone(), intent.wake_event_id.clone());
             let wake = state.wakes.get_mut(&key).ok_or(TaskStoreError::ConcurrentUpdate)?;
@@ -1516,6 +1637,57 @@ pub(crate) mod tests {
             wake.dispatched_at = None;
             state.intents.insert(key, intent.clone());
             Ok(())
+        }
+
+        async fn put_finalize_intent(&self, intent: &TaskFinalizeIntent) -> Result<(), TaskStoreError> {
+            {
+                let mut failures = self.put_intent_failures.lock().expect("put intent failures");
+                if *failures > 0 {
+                    *failures -= 1;
+                    return Err(TaskStoreError::Unavailable(
+                        "injected finalize intent write failure".into(),
+                    ));
+                }
+            }
+            let mut state = self.state.lock().expect("tasks");
+            if !state.tasks.contains_key(&intent.task_id) {
+                return Err(TaskStoreError::Unavailable("finalize intent task is missing".into()));
+            }
+            state
+                .intents
+                .insert((intent.task_id.clone(), intent.wake_event_id.clone()), intent.clone());
+            Ok(())
+        }
+
+        async fn completed_run_report(&self, run_id: &str) -> Result<Option<RunReport>, TaskStoreError> {
+            Ok(self
+                .state
+                .lock()
+                .expect("tasks")
+                .reports
+                .iter()
+                .find(|report| report.run_id == run_id)
+                .cloned())
+        }
+
+        async fn count_finalize_intents(&self) -> Result<i64, TaskStoreError> {
+            Ok(self.state.lock().expect("tasks").intents.len() as i64)
+        }
+
+        async fn prune_finalize_intents(&self, _older_than: chrono::DateTime<Utc>) -> Result<usize, TaskStoreError> {
+            let mut state = self.state.lock().expect("tasks");
+            let MemoryState {
+                intents, wakes, tasks, ..
+            } = &mut *state;
+            let before = intents.len();
+            intents.retain(|(task_id, event_id), _| {
+                let wake_live = wakes
+                    .get(&(task_id.clone(), event_id.clone()))
+                    .is_some_and(|wake| wake.resolved_at.is_none());
+                let task_live = tasks.get(task_id).is_some_and(|task| !task.status.is_terminal());
+                wake_live && task_live
+            });
+            Ok(before - intents.len())
         }
 
         async fn finalize_intent(
@@ -2900,9 +3072,12 @@ pub(crate) mod tests {
             ..wake("job_done")
         });
 
+        let router = WakeRouter::new(fixture.store.clone(), fixture.coordinator.clone());
+        assert_eq!(router.run(10).await.expect("steer dispatch"), 1);
         assert_eq!(
-            fixture.coordinator.advance("task_1", "job_done").await.expect("steer"),
-            Advance::Steered
+            fixture.store.wake("task_1", "job_done").dispatch_state,
+            WakeDispatchState::Dispatched,
+            "the router must acknowledge the steered wake exactly once"
         );
         let active = fixture.active.get("run_existing").expect("active run");
         let steering = active.steering.lock().expect("steering buffer");
@@ -2930,6 +3105,333 @@ pub(crate) mod tests {
             2,
             "only the wake fence and the terminal block may close"
         );
+    }
+
+    fn report(run_id: &str, wake_event_id: &str) -> RunReport {
+        RunReport {
+            run_id: run_id.into(),
+            workspace_id: "ws_1".into(),
+            trigger: "task:task_1".into(),
+            outcome: Outcome::Acted,
+            summary: "test report".into(),
+            actions: vec![],
+            verified: false,
+            duration_ms: 0,
+            tool_calls: 0,
+            tokens: 0,
+            end_reason: None,
+            thing_id: None,
+            trace: vec![],
+            task_count: None,
+            snapshot: None,
+            task_id: Some("task_1".into()),
+            wake_event_id: Some(wake_event_id.into()),
+        }
+    }
+
+    fn intent(run_id: &str, wake_event_id: &str) -> TaskFinalizeIntent {
+        TaskFinalizeIntent {
+            task_id: "task_1".into(),
+            workspace_id: "ws_1".into(),
+            wake_event_id: wake_event_id.into(),
+            run_id: run_id.into(),
+            report: report(run_id, wake_event_id),
+            report_persisted: false,
+            report_emitted: false,
+            undelivered: vec![],
+        }
+    }
+
+    #[tokio::test]
+    async fn staging_write_failure_retries_from_memory_without_rerunning_the_model() {
+        let fixture = Fixture::new(task(TaskStatus::Active));
+        *fixture.store.finish_run_failures.lock().expect("finish run failures") = 1;
+        *fixture.store.requeue_intent_failures.lock().expect("requeue failures") = 10;
+        let mut events = fixture.events.subscribe();
+        fixture.add_wake("event_stage_fail");
+        let router = WakeRouter::new(fixture.store.clone(), fixture.coordinator.clone());
+        assert_eq!(router.run(10).await.expect("first dispatch"), 1);
+        wait_for(|| {
+            fixture.coordinator.has_pending_staging("task_1", "event_stage_fail")
+                && fixture.store.wake("task_1", "event_stage_fail").dispatch_state == WakeDispatchState::Pending
+        })
+        .await;
+
+        assert_eq!(fixture.store.task("task_1").status, TaskStatus::Active);
+        assert!(
+            fixture.store.intent("task_1", "event_stage_fail").is_none(),
+            "the atomic stage write did not commit"
+        );
+        assert_eq!(*fixture.provider.calls.lock().expect("calls"), 1);
+        let wake = fixture.store.wake("task_1", "event_stage_fail");
+        assert_eq!(wake.dispatch_state, WakeDispatchState::Pending);
+        assert!(
+            wake.dispatched_at.is_none(),
+            "the failed stage must leave the wake retryable"
+        );
+        while let Ok(event) = events.try_recv() {
+            assert!(
+                !matches!(event.kind, AgentEventKind::RunRecorded { .. }),
+                "an unpersisted report must not be emitted"
+            );
+        }
+
+        // Restore the store: the router must stage the retained intent and
+        // finalize without another model turn.
+        *fixture.store.requeue_intent_failures.lock().expect("requeue failures") = 0;
+        assert_eq!(router.run(10).await.expect("retry dispatch"), 1);
+        assert_eq!(fixture.store.task("task_1").status, TaskStatus::Completed);
+        assert_eq!(
+            fixture.store.wake("task_1", "event_stage_fail").dispatch_state,
+            WakeDispatchState::Dispatched,
+            "the retried wake must be acknowledged, not dead-lettered"
+        );
+        assert!(fixture.coordinator.pending_staging.is_empty());
+        assert!(fixture.store.intent("task_1", "event_stage_fail").is_none());
+        assert_eq!(*fixture.provider.calls.lock().expect("calls"), 1);
+        assert_eq!(fixture.store.state.lock().expect("tasks").reports.len(), 1);
+        let mut recorded = 0;
+        while let Ok(event) = events.try_recv() {
+            if matches!(event.kind, AgentEventKind::RunRecorded { .. }) {
+                recorded += 1;
+            }
+        }
+        assert_eq!(recorded, 1, "the memory retry must emit RunRecorded exactly once");
+    }
+
+    #[tokio::test]
+    async fn staging_store_outage_keeps_the_wake_retryable_past_the_dead_threshold() {
+        let fixture = Fixture::new(task(TaskStatus::Active));
+        *fixture.store.finish_run_failures.lock().expect("finish run failures") = 1;
+        *fixture.store.requeue_intent_failures.lock().expect("requeue failures") = 10;
+        let mut events = fixture.events.subscribe();
+        fixture.add_wake("event_stage_outage");
+        let router = WakeRouter::new(fixture.store.clone(), fixture.coordinator.clone());
+        assert_eq!(router.run(10).await.expect("first dispatch"), 1);
+        wait_for(|| {
+            fixture.coordinator.has_pending_staging("task_1", "event_stage_outage")
+                && fixture.store.wake("task_1", "event_stage_outage").dispatch_state == WakeDispatchState::Pending
+        })
+        .await;
+
+        // The store remains unavailable while the retained intent is retried.
+        // This must not dead-letter the wake after the normal failure budget.
+        *fixture.store.put_intent_failures.lock().expect("put intent failures") = 20;
+        for _ in 0..4 {
+            assert_eq!(router.run(10).await.expect("deferred retry"), 1);
+            assert_eq!(
+                fixture.store.wake("task_1", "event_stage_outage").dispatch_state,
+                WakeDispatchState::Pending,
+                "an in-memory finalize intent must keep its wake retryable"
+            );
+        }
+        assert_eq!(*fixture.provider.calls.lock().expect("calls"), 1);
+        assert_eq!(
+            *fixture.store.put_intent_failures.lock().expect("put intent failures"),
+            16
+        );
+
+        *fixture.store.put_intent_failures.lock().expect("put intent failures") = 0;
+        assert_eq!(router.run(10).await.expect("recovered retry"), 1);
+        assert_eq!(fixture.store.task("task_1").status, TaskStatus::Completed);
+        assert_eq!(
+            fixture.store.wake("task_1", "event_stage_outage").dispatch_state,
+            WakeDispatchState::Dispatched
+        );
+        assert!(fixture.coordinator.pending_staging.is_empty());
+        assert!(fixture.store.intent("task_1", "event_stage_outage").is_none());
+        assert_eq!(*fixture.provider.calls.lock().expect("calls"), 1);
+        assert_eq!(fixture.store.state.lock().expect("tasks").reports.len(), 1);
+        assert_eq!(recorded_count_from(&mut events), 1);
+    }
+
+    #[tokio::test]
+    async fn deleted_task_teardown_resolves_its_wake_without_staging_an_intent() {
+        let mut running = task(TaskStatus::Active);
+        running.current_run_id = Some("run_existing".into());
+        let fixture = Fixture::new(running.clone());
+        fixture.add_wake("event_deleted");
+        fixture.store.state.lock().expect("tasks").tasks.remove("task_1");
+
+        fixture
+            .coordinator
+            .finish_task_run(&running, "run_existing", "event_deleted", Outcome::Acted)
+            .await;
+
+        assert!(fixture.store.intent("task_1", "event_deleted").is_none());
+        assert!(fixture.coordinator.pending_staging.is_empty());
+        assert!(
+            fixture.store.wake("task_1", "event_deleted").resolved_at.is_some(),
+            "the wake of a deleted Task must be resolved, not retried"
+        );
+        let router = WakeRouter::new(fixture.store.clone(), fixture.coordinator.clone());
+        assert_eq!(
+            router.run(10).await.expect("no retry loop"),
+            0,
+            "a resolved wake must not be re-claimed until it goes dead"
+        );
+    }
+
+    #[tokio::test]
+    async fn terminal_retry_does_not_delete_watch_rows_when_discovery_fails() {
+        let mut completed = task(TaskStatus::Completed);
+        completed.current_run_id = Some("run_existing".into());
+        let fixture = Fixture::new(completed);
+        fixture.add_wake("event_terminal_retry");
+        fixture
+            .watches
+            .rules
+            .lock()
+            .expect("watches")
+            .push(owned_watch("watch_live"));
+        fixture.store.state.lock().expect("tasks").intents.insert(
+            ("task_1".into(), "event_terminal_retry".into()),
+            intent("run_existing", "event_terminal_retry"),
+        );
+        *fixture.watches.fail_on_list_call.lock().expect("watch list failure") = Some(1);
+
+        fixture
+            .coordinator
+            .advance("task_1", "event_terminal_retry")
+            .await
+            .expect_err("discovery failure must retry, not delete blind");
+        assert!(
+            fixture.store.intent("task_1", "event_terminal_retry").is_some(),
+            "the intent must remain for the retry"
+        );
+        assert!(fixture.watches.deleted_tasks.lock().expect("deleted").is_empty());
+        assert_eq!(fixture.watches.rules.lock().expect("watches").len(), 1);
+
+        assert_eq!(
+            fixture
+                .coordinator
+                .advance("task_1", "event_terminal_retry")
+                .await
+                .expect("retry"),
+            Advance::Recorded
+        );
+        assert!(fixture.store.intent("task_1", "event_terminal_retry").is_none());
+        assert!(fixture.watches.rules.lock().expect("watches").is_empty());
+        assert_eq!(
+            fixture.watches.deleted_tasks.lock().expect("deleted").as_slice(),
+            [("ws_1".to_string(), "task_1".to_string())]
+        );
+    }
+
+    #[tokio::test]
+    async fn recover_defers_a_cancelling_task_when_watch_discovery_fails() {
+        let fixture = Fixture::new(task(TaskStatus::Cancelling));
+        *fixture.watches.fail_on_list_call.lock().expect("watch list failure") = Some(1);
+
+        assert_eq!(fixture.coordinator.recover().await.expect("recover"), 0);
+        assert_eq!(
+            fixture.store.task("task_1").status,
+            TaskStatus::Cancelling,
+            "a discovery failure must not abort startup or settle the Task"
+        );
+
+        assert_eq!(fixture.coordinator.recover().await.expect("retry recover"), 0);
+        assert_eq!(fixture.store.task("task_1").status, TaskStatus::Cancelled);
+    }
+
+    #[tokio::test]
+    async fn retry_treats_a_lost_finish_run_ack_as_persisted_and_emits_once() {
+        let mut running = task(TaskStatus::Active);
+        running.current_run_id = Some("run_1".into());
+        let fixture = Fixture::new(running);
+        fixture.add_wake("event_lost");
+        let report = report("run_1", "event_lost");
+        {
+            let mut state = fixture.store.state.lock().expect("tasks");
+            state.reports.push(report.clone());
+            state.intents.insert(
+                ("task_1".into(), "event_lost".into()),
+                TaskFinalizeIntent {
+                    report,
+                    ..intent("run_1", "event_lost")
+                },
+            );
+        }
+        // The first write committed; only its acknowledgement was lost, so the
+        // retry sees a Completed row and must treat the report as persisted.
+        *fixture.store.finish_run_conflicts.lock().expect("finish run conflicts") = 1;
+        let mut events = fixture.events.subscribe();
+
+        assert_eq!(
+            fixture
+                .coordinator
+                .advance("task_1", "event_lost")
+                .await
+                .expect("retry"),
+            Advance::Recorded
+        );
+        assert_eq!(fixture.store.task("task_1").status, TaskStatus::Completed);
+        assert!(fixture.store.intent("task_1", "event_lost").is_none());
+        assert_eq!(
+            fixture
+                .store
+                .state
+                .lock()
+                .expect("tasks")
+                .reports
+                .iter()
+                .filter(|report| report.run_id == "run_1")
+                .count(),
+            1,
+            "the lost acknowledgement must not duplicate the report"
+        );
+        let mut recorded = 0;
+        while let Ok(event) = events.try_recv() {
+            if matches!(event.kind, AgentEventKind::RunRecorded { .. }) {
+                recorded += 1;
+            }
+        }
+        assert_eq!(recorded, 1);
+    }
+
+    #[tokio::test]
+    async fn retry_does_not_emit_when_a_different_owner_completed_the_run() {
+        let mut running = task(TaskStatus::Active);
+        running.current_run_id = Some("run_1".into());
+        let fixture = Fixture::new(running);
+        fixture.add_wake("event_lost");
+        {
+            let mut state = fixture.store.state.lock().expect("tasks");
+            // Same run id, but completed for a different wake: a genuine newer
+            // owner, not our lost acknowledgement.
+            state.reports.push(report("run_1", "event_other"));
+            state
+                .intents
+                .insert(("task_1".into(), "event_lost".into()), intent("run_1", "event_lost"));
+        }
+        *fixture.store.finish_run_conflicts.lock().expect("finish run conflicts") = 1;
+        let mut events = fixture.events.subscribe();
+
+        assert_eq!(
+            fixture
+                .coordinator
+                .advance("task_1", "event_lost")
+                .await
+                .expect("retry"),
+            Advance::Recorded
+        );
+        assert_eq!(
+            fixture.store.task("task_1").status,
+            TaskStatus::Active,
+            "a report owned by another Run must not settle this Task"
+        );
+        assert!(fixture.store.intent("task_1", "event_lost").is_none());
+        assert_eq!(recorded_count_from(&mut events), 0);
+    }
+
+    fn recorded_count_from(events: &mut tokio::sync::broadcast::Receiver<crate::runtime::events::AgentEvent>) -> usize {
+        let mut count = 0;
+        while let Ok(event) = events.try_recv() {
+            if matches!(event.kind, AgentEventKind::RunRecorded { .. }) {
+                count += 1;
+            }
+        }
+        count
     }
 
     #[tokio::test]

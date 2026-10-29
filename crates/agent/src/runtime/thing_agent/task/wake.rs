@@ -43,6 +43,24 @@ impl WakeRouter {
             .map_err(|error| TaskStoreError::Unavailable(error.to_string()).into())
     }
 
+    /// Emit the retained-intent gauge and prune only intents whose wake is no
+    /// longer live (or whose Task is terminal) and that are older than the
+    /// bounded retention window. Runs from the existing periodic runtime tick.
+    pub async fn sweep_finalize_intents(&self, now: chrono::DateTime<chrono::Utc>) -> Result<usize, TaskError> {
+        let pruned = self
+            .store
+            .prune_finalize_intents(now - chrono::Duration::days(7))
+            .await?;
+        let count = self.store.count_finalize_intents().await?;
+        tracing::info!(
+            metric = "runtime_task_finalize_intents",
+            count,
+            pruned,
+            "finalize intent gauge"
+        );
+        Ok(pruned)
+    }
+
     pub async fn run(&self, limit: i64) -> Result<usize, TaskError> {
         let wakes = self.store.claim_pending_wakes(limit).await?;
         let count = wakes.len();
@@ -79,6 +97,21 @@ impl WakeRouter {
                     self.failures.remove(&key);
                     self.store
                         .mark_wake(&wake.task_id, &wake.event_id, WakeDispatchState::Dispatched)
+                        .await?;
+                }
+                Err(error) if self.coordinator.has_pending_staging(&wake.task_id, &wake.event_id) => {
+                    // The report/finalize intent is still held in memory, so a
+                    // transient store outage must not consume the dead-letter
+                    // budget for this wake. Keep it claimable and retry.
+                    self.failures.remove(&key);
+                    tracing::warn!(
+                        task_id = %wake.task_id,
+                        event_id = %wake.event_id,
+                        %error,
+                        "Task wake dispatch deferred with an in-memory finalize intent"
+                    );
+                    self.store
+                        .mark_wake(&wake.task_id, &wake.event_id, WakeDispatchState::Pending)
                         .await?;
                 }
                 Err(error) => {

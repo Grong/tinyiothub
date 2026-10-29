@@ -1730,8 +1730,8 @@ mod tests {
         .execute(db.pool())
         .await
         .expect("device declaration");
-        // Seed the incremental projection, then simulate the terminal
-        // transition deleting it.
+        // Seed the incremental projection, then drive the production terminal
+        // transition, which must delete it in the same transaction.
         sqlx::query(
             "INSERT INTO runtime_device_state (workspace_id, task_id, device_id, state_json, updated_at)
              VALUES ('ws-1', 'task-1', 'dev-late', '{\"temperature\":\"18\"}', 'now')",
@@ -1739,14 +1739,20 @@ mod tests {
         .execute(db.pool())
         .await
         .expect("seed projection");
-        sqlx::query("UPDATE agent_tasks SET status = 'failed' WHERE id = 'task-1'")
-            .execute(db.pool())
+        db.transition_task_and_event("ws-1", "task-1", 0, TaskStatus::Failed, None)
             .await
             .expect("terminal Task");
-        sqlx::query("DELETE FROM runtime_device_state WHERE workspace_id = 'ws-1' AND task_id = 'task-1'")
-            .execute(db.pool())
-            .await
-            .expect("terminal projection cleanup");
+        let rows_after_transition: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM runtime_device_state
+             WHERE workspace_id = 'ws-1' AND task_id = 'task-1'",
+        )
+        .fetch_one(db.pool())
+        .await
+        .expect("projection rows after transition");
+        assert_eq!(
+            rows_after_transition, 0,
+            "the terminal transition must delete the projection in its own transaction"
+        );
 
         let mut late = event("late-terminal", "task-1");
         late.event_type = "job.interrupted".into();

@@ -27,6 +27,11 @@ pub(crate) fn escape_untrusted(value: &str) -> String {
 /// explicit note instead of allowing an unbounded prompt.
 const MAX_TERMINAL_JOB_RESULT_CHARS: usize = 4_000;
 
+/// Cap the raw serialized result before escaping. At the maximum 5x expansion
+/// (`&` -> `&amp;`) this bounds the escaped copy to 20 000 characters even for
+/// a multi-megabyte device result, instead of escaping the whole payload.
+const MAX_TERMINAL_JOB_RESULT_RAW_CHARS: usize = MAX_TERMINAL_JOB_RESULT_CHARS * 5 / 4;
+
 fn truncate_chars(value: &str, max: usize) -> (String, bool) {
     match value.char_indices().nth(max) {
         Some((index, _)) => (value[..index].to_string(), true),
@@ -35,17 +40,20 @@ fn truncate_chars(value: &str, max: usize) -> (String, bool) {
 }
 
 /// Render the fenced "Terminal Job result" block shared by the continuation
-/// prompt and steering facts. The result is escaped first and truncated second,
-/// so entity expansion (`&`, `<`, `>`) cannot push the rendered block past the
-/// character bound.
+/// prompt and steering facts. The raw result is capped before escaping so a
+/// huge device payload cannot force a full escaped copy, then the escaped
+/// value is truncated to the rendered bound. Entity expansion (`&`, `<`, `>`)
+/// therefore cannot push the rendered block past the character bound.
 pub(crate) fn terminal_job_result_block(job: &DeviceJob) -> String {
     let raw = job
         .result_json
         .as_ref()
         .map(serde_json::Value::to_string)
         .unwrap_or_else(|| "none".to_string());
+    let (raw, raw_truncated) = truncate_chars(&raw, MAX_TERMINAL_JOB_RESULT_RAW_CHARS);
     let escaped = escape_untrusted(&raw);
-    let (result, truncated) = truncate_chars(&escaped, MAX_TERMINAL_JOB_RESULT_CHARS);
+    let (result, escaped_truncated) = truncate_chars(&escaped, MAX_TERMINAL_JOB_RESULT_CHARS);
+    let truncated = raw_truncated || escaped_truncated;
     let mut out = String::from("\n\nTerminal Job result\n<untrusted_task_context>");
     let _ = write!(
         out,
@@ -415,6 +423,30 @@ mod tests {
         assert!(
             block.lines().count() < 12,
             "adversarial expansion must not add rendered lines: {block}"
+        );
+    }
+
+    #[test]
+    fn terminal_job_result_caps_a_huge_source_before_escaping() {
+        let mut terminal = job("job_huge");
+        terminal.state = DeviceJobState::Done;
+        terminal.result_json = Some(serde_json::json!({"blob": "<&>".repeat(100_000)}));
+        let prompt = build_task_prompt(&task(), &[], &[], &[], &[], "", None, Some(&terminal));
+        let block = prompt.rsplit("Terminal Job result").next().expect("terminal block");
+        assert!(block.contains("result_truncated: true"), "{block}");
+        let result = block
+            .lines()
+            .find_map(|line| line.strip_prefix("result: "))
+            .expect("rendered result");
+        assert!(
+            result.chars().count() <= 4_000,
+            "a huge raw result must be capped before escaping, got {} chars",
+            result.chars().count()
+        );
+        assert!(result.contains("&lt;&amp;&gt;"));
+        assert!(
+            block.lines().count() < 12,
+            "a huge raw result must not add rendered lines: {block}"
         );
     }
 }

@@ -568,6 +568,46 @@ impl TaskStore for MemoryTasks {
             .remove(&(task_id.into(), event_id.into()));
         Ok(())
     }
+
+    async fn put_finalize_intent(&self, intent: &TaskFinalizeIntent) -> Result<(), TaskStoreError> {
+        self.state
+            .lock()
+            .expect("tasks")
+            .intents
+            .insert((intent.task_id.clone(), intent.wake_event_id.clone()), intent.clone());
+        Ok(())
+    }
+
+    async fn completed_run_report(&self, run_id: &str) -> Result<Option<RunReport>, TaskStoreError> {
+        Ok(self
+            .state
+            .lock()
+            .expect("tasks")
+            .reports
+            .iter()
+            .find(|report| report.run_id == run_id)
+            .cloned())
+    }
+
+    async fn count_finalize_intents(&self) -> Result<i64, TaskStoreError> {
+        Ok(self.state.lock().expect("tasks").intents.len() as i64)
+    }
+
+    async fn prune_finalize_intents(&self, _older_than: chrono::DateTime<Utc>) -> Result<usize, TaskStoreError> {
+        let mut state = self.state.lock().expect("tasks");
+        let MemoryState {
+            tasks, wakes, intents, ..
+        } = &mut *state;
+        let before = intents.len();
+        intents.retain(|(task_id, event_id), _| {
+            let wake_live = wakes
+                .get(&(task_id.clone(), event_id.clone()))
+                .is_some_and(|wake| wake.resolved_at.is_none());
+            let task_live = tasks.get(task_id).is_some_and(|task| !task.status.is_terminal());
+            wake_live && task_live
+        });
+        Ok(before - intents.len())
+    }
 }
 
 #[derive(Default)]

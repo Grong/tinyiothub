@@ -50,6 +50,43 @@ fn unavailable(error: impl std::fmt::Display) -> TaskStoreError {
     TaskStoreError::Unavailable(error.to_string())
 }
 
+async fn upsert_finalize_intent_tx(
+    tx: &mut Transaction<'_, Sqlite>,
+    intent: &TaskFinalizeIntent,
+    now: DateTime<Utc>,
+) -> Result<(), TaskStoreError> {
+    let report_json = serde_json::to_string(&intent.report).map_err(unavailable)?;
+    let undelivered_json = serde_json::to_string(&intent.undelivered).map_err(unavailable)?;
+    sqlx::query(
+        "INSERT INTO task_finalize_intents
+             (task_id, workspace_id, wake_event_id, run_id, report_json,
+              report_persisted, report_emitted, undelivered_json, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT(task_id, wake_event_id) DO UPDATE SET
+             workspace_id = excluded.workspace_id,
+             run_id = excluded.run_id,
+             report_json = excluded.report_json,
+             report_persisted = excluded.report_persisted,
+             report_emitted = excluded.report_emitted,
+             undelivered_json = excluded.undelivered_json,
+             updated_at = excluded.updated_at",
+    )
+    .bind(&intent.task_id)
+    .bind(&intent.workspace_id)
+    .bind(&intent.wake_event_id)
+    .bind(&intent.run_id)
+    .bind(report_json)
+    .bind(i64::from(intent.report_persisted))
+    .bind(i64::from(intent.report_emitted))
+    .bind(undelivered_json)
+    .bind(now)
+    .bind(now)
+    .execute(&mut **tx)
+    .await
+    .map_err(unavailable)?;
+    Ok(())
+}
+
 /// Statuses that may legally transition to `next`. The first write of a
 /// transition transaction carries this list so SQLite acquires the write lock
 /// before any read (avoiding a deferred SHARED -> RESERVED upgrade failure).
@@ -772,8 +809,6 @@ impl Db {
     /// and clearing `dispatched_at` means the original dispatch's later
     /// `Dispatched` acknowledgement is rejected by `mark_wake`'s guard.
     pub async fn requeue_with_finalize_intent(&self, intent: &TaskFinalizeIntent) -> Result<(), TaskStoreError> {
-        let report_json = serde_json::to_string(&intent.report).map_err(unavailable)?;
-        let undelivered_json = serde_json::to_string(&intent.undelivered).map_err(unavailable)?;
         let now = Utc::now();
         let mut tx = self.pool().begin().await.map_err(unavailable)?;
         let requeued = sqlx::query(
@@ -792,33 +827,16 @@ impl Db {
             // resurrect it or leave an unreachable intent behind.
             return Err(TaskStoreError::ConcurrentUpdate);
         }
-        sqlx::query(
-            "INSERT INTO task_finalize_intents
-                 (task_id, workspace_id, wake_event_id, run_id, report_json,
-                  report_persisted, report_emitted, undelivered_json, created_at, updated_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-             ON CONFLICT(task_id, wake_event_id) DO UPDATE SET
-                 workspace_id = excluded.workspace_id,
-                 run_id = excluded.run_id,
-                 report_json = excluded.report_json,
-                 report_persisted = excluded.report_persisted,
-                 report_emitted = excluded.report_emitted,
-                 undelivered_json = excluded.undelivered_json,
-                 updated_at = excluded.updated_at",
-        )
-        .bind(&intent.task_id)
-        .bind(&intent.workspace_id)
-        .bind(&intent.wake_event_id)
-        .bind(&intent.run_id)
-        .bind(report_json)
-        .bind(i64::from(intent.report_persisted))
-        .bind(i64::from(intent.report_emitted))
-        .bind(undelivered_json)
-        .bind(now)
-        .bind(now)
-        .execute(&mut *tx)
-        .await
-        .map_err(unavailable)?;
+        upsert_finalize_intent_tx(&mut tx, intent, now).await?;
+        tx.commit().await.map_err(unavailable)?;
+        Ok(())
+    }
+
+    /// Persist a finalize intent without changing the wake state. This backs
+    /// the in-memory staging retry after a transient atomic-stage failure.
+    pub async fn put_finalize_intent(&self, intent: &TaskFinalizeIntent) -> Result<(), TaskStoreError> {
+        let mut tx = self.pool().begin().await.map_err(unavailable)?;
+        upsert_finalize_intent_tx(&mut tx, intent, Utc::now()).await?;
         tx.commit().await.map_err(unavailable)?;
         Ok(())
     }
@@ -872,6 +890,62 @@ impl Db {
             .await
             .map_err(unavailable)?;
         Ok(())
+    }
+
+    /// The completed Run report for `run_id`. `finish_run` returning
+    /// `ConcurrentUpdate` is ambiguous: the prior write may have committed and
+    /// lost only its acknowledgement. This read resolves that ambiguity.
+    pub async fn completed_run_report(
+        &self,
+        run_id: &str,
+    ) -> Result<Option<tinyiothub_core::agent_runs::RunReport>, TaskStoreError> {
+        let row: Option<(String,)> = sqlx::query_as(
+            "SELECT report FROM agent_runs
+             WHERE id = ? AND status = 'completed' AND report IS NOT NULL",
+        )
+        .bind(run_id)
+        .fetch_optional(self.pool())
+        .await
+        .map_err(unavailable)?;
+        row.map(|(json,)| serde_json::from_str(&json).map_err(unavailable))
+            .transpose()
+    }
+
+    pub async fn count_finalize_intents(&self) -> Result<i64, TaskStoreError> {
+        sqlx::query_scalar("SELECT COUNT(*) FROM task_finalize_intents")
+            .fetch_one(self.pool())
+            .await
+            .map_err(unavailable)
+    }
+
+    /// Bounded retention sweep for finalize intents. Only rows older than the
+    /// cutoff whose wake is no longer live (resolved/dead/missing) or whose
+    /// Task is terminal are removable; an intent that can still be retried is
+    /// never dropped.
+    pub async fn prune_finalize_intents(&self, older_than: DateTime<Utc>) -> Result<usize, TaskStoreError> {
+        let affected = sqlx::query(
+            "DELETE FROM task_finalize_intents
+             WHERE updated_at < ?
+               AND (
+                   NOT EXISTS (
+                       SELECT 1 FROM task_wake_outbox w
+                       WHERE w.task_id = task_finalize_intents.task_id
+                         AND w.event_id = task_finalize_intents.wake_event_id
+                         AND w.resolved_at IS NULL
+                   )
+                   OR NOT EXISTS (
+                       SELECT 1 FROM agent_tasks t
+                       WHERE t.id = task_finalize_intents.task_id
+                         AND t.status NOT IN ('completed', 'failed', 'cancelled')
+                   )
+               )",
+        )
+        .bind(older_than)
+        .execute(self.pool())
+        .await
+        .map_err(unavailable)?
+        .rows_affected();
+        Ok(affected as usize)
     }
 
     pub async fn retry_dead_wake(&self, workspace_id: &str, event_id: &str) -> Result<bool, TaskStoreError> {
@@ -1745,6 +1819,109 @@ mod tests {
             .await
             .expect("complete intent");
         assert!(db.finalize_intent("task_1", "event_1").await.expect("load").is_none());
+    }
+
+    #[tokio::test]
+    async fn completed_run_report_is_readable_only_after_the_finish_commits() {
+        let pool = crate::test_helpers::test_pool().await;
+        seed_workspace(&pool, "ws_1").await;
+        let db = Db::new(pool);
+        let task = sample_task("task_1", "ws_1", "key_1", "inspect");
+        db.create_task_with_wake(&task, &sample_wake("task_1", "event_1", "ws_1"))
+            .await
+            .expect("create");
+        assert!(
+            db.begin_run(&task, "event_1", "run_1").await.expect("begin"),
+            "the run row must be created"
+        );
+        assert!(
+            db.completed_run_report("run_1")
+                .await
+                .expect("pre-finish read")
+                .is_none(),
+            "a running row is not a completed report"
+        );
+
+        let report = sample_report("run_1", "event_1");
+        db.finish_run(&report).await.expect("finish");
+        let stored = db
+            .completed_run_report("run_1")
+            .await
+            .expect("completed read")
+            .expect("completed report");
+        assert_eq!(stored.run_id, "run_1");
+        assert_eq!(stored.task_id.as_deref(), Some("task_1"));
+        assert_eq!(stored.wake_event_id.as_deref(), Some("event_1"));
+        assert_eq!(stored.outcome, tinyiothub_core::agent_runs::Outcome::Acted);
+        assert!(
+            db.completed_run_report("run_missing")
+                .await
+                .expect("missing read")
+                .is_none(),
+            "an unknown run has no completed report"
+        );
+    }
+
+    #[tokio::test]
+    async fn prune_finalize_intents_removes_only_old_settled_rows() {
+        let pool = crate::test_helpers::test_pool().await;
+        seed_workspace(&pool, "ws_1").await;
+        let db = Db::new(pool);
+
+        for index in 1..=4 {
+            let task_id = format!("task_{index}");
+            let event_id = format!("event_{index}");
+            let task = sample_task(&task_id, "ws_1", &format!("key_{index}"), "inspect");
+            db.create_task_with_wake(&task, &sample_wake(&task_id, &event_id, "ws_1"))
+                .await
+                .expect("create");
+            let mut report = sample_report(&format!("run_{index}"), &event_id);
+            report.task_id = Some(task_id.clone());
+            let intent = TaskFinalizeIntent {
+                task_id,
+                workspace_id: "ws_1".into(),
+                wake_event_id: event_id,
+                run_id: format!("run_{index}"),
+                report,
+                report_persisted: false,
+                report_emitted: false,
+                undelivered: vec![],
+            };
+            db.requeue_with_finalize_intent(&intent).await.expect("stage");
+        }
+
+        // 1: old + resolved wake. 2: old + live wake (must be kept).
+        // 3: old + terminal Task. 4: recent + resolved wake (must be kept).
+        db.mark_wake("task_1", "event_1", WakeDispatchState::Dead)
+            .await
+            .expect("dead wake");
+        db.transition_task("ws_1", "task_3", 0, TaskStatus::Failed, None)
+            .await
+            .expect("terminal task");
+        db.mark_wake("task_4", "event_4", WakeDispatchState::Dead)
+            .await
+            .expect("dead wake");
+        sqlx::query(
+            "UPDATE task_finalize_intents SET updated_at = '2000-01-01T00:00:00Z'
+             WHERE task_id IN ('task_1', 'task_2', 'task_3')",
+        )
+        .execute(db.pool())
+        .await
+        .expect("age intents");
+
+        let cutoff = Utc::now() - chrono::Duration::days(7);
+        assert_eq!(db.prune_finalize_intents(cutoff).await.expect("prune"), 2);
+        assert_eq!(db.count_finalize_intents().await.expect("count"), 2);
+        assert!(db.finalize_intent("task_1", "event_1").await.expect("load").is_none());
+        assert!(
+            db.finalize_intent("task_2", "event_2").await.expect("load").is_some(),
+            "an intent whose wake is still live must not be pruned"
+        );
+        assert!(db.finalize_intent("task_3", "event_3").await.expect("load").is_none());
+        assert!(
+            db.finalize_intent("task_4", "event_4").await.expect("load").is_some(),
+            "a recent intent must not be pruned"
+        );
     }
 
     #[tokio::test]
