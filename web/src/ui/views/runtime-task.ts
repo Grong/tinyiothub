@@ -404,7 +404,7 @@ export class RuntimeTaskView extends LitElement {
           </p>
           ${projection
             ? html`<runtime-task-controls .workspaceId=${this.workspaceId} .taskId=${this.taskId}
-                .projection=${projection} .readOnly=${this.historyMode}
+                .projection=${projection} .revision=${this.revision} .readOnly=${this.historyMode}
                 @projection-change=${this.onProjectionChange}
                 @refresh-request=${this.refreshProjection}></runtime-task-controls>`
             : nothing}

@@ -29,6 +29,7 @@ export class RuntimeTaskControls extends LitElement {
   @property() workspaceId = '';
   @property() taskId = '';
   @property({ attribute: false }) projection: RuntimeProjection | null = null;
+  @property({ type: Number }) revision = 0;
   @property({ type: Boolean }) readOnly = false;
 
   @state() private pending: 'pause' | 'resume' | 'cancel' | null = null;
@@ -226,6 +227,7 @@ export class RuntimeTaskControls extends LitElement {
   }
 
   render() {
+    void this.revision;
     const unknown = this.unknownJobs;
     const style = html`<style>
       runtime-task-controls { display: inline-flex; flex-direction: column; gap: var(--space-2, 8px); }

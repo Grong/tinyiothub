@@ -1,20 +1,33 @@
 import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from 'vitest';
-import { getRuntimeTask, pauseRuntimeTask } from '../../api/runtime.js';
+import { cancelRuntimeTask, getRuntimeTask, pauseRuntimeTask } from '../../api/runtime.js';
 import { connectRuntimeStream, type RuntimeStreamCallbacks } from '../../api/runtime-stream.js';
-import type { RuntimeEvent, TaskProjection, TaskStatus } from '../../types/runtime.js';
+import type {
+  DeviceJobState,
+  RuntimeEvent,
+  RuntimeJob,
+  TaskProjection,
+  TaskStatus,
+} from '../../types/runtime.js';
 import type { RuntimePlayback } from './runtime-playback.js';
+import type { RuntimeTaskControls } from './runtime-task-controls.js';
 import { parseRuntimeHash, type RuntimeView } from './runtime-url-state.js';
 import './runtime-task.js';
 import type { RuntimeTaskView } from './runtime-task.js';
 
 vi.mock('../../api/runtime.js', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../../api/runtime.js')>();
-  return { ...actual, getRuntimeTask: vi.fn(), pauseRuntimeTask: vi.fn() };
+  return {
+    ...actual,
+    getRuntimeTask: vi.fn(),
+    pauseRuntimeTask: vi.fn(),
+    cancelRuntimeTask: vi.fn(),
+  };
 });
 vi.mock('../../api/runtime-stream.js', () => ({ connectRuntimeStream: vi.fn() }));
 
 const get = vi.mocked(getRuntimeTask);
 const pause = vi.mocked(pauseRuntimeTask);
+const cancel = vi.mocked(cancelRuntimeTask);
 const connect = vi.mocked(connectRuntimeStream);
 let view: RuntimeTaskView;
 let close: Mock<() => void>;
@@ -39,9 +52,45 @@ function liveEvent(eventId: string, cursor = 3): RuntimeEvent {
   };
 }
 
+function taskStatusEvent(eventType: 'task.completed' | 'task.cancelled', cursor = 1): RuntimeEvent {
+  return {
+    cursor, eventId: `${eventType}:${cursor}`, eventType, occurredAt: '2026-10-27T10:04:00Z',
+    workspaceId: 'ws_1', taskId: 'task_1', runId: null, toolCallId: null, jobId: null,
+    approvalId: null, deviceId: null, sourceId: null, sourceSeq: null, evidenceId: null,
+    data: { stateVersion: 1 },
+  };
+}
+
+function jobStateEvent(jobId: string, state: DeviceJobState, cursor = 1): RuntimeEvent {
+  return {
+    cursor, eventId: `job:${jobId}:${state}`, eventType: `job.${state}`, occurredAt: '2026-10-27T10:04:00Z',
+    workspaceId: 'ws_1', taskId: 'task_1', runId: 'run_1', toolCallId: 'call_1', jobId,
+    approvalId: null, deviceId: 'dev_1', sourceId: null, sourceSeq: null, evidenceId: null,
+    data: { state },
+  };
+}
+
+function runningJob(): RuntimeJob {
+  return {
+    id: 'job_1', workspaceId: 'ws_1', deviceId: 'dev_1', tool: 'set_device',
+    argsJson: { value: 21 }, state: 'running', stopRequestedAt: null, progressJson: null,
+    resultJson: null, taskId: 'task_1', runId: 'run_1', toolCallId: 'call_1', driverCallId: null,
+    timeoutMs: 1000, startedAt: '2026-10-27T10:00:00Z', endedAt: null,
+  };
+}
+
+function snapshotWithRunningJob(): TaskProjection {
+  const value = snapshot();
+  value.jobs = [runningJob()];
+  value.associations = [{ deviceId: 'dev_1', sourceIds: [] }];
+  return value;
+}
+
 beforeEach(() => {
   localStorage.setItem('workspace-id', 'ws_1');
   window.history.replaceState({}, '', '/');
+  pause.mockReset();
+  cancel.mockReset();
   close = vi.fn();
   connect.mockImplementation((input) => {
     streamCallbacks = input.callbacks;
@@ -472,5 +521,64 @@ describe('Runtime Task detail shell', () => {
     expect(view.querySelector('.runtime-task__status')?.textContent).toContain('paused');
     expect(view.querySelector('runtime-task-controls button[data-action="resume"]')).not.toBeNull();
     expect(connect).toHaveBeenCalledOnce();
+  });
+
+  it('removes Pause and Cancel when the live stream makes the Task terminal', async () => {
+    get.mockResolvedValue({ code: 0, msg: '', result: snapshot() });
+    await mount();
+    expect(view.querySelector('runtime-task-controls button[data-action="pause"]')).not.toBeNull();
+    expect(view.querySelector('runtime-task-controls button[data-action="overflow"]')).not.toBeNull();
+
+    streamCallbacks.event(taskStatusEvent('task.completed'));
+    await view.updateComplete;
+    await Promise.resolve();
+    await view.updateComplete;
+
+    expect(view.querySelector('.runtime-task__status')?.textContent).toContain('completed');
+    expect(view.querySelector('runtime-task-controls button[data-action="pause"]')).toBeNull();
+    expect(view.querySelector('runtime-task-controls button[data-action="overflow"]')).toBeNull();
+  });
+
+  it('clears Cancelling when the live stream reports the Task cancelled', async () => {
+    get.mockResolvedValue({ code: 0, msg: '', result: snapshot() });
+    cancel.mockImplementation(() => new Promise<never>(() => {}));
+    await mount();
+    const controls = view.querySelector<RuntimeTaskControls>('runtime-task-controls')!;
+
+    controls.querySelector<HTMLButtonElement>('button[data-action="overflow"]')!.click();
+    await controls.updateComplete;
+    controls.querySelector<HTMLButtonElement>('button[data-action="menu-cancel"]')!.click();
+    await controls.updateComplete;
+    controls.querySelector<HTMLButtonElement>('button[data-action="danger"]')!.click();
+    await controls.updateComplete;
+
+    expect(cancel).toHaveBeenCalledOnce();
+    expect(controls.textContent).toContain('Cancelling');
+
+    streamCallbacks.event(taskStatusEvent('task.cancelled'));
+    await view.updateComplete;
+    await controls.updateComplete;
+    await Promise.resolve();
+    await controls.updateComplete;
+
+    expect(controls.textContent).not.toContain('Cancelling');
+    expect(controls.querySelector('button[data-action="pause"]')).toBeNull();
+    expect(controls.querySelector('button[data-action="overflow"]')).toBeNull();
+  });
+
+  it('shows Cancellation needs attention when cancelled_unknown arrives via the live stream', async () => {
+    get.mockResolvedValue({ code: 0, msg: '', result: snapshotWithRunningJob() });
+    await mount();
+    const controls = view.querySelector<RuntimeTaskControls>('runtime-task-controls')!;
+    expect(controls.querySelector('[data-attention="cancelled-unknown"]')).toBeNull();
+
+    streamCallbacks.event(jobStateEvent('job_1', 'cancelled_unknown'));
+    await view.updateComplete;
+    await controls.updateComplete;
+
+    expect(controls.querySelector('[data-attention="cancelled-unknown"]')).not.toBeNull();
+    expect(controls.textContent).toContain('Cancellation needs attention');
+    expect(controls.textContent).toContain('dev_1');
+    expect(controls.textContent).not.toContain('All stopped');
   });
 });
