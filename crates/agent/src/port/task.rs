@@ -1,7 +1,7 @@
 use async_trait::async_trait;
 use tinyiothub_core::agent_runs::RunReport;
 use tinyiothub_core::agent_task::{
-    AgentTask, CreateTaskOutcome, TaskStatus, TaskStoreError, TaskWake, WakeDispatchState,
+    AgentTask, CreateTaskOutcome, TaskFinalizeIntent, TaskStatus, TaskStoreError, TaskWake, WakeDispatchState,
 };
 
 #[async_trait]
@@ -37,6 +37,16 @@ pub trait TaskStore: Send + Sync {
     async fn claim_pending_wakes(&self, limit: i64) -> Result<Vec<TaskWake>, TaskStoreError>;
     async fn recover_claimed_wakes(&self) -> Result<usize, TaskStoreError>;
     async fn mark_wake(&self, task_id: &str, event_id: &str, state: WakeDispatchState) -> Result<(), TaskStoreError>;
+    /// Atomically persist a finalize intent and put its wake back on the
+    /// outbox. The clear of `dispatched_at` is what makes a later Dispatched
+    /// acknowledgement from the original claim a no-op.
+    async fn requeue_with_finalize_intent(&self, intent: &TaskFinalizeIntent) -> Result<(), TaskStoreError>;
+    async fn finalize_intent(
+        &self,
+        task_id: &str,
+        event_id: &str,
+    ) -> Result<Option<TaskFinalizeIntent>, TaskStoreError>;
+    async fn complete_finalize_intent(&self, task_id: &str, event_id: &str) -> Result<(), TaskStoreError>;
     async fn retry_dead_wake(&self, workspace_id: &str, event_id: &str) -> Result<bool, TaskStoreError>;
     async fn list_nonterminal_tasks(&self, workspace_id: Option<&str>) -> Result<Vec<AgentTask>, TaskStoreError>;
 }

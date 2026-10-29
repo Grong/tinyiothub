@@ -290,6 +290,21 @@ pub(crate) async fn project(
                 project_heartbeat_run(pool, report, publisher, shutdown).await;
             }
         }
+        AgentEventKind::TaskFinalizeBlocked {
+            task_id,
+            from,
+            to,
+            reason,
+        } => {
+            warn!(
+                metric = "runtime_task_finalize_blocked",
+                %task_id,
+                %from,
+                %to,
+                %reason,
+                "task finalize requested an illegal transition"
+            );
+        }
         AgentEventKind::TrustConfigChanged { workspace_id, config } => {
             // fencing upsert（CEO review T2）：以事件的 occurred_at 与已应用
             // 时间戳比较，乱序/回放的旧事件不覆盖新配置；与 handler 先写路径

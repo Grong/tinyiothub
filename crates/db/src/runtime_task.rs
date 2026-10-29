@@ -1,6 +1,8 @@
 use chrono::{DateTime, Utc};
 use sqlx::{Sqlite, Transaction};
-use tinyiothub_core::agent_task::{AgentTask, CreateTaskOutcome, TaskStatus, TaskStoreError, TaskWake};
+use tinyiothub_core::agent_task::{
+    AgentTask, CreateTaskOutcome, TaskFinalizeIntent, TaskStatus, TaskStoreError, TaskWake,
+};
 
 use crate::Db;
 use crate::runtime_event::{RuntimeEventInput, append_runtime_event_tx, task_event};
@@ -765,6 +767,113 @@ impl Db {
         Ok(())
     }
 
+    /// Stage the finalize intent and requeue its wake in one transaction. The
+    /// wake update runs first so SQLite takes the write lock before reading,
+    /// and clearing `dispatched_at` means the original dispatch's later
+    /// `Dispatched` acknowledgement is rejected by `mark_wake`'s guard.
+    pub async fn requeue_with_finalize_intent(&self, intent: &TaskFinalizeIntent) -> Result<(), TaskStoreError> {
+        let report_json = serde_json::to_string(&intent.report).map_err(unavailable)?;
+        let undelivered_json = serde_json::to_string(&intent.undelivered).map_err(unavailable)?;
+        let now = Utc::now();
+        let mut tx = self.pool().begin().await.map_err(unavailable)?;
+        let requeued = sqlx::query(
+            "UPDATE task_wake_outbox
+             SET dispatch_state = 'pending', dispatched_at = NULL
+             WHERE task_id = ? AND event_id = ? AND resolved_at IS NULL",
+        )
+        .bind(&intent.task_id)
+        .bind(&intent.wake_event_id)
+        .execute(&mut *tx)
+        .await
+        .map_err(unavailable)?
+        .rows_affected();
+        if requeued != 1 {
+            // A resolved wake belongs to a cancelled/terminal Task; do not
+            // resurrect it or leave an unreachable intent behind.
+            return Err(TaskStoreError::ConcurrentUpdate);
+        }
+        sqlx::query(
+            "INSERT INTO task_finalize_intents
+                 (task_id, workspace_id, wake_event_id, run_id, report_json,
+                  report_persisted, report_emitted, undelivered_json, created_at, updated_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             ON CONFLICT(task_id, wake_event_id) DO UPDATE SET
+                 workspace_id = excluded.workspace_id,
+                 run_id = excluded.run_id,
+                 report_json = excluded.report_json,
+                 report_persisted = excluded.report_persisted,
+                 report_emitted = excluded.report_emitted,
+                 undelivered_json = excluded.undelivered_json,
+                 updated_at = excluded.updated_at",
+        )
+        .bind(&intent.task_id)
+        .bind(&intent.workspace_id)
+        .bind(&intent.wake_event_id)
+        .bind(&intent.run_id)
+        .bind(report_json)
+        .bind(i64::from(intent.report_persisted))
+        .bind(i64::from(intent.report_emitted))
+        .bind(undelivered_json)
+        .bind(now)
+        .bind(now)
+        .execute(&mut *tx)
+        .await
+        .map_err(unavailable)?;
+        tx.commit().await.map_err(unavailable)?;
+        Ok(())
+    }
+
+    pub async fn finalize_intent(
+        &self,
+        task_id: &str,
+        event_id: &str,
+    ) -> Result<Option<TaskFinalizeIntent>, TaskStoreError> {
+        #[derive(sqlx::FromRow)]
+        struct Row {
+            task_id: String,
+            workspace_id: String,
+            wake_event_id: String,
+            run_id: String,
+            report_json: String,
+            report_persisted: i64,
+            report_emitted: i64,
+            undelivered_json: String,
+        }
+        sqlx::query_as::<_, Row>(
+            "SELECT task_id, workspace_id, wake_event_id, run_id, report_json,
+                    report_persisted, report_emitted, undelivered_json
+             FROM task_finalize_intents WHERE task_id = ? AND wake_event_id = ?",
+        )
+        .bind(task_id)
+        .bind(event_id)
+        .fetch_optional(self.pool())
+        .await
+        .map_err(unavailable)?
+        .map(|row| {
+            Ok(TaskFinalizeIntent {
+                task_id: row.task_id,
+                workspace_id: row.workspace_id,
+                wake_event_id: row.wake_event_id,
+                run_id: row.run_id,
+                report: serde_json::from_str(&row.report_json).map_err(unavailable)?,
+                report_persisted: row.report_persisted != 0,
+                report_emitted: row.report_emitted != 0,
+                undelivered: serde_json::from_str(&row.undelivered_json).map_err(unavailable)?,
+            })
+        })
+        .transpose()
+    }
+
+    pub async fn complete_finalize_intent(&self, task_id: &str, event_id: &str) -> Result<(), TaskStoreError> {
+        sqlx::query("DELETE FROM task_finalize_intents WHERE task_id = ? AND wake_event_id = ?")
+            .bind(task_id)
+            .bind(event_id)
+            .execute(self.pool())
+            .await
+            .map_err(unavailable)?;
+        Ok(())
+    }
+
     pub async fn retry_dead_wake(&self, workspace_id: &str, event_id: &str) -> Result<bool, TaskStoreError> {
         let affected = sqlx::query(
             "UPDATE task_wake_outbox
@@ -905,6 +1014,28 @@ mod tests {
             created_at: Utc::now(),
             dispatched_at: None,
             resolved_at: None,
+        }
+    }
+
+    fn sample_report(run_id: &str, wake_event_id: &str) -> tinyiothub_core::agent_runs::RunReport {
+        tinyiothub_core::agent_runs::RunReport {
+            run_id: run_id.into(),
+            workspace_id: "ws_1".into(),
+            trigger: "task:task_1".into(),
+            outcome: tinyiothub_core::agent_runs::Outcome::Acted,
+            summary: "finished".into(),
+            actions: vec![],
+            verified: true,
+            duration_ms: 1,
+            tool_calls: 0,
+            tokens: 0,
+            end_reason: None,
+            thing_id: None,
+            trace: vec![],
+            task_count: None,
+            snapshot: None,
+            task_id: Some("task_1".into()),
+            wake_event_id: Some(wake_event_id.into()),
         }
     }
 
@@ -1514,6 +1645,106 @@ mod tests {
         assert_eq!(retried.dispatch_state, WakeDispatchState::Pending);
         assert!(retried.dispatched_at.is_none());
         assert!(retried.resolved_at.is_none());
+    }
+
+    #[tokio::test]
+    async fn requeue_is_not_clobbered_by_a_late_dispatched_ack() {
+        let pool = crate::test_helpers::test_pool().await;
+        seed_workspace(&pool, "ws_1").await;
+        let db = Db::new(pool);
+        let task = sample_task("task_1", "ws_1", "key_1", "inspect");
+        db.create_task_with_wake(&task, &sample_wake("task_1", "event_1", "ws_1"))
+            .await
+            .expect("create");
+
+        // Claim -> explicit requeue -> original dispatch's late ack.
+        assert_eq!(db.claim_pending_wakes(10).await.expect("claim").len(), 1);
+        db.mark_wake("task_1", "event_1", WakeDispatchState::Pending)
+            .await
+            .expect("requeue");
+        db.mark_wake("task_1", "event_1", WakeDispatchState::Dispatched)
+            .await
+            .expect("late ack");
+        let wake = db
+            .wake_by_id("task_1", "event_1")
+            .await
+            .expect("wake")
+            .expect("present");
+        assert_eq!(wake.dispatch_state, WakeDispatchState::Pending);
+        assert!(wake.dispatched_at.is_none(), "the late ack must not re-lease the wake");
+        assert_eq!(
+            db.claim_pending_wakes(10).await.expect("re-claim").len(),
+            1,
+            "the requeued wake must remain claimable"
+        );
+
+        // Ack -> explicit requeue (reverse order) also converges to Pending.
+        db.mark_wake("task_1", "event_1", WakeDispatchState::Dispatched)
+            .await
+            .expect("ack");
+        db.mark_wake("task_1", "event_1", WakeDispatchState::Pending)
+            .await
+            .expect("requeue after ack");
+        let wake = db
+            .wake_by_id("task_1", "event_1")
+            .await
+            .expect("wake")
+            .expect("present");
+        assert_eq!(wake.dispatch_state, WakeDispatchState::Pending);
+        assert!(wake.dispatched_at.is_none());
+        assert!(db.wake_by_id("task_1", "event_1").await.expect("read").is_some());
+    }
+
+    #[tokio::test]
+    async fn finalize_intent_and_requeue_are_staged_together() {
+        let pool = crate::test_helpers::test_pool().await;
+        seed_workspace(&pool, "ws_1").await;
+        let db = Db::new(pool);
+        let task = sample_task("task_1", "ws_1", "key_1", "inspect");
+        db.create_task_with_wake(&task, &sample_wake("task_1", "event_1", "ws_1"))
+            .await
+            .expect("create");
+        assert_eq!(db.claim_pending_wakes(10).await.expect("claim").len(), 1);
+
+        let intent = tinyiothub_core::agent_task::TaskFinalizeIntent {
+            task_id: "task_1".into(),
+            workspace_id: "ws_1".into(),
+            wake_event_id: "event_1".into(),
+            run_id: "run_1".into(),
+            report: sample_report("run_1", "event_1"),
+            report_persisted: false,
+            report_emitted: false,
+            undelivered: vec!["wake_event_id: event_2".into()],
+        };
+        db.requeue_with_finalize_intent(&intent).await.expect("stage intent");
+
+        let wake = db
+            .wake_by_id("task_1", "event_1")
+            .await
+            .expect("wake")
+            .expect("present");
+        assert_eq!(wake.dispatch_state, WakeDispatchState::Pending);
+        assert!(wake.dispatched_at.is_none());
+        assert_eq!(
+            db.claim_pending_wakes(10).await.expect("re-claim").len(),
+            1,
+            "the staged requeue must be claimable"
+        );
+        let loaded = db
+            .finalize_intent("task_1", "event_1")
+            .await
+            .expect("load intent")
+            .expect("intent");
+        assert_eq!(loaded.run_id, "run_1");
+        assert!(!loaded.report_persisted);
+        assert!(!loaded.report_emitted);
+        assert_eq!(loaded.undelivered, vec!["wake_event_id: event_2".to_string()]);
+        assert_eq!(loaded.report.outcome, tinyiothub_core::agent_runs::Outcome::Acted);
+
+        db.complete_finalize_intent("task_1", "event_1")
+            .await
+            .expect("complete intent");
+        assert!(db.finalize_intent("task_1", "event_1").await.expect("load").is_none());
     }
 
     #[tokio::test]

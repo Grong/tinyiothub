@@ -1706,16 +1706,53 @@ mod tests {
         seed_workspace(&pool, "ws-1").await;
         let db = Db::new(pool);
         seed_task(&db, "ws-1", "task-1").await;
+        sqlx::query(
+            "INSERT INTO things (id, name, workspace_id, thing_type, state, zone_ref, position, driver_name)
+             VALUES ('dev-late', 'dev-late', 'ws-1', 'device', 1, 'North', 'rack-1', 'camera')",
+        )
+        .execute(db.pool())
+        .await
+        .expect("device");
+        let declaration = json!({
+            "manifestVersion":"1.0",
+            "driver":"camera",
+            "driverVersion":"1.0.0",
+            "stateFields":[{"name":"temperature","type":"number","unit":"C","key":"primary"}],
+            "tools":[]
+        });
+        sqlx::query(
+            "INSERT INTO device_declarations
+                 (workspace_id, thing_id, driver_name, driver_version, declaration_json,
+                  declaration_hash, status, updated_at)
+             VALUES ('ws-1', 'dev-late', 'camera', '1.0.0', ?, 'hash', 'active', 'now')",
+        )
+        .bind(declaration.to_string())
+        .execute(db.pool())
+        .await
+        .expect("device declaration");
+        // Seed the incremental projection, then simulate the terminal
+        // transition deleting it.
+        sqlx::query(
+            "INSERT INTO runtime_device_state (workspace_id, task_id, device_id, state_json, updated_at)
+             VALUES ('ws-1', 'task-1', 'dev-late', '{\"temperature\":\"18\"}', 'now')",
+        )
+        .execute(db.pool())
+        .await
+        .expect("seed projection");
         sqlx::query("UPDATE agent_tasks SET status = 'failed' WHERE id = 'task-1'")
             .execute(db.pool())
             .await
             .expect("terminal Task");
+        sqlx::query("DELETE FROM runtime_device_state WHERE workspace_id = 'ws-1' AND task_id = 'task-1'")
+            .execute(db.pool())
+            .await
+            .expect("terminal projection cleanup");
 
         let mut late = event("late-terminal", "task-1");
-        late.event_type = "read_device".into();
+        late.event_type = "job.interrupted".into();
         late.device_id = Some("dev-late".into());
         late.data = json!({"state":{"temperature":"22"}});
-        db.append_runtime_event(late).await.expect("late append");
+        let appended = db.append_runtime_event(late).await.expect("late append");
 
         let rows: i64 = sqlx::query_scalar(
             "SELECT COUNT(*) FROM runtime_device_state
@@ -1725,6 +1762,18 @@ mod tests {
         .await
         .expect("projection rows");
         assert_eq!(rows, 0, "a terminal Task must not regain a device projection");
+        let facts = appended.data.get("deviceFacts").expect("device facts");
+        assert_eq!(facts["deviceId"], "dev-late");
+        assert_eq!(facts["health"], "ok");
+        assert_eq!(facts["zone"], "North");
+        let fields = facts["fields"].as_array().expect("fields");
+        assert_eq!(fields.len(), 1);
+        assert_eq!(fields[0]["name"], "temperature");
+        assert_eq!(
+            fields[0]["value"], "22",
+            "returned facts must reflect only the late event, not the deleted projection"
+        );
+        assert!(!facts.to_string().contains("18"));
     }
 
     #[tokio::test]

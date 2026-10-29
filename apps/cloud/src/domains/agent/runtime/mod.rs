@@ -4,7 +4,7 @@ use async_trait::async_trait;
 use tinyiothub_agent::port::task::TaskStore;
 use tinyiothub_core::agent_runs::RunReport;
 use tinyiothub_core::agent_task::{
-    AgentTask, CreateTaskOutcome, TaskStatus, TaskStoreError, TaskWake, WakeDispatchState,
+    AgentTask, CreateTaskOutcome, TaskFinalizeIntent, TaskStatus, TaskStoreError, TaskWake, WakeDispatchState,
 };
 use tinyiothub_storage::Db;
 
@@ -170,6 +170,22 @@ impl TaskStore for DbTaskStore {
 
     async fn mark_wake(&self, task_id: &str, event_id: &str, state: WakeDispatchState) -> Result<(), TaskStoreError> {
         self.db.mark_wake(task_id, event_id, state).await
+    }
+
+    async fn requeue_with_finalize_intent(&self, intent: &TaskFinalizeIntent) -> Result<(), TaskStoreError> {
+        self.db.requeue_with_finalize_intent(intent).await
+    }
+
+    async fn finalize_intent(
+        &self,
+        task_id: &str,
+        event_id: &str,
+    ) -> Result<Option<TaskFinalizeIntent>, TaskStoreError> {
+        self.db.finalize_intent(task_id, event_id).await
+    }
+
+    async fn complete_finalize_intent(&self, task_id: &str, event_id: &str) -> Result<(), TaskStoreError> {
+        self.db.complete_finalize_intent(task_id, event_id).await
     }
 
     async fn retry_dead_wake(&self, workspace_id: &str, event_id: &str) -> Result<bool, TaskStoreError> {

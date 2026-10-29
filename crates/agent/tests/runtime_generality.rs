@@ -25,7 +25,7 @@ use tinyiothub_agent::runtime::thing_agent::task::coordinator::{Advance, TaskCoo
 use tinyiothub_agent::runtime::thing_agent::types::{Priority, TriggerSource, WakeSignal};
 use tinyiothub_core::agent_runs::RunReport;
 use tinyiothub_core::agent_task::{
-    AgentTask, CreateTaskOutcome, TaskStatus, TaskStoreError, TaskWake, WakeDispatchState,
+    AgentTask, CreateTaskOutcome, TaskFinalizeIntent, TaskStatus, TaskStoreError, TaskWake, WakeDispatchState,
 };
 use tinyiothub_core::device_job::{DeviceJob, DeviceJobError, DeviceJobState};
 use tinyiothub_core::error::Error;
@@ -281,6 +281,7 @@ struct MemoryState {
     wakes: HashMap<(String, String), TaskWake>,
     runs: HashSet<(String, String)>,
     reports: Vec<RunReport>,
+    intents: HashMap<(String, String), TaskFinalizeIntent>,
 }
 
 #[derive(Default)]
@@ -529,6 +530,43 @@ impl TaskStore for MemoryTasks {
             .filter(|task| workspace_id.is_none_or(|workspace| workspace == task.workspace_id))
             .cloned()
             .collect())
+    }
+
+    async fn requeue_with_finalize_intent(&self, intent: &TaskFinalizeIntent) -> Result<(), TaskStoreError> {
+        let mut state = self.state.lock().expect("tasks");
+        let wake = state
+            .wakes
+            .get_mut(&(intent.task_id.clone(), intent.wake_event_id.clone()))
+            .ok_or(TaskStoreError::ConcurrentUpdate)?;
+        wake.dispatch_state = WakeDispatchState::Pending;
+        wake.dispatched_at = None;
+        state
+            .intents
+            .insert((intent.task_id.clone(), intent.wake_event_id.clone()), intent.clone());
+        Ok(())
+    }
+
+    async fn finalize_intent(
+        &self,
+        task_id: &str,
+        event_id: &str,
+    ) -> Result<Option<TaskFinalizeIntent>, TaskStoreError> {
+        Ok(self
+            .state
+            .lock()
+            .expect("tasks")
+            .intents
+            .get(&(task_id.into(), event_id.into()))
+            .cloned())
+    }
+
+    async fn complete_finalize_intent(&self, task_id: &str, event_id: &str) -> Result<(), TaskStoreError> {
+        self.state
+            .lock()
+            .expect("tasks")
+            .intents
+            .remove(&(task_id.into(), event_id.into()));
+        Ok(())
     }
 }
 

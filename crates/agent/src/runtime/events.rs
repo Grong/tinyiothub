@@ -42,6 +42,16 @@ pub enum AgentEventKind {
         problem_key: Option<String>,
         dedup_key: Option<String>,
     },
+    /// A completed Task Run could not settle because the waiting relationship
+    /// implied an illegal status transition. Emitted instead of silently
+    /// leaving the Task stuck; the finalize intent is dropped so the wake is
+    /// not retried forever.
+    TaskFinalizeBlocked {
+        task_id: String,
+        from: String,
+        to: String,
+        reason: String,
+    },
     /// trust config 变更（状态跃迁，非每 tick）
     TrustConfigChanged {
         workspace_id: String,

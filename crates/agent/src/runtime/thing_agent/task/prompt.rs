@@ -34,6 +34,38 @@ fn truncate_chars(value: &str, max: usize) -> (String, bool) {
     }
 }
 
+/// Render the fenced "Terminal Job result" block shared by the continuation
+/// prompt and steering facts. The result is escaped first and truncated second,
+/// so entity expansion (`&`, `<`, `>`) cannot push the rendered block past the
+/// character bound.
+pub(crate) fn terminal_job_result_block(job: &DeviceJob) -> String {
+    let raw = job
+        .result_json
+        .as_ref()
+        .map(serde_json::Value::to_string)
+        .unwrap_or_else(|| "none".to_string());
+    let escaped = escape_untrusted(&raw);
+    let (result, truncated) = truncate_chars(&escaped, MAX_TERMINAL_JOB_RESULT_CHARS);
+    let mut out = String::from("\n\nTerminal Job result\n<untrusted_task_context>");
+    let _ = write!(
+        out,
+        "\njob_id: {}\ndevice_id: {}\ntool: {}\nstate: {}\nresult: {}",
+        escape_untrusted(&job.id),
+        escape_untrusted(&job.device_id),
+        escape_untrusted(&job.tool),
+        job.state.as_str(),
+        result
+    );
+    if truncated {
+        let _ = write!(
+            out,
+            "\nresult_truncated: true (showing first {MAX_TERMINAL_JOB_RESULT_CHARS} characters)"
+        );
+    }
+    out.push_str("\n</untrusted_task_context>");
+    out
+}
+
 #[allow(clippy::too_many_arguments)]
 pub fn build_task_prompt(
     task: &AgentTask,
@@ -89,29 +121,7 @@ pub fn build_task_prompt(
     }
 
     if let Some(job) = terminal_job {
-        let result = job
-            .result_json
-            .as_ref()
-            .map(serde_json::Value::to_string)
-            .unwrap_or_else(|| "none".to_string());
-        let (result, truncated) = truncate_chars(&result, MAX_TERMINAL_JOB_RESULT_CHARS);
-        out.push_str("\n\nTerminal Job result\n<untrusted_task_context>");
-        let _ = write!(
-            out,
-            "\njob_id: {}\ndevice_id: {}\ntool: {}\nstate: {}\nresult: {}",
-            escape_untrusted(&job.id),
-            escape_untrusted(&job.device_id),
-            escape_untrusted(&job.tool),
-            job.state.as_str(),
-            escape_untrusted(&result)
-        );
-        if truncated {
-            let _ = write!(
-                out,
-                "\nresult_truncated: true (showing first {MAX_TERMINAL_JOB_RESULT_CHARS} characters)"
-            );
-        }
-        out.push_str("\n</untrusted_task_context>");
+        out.push_str(&terminal_job_result_block(job));
     }
 
     let mut pending_watches: Vec<&WatchRule> = watches.iter().collect();
@@ -384,6 +394,27 @@ mod tests {
         assert!(
             !prompt.contains(&"x".repeat(4_001)),
             "the persisted result must be truncated at the documented bound"
+        );
+
+        // Escape before truncation: `&`, `<`, `>` expand, so truncating the raw
+        // JSON first would let the rendered block exceed the bound.
+        terminal.result_json = Some(serde_json::json!({"blob": "<&>".repeat(2_000)}));
+        let prompt = build_task_prompt(&task(), &[], &[], &[], &[], "", None, Some(&terminal));
+        let block = prompt.rsplit("Terminal Job result").next().expect("terminal block");
+        assert!(block.contains("result_truncated: true"), "{block}");
+        let result = block
+            .lines()
+            .find_map(|line| line.strip_prefix("result: "))
+            .expect("rendered result");
+        assert!(
+            result.chars().count() <= 4_000,
+            "escaped result must stay bounded, got {} chars",
+            result.chars().count()
+        );
+        assert!(result.contains("&lt;&amp;&gt;"));
+        assert!(
+            block.lines().count() < 12,
+            "adversarial expansion must not add rendered lines: {block}"
         );
     }
 }

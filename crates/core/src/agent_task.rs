@@ -1,6 +1,8 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
+use crate::agent_runs::RunReport;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum TaskStatus {
@@ -160,6 +162,24 @@ pub struct TaskWake {
     pub created_at: DateTime<Utc>,
     pub dispatched_at: Option<DateTime<Utc>>,
     pub resolved_at: Option<DateTime<Utc>>,
+}
+
+/// Durable intent for the part of a Task Run that has already produced a
+/// report but has not finished teardown. The report is persisted separately by
+/// `finish_run`; the flags record whether that write and its `RunRecorded`
+/// emission already happened, so a retry never repeats either. Requeueing the
+/// wake and staging this row happen in one write, so the router can retry the
+/// exact same Run without re-executing the model or resubmitting device work.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TaskFinalizeIntent {
+    pub task_id: String,
+    pub workspace_id: String,
+    pub wake_event_id: String,
+    pub run_id: String,
+    pub report: RunReport,
+    pub report_persisted: bool,
+    pub report_emitted: bool,
+    pub undelivered: Vec<String>,
 }
 
 #[cfg(test)]
