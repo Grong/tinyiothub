@@ -29,7 +29,6 @@ export class RuntimePlayback extends LitElement {
 
   private hls?: Hls;
   private media?: HTMLVideoElement | HTMLImageElement;
-  private loadAbort?: AbortController;
   private generation = 0;
   private ownsPlayer = false;
   private errorMedia?: HTMLVideoElement | HTMLImageElement;
@@ -144,7 +143,6 @@ export class RuntimePlayback extends LitElement {
   private startPlayer(): void {
     this.destroyPlayer();
     const generation = ++this.generation;
-    this.loadAbort = new AbortController();
     const descriptor = this.descriptor;
     if (!descriptor) return;
 
@@ -178,6 +176,9 @@ export class RuntimePlayback extends LitElement {
       hls.on(Hls.Events.ERROR, (_event, data) => {
         if (generation !== this.generation || !data.fatal) return;
         this.showUnavailable(generation, 'hls_fatal');
+        // A fatal error leaves the instance dead; release the player instead of
+        // letting a broken Hls/<video> pair linger until the next descriptor.
+        this.destroyPlayer();
       });
       this.acquirePlayer('hls');
       hls.loadSource(usable.url);
@@ -189,8 +190,6 @@ export class RuntimePlayback extends LitElement {
 
   private destroyPlayer(): void {
     this.generation += 1;
-    this.loadAbort?.abort();
-    this.loadAbort = undefined;
     this.unbindMediaError();
     if (this.hls) {
       const hls = this.hls;
@@ -220,7 +219,7 @@ export class RuntimePlayback extends LitElement {
       <div class="runtime-playback">
         ${
           usable?.protocol === 'mjpeg'
-            ? html`<img class="runtime-playback__media" alt=${this.alt} .src=${usable.url} />`
+            ? html`<img class="runtime-playback__media" alt=${this.alt} />`
             : usable?.protocol === 'hls'
               ? html`<video
                   class="runtime-playback__media"

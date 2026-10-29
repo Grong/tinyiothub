@@ -258,6 +258,53 @@ describe('RuntimeProjection', () => {
     expect(projection.stale).toBe(true);
   });
 
+  it('freezes steps restored by the in-page history transition', () => {
+    const projection = new RuntimeProjection(snapshotWithNoDevices());
+    projection.restoreHistorySteps([event('event_1', 'read_device', {}, { deviceId: 'dev_1' })]);
+
+    // Both the live delta and a bounded page must be ignored once frozen; this
+    // fails if the frozenHistory guard in mergeSteps regresses.
+    projection.apply(event('event_2', 'read_device', {}, { deviceId: 'dev_2' }));
+    projection.mergeSteps([event('event_3', 'read_device', {}, { deviceId: 'dev_3' })]);
+
+    expect(projection.steps.map((step) => step.eventId)).toEqual(['event_1']);
+    expect(projection.eventIds.has('event_2')).toBe(false);
+    expect(projection.eventIds.has('event_3')).toBe(false);
+  });
+
+  it('round-trips live deviceFacts through the projection snapshot', () => {
+    const projection = new RuntimeProjection(snapshotWithNoDevices());
+    projection.apply(
+      event(
+        'event_1',
+        'read_device',
+        {
+          deviceFacts: {
+            deviceId: 'dev_camera',
+            health: 'ok',
+            zone: 'North',
+            position: 'rack-9',
+            sources: [{ id: 'live', dataKind: 'video' }],
+            fields: [{ name: 'temperature', value: null, unit: 'C' }],
+          },
+        },
+        { deviceId: 'dev_camera' },
+      ),
+    );
+
+    const roundTrip = new RuntimeProjection(projection.snapshot);
+    const camera = roundTrip.devices.find((device) => device.deviceId === 'dev_camera');
+
+    expect(camera).toMatchObject({
+      health: 'ok',
+      zone: 'North',
+      position: 'rack-9',
+      sources: [{ id: 'live', dataKind: 'video' }],
+      fields: [{ name: 'temperature', value: null, unit: 'C' }],
+    });
+    expect(roundTrip.snapshot.devices.map((device) => device.deviceId)).toEqual(['dev_camera']);
+  });
+
   it('groups current and recent Tasks by latest activity', () => {
     const groups = groupRuntimeTasks([
       task('old-current', { updatedAt: '2026-10-27T09:00:00Z' }),

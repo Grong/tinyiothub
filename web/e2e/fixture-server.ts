@@ -218,6 +218,21 @@ const fixtures: Record<string, Fixture> = {
       runtimeEvent('task_two_cameras', 2, 'read_device', { deviceId: 'cam-b' }),
     ],
   },
+  task_camera_and_sensor: {
+    projection: projection('task_camera_and_sensor', {
+      devices: [
+        device('cam-a'),
+        {
+          ...device('sensor-only', 'none'),
+          fields: [{ name: 'temperature', value: '21', unit: 'C' }],
+        },
+      ],
+    }),
+    events: [
+      runtimeEvent('task_camera_and_sensor', 1, 'read_device', { deviceId: 'cam-a' }),
+      runtimeEvent('task_camera_and_sensor', 2, 'read_device', { deviceId: 'sensor-only' }),
+    ],
+  },
   task_expired_mjpeg: {
     projection: projection('task_expired_mjpeg', { devices: [device('cam-expired-mjpeg')] }),
     events: [],

@@ -215,6 +215,20 @@ describe('runtime-playback errors and accessibility', () => {
     expect(element.shadowRoot?.textContent).toContain('Captions unavailable');
   });
 
+  it('destroys the Hls instance and media on a fatal error instead of leaving them alive', async () => {
+    const element = await mount(descriptor('fatal'));
+    const player = FakeHls.instances[0];
+    const video = element.shadowRoot?.querySelector('video') as HTMLVideoElement;
+
+    player.emitFatalError();
+    await element.updateComplete;
+
+    expect(player.destroy).toHaveBeenCalledOnce();
+    expect(FakeHls.activeCount).toBe(0);
+    expect(video.hasAttribute('src')).toBe(false);
+    expect(element.shadowRoot?.textContent).toContain('Playback unavailable');
+  });
+
   it('rejects stale Hls errors after a descriptor switch', async () => {
     const element = await mount(descriptor('stale'));
     const stale = FakeHls.instances[0];
@@ -305,6 +319,32 @@ describe('runtime-playback errors and accessibility', () => {
     expect(errorAdds()).toBe(2);
     expect(first.getAttribute('src')).toBe(descriptor('second-frame', 'mjpeg').url);
     expect(element.shadowRoot?.querySelectorAll('img')).toHaveLength(1);
+  });
+
+  it('assigns each MJPEG descriptor URL to the media element exactly once', async () => {
+    const assignments: string[] = [];
+    const descriptorProperty = Object.getOwnPropertyDescriptor(HTMLImageElement.prototype, 'src');
+    if (!descriptorProperty?.set) throw new Error('missing jsdom src setter');
+    const setSrc = descriptorProperty.set;
+    const spy = vi.spyOn(HTMLImageElement.prototype, 'src', 'set').mockImplementation(function (
+      this: HTMLImageElement,
+      value: string,
+    ) {
+      assignments.push(value);
+      setSrc.call(this, value);
+    });
+
+    const element = await mount(descriptor('first-frame', 'mjpeg'));
+    expect(assignments).toEqual([descriptor('first-frame', 'mjpeg').url]);
+
+    element.descriptor = descriptor('second-frame', 'mjpeg');
+    await element.updateComplete;
+    expect(assignments).toEqual([
+      descriptor('first-frame', 'mjpeg').url,
+      descriptor('second-frame', 'mjpeg').url,
+    ]);
+
+    spy.mockRestore();
   });
 });
 

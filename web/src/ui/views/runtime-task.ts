@@ -38,6 +38,7 @@ const deviceWidthStep = 24;
 const deviceWidthKey = 'runtime.devices.width';
 const deviceExpandedKey = 'runtime.devices.expanded';
 const timelinePageSize = 100;
+const timelineSeedTimeoutMs = 10_000;
 const playbackRefreshLeadMs = 30_000;
 const playbackRefreshRetryMs = 10_000;
 
@@ -82,8 +83,11 @@ export class RuntimeTaskView extends LitElement {
   @state() private timelineError = '';
   @state() private timelineHasMore = false;
   @state() private timelineOldest: number | null = null;
+  @state() private historyRejected = false;
+  @state() private historyNotice = '';
 
   private generation = 0;
+  private coldHistoryStripped = false;
   private abort: AbortController | null = null;
   private playbackAbort: AbortController | null = null;
   private timelineAbort: AbortController | null = null;
@@ -160,6 +164,17 @@ export class RuntimeTaskView extends LitElement {
       changed.has('history') &&
       changed.get('history') !== undefined &&
       !sameHistory(changed.get('history') ?? null, this.history);
+    const coldHistoryStripped = this.coldHistoryStripped;
+    // The router clearing the stale history value after a cold-link recovery is
+    // not a user navigation: keep the rejection (and its one-time notice) so the
+    // live view underneath the notice is not reloaded and the notice survives.
+    const clearingColdHistory = coldHistoryStripped && !isHistoryState(this.history);
+    if (historyChanged && !clearingColdHistory) {
+      // An explicit navigation supersedes a previous cold-link rejection.
+      this.historyRejected = false;
+      this.coldHistoryStripped = false;
+      this.historyNotice = '';
+    }
     if (taskChanged) {
       const previousTaskId = changed.get('taskId');
       if (typeof previousTaskId === 'string' && previousTaskId && previousTaskId !== this.taskId) {
@@ -167,6 +182,9 @@ export class RuntimeTaskView extends LitElement {
       }
       this.historyEventId = '';
       this.historyOccurredAt = '';
+      this.historyRejected = false;
+      this.coldHistoryStripped = false;
+      this.historyNotice = '';
       this.mobilePanel = null;
       this.announcement = '';
       this.lastTaskStatus = null;
@@ -176,7 +194,10 @@ export class RuntimeTaskView extends LitElement {
       this.cleanupTask();
       if (this.taskId) void this.load();
     } else if (historyChanged) {
-      if (this.historyMode) {
+      if (coldHistoryStripped && !this.historyMode) {
+        // The cold-link recovery already reloaded the live view in this cycle;
+        // the router clearing the stale history value must not reload it again.
+      } else if (this.historyMode) {
         const steps = this.projection?.steps ?? [];
         this.cleanupTask();
         if (this.taskId) void this.loadHistory(steps);
@@ -344,31 +365,31 @@ export class RuntimeTaskView extends LitElement {
     heading.focus({ preventScroll: true });
   }
 
-  private playbackAlt(): string {
+  /**
+   * Single resolver for playback target and alt text. An explicitly selected
+   * device without a video source fails closed instead of silently playing a
+   * different camera whose frame would then be misattributed in the alt text.
+   */
+  private resolvePlaybackTarget(): { deviceId: string; sourceId: string } | null {
     const devices = this.projection?.devices ?? [];
-    const device =
-      devices.find((item) => item.deviceId === this.device) ??
-      devices.find((item) => item.sources?.some((source) => source.dataKind === 'video')) ??
-      devices[0];
-    const source = device?.sources?.find((item) => item.dataKind === 'video');
-    if (device && source) return `Live camera frame from ${device.deviceId}, source ${source.id}`;
-    if (device) return `Live camera frame from ${device.deviceId}`;
-    return 'Live camera frame';
-  }
-
-  private get playbackTarget(): { deviceId: string; sourceId: string } | null {
-    const devices = this.projection?.devices ?? [];
-    const ordered = this.device
-      ? [
-          ...devices.filter((item) => item.deviceId === this.device),
-          ...devices.filter((item) => item.deviceId !== this.device),
-        ]
+    const candidates = this.device
+      ? devices.filter((item) => item.deviceId === this.device)
       : devices;
-    for (const device of ordered) {
+    for (const device of candidates) {
       const source = device.sources?.find((item) => item.dataKind === 'video');
       if (source) return { deviceId: device.deviceId, sourceId: source.id };
     }
     return null;
+  }
+
+  private playbackAlt(): string {
+    const target = this.resolvePlaybackTarget();
+    if (!target) return 'Live camera frame';
+    return `Live camera frame from ${target.deviceId}, source ${target.sourceId}`;
+  }
+
+  private get playbackTarget(): { deviceId: string; sourceId: string } | null {
+    return this.resolvePlaybackTarget();
   }
 
   /** Tear down media, signed URLs and timers; safe to call repeatedly. */
@@ -634,7 +655,28 @@ export class RuntimeTaskView extends LitElement {
   }
 
   private get historyMode(): boolean {
-    return isHistoryState(this.history);
+    return !this.historyRejected && isHistoryState(this.history);
+  }
+
+  /**
+   * A cold history link has no in-memory steps to freeze. Showing the live
+   * snapshot under a past-time banner would present present facts as past ones,
+   * so strip the cursor, show a one-time notice, and load the live view.
+   */
+  private recoverColdHistory(): void {
+    if (!isHistoryState(this.history) || this.projection) return;
+    this.historyRejected = true;
+    this.coldHistoryStripped = true;
+    this.historyNotice = 'History is no longer available from this link; showing live activity.';
+    window.history.replaceState(
+      {},
+      '',
+      toLiveRuntimeTaskUrl(this.taskId, { view: this.view, device: this.device }),
+    );
+    // Let the router re-render from the live URL without blocking this load.
+    queueMicrotask(() => {
+      window.dispatchEvent(new HashChangeEvent('hashchange'));
+    });
   }
 
   private historyTime(): string {
@@ -697,6 +739,7 @@ export class RuntimeTaskView extends LitElement {
   }
 
   private async load(): Promise<void> {
+    this.recoverColdHistory();
     const generation = ++this.generation;
     const taskId = this.taskId;
     this.abort = new AbortController();
@@ -729,14 +772,28 @@ export class RuntimeTaskView extends LitElement {
     this.timelineError = '';
     this.timelineHasMore = false;
     this.timelineOldest = null;
+    let timedOut = false;
+    let timeout: ReturnType<typeof setTimeout> | null = null;
     try {
-      const response = await listRuntimeTaskEvents(
-        this.workspaceId,
-        taskId,
-        timelinePageSize,
-        undefined,
-        controller.signal,
-      );
+      // The seed must never gate live updates indefinitely: a stalled events
+      // request opens SSE anyway and leaves the timeline in an error/Retry
+      // state.
+      const response = await Promise.race([
+        listRuntimeTaskEvents(
+          this.workspaceId,
+          taskId,
+          timelinePageSize,
+          undefined,
+          controller.signal,
+        ),
+        new Promise<never>((_resolve, reject) => {
+          timeout = setTimeout(() => {
+            timedOut = true;
+            controller.abort();
+            reject(new Error('Timeline request timed out'));
+          }, timelineSeedTimeoutMs);
+        }),
+      ]);
       if (generation !== this.generation || taskId !== this.taskId || controller.signal.aborted)
         return;
       const page = response.result;
@@ -746,10 +803,15 @@ export class RuntimeTaskView extends LitElement {
       this.timelineHasMore = page.hasMore;
       this.timelineOldest = page.oldestCursor;
     } catch (error) {
-      if (generation !== this.generation || taskId !== this.taskId || controller.signal.aborted)
-        return;
-      this.timelineError = error instanceof ApiError ? error.message : 'Unable to load timeline';
+      if (generation !== this.generation || taskId !== this.taskId) return;
+      if (controller.signal.aborted && !timedOut) return;
+      this.timelineError = timedOut
+        ? 'Timeline request timed out'
+        : error instanceof ApiError
+          ? error.message
+          : 'Unable to load timeline';
     } finally {
+      if (timeout !== null) clearTimeout(timeout);
       if (generation === this.generation && taskId === this.taskId) this.timelineLoading = false;
     }
   }
@@ -1028,6 +1090,7 @@ export class RuntimeTaskView extends LitElement {
                     .projection=${projection}
                     .revision=${this.revision}
                     .readOnly=${this.historyMode}
+                    .loading=${this.timelineLoading}
                     @locate-device=${this.locateDevice}
                     @refresh-request=${this.refreshProjection}
                     @projection-change=${this.onProjectionChange}
@@ -1112,6 +1175,13 @@ export class RuntimeTaskView extends LitElement {
     </section>`;
   }
 
+  private renderHistoryNotice() {
+    if (!this.historyNotice) return nothing;
+    return html`<p class="runtime-task__history-notice" data-history-notice role="status">
+      ${this.historyNotice}
+    </p>`;
+  }
+
   private renderConnectionBanner() {
     if (this.connection !== 'offline') return nothing;
     return html`<p class="runtime-task__connection" data-connection="offline" role="status">
@@ -1178,7 +1248,7 @@ export class RuntimeTaskView extends LitElement {
           }
           <slot name="task-actions"></slot>
         </header>
-        ${this.renderHistoryBanner()} ${this.renderConnectionBanner()}
+        ${this.renderHistoryNotice()} ${this.renderHistoryBanner()} ${this.renderConnectionBanner()}
         ${this.error ? html`<p role="alert" class="runtime-task__error">${this.error}</p>` : ''}
         <details class="runtime-task__details">
           <summary>Details and IDs</summary>

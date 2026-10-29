@@ -180,6 +180,33 @@ function snapshotWithCameras(): TaskProjection {
   return value;
 }
 
+function snapshotWithCameraAndSensor(): TaskProjection {
+  const value = snapshot();
+  value.associations = [
+    { deviceId: 'cam-a', sourceIds: ['live'] },
+    { deviceId: 'sensor-1', sourceIds: [] },
+  ];
+  value.devices = [
+    {
+      deviceId: 'cam-a',
+      health: 'ok',
+      zone: 'Entrance',
+      position: 'rack-1',
+      sources: [{ id: 'live', dataKind: 'video' }],
+      fields: [],
+    },
+    {
+      deviceId: 'sensor-1',
+      health: 'ok',
+      zone: 'Entrance',
+      position: 'rack-1',
+      sources: [],
+      fields: [{ name: 'temperature', value: '21', unit: 'C' }],
+    },
+  ];
+  return value;
+}
+
 function playbackDescriptor(over: Partial<PlaybackDescriptor> = {}): PlaybackDescriptor {
   return {
     protocol: 'mjpeg',
@@ -364,6 +391,51 @@ describe('Runtime Task detail shell', () => {
     expect(view.querySelector('[data-timeline-empty]')).toBeNull();
   });
 
+  it('does not assert no agent activity while the initial timeline seed is loading', async () => {
+    let release!: () => void;
+    get.mockResolvedValue({ code: 0, msg: '', result: snapshot() });
+    events.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          release = () =>
+            resolve({
+              code: 0,
+              msg: '',
+              result: { events: [], oldestCursor: null, hasMore: false },
+            });
+        }),
+    );
+    await mount();
+
+    expect(view.querySelector('[data-timeline-loading]')).not.toBeNull();
+    expect(view.querySelector('runtime-loop')?.textContent).not.toContain('No agent activity yet');
+
+    release();
+    await settle();
+
+    expect(view.querySelector('runtime-loop')?.textContent).toContain('No agent activity yet');
+  });
+
+  it('bounds a stalled initial timeline seed so SSE opens with an error and Retry', async () => {
+    vi.useFakeTimers();
+    get.mockResolvedValue({ code: 0, msg: '', result: snapshot() });
+    events.mockImplementation(() => new Promise(() => {}));
+    await mount();
+
+    expect(connect).not.toHaveBeenCalled();
+    expect(view.querySelector('[data-timeline-loading]')).not.toBeNull();
+
+    await vi.advanceTimersByTimeAsync(10_000);
+    await settle();
+
+    expect(connect).toHaveBeenCalledOnce();
+    expect(view.querySelector('[data-timeline-error]')?.textContent).toContain(
+      'Timeline request timed out',
+    );
+    expect(view.querySelector('[data-action="retry-timeline"]')).not.toBeNull();
+    vi.useRealTimers();
+  });
+
   it('keeps seeded timeline steps when a same-Task snapshot rewrites the projection', async () => {
     events.mockResolvedValueOnce({
       code: 0,
@@ -402,6 +474,47 @@ describe('Runtime Task detail shell', () => {
     const image = player.shadowRoot?.querySelector('img');
     expect(image?.alt).toContain('cam-b');
     expect(playback).toHaveBeenLastCalledWith('ws_1', 'cam-b', 'live', expect.any(AbortSignal));
+  });
+
+  it('never attributes a camera frame to a selected sensor-only device', async () => {
+    get.mockResolvedValue({ code: 0, msg: '', result: snapshotWithCameraAndSensor() });
+    playback.mockResolvedValue(playbackDescriptor());
+    await mount();
+
+    view.device = 'cam-a';
+    await view.updateComplete;
+    const play = view.querySelector<HTMLButtonElement>('button[data-action="play-evidence"]');
+    expect(play).not.toBeNull();
+    play!.click();
+    await settle();
+    const player = view.querySelector('runtime-playback') as RuntimePlayback;
+    await player.updateComplete;
+    const image = player.shadowRoot?.querySelector('img');
+    expect(image?.alt).toContain('cam-a');
+    expect(image?.alt).not.toContain('sensor-1');
+    expect(playback).toHaveBeenLastCalledWith('ws_1', 'cam-a', 'live', expect.any(AbortSignal));
+
+    view.device = 'sensor-1';
+    await view.updateComplete;
+
+    expect(view.querySelector('runtime-playback')).toBeNull();
+    expect(view.querySelector('button[data-action="play-evidence"]')).toBeNull();
+    expect(view.descriptor).toBeUndefined();
+  });
+
+  it('fails closed on a cold history URL instead of showing live facts under a past banner', async () => {
+    get.mockResolvedValue({ code: 0, msg: '', result: snapshot() });
+    await mountFromHash('#/runtime/tasks/task_1?at=2026-10-27T10%3A00%3A00Z');
+
+    expect(view.querySelector('[data-history-banner]')).toBeNull();
+    expect(view.querySelector('[data-history-notice]')?.textContent).toContain(
+      'History is no longer available from this link',
+    );
+    expect(connect).toHaveBeenCalledOnce();
+    expect(events).toHaveBeenCalledOnce();
+    expect(window.location.hash).toBe('#/runtime/tasks/task_1');
+    expect(view.querySelector('[data-timeline-loading]')).toBeNull();
+    expect(view.querySelector('[data-timeline-empty]')).not.toBeNull();
   });
 
   it('refreshes a descriptor before expiry and cancels the timer when playback stops', async () => {
@@ -467,6 +580,7 @@ describe('Runtime Task detail shell', () => {
     expect(get).toHaveBeenCalledTimes(2);
     expect(connect).toHaveBeenCalledOnce();
     expect(view.textContent).toContain('History');
+    expect(view.querySelector('[data-history-notice]')).toBeNull();
     liveCallbacks.event({
       cursor: 1,
       eventId: 'stale_live',
@@ -491,24 +605,30 @@ describe('Runtime Task detail shell', () => {
 
   it('reloads a live projection and opens fresh SSE when leaving same-Task history', async () => {
     get.mockResolvedValue({ code: 0, msg: '', result: snapshot() });
-    await mount({ event: 'event_1' });
-    expect(connect).not.toHaveBeenCalled();
+    await mount();
+    expect(connect).toHaveBeenCalledOnce();
+
+    view.history = { event: 'event_1' };
+    await settle();
+    expect(view.textContent).toContain('History');
 
     view.history = null;
-    await view.updateComplete;
-    await Promise.resolve();
-    await view.updateComplete;
+    await settle();
 
-    expect(get).toHaveBeenCalledTimes(2);
-    expect(connect).toHaveBeenCalledOnce();
+    expect(get).toHaveBeenCalledTimes(3);
+    expect(connect).toHaveBeenCalledTimes(2);
     expect(view.textContent).not.toContain('History');
   });
 
-  it('freezes history without opening SSE and cleans up on disconnect', async () => {
+  it('freezes in-page history without reopening SSE and cleans up on disconnect', async () => {
     get.mockResolvedValue({ code: 0, msg: '', result: snapshot() });
-    await mount({ event: 'event_1' });
-    expect(connect).not.toHaveBeenCalled();
+    await mount();
+    expect(connect).toHaveBeenCalledOnce();
+
+    view.history = { event: 'event_1' };
+    await settle();
     expect(view.textContent).toContain('History');
+    expect(connect).toHaveBeenCalledOnce();
 
     view.descriptor = {
       protocol: 'mjpeg',
@@ -755,9 +875,7 @@ describe('Runtime Task detail shell', () => {
 
     view.history = { event: 'event_2' };
     view.view = 'flow';
-    await view.updateComplete;
-    await Promise.resolve();
-    await view.updateComplete;
+    await settle();
 
     const banner = view.querySelector<HTMLElement>('[data-history-banner]');
     expect(banner?.textContent).toContain('History · read-only');
@@ -766,14 +884,11 @@ describe('Runtime Task detail shell', () => {
 
     liveCallbacks.event(liveEvent('event_3'));
     await view.updateComplete;
-    const frozen = (view as unknown as { projection?: { eventIds: Set<string> } }).projection;
-    expect(frozen?.eventIds.has('event_3')).toBe(false);
+    expect(view.querySelector('[data-event-id="event_3"]')).toBeNull();
 
     const fetchesBefore = get.mock.calls.length;
     view.querySelector<HTMLButtonElement>('button[data-action="back-to-live"]')!.click();
-    await view.updateComplete;
-    await Promise.resolve();
-    await view.updateComplete;
+    await settle();
 
     expect(window.location.hash).toBe('#/runtime/tasks/task_1?view=flow');
     expect(get.mock.calls.length - fetchesBefore).toBe(1);
@@ -783,9 +898,9 @@ describe('Runtime Task detail shell', () => {
 
   it('shows a factual history time and preserves Task, view and device on Back to live', async () => {
     get.mockResolvedValue({ code: 0, msg: '', result: snapshot() });
-    await mountFromHash(
-      '#/runtime/tasks/task_1?view=flow&device=dev_1&at=2026-10-27T10%3A00%3A00Z',
-    );
+    await mountFromHash('#/runtime/tasks/task_1?view=flow&device=dev_1');
+    view.history = { at: '2026-10-27T10:00:00Z' };
+    await settle();
 
     expect(view.querySelector('[data-history-banner]')?.textContent).toContain(
       '2026-10-27T10:00:00Z',
@@ -842,7 +957,9 @@ describe('Runtime Task detail shell', () => {
       },
     ];
     get.mockResolvedValue({ code: 0, msg: '', result: withEvidence });
-    await mount({ event: 'event_2' });
+    await mount();
+    view.history = { event: 'event_2' };
+    await settle();
 
     expect(view.querySelector('[data-evidence-id="evidence_history"]')).not.toBeNull();
     expect(executableControls()).toEqual([]);

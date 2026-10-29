@@ -24,6 +24,7 @@ export class RuntimeLoop extends LitElement {
   @property({ attribute: false }) projection: RuntimeProjection | null = null;
   @property({ type: Number }) revision = 0;
   @property({ type: Boolean }) readOnly = false;
+  @property({ type: Boolean }) loading = false;
 
   @state() private confirmStopJobId: string | null = null;
   @state() private stoppingJobId: string | null = null;
@@ -309,7 +310,7 @@ export class RuntimeLoop extends LitElement {
     );
     return html`<section class="runtime-loop" aria-label="Agent Loop">
       <h2>Agent Loop</h2>
-      ${projection.jobs.length || projection.steps.length || projection.evidence.length || projection.approvals.length ? nothing : html`<p class="runtime-loop__empty">No agent activity yet</p>`}
+      ${this.loading || projection.jobs.length || projection.steps.length || projection.evidence.length || projection.approvals.length ? nothing : html`<p class="runtime-loop__empty">No agent activity yet</p>`}
       <div class="runtime-loop__jobs">${projection.jobs.map((job) => this.renderJob(job))}</div>
       ${
         orphanApprovals.length

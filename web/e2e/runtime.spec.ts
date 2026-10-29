@@ -163,6 +163,49 @@ test('device change destroys the old playback before playing the new device', as
   await expect(page.locator('runtime-playback img')).not.toHaveAttribute('src', /frame-a\.png/);
 });
 
+test('playback alt names the rendered camera, never a selected sensor', async ({
+  page,
+  request,
+}) => {
+  await openRuntimeTask(page, 'task_camera_and_sensor');
+  await page.locator('runtime-devices [data-device-card][data-device-id="cam-a"] button').click();
+  await page.getByRole('button', { name: 'Play evidence' }).click();
+  const image = page.locator('runtime-playback img');
+  await expect(image).toHaveAttribute('src', /frame-a\.png/);
+  await expect(image).toHaveAttribute('alt', /cam-a/);
+  await expect(image).not.toHaveAttribute('alt', /sensor-only/);
+  const afterCamera = await mediaRequests(request);
+
+  await page
+    .locator('runtime-devices [data-device-card][data-device-id="sensor-only"] button')
+    .click();
+  await expect(page.locator('runtime-playback')).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Play evidence' })).toHaveCount(0);
+  await page.waitForTimeout(300);
+  expect(await mediaRequests(request)).toBe(afterCamera);
+});
+
+test('cold history links fail closed to live activity with a one-time notice', async ({ page }) => {
+  const streamUrls: string[] = [];
+  page.on('request', (request) => {
+    if (request.url().includes('/agent/tasks/task_timeline/stream')) streamUrls.push(request.url());
+  });
+  await page.goto('/#/runtime/tasks/task_timeline?at=2026-10-27T10%3A00%3A00Z');
+
+  await expect(page.getByText('History is no longer available from this link')).toBeVisible();
+  await expect(page.getByText('History · read-only')).toHaveCount(0);
+  await expect(page).toHaveURL(/#\/runtime\/tasks\/task_timeline$/);
+  await expect(page.locator('runtime-loop [data-event-id="event_1"]')).toHaveCount(1);
+  await expect.poll(() => streamUrls.length).toBeGreaterThan(0);
+});
+
+test('in-page history navigation still freezes without the cold URL notice', async ({ page }) => {
+  await openRuntimeTask(page, 'task_history');
+
+  await expect(page.getByText('History · read-only')).toBeVisible();
+  await expect(page.getByText('History is no longer available from this link')).toHaveCount(0);
+});
+
 test('expired MJPEG and unsafe playback URLs fail closed without media requests', async ({
   page,
   request,
