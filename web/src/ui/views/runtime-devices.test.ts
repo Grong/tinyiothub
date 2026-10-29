@@ -98,6 +98,68 @@ describe('runtime-devices', () => {
     expect(devices.textContent).not.toContain('%');
   });
 
+  it('hydrates declaration and state facts for devices introduced by live events without a refresh', async () => {
+    const projection = new RuntimeProjection({
+      ...projectionFromFixtureB().snapshot,
+      jobs: [], evidence: [], associations: [], devices: [],
+    });
+    const base: RuntimeEvent = {
+      cursor: 4, eventId: 'event_live_job', eventType: 'job.accepted', occurredAt: '2026-10-27T10:02:00Z',
+      workspaceId: 'ws_1', taskId: 'task_b', runId: null, toolCallId: 'call_live', jobId: 'job_live',
+      approvalId: null, deviceId: 'dev_camera_live', sourceId: null, sourceSeq: null, evidenceId: null,
+      data: {
+        state: 'accepted', tool: 'read_device', argsJson: { thingId: 'dev_camera_live' },
+        deviceFacts: {
+          deviceId: 'dev_camera_live', health: 'ok', zone: 'North', position: 'rack-9',
+          sources: [{ id: 'live', dataKind: 'video' }],
+          fields: [{ name: 'temperature', value: null, unit: 'C' }],
+        },
+      },
+    };
+    projection.apply(base);
+    projection.apply({
+      ...base, cursor: 5, eventId: 'event_live_job_reader', jobId: 'job_reader', deviceId: 'dev_reader_live',
+      data: {
+        state: 'accepted', tool: 'read_device',
+        deviceFacts: {
+          deviceId: 'dev_reader_live', health: 'attention', zone: 'South', position: 'panel-2',
+          sources: [{ id: 'telemetry', dataKind: 'values' }],
+          fields: [{ name: 'temperature', value: null, unit: 'C' }],
+        },
+      },
+    });
+    const devices = await mount(projection);
+    const camera = devices.querySelector<HTMLElement>('[data-device-card][data-device-id="dev_camera_live"]');
+    const reader = devices.querySelector<HTMLElement>('[data-device-card][data-device-id="dev_reader_live"]');
+
+    expect(camera?.textContent).toContain('ok');
+    expect(camera?.textContent).toContain('North');
+    expect(camera?.textContent).toContain('rack-9');
+    expect(camera?.querySelector('[data-declaration-source]')?.textContent).toContain('Video live');
+    expect(reader?.textContent).toContain('attention');
+    expect(reader?.textContent).toContain('temperature');
+    expect(reader?.textContent).toContain('Not reported');
+
+    projection.apply({
+      ...base, cursor: 6, eventId: 'event_live_read', eventType: 'read_device',
+      jobId: null, toolCallId: null, deviceId: 'dev_reader_live',
+      data: {
+        state: { temperature: '21.5' },
+        deviceFacts: {
+          deviceId: 'dev_reader_live', health: 'attention', zone: 'South', position: 'panel-2',
+          sources: [{ id: 'telemetry', dataKind: 'values' }],
+          fields: [{ name: 'temperature', value: '21.5', unit: 'C' }],
+        },
+      },
+    });
+    devices.revision += 1;
+    await devices.updateComplete;
+
+    const updated = devices.querySelector<HTMLElement>('[data-device-card][data-device-id="dev_reader_live"]');
+    expect(updated?.textContent).toContain('21.5 C');
+    expect(updated?.textContent).not.toContain('Not reported');
+  });
+
   it('falls back to declared key fields, or the first three fields, without media', async () => {
     const projection = projectionFromFixtureB();
     projection.replaceWithSnapshot({

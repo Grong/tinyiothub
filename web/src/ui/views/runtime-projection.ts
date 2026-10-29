@@ -78,7 +78,17 @@ export class RuntimeProjection {
       watches: [...this.watches],
       evidence: [...this.evidence],
       associations: this.devices.map(({ deviceId, sourceIds }) => ({ deviceId, sourceIds: [...sourceIds] })),
-      devices: this.baseSnapshot.devices.map((device) => ({ ...device, sources: [...device.sources], fields: [...device.fields] })),
+      devices: this.devices.flatMap((device) => {
+        if (typeof device.health !== 'string' || !device.sources || !device.fields) return [];
+        return [{
+          deviceId: device.deviceId,
+          health: device.health,
+          zone: device.zone ?? null,
+          position: device.position ?? null,
+          sources: device.sources.map((source) => ({ ...source })),
+          fields: device.fields.map((field) => ({ ...field })),
+        }];
+      }),
       cursor: this.cursor,
     };
   }
@@ -163,6 +173,7 @@ export class RuntimeProjection {
           }
         }
       }
+      this.applyDeviceFacts(event.data.deviceFacts);
       if (event.cursor <= this.baseCursor) continue;
 
       this.applyTaskEvent(task, event);
@@ -279,6 +290,41 @@ export class RuntimeProjection {
       toolCallId: event.toolCallId,
       jobId: event.jobId,
     });
+  }
+
+  private applyDeviceFacts(raw: unknown): void {
+    if (!raw || typeof raw !== 'object') return;
+    const facts = raw as Record<string, unknown>;
+    if (typeof facts.deviceId !== 'string') return;
+    this.associate(facts.deviceId);
+    const device = this.devices.find((item) => item.deviceId === facts.deviceId);
+    if (!device) return;
+    if (typeof facts.health === 'string') device.health = facts.health;
+    const zone = facts.zone;
+    if (typeof zone === 'string' || zone === null) device.zone = zone;
+    const position = facts.position;
+    if (typeof position === 'string' || position === null) device.position = position;
+    if (Array.isArray(facts.sources)) {
+      device.sources = facts.sources.flatMap((source) => {
+        if (!source || typeof source !== 'object') return [];
+        const item = source as Record<string, unknown>;
+        return typeof item.id === 'string' && typeof item.dataKind === 'string'
+          ? [{ id: item.id, dataKind: item.dataKind }]
+          : [];
+      });
+    }
+    if (Array.isArray(facts.fields)) {
+      device.fields = facts.fields.flatMap((field) => {
+        if (!field || typeof field !== 'object') return [];
+        const item = field as Record<string, unknown>;
+        if (typeof item.name !== 'string') return [];
+        return [{
+          name: item.name,
+          value: typeof item.value === 'string' ? item.value : null,
+          unit: typeof item.unit === 'string' ? item.unit : null,
+        }];
+      });
+    }
   }
 
   private associate(deviceId: string | null, sourceId?: string | null): void {
