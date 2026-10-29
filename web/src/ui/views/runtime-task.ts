@@ -199,8 +199,16 @@ export class RuntimeTaskView extends LitElement {
         // the router clearing the stale history value must not reload it again.
       } else if (this.historyMode) {
         const steps = this.projection?.steps ?? [];
-        this.cleanupTask();
-        if (this.taskId) void this.loadHistory(steps);
+        if (!steps.length && !this.historyEventId) {
+          // No in-memory history to freeze (e.g. same-Task history navigation
+          // that arrived before the initial snapshot installed). Fail closed to
+          // live rather than render the live snapshot under a past banner.
+          this.cleanupTask();
+          if (this.taskId) void this.load();
+        } else {
+          this.cleanupTask();
+          if (this.taskId) void this.loadHistory(steps);
+        }
       } else {
         this.cleanupTask();
         if (this.taskId) void this.load();
@@ -383,7 +391,13 @@ export class RuntimeTaskView extends LitElement {
   }
 
   private playbackAlt(): string {
-    const target = this.resolvePlaybackTarget();
+    // Once a descriptor is accepted, the alt must describe the target that
+    // produced it, not whatever the projection resolves to on this render. A
+    // descriptor supplied without a stored target (public property assignment)
+    // falls back to the resolver, same as the no-descriptor case.
+    const target = this.descriptor
+      ? (this.descriptorTarget ?? this.resolvePlaybackTarget())
+      : this.resolvePlaybackTarget();
     if (!target) return 'Live camera frame';
     return `Live camera frame from ${target.deviceId}, source ${target.sourceId}`;
   }
@@ -508,7 +522,12 @@ export class RuntimeTaskView extends LitElement {
         target.sourceId,
         controller.signal,
       );
-      if (generation !== this.generation) return;
+      if (generation !== this.generation || controller.signal.aborted) return;
+      // The projection may have moved to another source while the descriptor
+      // was in flight; never attach a descriptor to a target it does not match.
+      const current = this.resolvePlaybackTarget();
+      if (!current || current.deviceId !== target.deviceId || current.sourceId !== target.sourceId)
+        return;
       if (!this.usableDescriptor(descriptor)) {
         this.failPlayback();
         return;
@@ -858,6 +877,13 @@ export class RuntimeTaskView extends LitElement {
   }
 
   private async loadHistory(steps: RuntimeEvent[]): Promise<void> {
+    if (!steps.length && !this.historyEventId) {
+      // Nothing to freeze and no explicit selection to restore: fail closed to
+      // the live view instead of freezing a snapshot with an empty timeline.
+      this.cleanupTask();
+      if (this.taskId) await this.load();
+      return;
+    }
     const generation = ++this.generation;
     const taskId = this.taskId;
     this.abort = new AbortController();
@@ -878,6 +904,9 @@ export class RuntimeTaskView extends LitElement {
   }
 
   private async refreshProjection(): Promise<void> {
+    // History is a frozen projection; refreshing it would replace past facts
+    // with the current live snapshot under the read-only banner.
+    if (this.historyMode) return;
     const generation = this.generation;
     const taskId = this.taskId;
     this.abort?.abort();
@@ -934,6 +963,9 @@ export class RuntimeTaskView extends LitElement {
         event: (event) => {
           if (generation !== this.generation) return;
           this.projection?.apply(event);
+          // Live device facts can remove or replace the playing source; the
+          // descriptor (and its rendered alt) must not outlive that target.
+          this.invalidatePlaybackTarget();
           this.revision += 1;
         },
         resync: (snapshot, cursor) => {

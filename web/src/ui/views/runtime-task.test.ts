@@ -163,6 +163,12 @@ function snapshotWithRunningJob(): TaskProjection {
   return value;
 }
 
+function snapshotWithUnknownJob(): TaskProjection {
+  const value = snapshotWithRunningJob();
+  value.jobs = [{ ...runningJob(), state: 'cancelled_unknown' }];
+  return value;
+}
+
 function snapshotWithCameras(): TaskProjection {
   const value = snapshot();
   value.associations = [
@@ -224,6 +230,14 @@ function emptyTimeline() {
   };
 }
 
+function timelineWith(eventId = 'event_1', cursor = 1) {
+  return {
+    code: 0,
+    msg: '',
+    result: { events: [liveEvent(eventId, cursor)], oldestCursor: cursor, hasMore: false },
+  };
+}
+
 async function settle(): Promise<void> {
   for (let index = 0; index < 4; index += 1) await Promise.resolve();
   await view.updateComplete;
@@ -247,6 +261,7 @@ beforeEach(() => {
 afterEach(() => {
   view?.remove();
   localStorage.clear();
+  vi.useRealTimers();
   vi.clearAllMocks();
   vi.unstubAllGlobals();
 });
@@ -433,7 +448,6 @@ describe('Runtime Task detail shell', () => {
       'Timeline request timed out',
     );
     expect(view.querySelector('[data-action="retry-timeline"]')).not.toBeNull();
-    vi.useRealTimers();
   });
 
   it('keeps seeded timeline steps when a same-Task snapshot rewrites the projection', async () => {
@@ -517,6 +531,82 @@ describe('Runtime Task detail shell', () => {
     expect(view.querySelector('[data-timeline-empty]')).not.toBeNull();
   });
 
+  it('fails closed when same-Task history navigation races the initial snapshot', async () => {
+    const pending: Array<(value: { code: number; msg: string; result: TaskProjection }) => void> =
+      [];
+    get.mockImplementation(() => new Promise((resolve) => pending.push(resolve)));
+    await mount();
+    expect(pending).toHaveLength(1);
+
+    view.history = { at: '2026-10-27T10:00:00Z' };
+    await view.updateComplete;
+    expect(get).toHaveBeenCalledTimes(2);
+
+    for (const resolve of pending) resolve({ code: 0, msg: '', result: snapshot() });
+    await settle();
+
+    expect(view.querySelector('[data-history-banner]')).toBeNull();
+    expect(view.querySelector('[data-history-notice]')?.textContent).toContain(
+      'History is no longer available from this link',
+    );
+    expect(window.location.hash).toBe('#/runtime/tasks/task_1');
+    expect(connect).toHaveBeenCalledOnce();
+    expect(events).toHaveBeenCalledOnce();
+  });
+
+  it('tears down playback when live device facts remove the playing source', async () => {
+    get.mockResolvedValue({ code: 0, msg: '', result: snapshotWithCameras() });
+    playback.mockResolvedValue(playbackDescriptor());
+    await mount();
+    view.device = 'cam-a';
+    await view.updateComplete;
+    view.querySelector<HTMLButtonElement>('button[data-action="play-evidence"]')!.click();
+    await settle();
+    const player = view.querySelector('runtime-playback') as RuntimePlayback;
+    await player.updateComplete;
+    expect(player.shadowRoot?.querySelector('img')?.alt).toContain('cam-a');
+
+    streamCallbacks.event({
+      ...liveEvent('event_cam_facts', 4),
+      deviceId: 'cam-a',
+      data: { deviceFacts: { deviceId: 'cam-a', health: 'ok', sources: [] } },
+    });
+    await settle();
+
+    expect(view.querySelector('runtime-playback')).toBeNull();
+    expect(view.descriptor).toBeUndefined();
+  });
+
+  it('discards a descriptor that resolves after the playback target changed', async () => {
+    let resolveDescriptor!: (descriptor: PlaybackDescriptor) => void;
+    get.mockResolvedValue({ code: 0, msg: '', result: snapshotWithCameras() });
+    playback.mockImplementation(
+      () => new Promise<PlaybackDescriptor>((resolve) => (resolveDescriptor = resolve)),
+    );
+    await mount();
+    view.device = 'cam-a';
+    await view.updateComplete;
+    view.querySelector<HTMLButtonElement>('button[data-action="play-evidence"]')!.click();
+    await view.updateComplete;
+    expect(playback).toHaveBeenCalledOnce();
+
+    streamCallbacks.event({
+      ...liveEvent('event_cam_facts', 4),
+      deviceId: 'cam-a',
+      data: {
+        deviceFacts: { deviceId: 'cam-a', sources: [{ id: 'live-2', dataKind: 'video' }] },
+      },
+    });
+    await settle();
+
+    resolveDescriptor(playbackDescriptor());
+    await settle();
+
+    expect(view.descriptor).toBeUndefined();
+    expect(view.querySelector('runtime-playback')).toBeNull();
+    expect(view.querySelector('button[data-action="play-evidence"]')).not.toBeNull();
+  });
+
   it('refreshes a descriptor before expiry and cancels the timer when playback stops', async () => {
     vi.useFakeTimers();
     const expiresAt = new Date(Date.now() + 60_000).toISOString();
@@ -535,7 +625,6 @@ describe('Runtime Task detail shell', () => {
     await view.updateComplete;
     await vi.advanceTimersByTimeAsync(120_000);
     expect(playback).toHaveBeenCalledTimes(2);
-    vi.useRealTimers();
   });
 
   it('closes SSE and destroys playback before replacing a switched Task projection', async () => {
@@ -567,6 +656,7 @@ describe('Runtime Task detail shell', () => {
   });
 
   it('closes live SSE and freezes a fresh projection for same-Task history navigation', async () => {
+    events.mockResolvedValueOnce(timelineWith());
     get.mockResolvedValue({ code: 0, msg: '', result: snapshot() });
     await mount();
     const liveCallbacks = streamCallbacks;
@@ -599,11 +689,13 @@ describe('Runtime Task detail shell', () => {
       data: {},
     } satisfies RuntimeEvent);
     await view.updateComplete;
-    expect(view.querySelector('runtime-loop')?.textContent).toContain('No agent activity yet');
+    expect(view.querySelector('runtime-loop [data-event-id="event_1"]')).not.toBeNull();
+    expect(view.querySelector('runtime-loop')?.textContent).not.toContain('stale_live');
     expect(view.querySelector('runtime-devices')?.textContent).not.toContain('dev_stale');
   });
 
   it('reloads a live projection and opens fresh SSE when leaving same-Task history', async () => {
+    events.mockResolvedValueOnce(timelineWith());
     get.mockResolvedValue({ code: 0, msg: '', result: snapshot() });
     await mount();
     expect(connect).toHaveBeenCalledOnce();
@@ -621,6 +713,7 @@ describe('Runtime Task detail shell', () => {
   });
 
   it('freezes in-page history without reopening SSE and cleans up on disconnect', async () => {
+    events.mockResolvedValueOnce(timelineWith());
     get.mockResolvedValue({ code: 0, msg: '', result: snapshot() });
     await mount();
     expect(connect).toHaveBeenCalledOnce();
@@ -869,9 +962,9 @@ describe('Runtime Task detail shell', () => {
   });
 
   it('freezes history, removes executable controls, and resyncs back to live', async () => {
+    events.mockResolvedValueOnce(timelineWith());
     get.mockResolvedValue({ code: 0, msg: '', result: snapshot() });
     await mount();
-    const liveCallbacks = streamCallbacks;
 
     view.history = { event: 'event_2' };
     view.view = 'flow';
@@ -881,10 +974,7 @@ describe('Runtime Task detail shell', () => {
     expect(banner?.textContent).toContain('History · read-only');
     expect(executableControls()).toEqual([]);
     expect(connect).toHaveBeenCalledOnce();
-
-    liveCallbacks.event(liveEvent('event_3'));
-    await view.updateComplete;
-    expect(view.querySelector('[data-event-id="event_3"]')).toBeNull();
+    expect(view.querySelector('[data-event-id="event_1"]')).not.toBeNull();
 
     const fetchesBefore = get.mock.calls.length;
     view.querySelector<HTMLButtonElement>('button[data-action="back-to-live"]')!.click();
@@ -896,7 +986,29 @@ describe('Runtime Task detail shell', () => {
     expect(connect).toHaveBeenCalledTimes(2);
   });
 
+  it('suppresses refresh status in read-only history and keeps the frozen base', async () => {
+    events.mockResolvedValueOnce(timelineWith());
+    get.mockResolvedValue({ code: 0, msg: '', result: snapshotWithUnknownJob() });
+    await mount();
+
+    expect(view.querySelectorAll('[data-action="refresh-status"]').length).toBeGreaterThan(0);
+
+    view.history = { at: '2026-10-27T10:00:00Z' };
+    await settle();
+
+    expect(view.querySelector('[data-history-banner]')).not.toBeNull();
+    expect(view.querySelectorAll('[data-action="refresh-status"]')).toHaveLength(0);
+
+    const fetchesBefore = get.mock.calls.length;
+    view
+      .querySelector('runtime-task-controls')!
+      .dispatchEvent(new CustomEvent('refresh-request', { bubbles: true, composed: true }));
+    await settle();
+    expect(get.mock.calls.length).toBe(fetchesBefore);
+  });
+
   it('shows a factual history time and preserves Task, view and device on Back to live', async () => {
+    events.mockResolvedValueOnce(timelineWith());
     get.mockResolvedValue({ code: 0, msg: '', result: snapshot() });
     await mountFromHash('#/runtime/tasks/task_1?view=flow&device=dev_1');
     view.history = { at: '2026-10-27T10:00:00Z' };
@@ -956,6 +1068,7 @@ describe('Runtime Task detail shell', () => {
         jobId: null,
       },
     ];
+    events.mockResolvedValueOnce(timelineWith());
     get.mockResolvedValue({ code: 0, msg: '', result: withEvidence });
     await mount();
     view.history = { event: 'event_2' };

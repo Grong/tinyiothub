@@ -187,14 +187,18 @@ export class RuntimeLoop extends LitElement {
       ${
         unknown
           ? html`<p role="alert">Stop result unknown</p>
-              <button
-                class="btn"
-                type="button"
-                data-action="refresh-status"
-                @click=${this.requestRefresh}
-              >
-                Refresh status
-              </button>`
+              ${
+                this.readOnly
+                  ? nothing
+                  : html`<button
+                      class="btn"
+                      type="button"
+                      data-action="refresh-status"
+                      @click=${this.requestRefresh}
+                    >
+                      Refresh status
+                    </button>`
+              }`
           : nothing
       }
       ${

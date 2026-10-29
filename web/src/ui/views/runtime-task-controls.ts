@@ -283,9 +283,13 @@ export class RuntimeTaskControls extends LitElement {
         Some device results are unknown${devices.length ? `: ${devices.join(', ')}` : ''}. Review
         them before retrying.
       </p>
-      <button type="button" data-action="refresh-status" @click=${this.requestRefresh}>
-        Refresh status
-      </button>
+      ${
+        this.readOnly
+          ? nothing
+          : html`<button type="button" data-action="refresh-status" @click=${this.requestRefresh}>
+              Refresh status
+            </button>`
+      }
     </section>`;
   }
 

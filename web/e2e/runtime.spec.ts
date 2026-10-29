@@ -174,6 +174,9 @@ test('playback alt names the rendered camera, never a selected sensor', async ({
   await expect(image).toHaveAttribute('src', /frame-a\.png/);
   await expect(image).toHaveAttribute('alt', /cam-a/);
   await expect(image).not.toHaveAttribute('alt', /sensor-only/);
+  // The image GET is initiated by the src assignment; wait until the fixture has
+  // actually counted it before using it as the no-growth baseline.
+  await expect.poll(() => mediaRequests(request)).toBeGreaterThan(0);
   const afterCamera = await mediaRequests(request);
 
   await page
