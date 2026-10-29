@@ -103,6 +103,33 @@ impl InvokeActionTool {
                 return tool_err("job_submit_failed: job lookup failed; action NOT dispatched".to_string());
             }
         }
+        // A recovery Run derives a fresh stable job id, so the lookup above
+        // cannot see an earlier in-flight call. Before submitting, reuse any
+        // still-active (or physically unknown) Job for this Task/device/tool
+        // with identical arguments. Terminal Jobs do not block a legitimate
+        // repeat call.
+        let mut in_flight = Vec::new();
+        for unknown_only in [false, true] {
+            match jobs.task_jobs(&self.workspace_id, &task_id, unknown_only).await {
+                Ok(found) => in_flight.extend(found),
+                Err(error) => {
+                    tracing::warn!(%task_id, %error, "task in-flight job lookup failed");
+                    return tool_err("job_submit_failed: job lookup failed; action NOT dispatched".to_string());
+                }
+            }
+        }
+        if let Some(existing) = in_flight.into_iter().find(|existing| {
+            existing.device_id == thing_id && existing.tool == action_name && existing.args_json == args_json
+        }) {
+            return tool_ok(json!({
+                "thingId": thing_id,
+                "actionName": action_name,
+                "status": "accepted",
+                "jobId": existing.id,
+                "jobState": existing.state.as_str(),
+                "deduplicated": true,
+            }));
+        }
         let job = match jobs
             .submit(tinyiothub_runtime::job::service::JobRequest {
                 job_id: Some(job_id),

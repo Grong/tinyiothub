@@ -60,10 +60,14 @@ impl ApprovalExecutor {
         }
     }
 
-    pub async fn execute_decision(&self, event_id: &str) -> Result<ExecutionOutcome, ApprovalError> {
+    pub async fn execute_decision(
+        &self,
+        workspace_id: &str,
+        event_id: &str,
+    ) -> Result<ExecutionOutcome, ApprovalError> {
         let approval = self
             .store
-            .get_by_decision_event(event_id)
+            .get_by_decision_event(workspace_id, event_id)
             .await?
             .ok_or(ApprovalError::NotFound)?;
         match approval.state {
@@ -124,8 +128,15 @@ mod tests {
         async fn get_scoped(&self, _: &str, _: &str, _: &str) -> Result<Option<TaskApproval>, ApprovalError> {
             Ok(Some(self.approval.clone()))
         }
-        async fn get_by_decision_event(&self, event_id: &str) -> Result<Option<TaskApproval>, ApprovalError> {
-            Ok((event_id == self.approval.decision_event_id).then(|| self.approval.clone()))
+        async fn get_by_decision_event(
+            &self,
+            workspace_id: &str,
+            event_id: &str,
+        ) -> Result<Option<TaskApproval>, ApprovalError> {
+            Ok(
+                (workspace_id == self.approval.workspace_id && event_id == self.approval.decision_event_id)
+                    .then(|| self.approval.clone()),
+            )
         }
         async fn list_for_task(&self, _: &str, _: &str) -> Result<Vec<TaskApproval>, ApprovalError> {
             Ok(vec![self.approval.clone()])
@@ -240,12 +251,26 @@ mod tests {
         });
         let jobs = Arc::new(Jobs::default());
         let executor = ApprovalExecutor::new(store, jobs.clone(), Arc::new(Tasks::default()));
-        let outcome = executor.execute_decision("decision_1").await.expect("execute");
+        let outcome = executor.execute_decision("ws_1", "decision_1").await.expect("execute");
         assert!(matches!(outcome, ExecutionOutcome::Job(ref job) if job.id == "job_1"));
         let calls = jobs.calls.lock().expect("calls");
         assert_eq!(calls.len(), 1);
         assert_eq!(calls[0].args_json, json!({"speed": 7, "frozen": true}));
         assert_eq!(calls[0].tool_call_id, "call_1");
+    }
+
+    #[tokio::test]
+    async fn decision_lookup_is_workspace_scoped() {
+        let store = Arc::new(Store {
+            approval: approval(ApprovalState::Approved),
+            expiry_seen: Mutex::new(None),
+        });
+        let executor = ApprovalExecutor::new(store, Arc::new(Jobs::default()), Arc::new(Tasks::default()));
+        let error = executor
+            .execute_decision("ws_other", "decision_1")
+            .await
+            .expect_err("another workspace must not resolve this decision");
+        assert!(matches!(error, ApprovalError::NotFound), "{error:?}");
     }
 
     #[tokio::test]
@@ -259,7 +284,7 @@ mod tests {
         assert_eq!(executor.recover(None).await.expect("recover"), 1);
         assert!(jobs.calls.lock().expect("calls").is_empty());
         executor
-            .execute_decision(&store.approval.decision_event_id)
+            .execute_decision(&store.approval.workspace_id, &store.approval.decision_event_id)
             .await
             .expect("router dispatch");
         let calls = jobs.calls.lock().expect("calls");
@@ -280,7 +305,10 @@ mod tests {
         assert_eq!(executor.recover(None).await.expect("repeat recovery"), 1);
         assert!(jobs.calls.lock().expect("calls").is_empty());
         assert!(matches!(
-            executor.execute_decision("decision_1").await.expect("router dispatch"),
+            executor
+                .execute_decision("ws_1", "decision_1")
+                .await
+                .expect("router dispatch"),
             ExecutionOutcome::Job(_)
         ));
         assert_eq!(jobs.calls.lock().expect("calls").len(), 1);
@@ -322,7 +350,7 @@ mod tests {
                 tasks.clone(),
             );
             assert!(matches!(
-                executor.execute_decision("decision_1").await.expect("deferred"),
+                executor.execute_decision("ws_1", "decision_1").await.expect("deferred"),
                 ExecutionOutcome::Deferred
             ));
             assert_eq!(tasks.advances.lock().expect("advances").len(), 1);

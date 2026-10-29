@@ -233,23 +233,64 @@ impl ReadDeviceTool {
     async fn read_model_sources(&self, thing_id: &str, requested: &[String]) -> Result<ModelSourceOutput, String> {
         use tinyiothub_core::media::{DataKind, ImageInput, MediaError};
 
-        let Some(reader) = &self.source_reader else {
-            return Err("source reads unavailable".into());
-        };
-        let items = reader
-            .read_sources(thing_id, requested.to_vec())
-            .await
-            .map_err(|error| format!("source read failed: {error}"))?;
-        let selected = tinyiothub_runtime::media::source::select_model_sources(&items, requested)
-            .map_err(|error| error.to_string())?;
-        if selected.iter().filter(|item| item.data_kind == DataKind::Image).count() > 1 {
-            return Err(MediaError::TooManyImages.to_string());
-        }
         // Fail-closed: an unwired or unreadable flag never enables image capture.
+        // Resolve it before any source read so disabled media never asks the
+        // driver to capture (or copy) an image at all.
         let media_enabled = match &self.media {
             Some(gate) => gate.media_enabled(&self.workspace_id).await,
             None => false,
         };
+        let mut readable = Vec::new();
+        let mut blocked = Vec::new();
+        let mut blocked_images = 0usize;
+        if media_enabled {
+            readable.extend(requested.iter().cloned());
+        } else {
+            match self
+                .thing_service
+                .declared_source_data_kinds(&self.workspace_id, thing_id)
+                .await
+            {
+                Some(declared) => {
+                    for source in requested {
+                        match declared.get(source) {
+                            Some(DataKind::Image) => {
+                                blocked_images += 1;
+                                blocked.push(source.clone());
+                            }
+                            // Unknown sources are not provably non-image: fail closed too.
+                            Some(_) => readable.push(source.clone()),
+                            None => blocked.push(source.clone()),
+                        }
+                    }
+                }
+                // No authoritative declaration: every requested source could be
+                // an image, so none may reach the reader.
+                None => blocked.extend(requested.iter().cloned()),
+            }
+        }
+        if blocked_images > 1 {
+            return Err(MediaError::TooManyImages.to_string());
+        }
+        let items = if readable.is_empty() {
+            Vec::new()
+        } else {
+            let Some(reader) = &self.source_reader else {
+                return Err("source reads unavailable".into());
+            };
+            let mut items = reader
+                .read_sources(thing_id, readable.clone())
+                .await
+                .map_err(|error| format!("source read failed: {error}"))?;
+            // A driver must not smuggle an unrequested/blocked source back in.
+            items.retain(|item| readable.iter().any(|source| source == &item.source));
+            items
+        };
+        let selected = tinyiothub_runtime::media::source::select_model_sources(&items, requested)
+            .map_err(|error| error.to_string())?;
+        if selected.iter().filter(|item| item.data_kind == DataKind::Image).count() + blocked_images > 1 {
+            return Err(MediaError::TooManyImages.to_string());
+        }
 
         let (task_id, run_id) = match &self.run_ctx {
             Some(slot) => {
@@ -265,6 +306,13 @@ impl ReadDeviceTool {
             None => (None, None),
         };
         let mut output = ModelSourceOutput::default();
+        for source in blocked {
+            output.errors.push(json!({
+                "source": source,
+                "error": "image_unavailable",
+                "reason": "media_disabled",
+            }));
+        }
         for item in selected {
             match item.data_kind {
                 DataKind::Detections => output.sources.push(json!({
@@ -865,6 +913,59 @@ mod tests {
         pool
     }
 
+    /// Seed the authoritative declaration chain the media gate reads: device ->
+    /// driver/version -> manifest source data kinds.
+    async fn seed_source_declaration(pool: &sqlx::SqlitePool, sources: &[(&str, &str)]) {
+        let db = tinyiothub_storage::Db::new(pool.clone());
+        let sources = sources
+            .iter()
+            .map(|(id, kind)| json!({"id": id, "kind": "poll", "dataKind": kind}))
+            .collect::<Vec<_>>();
+        let manifest = json!({
+            "manifestVersion": "1.0",
+            "identity": {"driver":"source-demo","version":"1.0.0","protocol":"demo","abiVersion":2},
+            "config": {"type":"object"},
+            "tools": [],
+            "stateFields": [],
+            "sources": sources,
+            "resources": [],
+            "placement": {"mode":"runtime"},
+            "limits": {"maxConcurrentJobs":1,"maxCallsPerMin":60}
+        });
+        db.upsert_driver_declaration(&tinyiothub_core::driver::declaration::DriverDeclarationRecord {
+            workspace_id: "ws-set".into(),
+            driver_name: "source-demo".into(),
+            driver_version: "1.0.0".into(),
+            manifest_version: "1.0".into(),
+            manifest_json: manifest.to_string(),
+            manifest_hash: "source-manifest-hash".into(),
+            binary_hash: None,
+            status: "active".into(),
+            installed_at: "2026-10-29T00:00:00Z".into(),
+        })
+        .await
+        .expect("driver declaration");
+        db.upsert_device_declaration(&DeviceDeclarationRecord {
+            workspace_id: "ws-set".into(),
+            thing_id: "dev-1".into(),
+            driver_name: "source-demo".into(),
+            driver_version: "1.0.0".into(),
+            declaration_json: json!({
+                "manifestVersion": "1.0",
+                "driver": "source-demo",
+                "driverVersion": "1.0.0",
+                "stateFields": [],
+                "tools": [],
+            })
+            .to_string(),
+            declaration_hash: "source-declaration-hash".into(),
+            status: "active".into(),
+            updated_at: "2026-10-29T00:00:00Z".into(),
+        })
+        .await
+        .expect("device declaration");
+    }
+
     async fn resource_access(pool: &sqlx::SqlitePool, tools: Value) -> Arc<AccessService> {
         let db = Arc::new(tinyiothub_storage::Db::new(pool.clone()));
         let manifests = Arc::new(ManifestRegistry::new());
@@ -1279,6 +1380,16 @@ mod tests {
     #[tokio::test]
     async fn read_device_persists_only_explicit_model_sources_and_attaches_exact_image() {
         let pool = pool_with_device().await;
+        seed_source_declaration(
+            &pool,
+            &[
+                ("temperature", "values"),
+                ("lidar", "x_lidar"),
+                ("objects", "detections"),
+                ("front", "image"),
+            ],
+        )
+        .await;
         let root = tempfile::tempdir().expect("media root");
         let store = Arc::new(
             tinyiothub_runtime::media::evidence::LocalMediaStore::new(root.path())
@@ -1403,6 +1514,7 @@ mod tests {
     #[tokio::test]
     async fn read_device_media_flag_off_skips_image_without_evidence() {
         let pool = pool_with_device().await;
+        seed_source_declaration(&pool, &[("objects", "detections"), ("front", "image")]).await;
         let root = tempfile::tempdir().expect("media root");
         let store = Arc::new(
             tinyiothub_runtime::media::evidence::LocalMediaStore::new(root.path())
@@ -1425,8 +1537,69 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn read_device_media_off_never_requests_image_source_names() {
+        let pool = pool_with_device().await;
+        seed_source_declaration(&pool, &[("objects", "detections"), ("front", "image")]).await;
+        let root = tempfile::tempdir().expect("media root");
+        let store = Arc::new(
+            tinyiothub_runtime::media::evidence::LocalMediaStore::new(root.path())
+                .await
+                .expect("media store"),
+        );
+        let reader = image_reader();
+        let tool = ReadDeviceTool {
+            thing_service: Arc::new(ThingService::new(pool.clone())),
+            workspace_id: "ws-set".into(),
+            live: None,
+            device_cache: None,
+            demand: None,
+            source_reader: Some(reader.clone()),
+            evidence: Some(evidence_service(&pool, store)),
+            media: Some(Arc::new(StubMedia(false))),
+            run_ctx: None,
+            runtime_recorder: None,
+        };
+        assert_media_disabled_read(tool, &pool, root.path()).await;
+        assert_eq!(
+            reader.calls.lock().expect("calls").as_slice(),
+            &[vec!["objects".to_string()]],
+            "the reader must never be asked for a media-disabled image source"
+        );
+    }
+
+    #[tokio::test]
+    async fn read_device_missing_declaration_fails_closed_without_reading_sources() {
+        let pool = pool_with_device().await;
+        let reader = image_reader();
+        let tool = ReadDeviceTool {
+            thing_service: Arc::new(ThingService::new(pool.clone())),
+            workspace_id: "ws-set".into(),
+            live: None,
+            device_cache: None,
+            demand: None,
+            source_reader: Some(reader.clone()),
+            evidence: None,
+            media: Some(Arc::new(StubMedia(false))),
+            run_ctx: None,
+            runtime_recorder: None,
+        };
+        let result = tool
+            .execute(json!({"thingId":"dev-1", "sources":["objects","front"]}))
+            .await
+            .expect("execute");
+        assert!(result.success, "{:?}", result.error);
+        assert!(reader.calls.lock().expect("calls").is_empty());
+        assert!(result.attachments.is_empty());
+        let output: Value = serde_json::from_str(&result.output).expect("tool JSON");
+        assert_eq!(output["sourceErrors"].as_array().expect("errors").len(), 2);
+        assert_eq!(output["sourceErrors"][0]["error"], "image_unavailable");
+        assert_eq!(output["sourceErrors"][1]["reason"], "media_disabled");
+    }
+
+    #[tokio::test]
     async fn read_device_unwired_media_gate_fails_closed() {
         let pool = pool_with_device().await;
+        seed_source_declaration(&pool, &[("objects", "detections"), ("front", "image")]).await;
         let root = tempfile::tempdir().expect("media root");
         let store = Arc::new(
             tinyiothub_runtime::media::evidence::LocalMediaStore::new(root.path())
@@ -1482,6 +1655,7 @@ mod tests {
     #[tokio::test]
     async fn read_device_rejects_selected_video_and_multiple_images() {
         let pool = pool_with_device().await;
+        seed_source_declaration(&pool, &[("live", "video"), ("first", "image"), ("second", "image")]).await;
         let root = tempfile::tempdir().expect("media root");
         let store = Arc::new(
             tinyiothub_runtime::media::evidence::LocalMediaStore::new(root.path())

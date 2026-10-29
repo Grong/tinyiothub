@@ -403,6 +403,16 @@ impl Db {
             insert_wake(&mut tx, wake).await?;
         }
         let task = AgentTask::try_from(updated)?;
+        if task.status.is_terminal() {
+            // Device-state projections are scoped to a live Task. Remove them
+            // in the same transaction so a terminal Task leaves no orphans.
+            sqlx::query("DELETE FROM runtime_device_state WHERE workspace_id = ? AND task_id = ?")
+                .bind(&task.workspace_id)
+                .bind(&task.id)
+                .execute(&mut *tx)
+                .await
+                .map_err(unavailable)?;
+        }
         let event = append_runtime_event_tx(
             &mut tx,
             task_event(
@@ -480,7 +490,11 @@ impl Db {
         wake_event_id: &str,
         run_id: &str,
     ) -> Result<(bool, Option<crate::runtime_event::RuntimeEvent>), TaskStoreError> {
-        if !task.status.can_transition_to(TaskStatus::Active) {
+        // Paused is resumable but never by starting a Run from an old wake;
+        // Cancelling and terminal states must not begin work either.
+        if !task.status.can_transition_to(TaskStatus::Active)
+            || matches!(task.status, TaskStatus::Paused | TaskStatus::Cancelling)
+        {
             return Err(TaskStoreError::Validation(format!(
                 "task state transition {} -> active is forbidden",
                 task.status.as_str()
@@ -1199,6 +1213,86 @@ mod tests {
                 .resolved_at
                 .is_some()
         );
+    }
+
+    #[tokio::test]
+    async fn paused_or_cancelling_task_cannot_begin_a_run() {
+        let pool = crate::test_helpers::test_pool().await;
+        seed_workspace(&pool, "ws_1").await;
+        let db = Db::new(pool);
+        let task = sample_task("task_1", "ws_1", "key_1", "inspect");
+        db.create_task_with_wake(&task, &sample_wake("task_1", "event_1", "ws_1"))
+            .await
+            .expect("create");
+
+        let paused = db
+            .transition_task("ws_1", "task_1", 0, TaskStatus::Paused, None)
+            .await
+            .expect("pause");
+        let error = db
+            .begin_run(&paused, "event_1", "run_1")
+            .await
+            .expect_err("paused Task must not begin a Run");
+        assert!(matches!(error, TaskStoreError::Validation(_)), "{error:?}");
+
+        let cancelling = db
+            .transition_task("ws_1", "task_1", 1, TaskStatus::Cancelling, None)
+            .await
+            .expect("cancel");
+        let error = db
+            .begin_run(&cancelling, "event_1", "run_1")
+            .await
+            .expect_err("cancelling Task must not begin a Run");
+        assert!(matches!(error, TaskStoreError::Validation(_)), "{error:?}");
+
+        let runs: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM agent_runs")
+            .fetch_one(db.pool())
+            .await
+            .expect("run count");
+        assert_eq!(runs, 0);
+        let wake = db
+            .wake_by_id("task_1", "event_1")
+            .await
+            .expect("wake")
+            .expect("stored wake");
+        assert_eq!(wake.dispatch_state, WakeDispatchState::Pending);
+    }
+
+    #[tokio::test]
+    async fn terminal_transition_deletes_device_state_and_nonterminal_keeps_it() {
+        let pool = crate::test_helpers::test_pool().await;
+        seed_workspace(&pool, "ws_1").await;
+        let db = Db::new(pool);
+        let task = sample_task("task_1", "ws_1", "key_1", "inspect");
+        db.create_task_with_wake(&task, &sample_wake("task_1", "event_1", "ws_1"))
+            .await
+            .expect("create");
+        let seed_state = || {
+            sqlx::query(
+                "INSERT INTO runtime_device_state (workspace_id, task_id, device_id, state_json, updated_at)
+                 VALUES ('ws_1', 'task_1', 'device_1', '{\"temperature\":\"21\"}', 'now')",
+            )
+            .execute(db.pool())
+        };
+        seed_state().await.expect("state");
+
+        db.transition_task("ws_1", "task_1", 0, TaskStatus::WaitingJob, None)
+            .await
+            .expect("waiting");
+        let rows: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM runtime_device_state")
+            .fetch_one(db.pool())
+            .await
+            .expect("nonterminal state count");
+        assert_eq!(rows, 1, "a live Task keeps its device projection");
+
+        db.transition_task("ws_1", "task_1", 1, TaskStatus::Failed, None)
+            .await
+            .expect("fail");
+        let rows: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM runtime_device_state")
+            .fetch_one(db.pool())
+            .await
+            .expect("terminal state count");
+        assert_eq!(rows, 0, "a terminal Task leaves no device projection behind");
     }
 
     #[tokio::test]

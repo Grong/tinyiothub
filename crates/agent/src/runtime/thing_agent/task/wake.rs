@@ -48,19 +48,17 @@ impl WakeRouter {
         let count = wakes.len();
         for wake in wakes {
             let key = (wake.task_id.clone(), wake.event_id.clone());
-            let is_approval = serde_json::from_str::<serde_json::Value>(&wake.signal_json)
-                .ok()
-                .and_then(|signal| {
-                    signal
-                        .get("kind")
-                        .and_then(serde_json::Value::as_str)
-                        .map(str::to_owned)
-                })
-                .as_deref()
-                == Some("approval_decided");
-            let result = if is_approval && let Some(approvals) = &self.approvals {
+            let signal = serde_json::from_str::<serde_json::Value>(&wake.signal_json).ok();
+            let approval_workspace = signal.as_ref().and_then(|signal| {
+                (signal.get("kind").and_then(serde_json::Value::as_str) == Some("approval_decided"))
+                    .then(|| signal.get("workspace_id").and_then(serde_json::Value::as_str))
+                    .flatten()
+                    .map(str::to_owned)
+            });
+            let result = if let (Some(workspace_id), Some(approvals)) = (approval_workspace.as_deref(), &self.approvals)
+            {
                 approvals
-                    .execute_decision(&wake.event_id)
+                    .execute_decision(workspace_id, &wake.event_id)
                     .await
                     .map(|outcome| match outcome {
                         ExecutionOutcome::Deferred => Advance::Deferred,

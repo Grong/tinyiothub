@@ -29,7 +29,11 @@ pub trait TaskApprovalStore: Send + Sync {
         task_id: &str,
         approval_id: &str,
     ) -> Result<Option<TaskApproval>, ApprovalError>;
-    async fn get_by_decision_event(&self, event_id: &str) -> Result<Option<TaskApproval>, ApprovalError>;
+    async fn get_by_decision_event(
+        &self,
+        workspace_id: &str,
+        event_id: &str,
+    ) -> Result<Option<TaskApproval>, ApprovalError>;
     async fn list_for_task(&self, workspace_id: &str, task_id: &str) -> Result<Vec<TaskApproval>, ApprovalError>;
     async fn decide(
         &self,

@@ -76,9 +76,13 @@ impl TaskApprovalStore for DbApprovalStore {
             .map_err(map_error)
     }
 
-    async fn get_by_decision_event(&self, event_id: &str) -> Result<Option<TaskApproval>, ApprovalError> {
+    async fn get_by_decision_event(
+        &self,
+        workspace_id: &str,
+        event_id: &str,
+    ) -> Result<Option<TaskApproval>, ApprovalError> {
         self.db
-            .task_approval_by_decision_event(event_id)
+            .task_approval_by_decision_event(workspace_id, event_id)
             .await
             .map_err(map_error)
     }
@@ -421,6 +425,7 @@ mod tests {
         executor: Arc<tinyiothub_agent::runtime::thing_agent::task::approval::ApprovalExecutor>,
         router: Arc<tinyiothub_agent::runtime::thing_agent::task::wake::WakeRouter>,
         active: tinyiothub_agent::runtime::thing_agent::active_runs::ActiveRunRegistry,
+        jobs: tinyiothub_runtime::job::service::JobService,
     }
 
     impl ApprovalRuntime {
@@ -494,6 +499,7 @@ mod tests {
                 executor,
                 router,
                 active,
+                jobs,
             }
         }
     }
@@ -834,7 +840,7 @@ mod tests {
                     assert!(matches!(
                         crashed
                             .executor
-                            .execute_decision(&pending.decision_event_id)
+                            .execute_decision(&pending.workspace_id, &pending.decision_event_id)
                             .await
                             .expect("job before crash"),
                         tinyiothub_agent::runtime::thing_agent::task::approval::ExecutionOutcome::Job(_)
@@ -980,7 +986,7 @@ mod tests {
         assert!(matches!(
             runtime
                 .executor
-                .execute_decision(&pending.decision_event_id)
+                .execute_decision(&pending.workspace_id, &pending.decision_event_id)
                 .await
                 .expect("deferred cancelled execution"),
             tinyiothub_agent::runtime::thing_agent::task::approval::ExecutionOutcome::Deferred
@@ -1096,5 +1102,236 @@ mod tests {
                 .any(|pair| pair == ["approval.requested", "approval.approved"]),
             "{types:?}"
         );
+    }
+
+    async fn wait_for_task_status(
+        db: &Db,
+        task_id: &str,
+        expected: TaskStatus,
+    ) -> tinyiothub_core::agent_task::AgentTask {
+        for _ in 0..200 {
+            let task = db.get_task(WS, task_id).await.expect("task read").expect("task row");
+            if task.status == expected {
+                return task;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+        db.get_task(WS, task_id).await.expect("task read").expect("task row")
+    }
+
+    async fn seed_waiting_job_task(fixture: &Fixture, task_id: &str, job_id: &str) {
+        let now = Utc::now();
+        let task = AgentTask {
+            id: task_id.into(),
+            workspace_id: WS.into(),
+            idempotency_key: format!("{task_id}-key"),
+            objective: "observe a terminal device Job".into(),
+            session_key: None,
+            created_by: "user-1".into(),
+            status: TaskStatus::WaitingJob,
+            current_run_id: None,
+            state_version: 0,
+            created_at: now,
+            updated_at: now,
+            ended_at: None,
+        };
+        let wake = TaskWake {
+            task_id: task.id.clone(),
+            event_id: format!("create-{task_id}"),
+            signal_json: json!({"workspace_id":WS}).to_string(),
+            dispatch_state: WakeDispatchState::Dispatched,
+            created_at: now,
+            dispatched_at: Some(now),
+            resolved_at: Some(now),
+        };
+        fixture
+            .db
+            .create_task_with_wake(&task, &wake)
+            .await
+            .expect("waiting Task");
+        fixture
+            .db
+            .create_job(&tinyiothub_core::device_job::DeviceJob {
+                id: job_id.into(),
+                workspace_id: WS.into(),
+                device_id: "device-1".into(),
+                tool: "set_level".into(),
+                args_json: json!({"level":7}),
+                state: tinyiothub_core::device_job::DeviceJobState::Running,
+                stop_requested_at: None,
+                progress_json: None,
+                result_json: None,
+                task_id: Some(task.id.clone()),
+                run_id: Some("run-origin".into()),
+                tool_call_id: Some(format!("call-{task_id}")),
+                driver_call_id: None,
+                timeout_ms: 5_000,
+                started_at: now,
+                ended_at: None,
+            })
+            .await
+            .expect("running Job");
+    }
+
+    #[tokio::test]
+    async fn terminal_job_wakes_start_one_continuation_for_done_stopped_and_interrupted() {
+        use tinyiothub_runtime::job::service::JobFinal;
+
+        for (label, final_result, expected_state) in [
+            ("done", JobFinal::Done(json!({"level":7})), "done"),
+            ("stopped", JobFinal::Cancelled { within_grace: true }, "cancelled"),
+            (
+                "interrupted",
+                JobFinal::Interrupted("device connection lost".into()),
+                "interrupted",
+            ),
+        ] {
+            let fixture = fixture().await;
+            let task_id = "task-job";
+            let job_id = "job-terminal";
+            seed_waiting_job_task(&fixture, task_id, job_id).await;
+            let provider = Arc::new(RuntimeProvider::default());
+            provider.block_next.store(true, Ordering::SeqCst);
+            let runtime = fixture.runtime(Arc::new(RecordingWorker::default()), provider.clone());
+            let finished = runtime.jobs.finish(job_id, final_result).await.expect("finish Job");
+            assert!(finished.wake_created, "{label}");
+            assert_eq!(runtime.router.run(64).await.expect("wake routing"), 1, "{label}");
+            tokio::time::timeout(std::time::Duration::from_secs(5), provider.started.notified())
+                .await
+                .expect("continuation prompt starts");
+            let task = fixture
+                .db
+                .get_task(WS, task_id)
+                .await
+                .expect("task read")
+                .expect("task row");
+            assert_eq!(task.status, TaskStatus::Active, "{label}");
+            assert!(task.current_run_id.is_some(), "{label}");
+            let runs: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM agent_runs WHERE task_id = ?")
+                .bind(task_id)
+                .fetch_one(fixture.db.pool())
+                .await
+                .expect("run count");
+            assert_eq!(runs, 1, "{label}: exactly one continuation Run");
+            let wake = runtime
+                .store
+                .wake_by_id(task_id, &format!("device_job:{job_id}:{expected_state}"))
+                .await
+                .expect("wake read")
+                .expect("Job wake");
+            assert_eq!(wake.dispatch_state, WakeDispatchState::Dispatched, "{label}");
+            {
+                let prompts = provider.prompts.lock().expect("prompts");
+                assert_eq!(prompts.len(), 1, "{label}");
+                assert!(prompts[0].contains(job_id), "{label}: {}", prompts[0]);
+                assert!(prompts[0].contains(expected_state), "{label}: {}", prompts[0]);
+            }
+            provider.release.notify_waiters();
+            let completed = wait_for_task_status(&fixture.db, task_id, TaskStatus::Completed).await;
+            assert_eq!(completed.status, TaskStatus::Completed, "{label}");
+            let runs: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM agent_runs WHERE task_id = ?")
+                .bind(task_id)
+                .fetch_one(fixture.db.pool())
+                .await
+                .expect("run count");
+            assert_eq!(runs, 1, "{label}: no duplicate continuation Run");
+        }
+    }
+
+    #[tokio::test]
+    async fn approved_decision_waits_on_its_job_and_terminal_wake_continues() {
+        use tinyiothub_runtime::job::service::JobFinal;
+
+        let fixture = fixture().await;
+        let pending = pending(&fixture).await;
+        let worker = Arc::new(RecordingWorker::default());
+        let provider = Arc::new(RuntimeProvider::default());
+        let runtime = fixture.runtime(worker.clone(), provider.clone());
+        decide(
+            &runtime,
+            &pending,
+            tinyiothub_core::task_approval::ApprovalDecision::Approve,
+        )
+        .await;
+        assert_eq!(runtime.router.run(64).await.expect("decision routing"), 1);
+        let task = fixture
+            .db
+            .get_task(WS, &pending.task_id)
+            .await
+            .expect("task read")
+            .expect("task row");
+        assert_eq!(task.status, TaskStatus::WaitingJob);
+        let jobs = runtime
+            .jobs
+            .task_jobs(WS, &pending.task_id, false)
+            .await
+            .expect("task Jobs");
+        assert_eq!(jobs.len(), 1, "exactly one approved Job");
+        assert_eq!(worker.submitted.lock().expect("submitted").len(), 1);
+        let wake = runtime
+            .store
+            .wake_by_id(&pending.task_id, &pending.decision_event_id)
+            .await
+            .expect("wake read")
+            .expect("decision wake");
+        assert_eq!(wake.dispatch_state, WakeDispatchState::Dispatched);
+
+        let job_id = jobs[0].id.clone();
+        let finished = runtime
+            .jobs
+            .finish(&job_id, JobFinal::Done(json!({"level":7})))
+            .await
+            .expect("finish approved Job");
+        assert!(finished.wake_created);
+        assert_eq!(runtime.router.run(64).await.expect("Job wake routing"), 1);
+        let completed = wait_for_task_status(&fixture.db, &pending.task_id, TaskStatus::Completed).await;
+        assert_eq!(completed.status, TaskStatus::Completed);
+        assert_eq!(provider.prompts.lock().expect("prompts").len(), 1);
+        let jobs: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM device_jobs WHERE tool_call_id = ?")
+            .bind(&pending.tool_call_id)
+            .fetch_one(fixture.db.pool())
+            .await
+            .expect("job count");
+        assert_eq!(jobs, 1, "the continuation must not submit a second Job");
+        assert_eq!(worker.submitted.lock().expect("submitted").len(), 1);
+    }
+
+    #[tokio::test]
+    async fn rejected_and_expired_decisions_continue_without_a_job() {
+        for action in ["reject", "expire"] {
+            let fixture = fixture().await;
+            let pending = pending(&fixture).await;
+            let provider = Arc::new(RuntimeProvider::default());
+            let runtime = fixture.runtime(Arc::new(RecordingWorker::default()), provider.clone());
+            match action {
+                "reject" => {
+                    decide(
+                        &runtime,
+                        &pending,
+                        tinyiothub_core::task_approval::ApprovalDecision::Reject,
+                    )
+                    .await;
+                }
+                "expire" => {
+                    tinyiothub_agent::port::approval::TaskApprovalStore::expire_due(
+                        runtime.approvals.as_ref(),
+                        pending.expires_at + chrono::Duration::seconds(1),
+                    )
+                    .await
+                    .expect("expiry");
+                }
+                _ => unreachable!(),
+            }
+            assert_eq!(runtime.router.run(64).await.expect("decision routing"), 1, "{action}");
+            let completed = wait_for_task_status(&fixture.db, &pending.task_id, TaskStatus::Completed).await;
+            assert_eq!(completed.status, TaskStatus::Completed, "{action}");
+            assert_eq!(provider.prompts.lock().expect("prompts").len(), 1, "{action}");
+            let jobs: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM device_jobs WHERE tool_call_id = ?")
+                .bind(&pending.tool_call_id)
+                .fetch_one(fixture.db.pool())
+                .await
+                .expect("job count");
+            assert_eq!(jobs, 0, "{action}");
+        }
     }
 }

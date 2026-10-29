@@ -484,22 +484,24 @@ async fn load_device_facts(
                         }
                     }
                 }
-                if !merged.is_empty() {
-                    sqlx::query(
-                        "INSERT INTO runtime_device_state
-                             (workspace_id, task_id, device_id, state_json, updated_at)
-                         VALUES (?, ?, ?, ?, ?)
-                         ON CONFLICT(workspace_id, task_id, device_id)
-                         DO UPDATE SET state_json = excluded.state_json, updated_at = excluded.updated_at",
-                    )
-                    .bind(workspace_id)
-                    .bind(task_id)
-                    .bind(device_id)
-                    .bind(Value::Object(merged.clone()).to_string())
-                    .bind(Utc::now().to_rfc3339())
-                    .execute(&mut *connection)
-                    .await?;
-                }
+                // Seed even an empty projection: a device whose first events
+                // carry only null values still needs a row, otherwise every new
+                // event replays the Task's whole ledger and `merge_device_state_delta`
+                // keeps treating the projection as unseeded.
+                sqlx::query(
+                    "INSERT INTO runtime_device_state
+                         (workspace_id, task_id, device_id, state_json, updated_at)
+                     VALUES (?, ?, ?, ?, ?)
+                     ON CONFLICT(workspace_id, task_id, device_id)
+                     DO UPDATE SET state_json = excluded.state_json, updated_at = excluded.updated_at",
+                )
+                .bind(workspace_id)
+                .bind(task_id)
+                .bind(device_id)
+                .bind(Value::Object(merged.clone()).to_string())
+                .bind(Utc::now().to_rfc3339())
+                .execute(&mut *connection)
+                .await?;
                 Some(Value::Object(merged))
             }
         };
@@ -1293,6 +1295,51 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn task_page_and_event_dedupe_queries_use_their_bounded_indexes() {
+        let pool = crate::test_helpers::test_pool().await;
+        seed_workspace(&pool, "ws-1").await;
+        let plan = |sql: &'static str| {
+            let pool = pool.clone();
+            async move {
+                sqlx::query_as::<_, (i64, i64, i64, String)>(sql)
+                    .fetch_all(&pool)
+                    .await
+                    .expect("query plan")
+                    .into_iter()
+                    .map(|(_, _, _, detail)| detail)
+                    .collect::<Vec<_>>()
+            }
+        };
+        let page = plan(
+            "EXPLAIN QUERY PLAN
+             SELECT id, workspace_id, ts, payload FROM hub_ledger
+             WHERE workspace_id = 'ws-1' AND kind = 'runtime.v1'
+               AND (NULL IS NULL OR id < NULL)
+               AND json_extract(payload, '$.taskId') = 'task-1'
+             ORDER BY id DESC LIMIT 51",
+        )
+        .await;
+        assert!(
+            page.iter()
+                .any(|detail| detail.contains("idx_hub_ledger_runtime_task_page")),
+            "{page:?}"
+        );
+        let dedupe = plan(
+            "EXPLAIN QUERY PLAN
+             SELECT 1 FROM hub_ledger
+             WHERE workspace_id = 'ws-1' AND kind = 'runtime.v1'
+               AND json_extract(payload, '$.eventId') = 'event-1'",
+        )
+        .await;
+        assert!(
+            dedupe
+                .iter()
+                .any(|detail| detail.contains("idx_hub_ledger_runtime_event_id_full")),
+            "{dedupe:?}"
+        );
+    }
+
+    #[tokio::test]
     async fn projection_combines_ordered_runtime_facts_without_media_bytes() {
         let pool = crate::test_helpers::test_pool().await;
         seed_workspace(&pool, "ws-1").await;
@@ -1595,6 +1642,45 @@ mod tests {
         assert_eq!(persisted.source_id.as_deref(), Some("preview"));
         assert_eq!(persisted.evidence_id.as_deref(), Some("evidence-only"));
         assert!(persisted.data.get("storagePath").is_none());
+    }
+
+    #[tokio::test]
+    async fn null_only_state_seeds_the_device_projection() {
+        let pool = crate::test_helpers::test_pool().await;
+        seed_workspace(&pool, "ws-1").await;
+        let db = Db::new(pool);
+        seed_task(&db, "ws-1", "task-1").await;
+
+        let mut read = event("null-state", "task-1");
+        read.event_type = "read_device".into();
+        read.device_id = Some("dev-null".into());
+        read.data = json!({"state":{"temperature":null}});
+        db.append_runtime_event(read).await.expect("append");
+
+        let state: String = sqlx::query_scalar(
+            "SELECT state_json FROM runtime_device_state
+             WHERE workspace_id = 'ws-1' AND task_id = 'task-1' AND device_id = 'dev-null'",
+        )
+        .fetch_one(db.pool())
+        .await
+        .expect("seeded projection");
+        assert_eq!(state, "{}");
+
+        // The follow-up delta must update the seeded row instead of replaying
+        // the ledger from scratch.
+        let mut next = event("null-state-next", "task-1");
+        next.event_type = "read_device".into();
+        next.device_id = Some("dev-null".into());
+        next.data = json!({"state":{"temperature":"22"}});
+        db.append_runtime_event(next).await.expect("next append");
+        let state: String = sqlx::query_scalar(
+            "SELECT state_json FROM runtime_device_state
+             WHERE workspace_id = 'ws-1' AND task_id = 'task-1' AND device_id = 'dev-null'",
+        )
+        .fetch_one(db.pool())
+        .await
+        .expect("updated projection");
+        assert_eq!(state, r#"{"temperature":"22"}"#);
     }
 
     #[tokio::test]

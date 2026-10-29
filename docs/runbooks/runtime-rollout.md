@@ -46,7 +46,10 @@ provider keys into tickets or dashboards.
    Task ID and no second creation.
 3. Drive one long-running Job to a terminal state and confirm the Job is
    terminal (`done`/`failed`/`rejected`/`cancelled`), not paused and not a
-   percentage.
+   percentage. If the Run ends as failed while its Job is still running, the
+   Task must move to `waiting_job` (not `failed`); the terminal-Job wake then
+   starts exactly one continuation Run. A Task with no Job or watch left still
+   fails.
 4. Create and hit a watch, then cancel the Task while a Job runs. Confirm the
    cancel reaches the recorded terminal state.
 5. Restart the process. Confirm the Task, current Run, Job, watch, and outbox
@@ -57,11 +60,14 @@ provider keys into tickets or dashboards.
    `GET /api/v1/workspaces/{workspace_id}/agent/tasks/{task_id}/events?limit={1..200}&before={cursor?}`.
    The response is `{ events, oldestCursor, hasMore }`. Events are ascending by
    cursor and use the same serialized shape as SSE `event` frames. `limit`
-   defaults to 100 and is capped at 200; `before` is an exclusive cursor for
-   loading older pages. The endpoint is workspace- and Task-scoped, returns
-   `404` for an unknown Task and `403` across tenants, and never replays the
-   full ledger. An empty Task returns `events: []`, `oldestCursor: null`,
-   `hasMore: false`.
+   defaults to 100 and is capped at 200; `before` is an exclusive, id-keyset
+   cursor for loading older pages, and the page reads `limit + 1` rows only to
+   set `hasMore`. The query is served by the non-partial
+   `(workspace_id, kind, json_extract(payload,'$.taskId'), id)` index, so a page
+   never scans the workspace or Task's full ledger. The endpoint checks Task
+   existence directly (it does not build the Task projection), is workspace-
+   and Task-scoped, returns `404` for an unknown Task and `403` across tenants.
+   An empty Task returns `events: []`, `oldestCursor: null`, `hasMore: false`.
 8. With Tasks enabled but Media disabled (the required state), call
    `read_device` on an image source. Confirm the tool result is
    `image_unavailable` with reason `media_disabled`, no evidence row is
@@ -77,6 +83,13 @@ provider keys into tickets or dashboards.
    frozen arguments shown in the UI match the stored execution arguments.
 3. Restart after approval but before execution. Confirm one Job at most and the
    original `tool_call_id`.
+   Before submitting, a recovery Run reuses an accepted, running, interrupted,
+   or `cancelled_unknown` Job for the same Task/device/tool/arguments and
+   returns its ID with `deduplicated: true`. `completed`, `failed`, and
+   `rejected` Jobs do not block a deliberate repeat action. The reuse covers
+   Run recovery only: it is not a distributed exactly-once guarantee. Two
+   concurrent Runs that both pass the pre-submit scan can still submit two
+   Jobs; the device worker must keep command execution idempotent.
 4. Reject, expire, and cancel before a decision. Confirm each creates no Job.
 5. Pause the Task, then approve, reject, and expire one request of each kind.
    Confirm the original decision outbox stays pending until resume, and resume
@@ -146,8 +159,9 @@ and Media flags remain off.
      nonterminal (for example a run is still winding down); re-check drain and
      retry explicitly later rather than assuming success.
    - `not_found` — the ID does not exist in this workspace.
-   - `failed` — the per-Task Cancel returned an error; inspect logs and the
-     Task projection.
+   - `failed` — the per-Task Cancel returned an error, or the post-cancel Task
+     lookup itself failed (the outcome is unknown, not proof of progress);
+     inspect logs and the Task projection before retrying.
    `cancelled` counts only outcomes that actually performed the cancel. The
    response also recomputes `drain` after the batch.
 5. Cancel marks pending approvals unavailable and resolves undispatched

@@ -540,6 +540,32 @@ impl ThingService {
     ///
     /// Best-effort: a storage error yields an empty list — demand bookkeeping
     /// must never fail the read tool whose output is already built.
+    /// Authoritative model-source kinds declared for one device: the active
+    /// device declaration names the driver/version, and that driver's active
+    /// manifest declares each source's data kind. `None` means the declaration
+    /// chain is missing or unreadable, so callers must fail closed rather than
+    /// infer a kind from the source name.
+    pub async fn declared_source_data_kinds(
+        &self,
+        workspace_id: &str,
+        thing_id: &str,
+    ) -> Option<std::collections::BTreeMap<String, tinyiothub_core::media::DataKind>> {
+        let device = self.db.find_device_declaration(workspace_id, thing_id).await.ok()??;
+        let drivers = self.db.list_active_driver_declarations(workspace_id).await.ok()?;
+        let driver = drivers.into_iter().find(|driver| {
+            driver.driver_name == device.driver_name && driver.driver_version == device.driver_version
+        })?;
+        let manifest: tinyiothub_core::driver::manifest::DriverManifest =
+            serde_json::from_str(&driver.manifest_json).ok()?;
+        Some(
+            manifest
+                .sources
+                .into_iter()
+                .map(|source| (source.id, source.data_kind))
+                .collect(),
+        )
+    }
+
     pub async fn load_property_names(&self, thing_id: &str) -> Vec<String> {
         match self.db.find_thing_properties_by_thing_id(thing_id).await {
             Ok(props) => props.into_iter().map(|p| p.name).collect(),

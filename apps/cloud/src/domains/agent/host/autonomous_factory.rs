@@ -853,6 +853,79 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn recovered_run_reuses_an_in_flight_job_instead_of_submitting_a_duplicate() {
+        let pool = test_pool().await;
+        let db = Arc::new(tinyiothub_storage::Db::new(pool.clone()));
+        seed_task_owned_device(&pool, &db, "ws-recover", "dev-1", "task-1", "run-old", false).await;
+        let worker = Arc::new(SubmittingWorker::default());
+        let jobs = job_service(&db, worker.clone());
+        jobs.submit(tinyiothub_runtime::job::service::JobRequest {
+            job_id: Some("job:run-old:dev-1:1".into()),
+            workspace_id: "ws-recover".into(),
+            device_id: "dev-1".into(),
+            tool: "set_level".into(),
+            args_json: serde_json::json!({"level":7}),
+            task_id: Some("task-1".into()),
+            run_id: Some("run-old".into()),
+            tool_call_id: Some("run-old:dev-1:1".into()),
+        })
+        .await
+        .expect("seed in-flight Job");
+        worker.submitted.lock().expect("submitted").clear();
+
+        let tools = build_autonomous_tools(
+            &pool,
+            "ws-recover",
+            db.clone(),
+            new_run_context_slot(task_run_context("ws-recover", "task-1", "run-2").await),
+            Arc::new(ThingEventBus::new()),
+            Arc::new(ThrottleState::new(60)),
+            &ThingToolContext {
+                pending_actions: Some(Arc::new(dashmap::DashMap::new())),
+                jobs: Some(jobs.clone()),
+                ..Default::default()
+            },
+        );
+        let call = call_device(&tools);
+
+        // A recovery Run derives a new Job id; every still-in-flight state is
+        // reused so the device command cannot be dispatched twice.
+        for state in ["accepted", "running", "interrupted", "cancelled_unknown"] {
+            sqlx::query("UPDATE device_jobs SET state = ? WHERE id = 'job:run-old:dev-1:1'")
+                .bind(state)
+                .execute(&pool)
+                .await
+                .expect("set in-flight state");
+            let output = call.execute(call_args()).await.expect("recovered call");
+            let output: serde_json::Value = serde_json::from_str(&output.output).expect("tool output");
+            assert_eq!(output["jobId"], "job:run-old:dev-1:1", "{state}: {output}");
+            assert_eq!(output["jobState"], state, "{state}: {output}");
+            assert_eq!(output["deduplicated"], true, "{state}: {output}");
+            assert_eq!(job_rows(&pool).await, 1, "{state} must not create a Job");
+            assert!(
+                worker.submitted.lock().expect("submitted").is_empty(),
+                "{state} must not resubmit the device command"
+            );
+        }
+
+        // A terminal Job is history, not an in-flight call: a legitimate repeat
+        // action still dispatches exactly one new Job.
+        sqlx::query("UPDATE device_jobs SET state = 'done' WHERE id = 'job:run-old:dev-1:1'")
+            .execute(&pool)
+            .await
+            .expect("set terminal state");
+        let output = call.execute(call_args()).await.expect("repeat call");
+        let output: serde_json::Value = serde_json::from_str(&output.output).expect("tool output");
+        assert_eq!(output["jobId"], "job:run-2:dev-1:1", "{output}");
+        assert!(output.get("deduplicated").is_none(), "{output}");
+        assert_eq!(job_rows(&pool).await, 2);
+        assert_eq!(
+            worker.submitted.lock().expect("submitted").as_slice(),
+            ["job:run-2:dev-1:1".to_string()]
+        );
+    }
+
+    #[tokio::test]
     async fn approval_gated_task_call_creates_zero_jobs_until_approval_then_exactly_one() {
         let (_dir, pool) = file_pool().await;
         let db = Arc::new(tinyiothub_storage::Db::new(pool.clone()));
@@ -935,7 +1008,7 @@ mod tests {
         let approved_jobs: Arc<dyn ApprovedJobs> = Arc::new(jobs.clone());
         let executor = ApprovalExecutor::new(approvals.clone(), approved_jobs, Arc::new(RecordedTasks));
         let outcome = executor
-            .execute_decision(&approval.decision_event_id)
+            .execute_decision(&approval.workspace_id, &approval.decision_event_id)
             .await
             .expect("approved execution");
         let ExecutionOutcome::Job(job) = outcome else {
@@ -954,7 +1027,7 @@ mod tests {
         // Replaying the approved decision re-uses the same frozen Job instead
         // of submitting the side effect again.
         let replay = executor
-            .execute_decision(&approval.decision_event_id)
+            .execute_decision(&approval.workspace_id, &approval.decision_event_id)
             .await
             .expect("approved replay");
         let ExecutionOutcome::Job(replayed) = replay else {

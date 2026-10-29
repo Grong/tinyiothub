@@ -319,11 +319,13 @@ impl Db {
 
     pub async fn task_approval_by_decision_event(
         &self,
+        workspace_id: &str,
         event_id: &str,
     ) -> Result<Option<TaskApproval>, TaskApprovalStoreError> {
         sqlx::query_as::<_, TaskApprovalRow>(sqlx::AssertSqlSafe(format!(
-            "SELECT {APPROVAL_COLUMNS} FROM task_approvals WHERE decision_event_id = ?"
+            "SELECT {APPROVAL_COLUMNS} FROM task_approvals WHERE workspace_id = ? AND decision_event_id = ?"
         )))
+        .bind(workspace_id)
         .bind(event_id)
         .fetch_optional(self.pool())
         .await
@@ -1069,6 +1071,28 @@ mod tests {
                 ended_at: None,
             }
         }
+    }
+
+    #[tokio::test]
+    async fn decision_event_lookup_is_workspace_scoped() {
+        let mut fixture = Fixture::new_in_memory().await;
+        let pending = fixture.pending_approval().await;
+        let found = fixture
+            .db
+            .task_approval_by_decision_event("ws_1", &pending.decision_event_id)
+            .await
+            .expect("scoped lookup")
+            .expect("approval in its workspace");
+        assert_eq!(found.id, pending.id);
+        assert!(
+            fixture
+                .db
+                .task_approval_by_decision_event("ws_other", &pending.decision_event_id)
+                .await
+                .expect("cross workspace lookup")
+                .is_none(),
+            "a decision event id is scoped to its workspace"
+        );
     }
 
     #[tokio::test]

@@ -279,7 +279,7 @@ async fn cancel_fixed_task_batch<C: DrainTaskCancel + ?Sized>(
                         Ok(None) => "not_found",
                         Err(error) => {
                             tracing::warn!(%workspace_id, %task_id, %error, "drain cancel outcome lookup failed");
-                            "in_progress"
+                            "failed"
                         }
                     }
                 };
@@ -879,6 +879,10 @@ mod tests {
                     // is not in the projection; the report must say not_found.
                     return Ok(false);
                 }
+                if task_id == "lookup-error" {
+                    // Force the post-cancel outcome lookup to hit a DB error.
+                    return Ok(false);
+                }
                 let task = self
                     .db
                     .get_task(workspace_id, task_id)
@@ -991,6 +995,24 @@ mod tests {
             TaskStatus::Cancelling,
             "an in-flight cancel must keep its status"
         );
+    }
+
+    #[tokio::test]
+    async fn drain_cancel_reports_a_db_lookup_error_as_failed_not_in_progress() {
+        let pool = sqlx::sqlite::SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .expect("pool");
+        let db = tinyiothub_storage::Db::new(pool.clone());
+        pool.close().await;
+        let stub = StubCancel {
+            db: db.clone(),
+            calls: std::sync::Mutex::new(Vec::new()),
+        };
+        let report = super::cancel_fixed_task_batch(&db, &stub, WS, &["lookup-error".to_string()]).await;
+        assert_eq!(report.results[0]["outcome"], "failed");
+        assert_eq!(report.cancelled, 0);
     }
 
     #[tokio::test]
