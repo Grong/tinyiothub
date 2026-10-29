@@ -8,6 +8,7 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use async_trait::async_trait;
+use base64::Engine as _;
 use chrono::Utc;
 use rig_core::completion::{CompletionModel, CompletionRequest};
 use rig_core::message::{
@@ -367,7 +368,36 @@ async fn mock_vision_receives_exact_bytes_and_trace_keeps_only_evidence_refs() {
         !serialized.contains("T8_EXACT_PNG"),
         "trace/report leaked raw image bytes"
     );
-    assert!(!serialized.contains("\\u{89}PNG"));
+    // A weak literal check is not enough: search every common encoding an
+    // accidental attachment or storage reference could take.
+    let base64_engine = base64::engine::general_purpose::STANDARD;
+    let forbidden = [
+        base64_engine.encode(PNG_BYTES),
+        hex::encode(PNG_BYTES),
+        "\\u{89}PNG".to_string(),
+        "[137,80,78,71".to_string(),
+        "\\u{ff}\\u{d8}\\u{ff}".to_string(),
+        "[255,216,255".to_string(),
+    ];
+    for encoding in forbidden {
+        assert!(
+            !serialized.contains(&encoding),
+            "trace/report leaked image bytes encoded as {encoding}"
+        );
+    }
+    for marker in [
+        "storagePath",
+        "storage_path",
+        "T8_EXACT_PNG",
+        "T8_EXACT_JPEG",
+        "signed_url",
+        "sig=",
+    ] {
+        assert!(
+            !serialized.contains(marker),
+            "trace/report leaked sensitive marker {marker}"
+        );
+    }
 }
 
 #[tokio::test]

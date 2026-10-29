@@ -15,6 +15,46 @@ use tinyiothub_web::security::Claims;
 use tokio::sync::broadcast::error::RecvError;
 use tokio::sync::broadcast::{Receiver, Sender, channel};
 
+/// Per-connection duplicate-suppression window. The cursor check already drops
+/// anything at or below `last_cursor`; this set only covers equal-cursor races
+/// between replay and live publication, so a bounded window is sufficient and
+/// keeps memory flat on long-lived connections.
+const SEEN_EVENT_LIMIT: usize = 1024;
+
+#[derive(Default)]
+struct SeenEvents {
+    order: VecDeque<String>,
+    ids: HashSet<String>,
+}
+
+impl SeenEvents {
+    fn contains(&self, event_id: &str) -> bool {
+        self.ids.contains(event_id)
+    }
+
+    fn insert(&mut self, event_id: String) {
+        if !self.ids.insert(event_id.clone()) {
+            return;
+        }
+        self.order.push_back(event_id);
+        while self.order.len() > SEEN_EVENT_LIMIT {
+            if let Some(expired) = self.order.pop_front() {
+                self.ids.remove(&expired);
+            }
+        }
+    }
+
+    fn clear(&mut self) {
+        self.order.clear();
+        self.ids.clear();
+    }
+
+    #[cfg(test)]
+    fn len(&self) -> usize {
+        self.ids.len()
+    }
+}
+
 #[derive(Clone, Serialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum RuntimeFrame {
@@ -141,6 +181,7 @@ pub struct RuntimeStreamHub {
     resyncs: AtomicU64,
     duplicates_dropped: AtomicU64,
     foreign_task_events: AtomicU64,
+    task_less_events: AtomicU64,
     first_frames: AtomicU64,
     first_frame_ms_total: AtomicU64,
 }
@@ -154,6 +195,7 @@ pub struct RuntimeStreamMetrics {
     pub resyncs: u64,
     pub duplicates_dropped: u64,
     pub foreign_task_events: u64,
+    pub task_less_events: u64,
     pub first_frames: u64,
     pub first_frame_ms_total: u64,
 }
@@ -169,6 +211,7 @@ impl RuntimeStreamHub {
             resyncs: AtomicU64::new(0),
             duplicates_dropped: AtomicU64::new(0),
             foreign_task_events: AtomicU64::new(0),
+            task_less_events: AtomicU64::new(0),
             first_frames: AtomicU64::new(0),
             first_frame_ms_total: AtomicU64::new(0),
         }
@@ -182,6 +225,7 @@ impl RuntimeStreamHub {
             resyncs: self.resyncs.load(Ordering::Relaxed),
             duplicates_dropped: self.duplicates_dropped.load(Ordering::Relaxed),
             foreign_task_events: self.foreign_task_events.load(Ordering::Relaxed),
+            task_less_events: self.task_less_events.load(Ordering::Relaxed),
             first_frames: self.first_frames.load(Ordering::Relaxed),
             first_frame_ms_total: self.first_frame_ms_total.load(Ordering::Relaxed),
         }
@@ -193,6 +237,10 @@ impl RuntimeStreamHub {
 
     fn record_foreign_task_event(&self) {
         self.foreign_task_events.fetch_add(1, Ordering::Relaxed);
+    }
+
+    fn record_task_less_event(&self) {
+        self.task_less_events.fetch_add(1, Ordering::Relaxed);
     }
 
     fn record_resync(&self, reason: &str) {
@@ -300,7 +348,7 @@ impl RuntimeStreamHub {
             events,
             pending,
             last_cursor: cursor,
-            seen: HashSet::new(),
+            seen: SeenEvents::default(),
             hub: self.clone(),
             connected_at: Instant::now(),
             first_frame: false,
@@ -353,7 +401,7 @@ pub struct RuntimeConnection {
     events: Receiver<RuntimeEvent>,
     pending: VecDeque<RuntimeFrame>,
     last_cursor: i64,
-    seen: HashSet<String>,
+    seen: SeenEvents,
     hub: Arc<RuntimeStreamHub>,
     connected_at: Instant,
     first_frame: bool,
@@ -380,9 +428,19 @@ impl RuntimeConnection {
             }
             match self.events.recv().await {
                 Ok(event) => {
-                    if event.task_id.as_deref() != Some(self.task_id.as_str()) {
-                        self.hub.record_foreign_task_event();
-                        continue;
+                    match event.task_id.as_deref() {
+                        Some(task_id) if task_id == self.task_id => {}
+                        Some(_) => {
+                            self.hub.record_foreign_task_event();
+                            continue;
+                        }
+                        None => {
+                            // Workspace-scoped events (for example a run that
+                            // never belonged to a Task) are not "foreign Task"
+                            // traffic and must not raise that SSE alarm.
+                            self.hub.record_task_less_event();
+                            continue;
+                        }
                     }
                     if event.cursor <= self.last_cursor || self.seen.contains(&event.event_id) {
                         self.hub.record_duplicate();
@@ -413,12 +471,40 @@ impl RuntimeConnection {
         }
     }
 
+    fn warn_closing(&self, reason: &'static str, cursor: Option<i64>, error: &dyn std::fmt::Display) {
+        tracing::warn!(
+            workspace_id = %self.workspace_id,
+            task_id = %self.task_id,
+            reason,
+            cursor,
+            %error,
+            "runtime stream closing after runtime persistence read failure"
+        );
+    }
+
+    fn closing_without_projection<T>(&self, reason: &'static str, cursor: Option<i64>) -> Option<T> {
+        tracing::warn!(
+            workspace_id = %self.workspace_id,
+            task_id = %self.task_id,
+            reason,
+            cursor,
+            "runtime stream closing: runtime projection not found"
+        );
+        None
+    }
+
     async fn missed_task_event_before(&self, event: &RuntimeEvent) -> Option<bool> {
-        let rows = self
+        let rows = match self
             .db
             .runtime_events_after(&self.workspace_id, Some(self.last_cursor), Some(&self.task_id), 2)
             .await
-            .ok()?;
+        {
+            Ok(rows) => rows,
+            Err(error) => {
+                self.warn_closing("checkpoint_read", Some(event.cursor), &error);
+                return None;
+            }
+        };
         Some(rows.first().is_some_and(|first| first.cursor != event.cursor))
     }
 
@@ -426,21 +512,27 @@ impl RuntimeConnection {
         let Some(expected) = event.data.get("stateVersion").and_then(serde_json::Value::as_i64) else {
             return Some(false);
         };
-        let projection = self
-            .db
-            .runtime_projection(&self.workspace_id, &self.task_id)
-            .await
-            .ok()??;
+        let projection = match self.db.runtime_projection(&self.workspace_id, &self.task_id).await {
+            Ok(Some(projection)) => projection,
+            Ok(None) => return self.closing_without_projection("projection_missing", Some(event.cursor)),
+            Err(error) => {
+                self.warn_closing("projection_read", Some(event.cursor), &error);
+                return None;
+            }
+        };
         Some(projection.task.state_version != expected)
     }
 
     async fn resync(&mut self, reason: &str) -> Option<RuntimeFrame> {
         self.hub.record_resync(reason);
-        let projection = self
-            .db
-            .runtime_projection(&self.workspace_id, &self.task_id)
-            .await
-            .ok()??;
+        let projection = match self.db.runtime_projection(&self.workspace_id, &self.task_id).await {
+            Ok(Some(projection)) => projection,
+            Ok(None) => return self.closing_without_projection("resync_projection_missing", Some(self.last_cursor)),
+            Err(error) => {
+                self.warn_closing("resync_projection_read", Some(self.last_cursor), &error);
+                return None;
+            }
+        };
         self.last_cursor = projection.cursor;
         self.seen.clear();
         Some(RuntimeFrame::Resync {
@@ -462,7 +554,7 @@ mod tests {
     use tinyiothub_storage::Db;
     use tinyiothub_storage::runtime_event::RuntimeEventInput;
 
-    use super::{RuntimeFrame, RuntimeRecorder, RuntimeStreamHub};
+    use super::{RuntimeFrame, RuntimeRecorder, RuntimeStreamHub, SEEN_EVENT_LIMIT, SeenEvents};
 
     async fn fixture(capacity: usize) -> (Arc<Db>, Arc<RuntimeStreamHub>) {
         let pool = tinyiothub_storage::test_helpers::test_pool().await;
@@ -651,6 +743,21 @@ mod tests {
         );
         assert_eq!(hub.metrics().foreign_task_events, 1);
 
+        let mut task_less = input("task-less");
+        task_less.task_id = None;
+        hub.publish(db.append_runtime_event(task_less).await.expect("task-less"));
+        assert!(
+            tokio::time::timeout(Duration::from_millis(50), connection.next_frame())
+                .await
+                .is_err()
+        );
+        assert_eq!(
+            hub.metrics().foreign_task_events,
+            1,
+            "task-less events must not inflate the foreign-Task alarm"
+        );
+        assert_eq!(hub.metrics().task_less_events, 1);
+
         let duplicate = db.append_runtime_event(input("event-1")).await.expect("first");
         hub.publish(duplicate.clone());
         assert!(matches!(
@@ -668,6 +775,50 @@ mod tests {
             hub.metrics().foreign_task_events,
             1,
             "real duplicates must not be counted as foreign Task traffic"
+        );
+        assert_eq!(hub.metrics().task_less_events, 1);
+    }
+
+    #[test]
+    fn per_connection_dedupe_window_stays_bounded() {
+        let mut seen = SeenEvents::default();
+        let total = SEEN_EVENT_LIMIT + 64;
+        for index in 0..total {
+            seen.insert(format!("event-{index}"));
+        }
+        assert_eq!(seen.len(), SEEN_EVENT_LIMIT);
+        assert!(!seen.contains("event-0"), "oldest id must be evicted");
+        assert!(
+            seen.contains(&format!("event-{}", total - 1)),
+            "newest id must be retained"
+        );
+        seen.clear();
+        assert_eq!(seen.len(), 0);
+    }
+
+    #[tokio::test]
+    async fn checkpoint_read_failure_closes_the_connection_instead_of_going_silent() {
+        let (db, hub) = fixture(16).await;
+        let mut connection = hub.connect(db.clone(), "ws-1", "task-1", None).await.expect("connect");
+        assert!(matches!(
+            connection.next_frame().await,
+            Some(RuntimeFrame::Snapshot { .. })
+        ));
+        db.append_runtime_event(input("event-1")).await.expect("first");
+        let gap = db.append_runtime_event(input("event-2")).await.expect("second");
+        sqlx::query("ALTER TABLE hub_ledger RENAME TO hub_ledger_hidden")
+            .execute(db.pool())
+            .await
+            .expect("inject checkpoint read failure");
+        hub.publish(gap);
+        let closed = tokio::time::timeout(Duration::from_millis(100), connection.next_frame()).await;
+        sqlx::query("ALTER TABLE hub_ledger_hidden RENAME TO hub_ledger")
+            .execute(db.pool())
+            .await
+            .expect("restore ledger");
+        assert!(
+            matches!(closed, Ok(None)),
+            "a persistence read failure must end the stream (warned), not hang"
         );
     }
 

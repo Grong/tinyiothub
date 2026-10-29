@@ -228,7 +228,7 @@ trait DrainTaskCancel: Send + Sync {
         &'a self,
         workspace_id: &'a str,
         task_id: &'a str,
-    ) -> Pin<Box<dyn Future<Output = Result<(), String>> + Send + 'a>>;
+    ) -> Pin<Box<dyn Future<Output = Result<bool, String>> + Send + 'a>>;
 }
 
 impl DrainTaskCancel for ThingAgentManager {
@@ -236,11 +236,11 @@ impl DrainTaskCancel for ThingAgentManager {
         &'a self,
         workspace_id: &'a str,
         task_id: &'a str,
-    ) -> Pin<Box<dyn Future<Output = Result<(), String>> + Send + 'a>> {
+    ) -> Pin<Box<dyn Future<Output = Result<bool, String>> + Send + 'a>> {
         Box::pin(async move {
             self.cancel_task(workspace_id, task_id)
                 .await
-                .map(|_| ())
+                .map(|outcome| outcome.accepted)
                 .map_err(|error| error.to_string())
         })
     }
@@ -266,9 +266,24 @@ async fn cancel_fixed_task_batch<C: DrainTaskCancel + ?Sized>(
     let mut results = Vec::with_capacity(requested);
     for task_id in task_ids {
         match cancellations.cancel(workspace_id, task_id).await {
-            Ok(()) => {
-                cancelled += 1;
-                results.push(json!({"taskId": task_id, "outcome": "cancelled"}));
+            Ok(accepted) => {
+                if accepted {
+                    cancelled += 1;
+                }
+                let outcome = if accepted {
+                    "cancelled"
+                } else {
+                    match db.get_task(workspace_id, task_id).await {
+                        Ok(Some(task)) if task.status.is_terminal() => "already_terminal",
+                        Ok(Some(_)) => "in_progress",
+                        Ok(None) => "not_found",
+                        Err(error) => {
+                            tracing::warn!(%workspace_id, %task_id, %error, "drain cancel outcome lookup failed");
+                            "in_progress"
+                        }
+                    }
+                };
+                results.push(json!({"taskId": task_id, "outcome": outcome}));
             }
             Err(error) => {
                 tracing::warn!(
@@ -598,6 +613,104 @@ mod tests {
         .expect("unknown finish");
     }
 
+    async fn seed_task(db: &tinyiothub_storage::Db, id: &str, status: TaskStatus) {
+        let now = Utc::now();
+        db.create_task_with_wake(
+            &AgentTask {
+                id: id.into(),
+                workspace_id: WS.into(),
+                idempotency_key: format!("{id}-key"),
+                objective: "drain fixture".into(),
+                session_key: None,
+                created_by: "user-1".into(),
+                status: TaskStatus::Active,
+                current_run_id: None,
+                state_version: 1,
+                created_at: now,
+                updated_at: now,
+                ended_at: None,
+            },
+            &TaskWake {
+                task_id: id.into(),
+                event_id: format!("{id}-wake"),
+                signal_json: json!({"workspace_id":WS}).to_string(),
+                dispatch_state: WakeDispatchState::Dispatched,
+                created_at: now,
+                dispatched_at: Some(now),
+                resolved_at: Some(now),
+            },
+        )
+        .await
+        .expect("seed task");
+        if status == TaskStatus::Active {
+            return;
+        }
+        let cancelling = db
+            .transition_task(WS, id, 1, TaskStatus::Cancelling, None)
+            .await
+            .expect("cancelling");
+        if status == TaskStatus::Cancelled {
+            db.transition_task(WS, id, cancelling.state_version, TaskStatus::Cancelled, None)
+                .await
+                .expect("cancelled");
+        }
+    }
+
+    async fn seed_owned_watch(db: &tinyiothub_storage::Db, id: &str, owner_task_id: &str) {
+        sqlx::query(
+            "INSERT INTO watch_rules
+                 (id, workspace_id, kind, condition, persistent, timeout_secs, created_at, owner_task_id)
+             VALUES (?, ?, 'availability', '{\"thing_id\":\"dev_1\",\"online\":true}', 0, 60, 'now', ?)",
+        )
+        .bind(id)
+        .bind(WS)
+        .bind(owner_task_id)
+        .execute(db.pool())
+        .await
+        .expect("watch");
+    }
+
+    #[tokio::test]
+    async fn drain_http_surfaces_every_durable_category_and_ignores_terminal_owner_watch() {
+        let (app, db, admin, _) = fixture().await;
+        seed_task(&db, "task-terminal", TaskStatus::Cancelled).await;
+        seed_owned_watch(&db, "watch-live", "task-admin").await;
+        seed_owned_watch(&db, "watch-terminal", "task-terminal").await;
+        sqlx::query(
+            "INSERT INTO task_approvals
+                 (id, workspace_id, task_id, run_id, tool_call_id, device_id, tool, args_json, reason,
+                  state, decision, decider_id, requested_at, decided_at, expires_at, decision_event_id, updated_at)
+             VALUES ('approval-http', ?, 'task-admin', 'run-1', 'call-1', 'dev-1', 'set_speed', '{}',
+                     'confirm', 'pending', NULL, NULL, '2026-10-29T00:00:00Z', NULL,
+                     '2026-10-30T00:00:00Z', 'decision-1', '2026-10-29T00:00:00Z')",
+        )
+        .bind(WS)
+        .execute(db.pool())
+        .await
+        .expect("approval");
+        sqlx::query(
+            "INSERT INTO task_wake_outbox
+                 (task_id, event_id, signal_json, dispatch_state, created_at, dispatched_at, resolved_at)
+             VALUES ('task-admin', 'pending-http', '{\"workspace_id\":\"ws-runtime-admin\"}', 'pending',
+                     '2026-10-29T00:00:00Z', NULL, NULL)",
+        )
+        .execute(db.pool())
+        .await
+        .expect("pending outbox");
+        insert_unknown_job(&db, "unknown-http").await;
+
+        let drain_uri = format!("/api/v1/admin/runtime/drain?workspaceId={WS}");
+        let (status, body) = request(&app, &admin, "GET", &drain_uri).await;
+        assert_eq!(status, StatusCode::OK, "drain: {body}");
+        let drain = &body["result"]["drain"];
+        assert_eq!(drain["activeWatches"], 1, "terminal Task watch must count zero: {body}");
+        assert_eq!(drain["pendingApprovals"], 1, "{body}");
+        assert_eq!(drain["pendingOutbox"], 1, "{body}");
+        assert_eq!(drain["unresolvedUnknown"], 1, "{body}");
+        assert_eq!(body["result"]["canHideWorkbench"], false);
+        assert_eq!(body["result"]["canHideMedia"], false);
+    }
+
     #[tokio::test]
     async fn drain_counts_unknown_until_administrator_records_disposition() {
         let (app, db, admin, reader) = fixture().await;
@@ -755,11 +868,16 @@ mod tests {
             &'a self,
             workspace_id: &'a str,
             task_id: &'a str,
-        ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<(), String>> + Send + 'a>> {
+        ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<bool, String>> + Send + 'a>> {
             Box::pin(async move {
                 self.calls.lock().expect("calls").push(task_id.to_string());
                 if task_id == "missing-task" {
                     return Err("task not found".to_string());
+                }
+                if task_id == "noop-missing" {
+                    // A cancel path may report "nothing to do" for an ID that
+                    // is not in the projection; the report must say not_found.
+                    return Ok(false);
                 }
                 let task = self
                     .db
@@ -767,8 +885,8 @@ mod tests {
                     .await
                     .map_err(|error| error.to_string())?
                     .ok_or_else(|| "task not found".to_string())?;
-                if task.status.is_terminal() {
-                    return Ok(());
+                if task.status.is_terminal() || task.status == TaskStatus::Cancelling {
+                    return Ok(false);
                 }
                 let cancelling = self
                     .db
@@ -784,7 +902,7 @@ mod tests {
                         None,
                     )
                     .await
-                    .map(|_| ())
+                    .map(|_| true)
                     .map_err(|error| error.to_string())
             })
         }
@@ -823,6 +941,55 @@ mod tests {
         assert_eq!(
             db.get_task(WS, "task-admin").await.expect("get").expect("task").status,
             TaskStatus::Cancelled
+        );
+    }
+
+    #[tokio::test]
+    async fn drain_cancel_reports_cancelled_already_terminal_in_progress_not_found_and_failed() {
+        let (_, db, _, _) = fixture().await;
+        seed_task(&db, "task-terminal", TaskStatus::Cancelled).await;
+        seed_task(&db, "task-cancelling", TaskStatus::Cancelling).await;
+        let stub = StubCancel {
+            db: db.clone(),
+            calls: std::sync::Mutex::new(Vec::new()),
+        };
+        let task_ids = vec![
+            "task-admin".to_string(),
+            "task-terminal".to_string(),
+            "task-cancelling".to_string(),
+            "noop-missing".to_string(),
+            "missing-task".to_string(),
+        ];
+        let report = super::cancel_fixed_task_batch(&db, &stub, WS, &task_ids).await;
+
+        assert_eq!(report.requested, 5);
+        assert_eq!(report.cancelled, 1, "only the accepted cancel counts as cancelled");
+        let outcomes: Vec<&str> = report
+            .results
+            .iter()
+            .map(|result| result["outcome"].as_str().expect("outcome"))
+            .collect();
+        assert_eq!(
+            outcomes,
+            ["cancelled", "already_terminal", "in_progress", "not_found", "failed"]
+        );
+        assert_eq!(
+            db.get_task(WS, "task-terminal")
+                .await
+                .expect("get")
+                .expect("task")
+                .status,
+            TaskStatus::Cancelled,
+            "terminal Tasks must not be rewritten"
+        );
+        assert_eq!(
+            db.get_task(WS, "task-cancelling")
+                .await
+                .expect("get")
+                .expect("task")
+                .status,
+            TaskStatus::Cancelling,
+            "an in-flight cancel must keep its status"
         );
     }
 

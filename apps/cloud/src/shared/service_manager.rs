@@ -386,6 +386,12 @@ impl ServiceManager {
                     .clone()
                     .map(|a| a as Arc<dyn tinyiothub_runtime::access::DemandRecorder>),
                 Some(evidence.clone()),
+                Some(std::sync::Arc::new(
+                    crate::domains::agent::host::tools::DbRuntimeMediaGate {
+                        db: app_state.db.clone(),
+                    },
+                )),
+                Some(task_jobs.clone()),
                 app_state.runtime_recorder.clone(),
             ));
             tool_registry.set_external_tool_factory(Arc::new(|| {
@@ -456,6 +462,12 @@ impl ServiceManager {
                                     .map(|a| a as Arc<dyn tinyiothub_runtime::access::DemandRecorder>),
                                 run_ctx: None,
                                 evidence: Some(evidence.clone()),
+                                media: Some(std::sync::Arc::new(
+                                    crate::domains::agent::host::tools::DbRuntimeMediaGate {
+                                        db: app_state.db.clone(),
+                                    },
+                                )),
+                                jobs: Some(task_jobs.clone()),
                                 runtime_recorder: Some(app_state.runtime_recorder.clone()),
                             },
                         ),

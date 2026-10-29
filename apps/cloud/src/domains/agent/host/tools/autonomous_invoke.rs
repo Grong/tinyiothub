@@ -682,6 +682,8 @@ mod tests {
             approval: None,
             access: None,
             resources: None,
+            jobs: None,
+            run_ctx: None,
         };
         let tool = AutonomousInvokeActionTool::new(
             inner,
@@ -927,6 +929,8 @@ mod tests {
             approval: None,
             access: None,
             resources: None,
+            jobs: None,
+            run_ctx: None,
         };
         let tool = AutonomousInvokeActionTool::new(
             inner,
@@ -1206,6 +1210,8 @@ mod tests {
             approval: None,
             access: None,
             resources: None,
+            jobs: None,
+            run_ctx: None,
         };
         let tool = AutonomousInvokeActionTool::new(
             inner,
@@ -1323,6 +1329,8 @@ mod tests {
             approval: None,
             access: None,
             resources: None,
+            jobs: None,
+            run_ctx: None,
         };
         let tool = AutonomousInvokeActionTool::new(
             inner,
@@ -1411,6 +1419,8 @@ mod tests {
             approval: None,
             access: None,
             resources: Some(Arc::new(ActuatorResolver)),
+            jobs: None,
+            run_ctx: None,
         };
         let tool = AutonomousInvokeActionTool::new(
             inner,
@@ -1477,6 +1487,8 @@ mod tests {
             approval: None,
             access: None,
             resources: None,
+            jobs: None,
+            run_ctx: None,
         };
         let tool = AutonomousInvokeActionTool::new(
             inner,

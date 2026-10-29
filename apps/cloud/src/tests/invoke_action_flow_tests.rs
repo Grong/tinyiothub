@@ -302,6 +302,8 @@ async fn seeded_tool(
         approval: None,
         access: Some(Arc::new(RejectingAccess(rejection))),
         resources: None,
+        jobs: None,
+        run_ctx: None,
     };
     (tool, thing)
 }

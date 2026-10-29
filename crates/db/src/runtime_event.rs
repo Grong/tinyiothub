@@ -68,6 +68,13 @@ pub struct RuntimeEvent {
     pub data: Value,
 }
 
+/// One bounded timeline page (ascending cursor) plus whether older rows exist.
+#[derive(Debug, Clone, PartialEq)]
+pub struct RuntimeEventPage {
+    pub events: Vec<RuntimeEvent>,
+    pub has_more: bool,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RuntimeEventInput {
@@ -732,6 +739,39 @@ impl Db {
         .fetch_all(self.pool())
         .await?;
         rows.into_iter().map(decode_event).collect()
+    }
+
+    /// Bounded newest-first page of one Task's persisted events, returned in
+    /// ascending cursor order. `before` is exclusive; `limit` is clamped to
+    /// `1..=200` so callers can never replay the whole ledger in one query.
+    pub async fn runtime_events_page(
+        &self,
+        workspace_id: &str,
+        task_id: &str,
+        before: Option<i64>,
+        limit: i64,
+    ) -> Result<RuntimeEventPage> {
+        let limit = limit.clamp(1, 200);
+        let mut rows = sqlx::query_as::<_, RuntimeLedgerRow>(
+            "SELECT id, workspace_id, ts, payload FROM hub_ledger
+             WHERE workspace_id = ? AND kind = ?
+               AND (? IS NULL OR id < ?)
+               AND json_extract(payload, '$.taskId') = ?
+             ORDER BY id DESC LIMIT ?",
+        )
+        .bind(workspace_id)
+        .bind(RUNTIME_EVENT_KIND)
+        .bind(before)
+        .bind(before)
+        .bind(task_id)
+        .bind(limit + 1)
+        .fetch_all(self.pool())
+        .await?;
+        let has_more = rows.len() > limit as usize;
+        rows.truncate(limit as usize);
+        let events = rows.into_iter().map(decode_event).collect::<Result<Vec<_>>>()?;
+        let events = events.into_iter().rev().collect();
+        Ok(RuntimeEventPage { events, has_more })
     }
 
     pub async fn runtime_cursor_known(&self, workspace_id: &str, cursor: i64) -> Result<bool> {

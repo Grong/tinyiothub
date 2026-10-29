@@ -184,6 +184,8 @@ fn thing_tools(
             resources: access.map(|a| a as Arc<dyn ResourceResolver>),
             run_ctx: None,
             evidence: None,
+            jobs: None,
+            media: None,
             runtime_recorder: None,
         },
     )

@@ -44,6 +44,7 @@ use tinyiothub_runtime::access::resources::{ResourceClaim, ResourceResolver};
 use tinyiothub_runtime::watch::live_state::ThingLiveSummary;
 use tinyiothub_skills::trust::ToolSafety;
 
+pub use device::{DbRuntimeMediaGate, RuntimeMediaGate};
 pub use get::GetThingTool;
 pub use invoke_action::InvokeActionTool;
 pub use list::ListThingsTool;
@@ -206,6 +207,11 @@ pub struct ThingToolContext {
     pub run_ctx: Option<super::RunContextSlot>,
     /// T4 durable model-image evidence; chat/autonomous share one service.
     pub evidence: Option<Arc<tinyiothub_runtime::media::evidence::EvidenceService>>,
+    /// `runtime_media_enabled` read per call; missing = fail-closed media off.
+    pub media: Option<Arc<dyn device::RuntimeMediaGate>>,
+    /// Durable Job submission for ordinary Task-owned device calls. Chat and
+    /// non-Task runs keep the direct dispatch path.
+    pub jobs: Option<tinyiothub_runtime::job::service::JobService>,
     /// Publish exact persisted Task events produced directly by host tools.
     pub runtime_recorder: Option<crate::domains::agent::runtime::stream::RuntimeRecorder>,
 }
@@ -262,6 +268,7 @@ pub fn create_thing_tools(
                 .clone()
                 .map(|server| server as Arc<dyn device::DeviceSourceReader>),
             evidence: runtime.evidence.clone(),
+            media: runtime.media.clone(),
             run_ctx: runtime.run_ctx.clone(),
             runtime_recorder: runtime.runtime_recorder.clone(),
         })),
@@ -276,6 +283,8 @@ pub fn create_thing_tools(
             approval: None,
             access: runtime.access.clone(),
             resources: runtime.resources.clone(),
+            jobs: runtime.jobs.clone(),
+            run_ctx: runtime.run_ctx.clone(),
         }))),
         destructive(Box::new(device::SetDeviceTool {
             thing_service: thing_service.clone(),
@@ -373,6 +382,8 @@ pub fn create_thing_tools(
             approval: None,
             access: runtime.access.clone(),
             resources: runtime.resources.clone(),
+            jobs: runtime.jobs.clone(),
+            run_ctx: runtime.run_ctx.clone(),
         })))),
     ];
 
@@ -845,6 +856,7 @@ mod tests {
             evidence: None,
             run_ctx: None,
             runtime_recorder: None,
+            media: None,
         };
         let out = tool
             .execute(serde_json::json!({"thingId": created.id, "properties": ["温度"]}))
@@ -947,6 +959,7 @@ mod tests {
             evidence: None,
             run_ctx: None,
             runtime_recorder: None,
+            media: None,
         };
 
         // Explicit properties: every requested name is recorded — including

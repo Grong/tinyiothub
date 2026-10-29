@@ -526,6 +526,11 @@ impl JobService {
         }
     }
 
+    /// Read one Job for idempotent submission/diagnostics.
+    pub async fn job(&self, workspace_id: &str, job_id: &str) -> Result<Option<DeviceJob>, DeviceJobError> {
+        self.inner.store.get_job(workspace_id, job_id).await
+    }
+
     pub async fn task_jobs(
         &self,
         workspace_id: &str,

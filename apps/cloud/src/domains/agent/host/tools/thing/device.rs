@@ -156,6 +156,34 @@ pub(super) fn call_device_tool(inner: Box<dyn Tool>) -> Box<dyn Tool> {
 // read_device：一次返回 state + health + zone + text（AI 不再逐物查 profile）
 // ============================================================================
 
+/// Per-workspace `runtime_media_enabled` read at call time. Every failure
+/// (missing config, malformed JSON, storage error) is fail-closed `false`.
+#[async_trait]
+pub trait RuntimeMediaGate: Send + Sync {
+    async fn media_enabled(&self, workspace_id: &str) -> bool;
+}
+
+pub struct DbRuntimeMediaGate {
+    pub db: Arc<tinyiothub_storage::Db>,
+}
+
+#[async_trait]
+impl RuntimeMediaGate for DbRuntimeMediaGate {
+    async fn media_enabled(&self, workspace_id: &str) -> bool {
+        match self.db.load_heartbeat_config_json(workspace_id).await {
+            Ok(json) => json
+                .as_deref()
+                .and_then(|json| serde_json::from_str::<Value>(json).ok())
+                .map(|json| crate::domains::agent::runtime::types::RuntimeFlags::from_heartbeat_json(&json).media)
+                .unwrap_or(false),
+            Err(error) => {
+                tracing::warn!(%workspace_id, %error, "runtime media flag lookup failed; media disabled");
+                false
+            }
+        }
+    }
+}
+
 #[async_trait]
 pub(super) trait DeviceSourceReader: Send + Sync {
     async fn read_sources(
@@ -188,6 +216,8 @@ pub(super) struct ReadDeviceTool {
     pub(super) demand: Option<Arc<dyn DemandRecorder>>,
     pub(super) source_reader: Option<Arc<dyn DeviceSourceReader>>,
     pub(super) evidence: Option<Arc<tinyiothub_runtime::media::evidence::EvidenceService>>,
+    /// `runtime_media_enabled` gate. Missing = fail-closed (image capture off).
+    pub(super) media: Option<Arc<dyn RuntimeMediaGate>>,
     pub(super) run_ctx: Option<super::super::RunContextSlot>,
     pub(super) runtime_recorder: Option<crate::domains::agent::runtime::stream::RuntimeRecorder>,
 }
@@ -215,6 +245,11 @@ impl ReadDeviceTool {
         if selected.iter().filter(|item| item.data_kind == DataKind::Image).count() > 1 {
             return Err(MediaError::TooManyImages.to_string());
         }
+        // Fail-closed: an unwired or unreadable flag never enables image capture.
+        let media_enabled = match &self.media {
+            Some(gate) => gate.media_enabled(&self.workspace_id).await,
+            None => false,
+        };
 
         let (task_id, run_id) = match &self.run_ctx {
             Some(slot) => {
@@ -242,6 +277,14 @@ impl ReadDeviceTool {
                     "error": item.error,
                 })),
                 DataKind::Image => {
+                    if !media_enabled {
+                        output.errors.push(json!({
+                            "source": item.source,
+                            "error": "image_unavailable",
+                            "reason": "media_disabled",
+                        }));
+                        continue;
+                    }
                     let result = async {
                         let evidence = self
                             .evidence
@@ -1004,6 +1047,8 @@ mod tests {
             approval: None,
             access: None,
             resources: None,
+            jobs: None,
+            run_ctx: None,
         };
         let blocked = invoke
             .execute(json!({"thingId": "dev-1", "actionName": "reboot"}))
@@ -1174,6 +1219,15 @@ mod tests {
         );
     }
 
+    struct StubMedia(bool);
+
+    #[async_trait]
+    impl super::RuntimeMediaGate for StubMedia {
+        async fn media_enabled(&self, _workspace_id: &str) -> bool {
+            self.0
+        }
+    }
+
     struct StubSources {
         items: Vec<tinyiothub_core::media::SourceItem>,
         calls: std::sync::Mutex<Vec<Vec<String>>>,
@@ -1253,6 +1307,7 @@ mod tests {
             demand: None,
             source_reader: Some(reader.clone()),
             evidence: Some(evidence_service(&pool, store)),
+            media: Some(Arc::new(StubMedia(true))),
             run_ctx: None,
             runtime_recorder: None,
         };
@@ -1281,6 +1336,146 @@ mod tests {
             reader.calls.lock().expect("calls").len(),
             1,
             "omitted sources must not read driver media"
+        );
+    }
+
+    fn image_reader() -> Arc<StubSources> {
+        let mut image = source("front", "image", 4);
+        image.media = Some(tinyiothub_core::media::MediaPayload {
+            mime: "image/png".into(),
+            bytes: png(),
+        });
+        Arc::new(StubSources {
+            items: vec![source("objects", "detections", 3), image],
+            calls: std::sync::Mutex::new(Vec::new()),
+        })
+    }
+
+    fn files_under(root: &std::path::Path) -> usize {
+        fn walk(dir: &std::path::Path) -> usize {
+            std::fs::read_dir(dir)
+                .map(|entries| {
+                    entries
+                        .flatten()
+                        .map(|entry| {
+                            let path = entry.path();
+                            if path.is_dir() { walk(&path) } else { 1 }
+                        })
+                        .sum()
+                })
+                .unwrap_or(0)
+        }
+        walk(root)
+    }
+
+    async fn assert_media_disabled_read(tool: ReadDeviceTool, pool: &sqlx::SqlitePool, root: &std::path::Path) {
+        let result = tool
+            .execute(json!({"thingId":"dev-1", "sources":["objects","front"]}))
+            .await
+            .expect("execute");
+        assert!(result.success, "{:?}", result.error);
+        assert!(
+            result.attachments.is_empty(),
+            "media-disabled reads must not attach image bytes"
+        );
+        assert!(!result.output.contains("evidenceId"), "{}", result.output);
+        let output: Value = serde_json::from_str(&result.output).expect("tool JSON");
+        let sources = output["sources"].as_array().expect("source results");
+        assert_eq!(sources.len(), 1);
+        assert_eq!(sources[0]["source"], "objects");
+        let errors = output["sourceErrors"].as_array().expect("source errors");
+        assert_eq!(errors.len(), 1, "{errors:?}");
+        assert_eq!(errors[0]["source"], "front");
+        assert_eq!(errors[0]["error"], "image_unavailable");
+        assert_eq!(errors[0]["reason"], "media_disabled");
+        let evidence_rows: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM media_evidence")
+            .fetch_one(pool)
+            .await
+            .expect("count evidence");
+        assert_eq!(evidence_rows, 0, "media-disabled reads must not persist evidence rows");
+        assert_eq!(
+            files_under(root),
+            0,
+            "media-disabled reads must not write evidence bytes"
+        );
+    }
+
+    #[tokio::test]
+    async fn read_device_media_flag_off_skips_image_without_evidence() {
+        let pool = pool_with_device().await;
+        let root = tempfile::tempdir().expect("media root");
+        let store = Arc::new(
+            tinyiothub_runtime::media::evidence::LocalMediaStore::new(root.path())
+                .await
+                .expect("media store"),
+        );
+        let tool = ReadDeviceTool {
+            thing_service: Arc::new(ThingService::new(pool.clone())),
+            workspace_id: "ws-set".into(),
+            live: None,
+            device_cache: None,
+            demand: None,
+            source_reader: Some(image_reader()),
+            evidence: Some(evidence_service(&pool, store)),
+            media: Some(Arc::new(StubMedia(false))),
+            run_ctx: None,
+            runtime_recorder: None,
+        };
+        assert_media_disabled_read(tool, &pool, root.path()).await;
+    }
+
+    #[tokio::test]
+    async fn read_device_unwired_media_gate_fails_closed() {
+        let pool = pool_with_device().await;
+        let root = tempfile::tempdir().expect("media root");
+        let store = Arc::new(
+            tinyiothub_runtime::media::evidence::LocalMediaStore::new(root.path())
+                .await
+                .expect("media store"),
+        );
+        let tool = ReadDeviceTool {
+            thing_service: Arc::new(ThingService::new(pool.clone())),
+            workspace_id: "ws-set".into(),
+            live: None,
+            device_cache: None,
+            demand: None,
+            source_reader: Some(image_reader()),
+            evidence: Some(evidence_service(&pool, store)),
+            media: None,
+            run_ctx: None,
+            runtime_recorder: None,
+        };
+        assert_media_disabled_read(tool, &pool, root.path()).await;
+    }
+
+    #[tokio::test]
+    async fn db_media_gate_fails_closed_on_missing_or_malformed_config() {
+        let pool = pool_with_device().await;
+        let gate = DbRuntimeMediaGate {
+            db: Arc::new(tinyiothub_storage::Db::new(pool.clone())),
+        };
+        assert!(
+            !gate.media_enabled("missing-workspace").await,
+            "absent workspace config must be fail-closed"
+        );
+        assert!(
+            !gate.media_enabled("ws-set").await,
+            "default workspace config must be fail-closed"
+        );
+        sqlx::query("UPDATE workspaces SET heartbeat_config = ? WHERE id = 'ws-set'")
+            .bind(r#"{"runtime_media_enabled":true}"#)
+            .execute(&pool)
+            .await
+            .expect("enable media");
+        assert!(gate.media_enabled("ws-set").await);
+        sqlx::query("UPDATE workspaces SET heartbeat_config = ? WHERE id = 'ws-set'")
+            .bind("{not-json")
+            .execute(&pool)
+            .await
+            .expect("malformed config");
+        assert!(
+            !gate.media_enabled("ws-set").await,
+            "malformed config must be fail-closed"
         );
     }
 
@@ -1314,6 +1509,7 @@ mod tests {
             evidence: Some(evidence_service(&pool, store)),
             run_ctx: None,
             runtime_recorder: None,
+            media: None,
         };
         let video = tool
             .execute(json!({"thingId":"dev-1", "sources":["live"]}))
@@ -1355,6 +1551,7 @@ mod tests {
             evidence: None,
             run_ctx: Some(run_ctx),
             runtime_recorder: Some(recorder),
+            media: None,
         };
 
         let result = tool.execute(json!({"thingId":"dev-1"})).await.expect("execute");
@@ -1417,6 +1614,7 @@ mod tests {
             demand: None,
             source_reader: Some(reader),
             evidence: Some(evidence_service(&pool, Arc::new(FailingStore))),
+            media: Some(Arc::new(StubMedia(true))),
             run_ctx: None,
             runtime_recorder: None,
         };

@@ -99,6 +99,10 @@ where
             get(crate::domains::agent::runtime::tasks::get_task),
         )
         .route(
+            "/{id}/agent/tasks/{task_id}/events",
+            get(crate::domains::agent::runtime::tasks::list_events),
+        )
+        .route(
             "/{id}/agent/tasks/{task_id}/stream",
             get(crate::domains::agent::runtime::stream::stream_task),
         )

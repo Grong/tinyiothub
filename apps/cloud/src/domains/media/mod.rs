@@ -403,6 +403,23 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn playback_production_composition_fails_closed_without_upstream_provider() {
+        let mut fixture = MediaApiFixture::new().await;
+        fixture.enable_media().await;
+        // The production composition wires `UnavailablePlaybackProvider`
+        // (no upstream vendor exists); enabling the media flag and declaring
+        // the source must still never authorize playback.
+        fixture.state.playback_provider = Arc::new(super::playback::UnavailablePlaybackProvider);
+        fixture.app = Router::new()
+            .nest("/api", crate::api::create_router(&fixture.state))
+            .with_state(fixture.state.clone());
+
+        let response = fixture.get_playback(WORKSPACE, DEVICE, SOURCE).await;
+        assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+        assert_eq!(json(response).await["msg"], "playback_unavailable");
+    }
+
+    #[tokio::test]
     async fn playback_returns_direct_url_and_caps_expiry_at_five_minutes() {
         let fixture = MediaApiFixture::new().await;
         fixture.enable_media().await;

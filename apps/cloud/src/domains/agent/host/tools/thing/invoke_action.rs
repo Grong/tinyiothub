@@ -39,6 +39,10 @@ pub struct InvokeActionTool {
     /// E4c 声明资源解析（None = 未接线）：接线后按工具声明 claim 资源，
     /// 未声明 resources 的工具仍 claim 合成 `__device__`（E1 语义）。
     pub resources: Option<Arc<dyn ResourceResolver>>,
+    /// Task-owned autonomous calls submit a durable Job instead of dispatching
+    /// directly. Chat runs leave `run_ctx` unset and keep the direct path.
+    pub jobs: Option<tinyiothub_runtime::job::service::JobService>,
+    pub run_ctx: Option<crate::domains::agent::host::tools::RunContextSlot>,
 }
 
 impl Attributable for InvokeActionTool {
@@ -47,6 +51,84 @@ impl Attributable for InvokeActionTool {
     }
     fn alias(&self) -> &str {
         self.name()
+    }
+}
+
+impl InvokeActionTool {
+    /// The in-flight action count already includes this tool call (the runner
+    /// counts at dispatch time), so it is a stable per-Run/per-device call
+    /// sequence for the Job id.
+    async fn task_identity(&self, thing_id: &str) -> Option<(String, String, u32)> {
+        let slot = self.run_ctx.as_ref()?.read().await.clone()?;
+        let context = slot.read().await;
+        let task_id = context.task_id.clone()?;
+        let run_id = context.run_id.clone();
+        let sequence = context.action_counts.get(thing_id).copied().unwrap_or(0);
+        Some((task_id, run_id, sequence))
+    }
+
+    async fn submit_task_job(
+        &self,
+        jobs: &tinyiothub_runtime::job::service::JobService,
+        thing_id: &str,
+        action_name: &str,
+        params: Option<&Value>,
+        task_id: String,
+        run_id: String,
+        sequence: u32,
+    ) -> anyhow::Result<ToolResult> {
+        let job_id = format!("job:{run_id}:{thing_id}:{sequence}");
+        let tool_call_id = format!("{run_id}:{thing_id}:{sequence}");
+        let args_json = params.cloned().unwrap_or_else(|| json!({}));
+        // Retry of the same tool call is idempotent: return the existing Job.
+        match jobs.job(&self.workspace_id, &job_id).await {
+            Ok(Some(existing))
+                if existing.device_id == thing_id
+                    && existing.tool == action_name
+                    && existing.task_id.as_deref() == Some(task_id.as_str())
+                    && existing.run_id.as_deref() == Some(run_id.as_str()) =>
+            {
+                return tool_ok(json!({
+                    "thingId": thing_id,
+                    "actionName": action_name,
+                    "status": "accepted",
+                    "jobId": existing.id,
+                    "jobState": existing.state.as_str(),
+                    "deduplicated": true,
+                }));
+            }
+            Ok(_) => {}
+            Err(error) => {
+                tracing::warn!(%job_id, %error, "task job lookup failed");
+                return tool_err("job_submit_failed: job lookup failed; action NOT dispatched".to_string());
+            }
+        }
+        let job = match jobs
+            .submit(tinyiothub_runtime::job::service::JobRequest {
+                job_id: Some(job_id),
+                workspace_id: self.workspace_id.clone(),
+                device_id: thing_id.to_string(),
+                tool: action_name.to_string(),
+                args_json,
+                task_id: Some(task_id),
+                run_id: Some(run_id),
+                tool_call_id: Some(tool_call_id),
+            })
+            .await
+        {
+            Ok(job) => job,
+            Err(error) => {
+                tracing::warn!(%thing_id, %action_name, %error, "task job submission failed");
+                return tool_err(format!("job_submit_failed: {error}; action NOT dispatched"));
+            }
+        };
+        tool_ok(json!({
+            "thingId": thing_id,
+            "actionName": action_name,
+            "status": "accepted",
+            "jobId": job.id,
+            "jobState": job.state.as_str(),
+        }))
     }
 }
 
@@ -233,6 +315,24 @@ impl Tool for InvokeActionTool {
             ApprovalDecision::Decided(reason) => {
                 return tool_err(format!("approval {}: action NOT executed", reason.code()));
             }
+        }
+
+        // 4b. Ordinary Task-owned autonomous calls get a durable Job with a
+        // stable id. The Job service owns the arbitration lease, so this path
+        // must not acquire one below (it would self-conflict).
+        if let (Some(jobs), Some((task_id, run_id, sequence))) = (&self.jobs, self.task_identity(&input.thing_id).await)
+        {
+            return self
+                .submit_task_job(
+                    jobs,
+                    &input.thing_id,
+                    &input.action_name,
+                    input.params.as_ref(),
+                    task_id,
+                    run_id,
+                    sequence,
+                )
+                .await;
         }
 
         // 5. E1/E4c 仲裁：执行前按声明资源 claim——TTL（默认 10min）内
@@ -465,6 +565,8 @@ mod tests {
             approval: None,
             access: None,
             resources: None,
+            jobs: None,
+            run_ctx: None,
         }
     }
 
