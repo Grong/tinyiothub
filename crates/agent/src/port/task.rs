@@ -16,7 +16,10 @@ pub trait TaskStore: Send + Sync {
     async fn wake_by_id(&self, task_id: &str, event_id: &str) -> Result<Option<TaskWake>, TaskStoreError>;
     async fn record_wake(&self, wake: &TaskWake) -> Result<bool, TaskStoreError>;
     async fn resolve_task_wakes(&self, task_id: &str) -> Result<usize, TaskStoreError>;
-    async fn interrupt_unfinished_runs(&self) -> Result<usize, TaskStoreError>;
+    /// Mark every `running` Run interrupted except the ids in `known_active`.
+    /// Restart recovery passes the Runs referenced by pending finalize intents
+    /// so their teardown can still complete the original Run.
+    async fn interrupt_unfinished_runs(&self, known_active: &[String]) -> Result<usize, TaskStoreError>;
     async fn transition_task(
         &self,
         workspace_id: &str,
@@ -51,13 +54,22 @@ pub trait TaskStore: Send + Sync {
     /// in-memory staging retry: the wake is already claimed/pending, so only
     /// the durable intent write needs to be re-attempted.
     async fn put_finalize_intent(&self, intent: &TaskFinalizeIntent) -> Result<(), TaskStoreError>;
+    /// Finalize intents that restart recovery must honor: the wake is still
+    /// live (`resolved_at IS NULL`) and the Task exists and is nonterminal.
+    /// Ordered by intent creation time for determinism. This is a bounded
+    /// startup read of retained teardown failures, not a user-facing list, so
+    /// it deliberately has no pagination cap.
+    async fn pending_finalize_intents(&self) -> Result<Vec<TaskFinalizeIntent>, TaskStoreError>;
     /// The completed Run report for `run_id`, used to distinguish a lost
     /// `finish_run` acknowledgement from a genuine newer-owner conflict.
     async fn completed_run_report(&self, run_id: &str) -> Result<Option<RunReport>, TaskStoreError>;
     /// Observability gauge for retained finalize intents.
     async fn count_finalize_intents(&self) -> Result<i64, TaskStoreError>;
-    /// Bounded retention sweep: remove intents older than `older_than` whose
-    /// wake is resolved/dead/missing or whose Task is terminal.
+    /// Bounded retention sweep: remove intents older than `older_than` only
+    /// when their wake is no longer live **and** their Task is terminal or
+    /// missing. A dead-wake intent on a live Task is retained until the Task
+    /// settles, because `retry_dead_wake` can resurrect it and an unpersisted
+    /// report exists nowhere else.
     async fn prune_finalize_intents(&self, older_than: chrono::DateTime<chrono::Utc>) -> Result<usize, TaskStoreError>;
     async fn retry_dead_wake(&self, workspace_id: &str, event_id: &str) -> Result<bool, TaskStoreError>;
     async fn list_nonterminal_tasks(&self, workspace_id: Option<&str>) -> Result<Vec<AgentTask>, TaskStoreError>;

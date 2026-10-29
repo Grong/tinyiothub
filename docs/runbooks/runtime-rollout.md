@@ -271,6 +271,10 @@ Structured metrics:
   `runtime_approval_conflict`, `runtime_approval_expired`,
   `runtime_approval_unavailable`
 - `runtime_outbox_claimed`, `runtime_outbox_marked`, `runtime_outbox_retried`
+- `runtime_task_finalize_intents` (retained-intent gauge; fields `count`,
+  `memory_count` for process-only staging, `pruned`, `staging_dropped`) and
+  `runtime_task_finalize_staging_dropped` (in-memory intents dropped by the
+  periodic sweep when their wake was resolved out-of-band)
 - `runtime_job_accepted`, `runtime_job_final`, `runtime_job_duration`
 - `runtime_watch_hit`, `runtime_watch_timeout`, `runtime_watch_expired`,
   `watch_ledger_write_failed`
@@ -291,6 +295,17 @@ alert here, and `[NOT IMPLEMENTED]` has no executable signal yet and must not be
 claimed as covered.
 
 - `[gauge]` `outbox.dead > 0`
+- `[gauge]` `runtime_task_finalize_intents.count > 0` — a finalize intent means
+  a completed Run is waiting for teardown to finish. The 30-second sweep retains
+  intents for 7 days and only prunes a row when its wake is no longer live
+  **and** its Task is terminal or missing (`retry_dead_wake` can resurrect a
+  dead wake, and for `report_persisted=false` the intent is the only copy of the
+  model output). Operator SLA: investigate within 7 days, before the retention
+  cutoff; `memory_count > 0` means the durable intent write is failing and a
+  process restart would lose the retained report.
+  A partial store outage can produce repeated staging warnings; the
+  `memory_count`/`staging_dropped` fields and rate-limited alerting are the only
+  signal (in-memory retry currently has no backoff).
 - `[gauge]` `outbox.oldestPendingAgeSecs > 60` **only while
   `tasks.paused == 0`**. Paused Tasks deliberately keep decision wakes pending
   until resume (section 3 step 5), so a paused Task must not page continuously.

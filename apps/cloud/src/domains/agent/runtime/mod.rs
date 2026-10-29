@@ -78,9 +78,9 @@ impl TaskStore for DbTaskStore {
         self.db.resolve_task_wakes(task_id).await
     }
 
-    async fn interrupt_unfinished_runs(&self) -> Result<usize, TaskStoreError> {
+    async fn interrupt_unfinished_runs(&self, known_active: &[String]) -> Result<usize, TaskStoreError> {
         self.db
-            .interrupt_zombie_running_agent_runs(&[])
+            .interrupt_zombie_running_agent_runs(known_active)
             .await
             .map(|count| count as usize)
             .map_err(|error| TaskStoreError::Unavailable(error.to_string()))
@@ -190,6 +190,10 @@ impl TaskStore for DbTaskStore {
 
     async fn put_finalize_intent(&self, intent: &TaskFinalizeIntent) -> Result<(), TaskStoreError> {
         self.db.put_finalize_intent(intent).await
+    }
+
+    async fn pending_finalize_intents(&self) -> Result<Vec<TaskFinalizeIntent>, TaskStoreError> {
+        self.db.pending_finalize_intents().await
     }
 
     async fn completed_run_report(&self, run_id: &str) -> Result<Option<RunReport>, TaskStoreError> {

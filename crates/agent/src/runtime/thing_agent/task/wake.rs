@@ -43,10 +43,13 @@ impl WakeRouter {
             .map_err(|error| TaskStoreError::Unavailable(error.to_string()).into())
     }
 
-    /// Emit the retained-intent gauge and prune only intents whose wake is no
-    /// longer live (or whose Task is terminal) and that are older than the
-    /// bounded retention window. Runs from the existing periodic runtime tick.
+    /// Emit the retained-intent gauge and prune only intents that are older
+    /// than the bounded retention window **and** whose wake is no longer live
+    /// **and** whose Task is terminal or missing. Also drops in-memory staged
+    /// intents whose wake was resolved out-of-band. Runs from the existing
+    /// periodic runtime tick.
     pub async fn sweep_finalize_intents(&self, now: chrono::DateTime<chrono::Utc>) -> Result<usize, TaskError> {
+        let (staging_dropped, memory_count) = self.coordinator.sweep_pending_staging().await;
         let pruned = self
             .store
             .prune_finalize_intents(now - chrono::Duration::days(7))
@@ -55,7 +58,9 @@ impl WakeRouter {
         tracing::info!(
             metric = "runtime_task_finalize_intents",
             count,
+            memory_count,
             pruned,
+            staging_dropped,
             "finalize intent gauge"
         );
         Ok(pruned)

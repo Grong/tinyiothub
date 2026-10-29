@@ -382,7 +382,7 @@ impl TaskStore for MemoryTasks {
         Ok(resolved)
     }
 
-    async fn interrupt_unfinished_runs(&self) -> Result<usize, TaskStoreError> {
+    async fn interrupt_unfinished_runs(&self, _known_active: &[String]) -> Result<usize, TaskStoreError> {
         Ok(0)
     }
 
@@ -599,14 +599,39 @@ impl TaskStore for MemoryTasks {
             tasks, wakes, intents, ..
         } = &mut *state;
         let before = intents.len();
+        // Prune only when both the wake is not live and the Task is terminal
+        // or missing; a dead-wake intent on a live Task is retained.
         intents.retain(|(task_id, event_id), _| {
             let wake_live = wakes
                 .get(&(task_id.clone(), event_id.clone()))
                 .is_some_and(|wake| wake.resolved_at.is_none());
             let task_live = tasks.get(task_id).is_some_and(|task| !task.status.is_terminal());
-            wake_live && task_live
+            wake_live || task_live
         });
         Ok(before - intents.len())
+    }
+
+    async fn pending_finalize_intents(&self) -> Result<Vec<TaskFinalizeIntent>, TaskStoreError> {
+        let state = self.state.lock().expect("tasks");
+        let mut intents = state
+            .intents
+            .iter()
+            .filter(|((task_id, event_id), _)| {
+                let wake_live = state
+                    .wakes
+                    .get(&(task_id.clone(), event_id.clone()))
+                    .is_some_and(|wake| wake.resolved_at.is_none());
+                let task_live = state.tasks.get(task_id).is_some_and(|task| !task.status.is_terminal());
+                wake_live && task_live
+            })
+            .map(|(_, intent)| intent.clone())
+            .collect::<Vec<_>>();
+        intents.sort_by(|a, b| {
+            a.task_id
+                .cmp(&b.task_id)
+                .then_with(|| a.wake_event_id.cmp(&b.wake_event_id))
+        });
+        Ok(intents)
     }
 }
 

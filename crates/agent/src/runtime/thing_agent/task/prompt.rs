@@ -28,8 +28,9 @@ pub(crate) fn escape_untrusted(value: &str) -> String {
 const MAX_TERMINAL_JOB_RESULT_CHARS: usize = 4_000;
 
 /// Cap the raw serialized result before escaping. At the maximum 5x expansion
-/// (`&` -> `&amp;`) this bounds the escaped copy to 20 000 characters even for
-/// a multi-megabyte device result, instead of escaping the whole payload.
+/// (`&` -> `&amp;`) this bounds the escaped copy to 25 000 characters even for
+/// a multi-megabyte device result, instead of escaping the whole payload. The
+/// escaped value is then truncated to 4 000 characters for rendering.
 const MAX_TERMINAL_JOB_RESULT_RAW_CHARS: usize = MAX_TERMINAL_JOB_RESULT_CHARS * 5 / 4;
 
 fn truncate_chars(value: &str, max: usize) -> (String, bool) {
