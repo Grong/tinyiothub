@@ -63,6 +63,7 @@ export class RuntimeTaskView extends LitElement {
   @state() private reducedMotion = false;
   @state() private announcement = '';
   @state() private mobilePanel: RuntimePanel | null = null;
+  @state() private mobile = false;
 
   private generation = 0;
   private abort: AbortController | null = null;
@@ -71,15 +72,16 @@ export class RuntimeTaskView extends LitElement {
   private historyOccurredAt = '';
   private drag: { pointerId: number; startX: number; startWidth: number } | null = null;
   private motionQuery: MediaQueryList | null = null;
-  private wideQuery: MediaQueryList | null = null;
+  private mobileQuery: MediaQueryList | null = null;
   private lastTaskStatus: TaskStatus | null = null;
   private lastJobStates = new Map<string, DeviceJobState>();
   private pendingObjectiveFocus = false;
   private motionListener = (event: MediaQueryListEvent) => {
     this.reducedMotion = event.matches;
   };
-  private wideListener = (event: MediaQueryListEvent) => {
-    if (event.matches) this.mobilePanel = null;
+  private mobileListener = (event: MediaQueryListEvent) => {
+    this.mobile = event.matches;
+    if (!event.matches) this.mobilePanel = null;
   };
 
   createRenderRoot() {
@@ -93,8 +95,9 @@ export class RuntimeTaskView extends LitElement {
       this.motionQuery = window.matchMedia('(prefers-reduced-motion: reduce)');
       this.reducedMotion = this.motionQuery.matches;
       this.motionQuery.addEventListener('change', this.motionListener);
-      this.wideQuery = window.matchMedia('(min-width: 600px)');
-      this.wideQuery.addEventListener('change', this.wideListener);
+      this.mobileQuery = window.matchMedia('(max-width: 599px)');
+      this.mobile = this.mobileQuery.matches;
+      this.mobileQuery.addEventListener('change', this.mobileListener);
     }
     if (this.taskId) void this.load();
   }
@@ -104,8 +107,8 @@ export class RuntimeTaskView extends LitElement {
     this.finishPointerDrag();
     this.motionQuery?.removeEventListener('change', this.motionListener);
     this.motionQuery = null;
-    this.wideQuery?.removeEventListener('change', this.wideListener);
-    this.wideQuery = null;
+    this.mobileQuery?.removeEventListener('change', this.mobileListener);
+    this.mobileQuery = null;
     super.disconnectedCallback();
   }
 
@@ -117,9 +120,7 @@ export class RuntimeTaskView extends LitElement {
 
   willUpdate(changed: PropertyValues<this>): void {
     const taskChanged = changed.has('taskId') && changed.get('taskId') !== undefined;
-    const historyChanged =
-      changed.has('history') &&
-      changed.get('history') !== undefined &&
+    const historyChanged = changed.has('history') && changed.get('history') !== undefined &&
       !sameHistory(changed.get('history') ?? null, this.history);
     if (taskChanged) {
       const previousTaskId = changed.get('taskId');
@@ -142,8 +143,7 @@ export class RuntimeTaskView extends LitElement {
 
   private restoreLayout(): void {
     const storedWidth = Number(localStorage.getItem(deviceWidthKey));
-    if (Number.isFinite(storedWidth) && storedWidth > 0)
-      this.deviceWidth = this.clampDeviceWidth(storedWidth);
+    if (Number.isFinite(storedWidth) && storedWidth > 0) this.deviceWidth = this.clampDeviceWidth(storedWidth);
     this.devicesExpanded = localStorage.getItem(deviceExpandedKey) !== 'false';
   }
 
@@ -193,10 +193,7 @@ export class RuntimeTaskView extends LitElement {
   private finishPointerDrag(): void {
     if (!this.drag) return;
     const seam = this.querySelector<HTMLElement>('[role="separator"]');
-    if (
-      seam &&
-      (typeof seam.hasPointerCapture !== 'function' || seam.hasPointerCapture(this.drag.pointerId))
-    ) {
+    if (seam && (typeof seam.hasPointerCapture !== 'function' || seam.hasPointerCapture(this.drag.pointerId))) {
       seam.releasePointerCapture(this.drag.pointerId);
     }
     this.drag = null;
@@ -208,16 +205,12 @@ export class RuntimeTaskView extends LitElement {
   }
 
   private syncUrl(): void {
-    window.history.pushState(
-      {},
-      '',
-      toRuntimeTaskUrl(this.taskId, {
-        view: this.view,
-        device: this.device,
-        at: this.history?.at,
-        event: this.history?.event,
-      }),
-    );
+    window.history.pushState({}, '', toRuntimeTaskUrl(this.taskId, {
+      view: this.view,
+      device: this.device,
+      at: this.history?.at,
+      event: this.history?.event,
+    }));
     window.dispatchEvent(new HashChangeEvent('hashchange'));
   }
 
@@ -225,17 +218,17 @@ export class RuntimeTaskView extends LitElement {
     if (view === this.view) return;
     this.view = view;
     this.syncUrl();
-    this.dispatchEvent(
-      new CustomEvent('view-change', {
-        detail: { view },
-        bubbles: true,
-        composed: true,
-      }),
-    );
+    this.dispatchEvent(new CustomEvent('view-change', {
+      detail: { view }, bubbles: true, composed: true,
+    }));
   }
 
   private get activePanel(): RuntimePanel {
     return this.mobilePanel ?? this.view;
+  }
+
+  private get visiblePanels(): RuntimePanel[] {
+    return this.mobile ? runtimePanels : runtimePanels.filter((panel) => panel !== 'devices');
   }
 
   private get objectiveLabel(): string {
@@ -243,6 +236,7 @@ export class RuntimeTaskView extends LitElement {
   }
 
   private selectPanel(panel: RuntimePanel, moveFocus = true): void {
+    if (panel === 'devices' && !this.mobile) return;
     if (panel === 'devices') {
       this.mobilePanel = 'devices';
     } else {
@@ -256,16 +250,16 @@ export class RuntimeTaskView extends LitElement {
   }
 
   private onTabKey(event: KeyboardEvent): void {
-    const current = runtimePanels.indexOf(this.activePanel);
+    const panels = this.visiblePanels;
+    const current = panels.indexOf(this.activePanel);
     let next = current < 0 ? 0 : current;
     if (event.key === 'Home') next = 0;
-    else if (event.key === 'End') next = runtimePanels.length - 1;
-    else if (event.key === 'ArrowLeft')
-      next = (next - 1 + runtimePanels.length) % runtimePanels.length;
-    else if (event.key === 'ArrowRight') next = (next + 1) % runtimePanels.length;
+    else if (event.key === 'End') next = panels.length - 1;
+    else if (event.key === 'ArrowLeft') next = (next - 1 + panels.length) % panels.length;
+    else if (event.key === 'ArrowRight') next = (next + 1) % panels.length;
     else return;
     event.preventDefault();
-    this.selectPanel(runtimePanels[next]);
+    this.selectPanel(panels[next]);
   }
 
   private jumpToDevices(): void {
@@ -283,8 +277,7 @@ export class RuntimeTaskView extends LitElement {
 
   private playbackAlt(): string {
     const devices = this.projection?.devices ?? [];
-    const device =
-      devices.find((item) => item.deviceId === this.device) ??
+    const device = devices.find((item) => item.deviceId === this.device) ??
       devices.find((item) => item.sources?.some((source) => source.dataKind === 'video')) ??
       devices[0];
     const source = device?.sources?.find((item) => item.dataKind === 'video');
@@ -310,11 +303,8 @@ export class RuntimeTaskView extends LitElement {
       const previous = this.lastJobStates.get(job.id);
       if (previous !== undefined && previous !== job.state) {
         messages.push(`Job ${job.id} ${statusLabel(job.state)}`);
-      } else if (
-        previous === undefined &&
-        previousTask !== null &&
-        (job.state === 'accepted' || job.state === 'running')
-      ) {
+      } else if (previous === undefined && previousTask !== null &&
+        (job.state === 'accepted' || job.state === 'running')) {
         messages.push(`Job ${job.id} ${statusLabel(job.state)}`);
       }
     }
@@ -331,17 +321,13 @@ export class RuntimeTaskView extends LitElement {
     }
     this.syncUrl();
     await this.updateComplete;
-    this.querySelector<RuntimeDevices>('runtime-devices')?.focusDevice(
-      this.device,
-      this.reducedMotion,
-    );
+    this.querySelector<RuntimeDevices>('runtime-devices')?.focusDevice(this.device, this.reducedMotion);
   }
 
   private selectHistoryEvent(event: CustomEvent<{ eventId: string }>): void {
     const eventId = event.detail.eventId;
     this.historyEventId = eventId;
-    this.historyOccurredAt =
-      this.projection?.steps.find((step) => step.eventId === eventId)?.occurredAt ?? '';
+    this.historyOccurredAt = this.projection?.steps.find((step) => step.eventId === eventId)?.occurredAt ?? '';
     this.history = { ...this.history, event: eventId };
     this.syncUrl();
   }
@@ -353,9 +339,8 @@ export class RuntimeTaskView extends LitElement {
   private historyTime(): string {
     if (this.history?.at) return this.history.at;
     if (this.history?.event) {
-      const fromProjection = this.projection?.steps.find(
-        (step) => step.eventId === this.history?.event,
-      )?.occurredAt;
+      const fromProjection = this.projection?.steps
+        .find((step) => step.eventId === this.history?.event)?.occurredAt;
       if (fromProjection) return fromProjection;
       if (this.historyEventId === this.history.event) return this.historyOccurredAt;
     }
@@ -367,14 +352,10 @@ export class RuntimeTaskView extends LitElement {
     this.history = null;
     this.historyEventId = '';
     this.historyOccurredAt = '';
-    window.history.replaceState(
-      {},
-      '',
-      toLiveRuntimeTaskUrl(this.taskId, {
-        view: this.view,
-        device: this.device,
-      }),
-    );
+    window.history.replaceState({}, '', toLiveRuntimeTaskUrl(this.taskId, {
+      view: this.view,
+      device: this.device,
+    }));
     window.dispatchEvent(new HashChangeEvent('hashchange'));
   }
 
@@ -427,8 +408,7 @@ export class RuntimeTaskView extends LitElement {
       this.installSnapshot(response.result, response.result.cursor);
     } catch (error) {
       if (generation !== this.generation || this.abort?.signal.aborted) return;
-      this.error =
-        error instanceof ApiError ? error.message : 'Network error refreshing Runtime task';
+      this.error = error instanceof ApiError ? error.message : 'Network error refreshing Runtime task';
     }
   }
 
@@ -474,134 +454,59 @@ export class RuntimeTaskView extends LitElement {
     void this.revision;
     const currentWidth = this.devicesExpanded ? this.deviceWidth : collapsedDeviceWidth;
     return html`
-      ${
-        this.descriptor
-          ? html`<runtime-playback
-              .descriptor=${this.descriptor}
-              .alt=${this.playbackAlt()}
-            ></runtime-playback>`
-          : nothing
-      }
-      <section
-        class="runtime-workbench"
-        data-view=${this.activePanel}
-        style=${`--runtime-device-width: ${currentWidth}px`}
-      >
+      ${this.descriptor
+        ? html`<runtime-playback .descriptor=${this.descriptor} .alt=${this.playbackAlt()}></runtime-playback>`
+        : nothing}
+      <section class="runtime-workbench" data-view=${this.activePanel}
+        style=${`--runtime-device-width: ${currentWidth}px`}>
         <div class="runtime-workbench__main">
           <div class="runtime-view-tabs-row">
-            <div
-              class="runtime-view-tabs"
-              role="tablist"
-              aria-label="Runtime view"
-              @keydown=${this.onTabKey}
-            >
-              <button
-                type="button"
-                role="tab"
-                data-view="loop"
-                id="runtime-tab-loop"
-                aria-controls="runtime-panel"
-                aria-selected=${this.activePanel === 'loop'}
+            <div class="runtime-view-tabs" role="tablist" aria-label="Runtime view" @keydown=${this.onTabKey}>
+              <button type="button" role="tab" data-view="loop" id="runtime-tab-loop"
+                aria-controls="runtime-panel" aria-selected=${this.activePanel === 'loop'}
                 tabindex=${this.activePanel === 'loop' ? '0' : '-1'}
-                @click=${() => this.selectPanel('loop', false)}
-              >
-                Agent Loop
-              </button>
-              <button
-                type="button"
-                role="tab"
-                data-view="flow"
-                id="runtime-tab-flow"
-                aria-controls="runtime-panel"
-                aria-selected=${this.activePanel === 'flow'}
+                @click=${() => this.selectPanel('loop', false)}>Agent Loop</button>
+              <button type="button" role="tab" data-view="flow" id="runtime-tab-flow"
+                aria-controls="runtime-panel" aria-selected=${this.activePanel === 'flow'}
                 tabindex=${this.activePanel === 'flow' ? '0' : '-1'}
-                @click=${() => this.selectPanel('flow', false)}
-              >
-                Flow
-              </button>
-              <button
-                type="button"
-                role="tab"
-                data-view="devices"
-                id="runtime-tab-devices"
-                aria-controls="runtime-devices-panel"
-                aria-selected=${this.activePanel === 'devices'}
-                tabindex=${this.activePanel === 'devices' ? '0' : '-1'}
-                @click=${() => this.selectPanel('devices', false)}
-              >
-                Devices
-              </button>
+                @click=${() => this.selectPanel('flow', false)}>Flow</button>
+              ${this.mobile
+                ? html`<button type="button" role="tab" data-view="devices" id="runtime-tab-devices"
+                    aria-controls="runtime-devices-panel" aria-selected=${this.activePanel === 'devices'}
+                    tabindex=${this.activePanel === 'devices' ? '0' : '-1'}
+                    @click=${() => this.selectPanel('devices', false)}>Devices</button>`
+                : nothing}
             </div>
-            <button type="button" class="runtime-task__devices-anchor" @click=${this.jumpToDevices}>
-              Devices
-            </button>
+            <button type="button" class="runtime-task__devices-anchor" @click=${this.jumpToDevices}>Devices</button>
           </div>
-          <div
-            role="tabpanel"
-            id="runtime-panel"
-            class="runtime-workbench__panel"
-            aria-labelledby=${`runtime-tab-${this.view}`}
-          >
-            ${
-              this.view === 'flow'
-                ? html`<runtime-flow
-                    .projection=${projection}
-                    .revision=${this.revision}
-                    .reducedMotion=${this.reducedMotion}
-                    @locate-device=${this.locateDevice}
-                    @event-select=${this.selectHistoryEvent}
-                  ></runtime-flow>`
-                : html`<runtime-loop
-                    .projection=${projection}
-                    .revision=${this.revision}
-                    .readOnly=${this.historyMode}
-                    @locate-device=${this.locateDevice}
-                    @refresh-request=${this.refreshProjection}
-                    @projection-change=${this.onProjectionChange}
-                  ></runtime-loop>`
-            }
+          <div role="tabpanel" id="runtime-panel" class="runtime-workbench__panel"
+            aria-labelledby=${`runtime-tab-${this.view}`}>
+            ${this.view === 'flow'
+              ? html`<runtime-flow .projection=${projection} .revision=${this.revision} .reducedMotion=${this.reducedMotion}
+                  @locate-device=${this.locateDevice} @event-select=${this.selectHistoryEvent}></runtime-flow>`
+              : html`<runtime-loop .projection=${projection} .revision=${this.revision}
+                  .readOnly=${this.historyMode}
+                  @locate-device=${this.locateDevice} @refresh-request=${this.refreshProjection}
+                  @projection-change=${this.onProjectionChange}></runtime-loop>`}
           </div>
         </div>
         <div class="runtime-seam">
-          <div
-            class="runtime-seam__handle"
-            role="separator"
-            tabindex=${this.devicesExpanded ? '0' : '-1'}
+          <div class="runtime-seam__handle" role="separator" tabindex=${this.devicesExpanded ? '0' : '-1'}
             aria-label="Resize associated devices. Use Left and Right arrow keys in 24 pixel steps."
-            aria-orientation="vertical"
-            aria-valuenow=${currentWidth}
+            aria-orientation="vertical" aria-valuenow=${currentWidth}
             aria-valuemin=${this.devicesExpanded ? minimumDeviceWidth : collapsedDeviceWidth}
             aria-valuemax=${this.maximumDeviceWidth}
             aria-valuetext=${this.devicesExpanded ? `${currentWidth} pixels` : 'Devices collapsed, 36 pixels'}
-            @keydown=${this.onSeamKey}
-            @pointerdown=${this.onPointerDown}
-            @pointermove=${this.onPointerMove}
-            @pointerup=${this.onPointerEnd}
-            @pointercancel=${this.onPointerEnd}
-          ></div>
-          <button
-            type="button"
-            class="runtime-seam__toggle"
-            aria-controls="runtime-devices-panel"
-            aria-expanded=${this.devicesExpanded}
-            aria-label=${this.devicesExpanded ? 'Collapse devices' : 'Expand devices'}
-            @click=${this.toggleDevices}
-          >
-            ${this.devicesExpanded ? '›' : '‹'}
-          </button>
+            @keydown=${this.onSeamKey} @pointerdown=${this.onPointerDown} @pointermove=${this.onPointerMove}
+            @pointerup=${this.onPointerEnd} @pointercancel=${this.onPointerEnd}></div>
+          <button type="button" class="runtime-seam__toggle" aria-controls="runtime-devices-panel"
+            aria-expanded=${this.devicesExpanded} aria-label=${this.devicesExpanded ? 'Collapse devices' : 'Expand devices'}
+            @click=${this.toggleDevices}>${this.devicesExpanded ? '›' : '‹'}</button>
         </div>
-        <aside
-          id="runtime-devices-panel"
-          class="runtime-devices-panel ${this.devicesExpanded ? '' : 'is-collapsed'}"
-          style="width: ${currentWidth}px;"
-        >
-          <runtime-devices
-            .projection=${projection}
-            .revision=${this.revision}
-            .selectedDevice=${this.device}
-            ?hidden=${!this.devicesExpanded}
-            @locate-device=${this.locateDevice}
-          ></runtime-devices>
+        <aside id="runtime-devices-panel" class="runtime-devices-panel ${this.devicesExpanded ? '' : 'is-collapsed'}"
+          style="width: ${currentWidth}px;">
+          <runtime-devices .projection=${projection} .revision=${this.revision} .selectedDevice=${this.device}
+            ?hidden=${!this.devicesExpanded} @locate-device=${this.locateDevice}></runtime-devices>
           ${this.devicesExpanded ? nothing : html`<div class="runtime-devices-rail"><span>Devices</span></div>`}
         </aside>
       </section>
@@ -611,40 +516,32 @@ export class RuntimeTaskView extends LitElement {
   private renderHistoryBanner() {
     if (!this.historyMode) return nothing;
     const time = this.historyTime();
-    return html`<section
-      class="runtime-task__history"
-      data-history-banner
-      aria-labelledby="runtime-history-title"
-    >
+    return html`<section class="runtime-task__history" data-history-banner
+      aria-labelledby="runtime-history-title">
       <strong id="runtime-history-title">History · read-only</strong>
       ${time ? html`<span> · ${time}</span>` : nothing}
-      <button type="button" data-action="back-to-live" @click=${this.backToLive}>
-        Back to live
-      </button>
+      <button type="button" data-action="back-to-live" @click=${this.backToLive}>Back to live</button>
     </section>`;
   }
 
   private renderConnectionBanner() {
     if (this.connection !== 'offline') return nothing;
     return html`<p class="runtime-task__connection" data-connection="offline" role="status">
-      <strong>Offline</strong> · showing the last known state. Live updates resume when the
-      connection returns.
+      <strong>Offline</strong> · showing the last known state. Live updates resume when the connection returns.
     </p>`;
   }
 
   render() {
     const projection = this.projection;
-    const pendingApprovals =
-      projection?.approvals.filter((approval) => approval.state === 'pending').length ?? 0;
+    const pendingApprovals = projection?.approvals.filter((approval) => approval.state === 'pending').length ?? 0;
     return html`
       <article class="runtime-task" aria-busy=${projection ? 'false' : 'true'}>
         <nav class="runtime-task__navigation" aria-label="Runtime task navigation">
           <a href="#/runtime">← Runtime</a>
           <a href="#/runtime">Switch task</a>
         </nav>
-        <div class="runtime-announcer" data-announcer aria-live="polite" aria-atomic="true">
-          ${this.announcement}
-        </div>
+        <div class="runtime-announcer" data-announcer aria-live="polite" aria-atomic="true"
+          >${this.announcement}</div>
         <header class="runtime-task-header">
           <h1 class="runtime-objective" tabindex="-1">${this.objectiveLabel}</h1>
           <div role="status" class="runtime-task__status">
@@ -653,41 +550,30 @@ export class RuntimeTaskView extends LitElement {
           <p class="runtime-task__intervention ${pendingApprovals ? 'has-approval' : ''}">
             ${pendingApprovals ? `Approval required (${pendingApprovals})` : 'No intervention required'}
           </p>
-          ${
-            projection
-              ? html`<runtime-task-controls
-                  .workspaceId=${this.workspaceId}
-                  .taskId=${this.taskId}
-                  .projection=${projection}
-                  .revision=${this.revision}
-                  .readOnly=${this.historyMode}
-                  @projection-change=${this.onProjectionChange}
-                  @refresh-request=${this.refreshProjection}
-                ></runtime-task-controls>`
-              : nothing
-          }
+          ${projection
+            ? html`<runtime-task-controls .workspaceId=${this.workspaceId} .taskId=${this.taskId}
+                .projection=${projection} .revision=${this.revision} .readOnly=${this.historyMode}
+                @projection-change=${this.onProjectionChange}
+                @refresh-request=${this.refreshProjection}></runtime-task-controls>`
+            : nothing}
           <slot name="task-actions"></slot>
         </header>
-        ${this.renderHistoryBanner()} ${this.renderConnectionBanner()}
+        ${this.renderHistoryBanner()}
+        ${this.renderConnectionBanner()}
         ${this.error ? html`<p role="alert" class="runtime-task__error">${this.error}</p>` : ''}
         <details class="runtime-task__details">
           <summary>Details and IDs</summary>
           <dl>
-            <dt>Task ID</dt>
-            <dd>${this.taskId}</dd>
-            <dt>Run ID</dt>
-            <dd>${projection?.task.currentRunId ?? 'None'}</dd>
-            <dt>Session key</dt>
-            <dd>${projection?.task.sessionKey ?? 'None'}</dd>
+            <dt>Task ID</dt><dd>${this.taskId}</dd>
+            <dt>Run ID</dt><dd>${projection?.task.currentRunId ?? 'None'}</dd>
+            <dt>Session key</dt><dd>${projection?.task.sessionKey ?? 'None'}</dd>
           </dl>
         </details>
-        ${
-          projection
-            ? this.renderProjection()
-            : html`<div class="runtime-loading" data-loading aria-hidden="true">
-                <span></span><span></span><span></span>
-              </div>`
-        }
+        ${projection
+          ? this.renderProjection()
+          : html`<div class="runtime-loading" data-loading aria-hidden="true">
+              <span></span><span></span><span></span>
+            </div>`}
       </article>
     `;
   }

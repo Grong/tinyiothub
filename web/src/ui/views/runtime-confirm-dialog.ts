@@ -90,23 +90,14 @@ export class RuntimeConfirmDialog extends LitElement {
   };
 
   render() {
-    return html`<div
-      class="runtime-confirm-dialog__overlay"
-      role="dialog"
-      aria-modal="true"
-      aria-labelledby=${this.titleId}
-      aria-describedby=${this.bodyId}
-    >
+    return html`<div class="runtime-confirm-dialog__overlay" role="dialog" aria-modal="true"
+      aria-labelledby=${this.titleId} aria-describedby=${this.bodyId}>
       <div class="runtime-confirm-dialog">
         <h2 id=${this.titleId}>${this.title}</h2>
         <div class="runtime-confirm-dialog__body" id=${this.bodyId}>${this.body}</div>
         <div class="runtime-confirm-dialog__actions">
-          <button type="button" data-action="primary" @click=${this.close}>
-            ${this.primaryLabel}
-          </button>
-          <button type="button" data-action="danger" @click=${this.confirmDanger}>
-            ${this.dangerLabel}
-          </button>
+          <button type="button" data-action="primary" @click=${this.close}>${this.primaryLabel}</button>
+          <button type="button" data-action="danger" @click=${this.confirmDanger}>${this.dangerLabel}</button>
         </div>
       </div>
     </div>`;

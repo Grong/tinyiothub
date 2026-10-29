@@ -332,7 +332,7 @@
     display: none;
   }
 
-  .runtime-workbench[data-view='devices'] .runtime-workbench__main {
+  .runtime-workbench[data-view='devices'] .runtime-workbench__panel {
     display: none;
   }
 

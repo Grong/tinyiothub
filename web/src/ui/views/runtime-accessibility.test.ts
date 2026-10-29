@@ -175,7 +175,21 @@ function required<T extends Element>(selector: string): T {
   return element;
 }
 
-async function workbenchFixture(options: { offline?: boolean } = {}): Promise<WorkbenchFixture> {
+async function workbenchFixture(
+  options: { offline?: boolean; mobile?: boolean } = {},
+): Promise<WorkbenchFixture> {
+  if (options.mobile) {
+    vi.stubGlobal('matchMedia', (query: string) => ({
+      matches: query === '(max-width: 599px)',
+      media: query,
+      onchange: null,
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+      addListener: vi.fn(),
+      removeListener: vi.fn(),
+      dispatchEvent: vi.fn(),
+    }));
+  }
   get.mockResolvedValue({ code: 0, msg: '', result: snapshot() });
   view = document.createElement('view-runtime-task') as RuntimeTaskView;
   view.taskId = 'task_1';
@@ -386,10 +400,11 @@ describe('Runtime workbench accessibility contracts', () => {
   });
 
   it('exposes same-level Loop, Flow and Devices tabs with keyboard activation', async () => {
-    const workbench = await workbenchFixture();
+    const workbench = await workbenchFixture({ mobile: true });
 
     expect(workbench.tabList.className).toContain('runtime-view-tabs');
     expect(workbench.devicesTab).not.toBeNull();
+    expect(workbench.tabList.closest('.runtime-workbench__panel')).toBeNull();
     expect(workbench.loopTab.getAttribute('aria-selected')).toBe('true');
     expect(workbench.loopTab.tabIndex).toBe(0);
     expect(workbench.flowTab.tabIndex).toBe(-1);
@@ -415,6 +430,29 @@ describe('Runtime workbench accessibility contracts', () => {
     );
     await flush();
     expect(workbench.loopTab.getAttribute('aria-selected')).toBe('true');
+    expect(required<HTMLElement>('.runtime-workbench').dataset.view).toBe('loop');
+  });
+
+  it('keeps the Devices view out of the roving tabs above 599px', async () => {
+    const workbench = await workbenchFixture();
+
+    expect(view.querySelector('[role="tab"][data-view="devices"]')).toBeNull();
+    expect(workbench.tabList.querySelectorAll('[role="tab"]')).toHaveLength(2);
+
+    workbench.loopTab.focus();
+    workbench.loopTab.dispatchEvent(
+      new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true }),
+    );
+    await flush();
+    expect(workbench.flowTab.getAttribute('aria-selected')).toBe('true');
+    expect(document.activeElement).toBe(workbench.flowTab);
+
+    workbench.flowTab.dispatchEvent(
+      new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true }),
+    );
+    await flush();
+    expect(workbench.loopTab.getAttribute('aria-selected')).toBe('true');
+    expect(document.activeElement).toBe(workbench.loopTab);
     expect(required<HTMLElement>('.runtime-workbench').dataset.view).toBe('loop');
   });
 
