@@ -554,6 +554,39 @@ describe('Runtime Task detail shell', () => {
     expect(events).toHaveBeenCalledOnce();
   });
 
+  it('fails closed when a stale event selection survives a router history exit', async () => {
+    events.mockResolvedValueOnce(timelineWith());
+    const pending: Array<(value: { code: number; msg: string; result: TaskProjection }) => void> =
+      [];
+    get.mockResolvedValueOnce({ code: 0, msg: '', result: snapshot() });
+    get.mockResolvedValueOnce({ code: 0, msg: '', result: snapshot() });
+    await mount(null, { view: 'flow' });
+
+    view.querySelector<HTMLButtonElement>('[data-event-id="event_1"]')!.click();
+    await settle();
+    expect(view.querySelector('[data-history-banner]')).not.toBeNull();
+    expect(get).toHaveBeenCalledTimes(2);
+
+    get.mockImplementation(() => new Promise((resolve) => pending.push(resolve)));
+    view.history = null;
+    await settle();
+    expect(pending).toHaveLength(1);
+    expect(view.querySelector('[data-history-banner]')).toBeNull();
+
+    view.history = { at: '2026-10-27T10:00:00Z' };
+    await view.updateComplete;
+
+    for (const resolve of pending) resolve({ code: 0, msg: '', result: snapshot() });
+    await settle();
+
+    expect(view.querySelector('[data-history-banner]')).toBeNull();
+    expect(view.querySelector('[data-history-notice]')?.textContent).toContain(
+      'History is no longer available from this link',
+    );
+    expect(window.location.hash).toBe('#/runtime/tasks/task_1?view=flow');
+    expect(connect).toHaveBeenCalledTimes(2);
+  });
+
   it('tears down playback when live device facts remove the playing source', async () => {
     get.mockResolvedValue({ code: 0, msg: '', result: snapshotWithCameras() });
     playback.mockResolvedValue(playbackDescriptor());
@@ -605,6 +638,49 @@ describe('Runtime Task detail shell', () => {
     expect(view.descriptor).toBeUndefined();
     expect(view.querySelector('runtime-playback')).toBeNull();
     expect(view.querySelector('button[data-action="play-evidence"]')).not.toBeNull();
+  });
+
+  it('keeps the rendered camera alt when load-earlier facts remove its source', async () => {
+    events.mockResolvedValueOnce({
+      code: 0,
+      msg: '',
+      result: { events: [liveEvent('event_seeded', 5)], oldestCursor: 5, hasMore: true },
+    });
+    get.mockResolvedValue({ code: 0, msg: '', result: snapshotWithCameras() });
+    playback.mockResolvedValue(playbackDescriptor());
+    await mount();
+    view.device = 'cam-a';
+    await view.updateComplete;
+    view.querySelector<HTMLButtonElement>('button[data-action="play-evidence"]')!.click();
+    await settle();
+
+    events.mockResolvedValueOnce({
+      code: 0,
+      msg: '',
+      result: {
+        events: [
+          {
+            ...liveEvent('event_old_facts', 1),
+            deviceId: 'cam-a',
+            data: { deviceFacts: { deviceId: 'cam-a', sources: [] } },
+          },
+        ],
+        oldestCursor: 1,
+        hasMore: false,
+      },
+    });
+    view.querySelector<HTMLButtonElement>('button[data-action="load-earlier"]')!.click();
+    await settle();
+
+    const player = view.querySelector('runtime-playback') as RuntimePlayback;
+    expect(player).not.toBeNull();
+    await player.updateComplete;
+    const image = player.shadowRoot?.querySelector('img');
+    expect(image?.alt).toContain('cam-a');
+    expect(image?.alt).toContain('live');
+    // The resolver now disagrees (cam-a has no video source): the surviving alt
+    // must come from the stored descriptor target, not a fresh resolution.
+    expect(view.querySelector('button[data-action="play-evidence"]')).toBeNull();
   });
 
   it('refreshes a descriptor before expiry and cancels the timer when playback stops', async () => {

@@ -175,6 +175,13 @@ export class RuntimeTaskView extends LitElement {
       this.coldHistoryStripped = false;
       this.historyNotice = '';
     }
+    if (historyChanged && !this.historyMode) {
+      // Leaving history by any route (Back to live, browser Back/Forward, URL
+      // edit) invalidates the in-page event selection; a stale selection must
+      // never re-enable freezing a projection with no steps.
+      this.historyEventId = '';
+      this.historyOccurredAt = '';
+    }
     if (taskChanged) {
       const previousTaskId = changed.get('taskId');
       if (typeof previousTaskId === 'string' && previousTaskId && previousTaskId !== this.taskId) {
@@ -199,7 +206,7 @@ export class RuntimeTaskView extends LitElement {
         // the router clearing the stale history value must not reload it again.
       } else if (this.historyMode) {
         const steps = this.projection?.steps ?? [];
-        if (!steps.length && !this.historyEventId) {
+        if (!steps.length && !this.hasHistorySelection(steps)) {
           // No in-memory history to freeze (e.g. same-Task history navigation
           // that arrived before the initial snapshot installed). Fail closed to
           // live rather than render the live snapshot under a past banner.
@@ -684,6 +691,8 @@ export class RuntimeTaskView extends LitElement {
    */
   private recoverColdHistory(): void {
     if (!isHistoryState(this.history) || this.projection) return;
+    this.historyEventId = '';
+    this.historyOccurredAt = '';
     this.historyRejected = true;
     this.coldHistoryStripped = true;
     this.historyNotice = 'History is no longer available from this link; showing live activity.';
@@ -696,6 +705,15 @@ export class RuntimeTaskView extends LitElement {
     queueMicrotask(() => {
       window.dispatchEvent(new HashChangeEvent('hashchange'));
     });
+  }
+
+  /**
+   * An event selection only counts while its step is actually in the frozen
+   * steps; trusting the id alone lets a stale selection freeze an empty list.
+   */
+  private hasHistorySelection(steps: RuntimeEvent[]): boolean {
+    if (!this.historyEventId) return false;
+    return steps.some((step) => step.eventId === this.historyEventId);
   }
 
   private historyTime(): string {
@@ -877,7 +895,7 @@ export class RuntimeTaskView extends LitElement {
   }
 
   private async loadHistory(steps: RuntimeEvent[]): Promise<void> {
-    if (!steps.length && !this.historyEventId) {
+    if (!steps.length && !this.hasHistorySelection(steps)) {
       // Nothing to freeze and no explicit selection to restore: fail closed to
       // the live view instead of freezing a snapshot with an empty timeline.
       this.cleanupTask();
