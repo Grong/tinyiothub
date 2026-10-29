@@ -386,8 +386,10 @@ impl Db {
         count_problem_runs(self.pool(), workspace_id, problem_key, since_hours).await
     }
 
-    /// 僵尸 run reconcile：status='running' 且不在 `known_active` 认领集
-    /// 的行标记 'interrupted'，返回标记行数。
+    /// 僵尸 run reconcile：status='running' 的行标记 'interrupted'，返回标记行数。
+    /// 排除两类：`known_active`（进程仍认领的 run）与存活 finalize intent 引用的
+    /// run（wake 未解析且 Task 非终止）——后者必须保持 running，才能让重启后的
+    /// teardown 重试完成原始 Run，而不必重跑模型。
     pub async fn interrupt_zombie_running_agent_runs(&self, known_active: &[String]) -> Result<u64> {
         interrupt_zombie_running_runs(self.pool(), known_active).await
     }

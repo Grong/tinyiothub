@@ -16,9 +16,13 @@ pub trait TaskStore: Send + Sync {
     async fn wake_by_id(&self, task_id: &str, event_id: &str) -> Result<Option<TaskWake>, TaskStoreError>;
     async fn record_wake(&self, wake: &TaskWake) -> Result<bool, TaskStoreError>;
     async fn resolve_task_wakes(&self, task_id: &str) -> Result<usize, TaskStoreError>;
-    /// Mark every `running` Run interrupted except the ids in `known_active`.
-    /// Restart recovery passes the Runs referenced by pending finalize intents
-    /// so their teardown can still complete the original Run.
+    /// Mark every `running` Run interrupted, except:
+    /// - Runs referenced by a live finalize intent (unresolved wake, nonterminal
+    ///   Task). Their teardown must still be able to complete the original Run,
+    ///   so the store excludes them independently of `known_active`; every
+    ///   startup call site gets this protection without coordination.
+    /// - The ids in `known_active`, a defensive exclusion for Runs the process
+    ///   still owns.
     async fn interrupt_unfinished_runs(&self, known_active: &[String]) -> Result<usize, TaskStoreError>;
     async fn transition_task(
         &self,
