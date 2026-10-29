@@ -149,6 +149,12 @@ export interface RuntimeEvent {
   data: Record<string, unknown>;
 }
 
+export interface RuntimeEventsPage {
+  events: RuntimeEvent[];
+  oldestCursor: number | null;
+  hasMore: boolean;
+}
+
 export interface TaskProjection {
   task: RuntimeTask;
   runs: RuntimeRun[];

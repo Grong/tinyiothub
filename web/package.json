@@ -7,9 +7,9 @@
     "dev": "vite",
     "preview": "vite preview",
     "test": "vitest run --config vitest.config.ts",
-    "type-check": "tsc --noEmit",
-    "lint": "eslint src/",
-    "lint:fix": "eslint src/ --fix",
+    "type-check": "tsc --noEmit && tsc --noEmit -p tsconfig.e2e.json",
+    "lint": "eslint src/ e2e/ playwright.config.ts",
+    "lint:fix": "eslint src/ e2e/ playwright.config.ts --fix",
     "format": "prettier --write \"src/**/*.{ts,js,json,css}\"",
     "format:check": "prettier --check \"src/**/*.{ts,js,json,css}\"",
     "test:browser": "playwright test"

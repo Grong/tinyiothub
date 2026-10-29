@@ -78,10 +78,8 @@
 }
 
 .runtime-workbench pre,
-.runtime-workbench .runtime-data,
 .runtime-device-card__facts,
-.flow-lane__events small,
-.runtime-task__history time {
+.flow-lane__events small {
   font-size: 14px;
   font-variant-numeric: tabular-nums;
 }
@@ -99,16 +97,65 @@
 .runtime-devices-rail {
   display: flex;
   justify-content: center;
+  width: 100%;
   height: 100%;
   min-height: 160px;
   padding-top: var(--space-3);
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
+  background: transparent;
   color: var(--runtime-muted);
+  cursor: pointer;
+}
+
+.runtime-devices-rail:hover {
+  background: var(--bg-hover);
 }
 
 .runtime-devices-rail span {
   writing-mode: vertical-rl;
+}
+
+/* Timeline seeding, paging and honest loading/error states. */
+.runtime-task__timeline {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+  margin: var(--space-2) 0;
+  min-width: 0;
+}
+
+.runtime-task__timeline-state,
+.runtime-task__timeline-error p {
+  margin: 0;
+  color: var(--runtime-muted);
+}
+
+.runtime-task__timeline-error {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--danger);
+  border-radius: var(--radius-md);
+  background: var(--danger-subtle);
+}
+
+.runtime-task__timeline-more,
+.runtime-task__timeline-error button {
+  padding: 0 var(--space-3);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-md);
+  background: var(--bg-elevated);
+  color: var(--text);
+  cursor: pointer;
+}
+
+.runtime-task__timeline-more:disabled {
+  opacity: 0.55;
+  cursor: default;
 }
 
 /* History / connection banners (moved out of inline render styles). */
@@ -259,7 +306,7 @@
     display: flex;
     align-self: stretch;
     justify-content: center;
-    min-width: 24px;
+    min-width: 44px;
     min-height: 180px;
   }
 
@@ -282,7 +329,7 @@
   .runtime-seam__toggle {
     position: absolute;
     top: 50%;
-    width: 24px;
+    width: 44px;
     height: 44px;
     padding: 0;
     border: 1px solid var(--border);

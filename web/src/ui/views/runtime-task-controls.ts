@@ -7,10 +7,17 @@ import type { RuntimeProjectedJob, RuntimeProjection } from './runtime-projectio
 import './runtime-confirm-dialog.js';
 
 const pausableStatuses = new Set<TaskStatus>([
-  'active', 'waiting_job', 'waiting_watch', 'needs_approval',
+  'active',
+  'waiting_job',
+  'waiting_watch',
+  'needs_approval',
 ]);
 const cancellableStatuses = new Set<TaskStatus>([
-  'active', 'waiting_job', 'waiting_watch', 'needs_approval', 'paused',
+  'active',
+  'waiting_job',
+  'waiting_watch',
+  'needs_approval',
+  'paused',
 ]);
 const terminalStatuses = new Set<TaskStatus>(['completed', 'failed', 'cancelled']);
 
@@ -44,6 +51,11 @@ export class RuntimeTaskControls extends LitElement {
 
   createRenderRoot() {
     return this;
+  }
+
+  connectedCallback(): void {
+    super.connectedCallback();
+    if (this.controller.signal.aborted) this.controller = new AbortController();
   }
 
   disconnectedCallback(): void {
@@ -89,8 +101,10 @@ export class RuntimeTaskControls extends LitElement {
   }
 
   private get activeJobs(): RuntimeProjectedJob[] {
-    return this.projection?.jobs.filter((job) =>
-      job.state === 'accepted' || job.state === 'running') ?? [];
+    return (
+      this.projection?.jobs.filter((job) => job.state === 'accepted' || job.state === 'running') ??
+      []
+    );
   }
 
   private get unknownJobs(): RuntimeProjectedJob[] {
@@ -98,14 +112,27 @@ export class RuntimeTaskControls extends LitElement {
   }
 
   private emitSnapshot(snapshot: TaskProjection): void {
-    this.dispatchEvent(new CustomEvent<TaskProjection>('projection-change', {
-      detail: snapshot, bubbles: true, composed: true,
-    }));
+    this.dispatchEvent(
+      new CustomEvent<TaskProjection>('projection-change', {
+        detail: snapshot,
+        bubbles: true,
+        composed: true,
+      }),
+    );
   }
 
   private restoreOverflowFocus(): void {
     void this.updateComplete.then(() => {
-      this.querySelector<HTMLButtonElement>('button[data-action="overflow"]')?.focus();
+      const trigger = this.querySelector<HTMLButtonElement>('button[data-action="overflow"]');
+      if (trigger) {
+        trigger.focus();
+        return;
+      }
+      // A successful cancel can remove the overflow trigger; ask the owning
+      // Task view for a stable surviving focus target instead of dropping to body.
+      this.dispatchEvent(
+        new CustomEvent('focus-status-request', { bubbles: true, composed: true }),
+      );
     });
   }
 
@@ -116,9 +143,10 @@ export class RuntimeTaskControls extends LitElement {
     this.pending = action;
     this.error = '';
     try {
-      const response = action === 'pause'
-        ? await pauseRuntimeTask(this.workspaceId, this.taskId, this.controller.signal)
-        : await resumeRuntimeTask(this.workspaceId, this.taskId, this.controller.signal);
+      const response =
+        action === 'pause'
+          ? await pauseRuntimeTask(this.workspaceId, this.taskId, this.controller.signal)
+          : await resumeRuntimeTask(this.workspaceId, this.taskId, this.controller.signal);
       if (!response.result) throw new ApiError(500, 'Task projection missing');
       if (generation !== this.generation) return;
       this.emitSnapshot(response.result);
@@ -159,11 +187,20 @@ export class RuntimeTaskControls extends LitElement {
     this.cancelRequested = true;
     this.restoreFocusWhenIdle = true;
     this.error = '';
+    let restored = false;
     try {
-      const response = await cancelRuntimeTask(this.workspaceId, this.taskId, this.controller.signal);
+      const response = await cancelRuntimeTask(
+        this.workspaceId,
+        this.taskId,
+        this.controller.signal,
+      );
       if (!response.result) throw new ApiError(500, 'Task projection missing');
       if (generation !== this.generation) return;
       this.emitSnapshot(response.result);
+      restored = true;
+      this.dispatchEvent(
+        new CustomEvent('focus-status-request', { bubbles: true, composed: true }),
+      );
     } catch (error) {
       if (generation !== this.generation || this.controller.signal.aborted) return;
       this.cancelRequested = false;
@@ -173,7 +210,7 @@ export class RuntimeTaskControls extends LitElement {
         this.pending = null;
         if (this.restoreFocusWhenIdle) {
           this.restoreFocusWhenIdle = false;
-          this.restoreOverflowFocus();
+          if (!restored) this.restoreOverflowFocus();
         }
       }
     }
@@ -208,9 +245,15 @@ export class RuntimeTaskControls extends LitElement {
     const devices = this.affectedDeviceNames();
     return html`
       <p><strong>Objective:</strong> ${objective}</p>
-      <p>${activeJobs} active job${activeJobs === 1 ? '' : 's'} · ${activeWatches} active watch${activeWatches === 1 ? '' : 'es'}</p>
+      <p>
+        ${activeJobs} active job${activeJobs === 1 ? '' : 's'} · ${activeWatches} active
+        watch${activeWatches === 1 ? '' : 'es'}
+      </p>
       <p><strong>Affected devices:</strong> ${devices.length ? devices.join(', ') : 'None'}</p>
-      <p>Cancelling stops this task's side effects. Unknown device results must be reviewed; they are not reported as stopped.</p>
+      <p>
+        Cancelling stops this task's side effects. Unknown device results must be reviewed; they are
+        not reported as stopped.
+      </p>
     `;
   }
 
@@ -221,34 +264,99 @@ export class RuntimeTaskControls extends LitElement {
       .primaryLabel=${'Keep running'}
       .dangerLabel=${'Cancel task'}
       @confirm-primary=${this.closeCancel}
-      @confirm-danger=${this.confirmCancel}>
+      @confirm-danger=${this.confirmCancel}
+    >
     </runtime-confirm-dialog>`;
   }
 
   private renderAttention(jobs: RuntimeProjectedJob[]) {
-    const devices = [...new Set(jobs.map((job) => job.deviceId).filter((id): id is string => Boolean(id)))];
-    return html`<section class="runtime-task-controls__attention" role="alert" data-attention="cancelled-unknown">
+    const devices = [
+      ...new Set(jobs.map((job) => job.deviceId).filter((id): id is string => Boolean(id))),
+    ];
+    return html`<section
+      class="runtime-task-controls__attention"
+      role="alert"
+      data-attention="cancelled-unknown"
+    >
       <strong>Cancellation needs attention</strong>
-      <p>Some device results are unknown${devices.length ? `: ${devices.join(', ')}` : ''}. Review them before retrying.</p>
-      <button type="button" data-action="refresh-status" @click=${this.requestRefresh}>Refresh status</button>
+      <p>
+        Some device results are unknown${devices.length ? `: ${devices.join(', ')}` : ''}. Review
+        them before retrying.
+      </p>
+      <button type="button" data-action="refresh-status" @click=${this.requestRefresh}>
+        Refresh status
+      </button>
     </section>`;
   }
 
+  // Prettier's Lit HTML printer oscillates on these nested conditionals.
+  // prettier-ignore
   render() {
     void this.revision;
     const unknown = this.unknownJobs;
     const style = html`<style>
-      runtime-task-controls { display: inline-flex; flex-direction: column; gap: var(--space-2, 8px); }
-      .runtime-task-controls__actions { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2, 8px); }
-      .runtime-task-controls__note { color: var(--muted-foreground, #94a3b8); font-size: 12px; }
-      .runtime-task-controls button { min-height: 44px; min-width: 44px; padding: 0 12px; border: 1px solid var(--glass-border, rgba(148, 163, 184, 0.3)); border-radius: var(--radius-md, 10px); background: var(--bg-subtle, rgba(255, 255, 255, 0.06)); color: inherit; cursor: pointer; }
-      .runtime-task-controls button:disabled { opacity: 0.55; cursor: default; }
-      .runtime-task-controls__overflow { position: relative; }
-      .runtime-task-controls__overflow [role="menu"] { position: absolute; right: 0; z-index: 20; margin-top: 4px; min-width: 160px; padding: 4px; border: 1px solid var(--glass-border, rgba(148, 163, 184, 0.3)); border-radius: var(--radius-md, 10px); background: var(--surface, #111827); }
-      .runtime-task-controls__overflow [role="menuitem"] { width: 100%; text-align: left; border-color: var(--danger, #ef4444); color: var(--danger, #ef4444); }
-      .runtime-task-controls__attention { padding: var(--space-2, 8px); border: 1px solid var(--warning, #f59e0b); border-radius: var(--radius-md, 10px); color: var(--warning, #f59e0b); }
-      .runtime-task-controls__attention p { margin: 4px 0; }
-      [data-pending="cancel"] { color: var(--warning, #f59e0b); font-weight: 600; }
+      runtime-task-controls {
+        display: inline-flex;
+        flex-direction: column;
+        gap: var(--space-2, 8px);
+      }
+      .runtime-task-controls__actions {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: var(--space-2, 8px);
+      }
+      .runtime-task-controls__note {
+        color: var(--muted-foreground, #94a3b8);
+        font-size: 12px;
+      }
+      .runtime-task-controls button {
+        min-height: 44px;
+        min-width: 44px;
+        padding: 0 12px;
+        border: 1px solid var(--glass-border, rgba(148, 163, 184, 0.3));
+        border-radius: var(--radius-md, 10px);
+        background: var(--bg-subtle, rgba(255, 255, 255, 0.06));
+        color: inherit;
+        cursor: pointer;
+      }
+      .runtime-task-controls button:disabled {
+        opacity: 0.55;
+        cursor: default;
+      }
+      .runtime-task-controls__overflow {
+        position: relative;
+      }
+      .runtime-task-controls__overflow [role='menu'] {
+        position: absolute;
+        right: 0;
+        z-index: 20;
+        margin-top: 4px;
+        min-width: 160px;
+        padding: 4px;
+        border: 1px solid var(--glass-border, rgba(148, 163, 184, 0.3));
+        border-radius: var(--radius-md, 10px);
+        background: var(--surface, #111827);
+      }
+      .runtime-task-controls__overflow [role='menuitem'] {
+        width: 100%;
+        text-align: left;
+        border-color: var(--danger, #ef4444);
+        color: var(--danger, #ef4444);
+      }
+      .runtime-task-controls__attention {
+        padding: var(--space-2, 8px);
+        border: 1px solid var(--warning, #f59e0b);
+        border-radius: var(--radius-md, 10px);
+        color: var(--warning, #f59e0b);
+      }
+      .runtime-task-controls__attention p {
+        margin: 4px 0;
+      }
+      [data-pending='cancel'] {
+        color: var(--warning, #f59e0b);
+        font-weight: 600;
+      }
     </style>`;
 
     if (this.readOnly) {
@@ -256,38 +364,73 @@ export class RuntimeTaskControls extends LitElement {
     }
 
     const showCancelling = this.cancelRequested && !this.isTerminal;
-    return html`${style}<div class="runtime-task-controls" @keydown=${this.onKeydown}>
-      ${unknown.length ? this.renderAttention(unknown) : nothing}
-      ${showCancelling
-        ? html`<span role="status" data-pending="cancel">${this.pending === 'cancel' ? 'Cancelling…' : 'Cancelling'}</span>`
-        : nothing}
-      ${this.canPause || this.canResume || this.canCancel
-        ? html`<div class="runtime-task-controls__actions">
-            ${this.canPause || this.canResume
-              ? html`<span class="runtime-task-controls__note">Stops new runs; active jobs and watches continue</span>
-                <button type="button" data-action=${this.canResume ? 'resume' : 'pause'} data-executable
-                  ?disabled=${this.pending !== null} @click=${() => this.submitControl(this.canResume ? 'resume' : 'pause')}>
-                  ${this.pending === 'resume' ? 'Resuming…' : this.pending === 'pause' ? 'Pausing…' : this.canResume ? 'Resume task' : 'Pause task'}
-                </button>`
-              : nothing}
-            ${this.canCancel
-              ? html`<div class="runtime-task-controls__overflow">
-                  <button type="button" data-action="overflow" aria-haspopup="menu"
-                    aria-expanded=${this.menuOpen ? 'true' : 'false'} aria-label="More task actions"
-                    ?disabled=${this.pending !== null} @click=${this.toggleMenu}>⋯</button>
-                  ${this.menuOpen
-                    ? html`<div role="menu">
-                        <button type="button" role="menuitem" data-action="menu-cancel" data-executable
-                          @click=${this.openCancel}>Cancel task</button>
-                      </div>`
-                    : nothing}
-                </div>`
-              : nothing}
-          </div>`
-        : nothing}
-      ${this.error ? html`<p role="alert" class="runtime-task-controls__error">${this.error}</p>` : nothing}
-      ${this.cancelOpen ? this.renderCancelDialog() : nothing}
-    </div>`;
+    return html`${style}
+      <div class="runtime-task-controls" @keydown=${this.onKeydown}>
+        ${unknown.length ? this.renderAttention(unknown) : nothing}
+        ${
+          showCancelling
+            ? html`<span role="status" data-pending="cancel"
+                >${this.pending === 'cancel' ? 'Cancelling…' : 'Cancelling'}</span
+              >`
+            : nothing
+        }
+        ${
+          this.canPause || this.canResume || this.canCancel
+            ? html`<div class="runtime-task-controls__actions">
+                ${
+                this.canPause || this.canResume
+                  ? html`<span class="runtime-task-controls__note"
+                        >Stops new runs; active jobs and watches continue</span
+                      >
+                      <button
+                        type="button"
+                        data-action=${this.canResume ? 'resume' : 'pause'}
+                        data-executable
+                        ?disabled=${this.pending !== null}
+                        @click=${() => this.submitControl(this.canResume ? 'resume' : 'pause')}
+                      >
+                        ${this.pending === 'resume' ? 'Resuming…' : this.pending === 'pause' ? 'Pausing…' : this.canResume ? 'Resume task' : 'Pause task'}
+                      </button>`
+                  : nothing
+              }
+                ${
+                this.canCancel
+                  ? html`<div class="runtime-task-controls__overflow">
+                      <button
+                        type="button"
+                        data-action="overflow"
+                        aria-haspopup="menu"
+                        aria-expanded=${this.menuOpen ? 'true' : 'false'}
+                        aria-label="More task actions"
+                        ?disabled=${this.pending !== null}
+                        @click=${this.toggleMenu}
+                      >
+                        ⋯
+                      </button>
+                      ${
+                      this.menuOpen
+                        ? html`<div role="menu">
+                            <button
+                              type="button"
+                              role="menuitem"
+                              data-action="menu-cancel"
+                              data-executable
+                              @click=${this.openCancel}
+                            >
+                              Cancel task
+                            </button>
+                          </div>`
+                        : nothing
+                    }
+                    </div>`
+                  : nothing
+              }
+              </div>`
+            : nothing
+        }
+        ${this.error ? html`<p role="alert" class="runtime-task-controls__error">${this.error}</p>` : nothing}
+        ${this.cancelOpen ? this.renderCancelDialog() : nothing}
+      </div>`;
   }
 }
 

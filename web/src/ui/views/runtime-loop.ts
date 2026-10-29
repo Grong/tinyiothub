@@ -5,21 +5,19 @@ import { stopRuntimeJob } from '../../api/runtime.js';
 import type { EvidenceRef, RuntimeEvent, TaskProjection, TaskStatus } from '../../types/runtime.js';
 import type { RuntimeProjectedApproval, RuntimeProjectedJob } from './runtime-projection.js';
 import { RuntimeProjection } from './runtime-projection.js';
+import { safeJson } from './runtime-json.js';
 import './runtime-approval.js';
 import './runtime-loop.css';
 
-const toolEvents = new Set(['read_device', 'call_device', 'set_device', 'stop_device', 'watch_device']);
+const toolEvents = new Set([
+  'read_device',
+  'call_device',
+  'set_device',
+  'stop_device',
+  'watch_device',
+]);
 const stopStates = new Set(['accepted', 'running']);
 const terminalStatuses = new Set<TaskStatus>(['completed', 'failed', 'cancelled']);
-
-function safeJson(value: unknown): string {
-  if (value === undefined || value === null) return 'None';
-  try {
-    return JSON.stringify(value, null, 2);
-  } catch {
-    return 'Unavailable';
-  }
-}
 
 @customElement('runtime-loop')
 export class RuntimeLoop extends LitElement {
@@ -37,6 +35,11 @@ export class RuntimeLoop extends LitElement {
 
   createRenderRoot() {
     return this;
+  }
+
+  connectedCallback(): void {
+    super.connectedCallback();
+    if (this.controller.signal.aborted) this.controller = new AbortController();
   }
 
   disconnectedCallback(): void {
@@ -59,11 +62,13 @@ export class RuntimeLoop extends LitElement {
   }
 
   private locate(deviceId: string, evidenceId?: string): void {
-    this.dispatchEvent(new CustomEvent('locate-device', {
-      detail: evidenceId ? { deviceId, evidenceId } : { deviceId },
-      bubbles: true,
-      composed: true,
-    }));
+    this.dispatchEvent(
+      new CustomEvent('locate-device', {
+        detail: evidenceId ? { deviceId, evidenceId } : { deviceId },
+        bubbles: true,
+        composed: true,
+      }),
+    );
   }
 
   private requestRefresh(): void {
@@ -71,8 +76,14 @@ export class RuntimeLoop extends LitElement {
   }
 
   private deviceLink(deviceId: string): TemplateResult {
-    return html`<button class="runtime-loop__device" type="button" data-device-id=${deviceId}
-      @click=${() => this.locate(deviceId)}>${deviceId}</button>`;
+    return html`<button
+      class="runtime-loop__device"
+      type="button"
+      data-device-id=${deviceId}
+      @click=${() => this.locate(deviceId)}
+    >
+      ${deviceId}
+    </button>`;
   }
 
   private stepKind(event: RuntimeEvent): string {
@@ -86,7 +97,10 @@ export class RuntimeLoop extends LitElement {
     return html`<article class="runtime-loop__step" data-event-id=${event.eventId}>
       <header><span>${this.stepKind(event)}</span><strong>${event.eventType}</strong></header>
       ${event.deviceId ? this.deviceLink(event.deviceId) : nothing}
-      <details><summary>Details</summary><pre>${safeJson(event.data)}</pre></details>
+      <details>
+        <summary>Details</summary>
+        <pre>${safeJson(event.data)}</pre>
+      </details>
     </article>`;
   }
 
@@ -95,7 +109,8 @@ export class RuntimeLoop extends LitElement {
       .workspaceId=${approval.workspaceId ?? this.projection?.task.workspaceId ?? ''}
       .taskId=${this.projection?.task.id ?? ''}
       .approval=${approval}
-      .readOnly=${this.readOnly}></runtime-approval>`;
+      .readOnly=${this.readOnly}
+    ></runtime-approval>`;
   }
 
   private ownsJob(job: RuntimeProjectedJob): boolean {
@@ -104,8 +119,14 @@ export class RuntimeLoop extends LitElement {
 
   private canOfferStop(job: RuntimeProjectedJob): boolean {
     const status = this.projection?.task.status;
-    return !this.readOnly && status !== undefined && !terminalStatuses.has(status) &&
-      this.ownsJob(job) && stopStates.has(job.state) && !this.stopUnknown.has(job.id);
+    return (
+      !this.readOnly &&
+      status !== undefined &&
+      !terminalStatuses.has(status) &&
+      this.ownsJob(job) &&
+      stopStates.has(job.state) &&
+      !this.stopUnknown.has(job.id)
+    );
   }
 
   private openStopConfirmation(job: RuntimeProjectedJob): void {
@@ -134,9 +155,13 @@ export class RuntimeLoop extends LitElement {
       );
       if (!response.result) throw new ApiError(500, 'Task projection missing');
       if (generation !== this.generation) return;
-      this.dispatchEvent(new CustomEvent<TaskProjection>('projection-change', {
-        detail: response.result, bubbles: true, composed: true,
-      }));
+      this.dispatchEvent(
+        new CustomEvent<TaskProjection>('projection-change', {
+          detail: response.result,
+          bubbles: true,
+          composed: true,
+        }),
+      );
     } catch {
       if (generation !== this.generation || this.controller.signal.aborted) return;
       this.errorFor(job.id, true);
@@ -147,9 +172,7 @@ export class RuntimeLoop extends LitElement {
 
   private errorFor(jobId: string, unknown: boolean): void {
     this.stopUnknown = new Set(
-      unknown
-        ? [...this.stopUnknown, jobId]
-        : [...this.stopUnknown].filter((id) => id !== jobId),
+      unknown ? [...this.stopUnknown, jobId] : [...this.stopUnknown].filter((id) => id !== jobId),
     );
   }
 
@@ -160,27 +183,73 @@ export class RuntimeLoop extends LitElement {
     return html`<section class="tool-card" data-job-id=${job.id}>
       <header><strong>${job.tool ?? 'Device job'}</strong><span>${job.state}</span></header>
       ${job.deviceId ? html`<p>${this.deviceLink(job.deviceId)}</p>` : nothing}
-      ${unknown
-        ? html`<p role="alert">Stop result unknown</p>
-          <button class="btn" type="button" data-action="refresh-status" @click=${this.requestRefresh}>Refresh status</button>`
-        : nothing}
-      ${!unknown && (confirming || stopping)
-        ? html`<div class="runtime-loop__stop-confirm" role="group" aria-label="Stop job confirmation">
-          <p>Stops only this job; the rest of the task continues.</p>
-          ${stopping
-            ? html`<p role="status">Stopping…</p>`
-            : html`<button class="btn" type="button" data-action="keep-job" @click=${this.keepJob}>Keep job</button>`}
-          <button class="btn" type="button" data-action="confirm-stop" data-executable
-            ?disabled=${stopping} @click=${() => this.requestStop(job)}>Confirm stop</button>
-        </div>`
-        : nothing}
-      ${!unknown && !confirming && !stopping && this.canOfferStop(job)
-        ? html`<button class="btn" type="button" data-action="stop-job" data-executable
-            @click=${() => this.openStopConfirmation(job)}>Stop job</button>`
-        : nothing}
-      <details><summary>${job.state === 'done' ? 'Done/Details' : 'Details'}</summary>
-        <dl><dt>Arguments</dt><dd><pre>${safeJson(job.argsJson)}</pre></dd>
-          <dt>Result</dt><dd><pre>${safeJson(job.resultJson)}</pre></dd></dl>
+      ${
+        unknown
+          ? html`<p role="alert">Stop result unknown</p>
+              <button
+                class="btn"
+                type="button"
+                data-action="refresh-status"
+                @click=${this.requestRefresh}
+              >
+                Refresh status
+              </button>`
+          : nothing
+      }
+      ${
+        !unknown && (confirming || stopping)
+          ? html`<div
+              class="runtime-loop__stop-confirm"
+              role="group"
+              aria-label="Stop job confirmation"
+            >
+              <p>Stops only this job; the rest of the task continues.</p>
+              ${
+                stopping
+                  ? html`<p role="status">Stopping…</p>`
+                  : html`<button
+                      class="btn"
+                      type="button"
+                      data-action="keep-job"
+                      @click=${this.keepJob}
+                    >
+                      Keep job
+                    </button>`
+              }
+              <button
+                class="btn"
+                type="button"
+                data-action="confirm-stop"
+                data-executable
+                ?disabled=${stopping}
+                @click=${() => this.requestStop(job)}
+              >
+                Confirm stop
+              </button>
+            </div>`
+          : nothing
+      }
+      ${
+        !unknown && !confirming && !stopping && this.canOfferStop(job)
+          ? html`<button
+              class="btn"
+              type="button"
+              data-action="stop-job"
+              data-executable
+              @click=${() => this.openStopConfirmation(job)}
+            >
+              Stop job
+            </button>`
+          : nothing
+      }
+      <details>
+        <summary>${job.state === 'done' ? 'Done/Details' : 'Details'}</summary>
+        <dl>
+          <dt>Arguments</dt>
+          <dd><pre>${safeJson(job.argsJson)}</pre></dd>
+          <dt>Result</dt>
+          <dd><pre>${safeJson(job.resultJson)}</pre></dd>
+        </dl>
       </details>
     </section>`;
   }
@@ -188,15 +257,23 @@ export class RuntimeLoop extends LitElement {
   private renderEvidence(evidence: EvidenceRef): TemplateResult {
     const expiresAt = evidence.expiresAt ? Date.parse(evidence.expiresAt) : Number.NaN;
     if (Number.isFinite(expiresAt) && expiresAt <= Date.now()) {
-      return html`<div class="runtime-loop__evidence runtime-loop__evidence--expired"
-        data-evidence-expired=${evidence.evidenceId} role="status">
+      return html`<div
+        class="runtime-loop__evidence runtime-loop__evidence--expired"
+        data-evidence-expired=${evidence.evidenceId}
+        role="status"
+      >
         <span>Image evidence</span><span>${evidence.evidenceId}</span>
         <small>Image evidence unavailable (expired) · ${evidence.mediaTime}</small>
       </div>`;
     }
-    return html`<button class="runtime-loop__evidence" type="button" data-evidence-id=${evidence.evidenceId}
-      @click=${() => this.locate(evidence.deviceId, evidence.evidenceId)}>
-      <span>Image evidence</span><span>${evidence.evidenceId}</span><small>${evidence.mediaTime}</small>
+    return html`<button
+      class="runtime-loop__evidence"
+      type="button"
+      data-evidence-id=${evidence.evidenceId}
+      @click=${() => this.locate(evidence.deviceId, evidence.evidenceId)}
+    >
+      <span>Image evidence</span><span>${evidence.evidenceId}</span
+      ><small>${evidence.mediaTime}</small>
     </button>`;
   }
 
@@ -214,24 +291,41 @@ export class RuntimeLoop extends LitElement {
     const renderedApprovals = new Set<string>();
     const steps = projection.steps.map((event) => {
       const approval = event.approvalId ? approvalById.get(event.approvalId) : undefined;
+      // The request and its later decision share an approval id; render the
+      // card once, attached to the first referencing step.
+      if (approval && !renderedApprovals.has(approval.id)) {
+        renderedApprovals.add(approval.id);
+        return html`${this.renderEvent(event)}${this.renderApproval(approval)}`;
+      }
       if (approval) renderedApprovals.add(approval.id);
-      return html`${this.renderEvent(event)}${approval ? this.renderApproval(approval) : nothing}`;
+      return this.renderEvent(event);
     });
-    const orphanApprovals = [...approvalById.values()]
-      .filter((approval) => !renderedApprovals.has(approval.id));
+    const orphanApprovals = [...approvalById.values()].filter(
+      (approval) => !renderedApprovals.has(approval.id),
+    );
 
-    const imageEvidence = projection.evidence.filter((evidence) => evidence.deviceId && evidence.mime.startsWith('image/'));
+    const imageEvidence = projection.evidence.filter(
+      (evidence) => evidence.deviceId && evidence.mime.startsWith('image/'),
+    );
     return html`<section class="runtime-loop" aria-label="Agent Loop">
       <h2>Agent Loop</h2>
       ${projection.jobs.length || projection.steps.length || projection.evidence.length || projection.approvals.length ? nothing : html`<p class="runtime-loop__empty">No agent activity yet</p>`}
       <div class="runtime-loop__jobs">${projection.jobs.map((job) => this.renderJob(job))}</div>
-      ${orphanApprovals.length
-        ? html`<div class="runtime-loop__approvals">${orphanApprovals.map((approval) => this.renderApproval(approval))}</div>`
-        : nothing}
+      ${
+        orphanApprovals.length
+          ? html`<div class="runtime-loop__approvals">
+              ${orphanApprovals.map((approval) => this.renderApproval(approval))}
+            </div>`
+          : nothing
+      }
       <div class="runtime-loop__steps">${steps}</div>
-      ${imageEvidence.length ? html`<section aria-label="Image evidence" class="runtime-loop__evidence-list">
-        ${imageEvidence.map((evidence) => this.renderEvidence(evidence))}
-      </section>` : nothing}
+      ${
+        imageEvidence.length
+          ? html`<section aria-label="Image evidence" class="runtime-loop__evidence-list">
+              ${imageEvidence.map((evidence) => this.renderEvidence(evidence))}
+            </section>`
+          : nothing
+      }
     </section>`;
   }
 }

@@ -3,7 +3,7 @@ import { ApiError } from '../../api/client.js';
 import { decideRuntimeApproval, getRuntimeTask } from '../../api/runtime.js';
 import type { RuntimeApproval, RuntimeApprovalDecisionResult } from '../../types/runtime.js';
 import type { RuntimeProjectedApproval } from './runtime-projection.js';
-import { safeJson } from './runtime-approval.js';
+import { safeJson } from './runtime-json.js';
 import './runtime-approval.js';
 import type { RuntimeApprovalView } from './runtime-approval.js';
 
@@ -17,35 +17,63 @@ const get = vi.mocked(getRuntimeTask);
 
 function pendingApproval(over: Partial<RuntimeApproval> = {}): RuntimeApproval {
   return {
-    id: 'approval_1', workspaceId: 'ws_1', taskId: 'task_1', runId: 'run_1',
-    toolCallId: 'call_1', deviceId: 'dev_1', tool: 'set_device', argsJson: { value: 21, mode: 'manual' },
-    reason: 'Raise the pump', state: 'pending', decision: null, deciderId: null,
-    requestedAt: '2026-10-27T10:00:00Z', decidedAt: null, expiresAt: '2026-10-27T10:05:00Z',
-    decisionEventId: 'decision_event_1', updatedAt: '2026-10-27T10:00:00Z',
+    id: 'approval_1',
+    workspaceId: 'ws_1',
+    taskId: 'task_1',
+    runId: 'run_1',
+    toolCallId: 'call_1',
+    deviceId: 'dev_1',
+    tool: 'set_device',
+    argsJson: { value: 21, mode: 'manual' },
+    reason: 'Raise the pump',
+    state: 'pending',
+    decision: null,
+    deciderId: null,
+    requestedAt: '2026-10-27T10:00:00Z',
+    decidedAt: null,
+    expiresAt: '2026-10-27T10:05:00Z',
+    decisionEventId: 'decision_event_1',
+    updatedAt: '2026-10-27T10:00:00Z',
     ...over,
   };
 }
 
 function approvedApproval(): RuntimeApproval {
   return pendingApproval({
-    state: 'approved', decision: 'approve', deciderId: 'admin_1', decidedAt: '2026-10-27T10:03:00Z',
+    state: 'approved',
+    decision: 'approve',
+    deciderId: 'admin_1',
+    decidedAt: '2026-10-27T10:03:00Z',
   });
 }
 
 function rejectedApproval(): RuntimeApproval {
   return pendingApproval({
-    state: 'rejected', decision: 'reject', deciderId: 'admin_1', decidedAt: '2026-10-27T10:03:00Z',
+    state: 'rejected',
+    decision: 'reject',
+    deciderId: 'admin_1',
+    decidedAt: '2026-10-27T10:03:00Z',
   });
 }
 
-function deferred<T>(): { promise: Promise<T>; resolve: (value: T) => void; reject: (error: unknown) => void } {
+function deferred<T>(): {
+  promise: Promise<T>;
+  resolve: (value: T) => void;
+  reject: (error: unknown) => void;
+} {
   let resolve!: (value: T) => void;
   let reject!: (error: unknown) => void;
-  const promise = new Promise<T>((res, rej) => { resolve = res; reject = rej; });
+  const promise = new Promise<T>((res, rej) => {
+    resolve = res;
+    reject = rej;
+  });
   return { promise, resolve, reject };
 }
 
-function decisionResult(approval: RuntimeApproval, deduplicated = false): { code: number; msg: string; result: RuntimeApprovalDecisionResult } {
+function decisionResult(
+  approval: RuntimeApproval,
+  deduplicated = false,
+): { code: number; msg: string; result: RuntimeApprovalDecisionResult } {
   return { code: 0, msg: '', result: { approval, deduplicated } };
 }
 
@@ -78,15 +106,21 @@ async function approvalFixture(approval: RuntimeProjectedApproval): Promise<Appr
   await element.updateComplete;
   return {
     element,
-    get text() { return element.textContent ?? ''; },
-    get args() { return element.querySelector<HTMLElement>('[data-approval-args]'); },
+    get text() {
+      return element.textContent ?? '';
+    },
+    get args() {
+      return element.querySelector<HTMLElement>('[data-approval-args]');
+    },
     get approveButton() {
       return element.querySelector<HTMLButtonElement>('button[data-action="approve"]') ?? undefined;
     },
     get rejectButton() {
       return element.querySelector<HTMLButtonElement>('button[data-action="reject"]') ?? undefined;
     },
-    get executableControls() { return [...element.querySelectorAll<HTMLElement>('[data-executable]')]; },
+    get executableControls() {
+      return [...element.querySelectorAll<HTMLElement>('[data-executable]')];
+    },
     projectionEvents,
     decisionApi: decide,
     refreshApi: get,
@@ -130,7 +164,13 @@ describe('runtime-approval', () => {
     await view.element.updateComplete;
 
     expect(decide).toHaveBeenCalledOnce();
-    expect(decide).toHaveBeenCalledWith('ws_1', 'task_1', 'approval_1', 'approve', expect.any(AbortSignal));
+    expect(decide).toHaveBeenCalledWith(
+      'ws_1',
+      'task_1',
+      'approval_1',
+      'approve',
+      expect.any(AbortSignal),
+    );
     expect(decide.mock.calls[0]).toHaveLength(5);
     expect(view.approveButton!.disabled).toBe(true);
     expect(view.rejectButton!.disabled).toBe(true);
@@ -156,7 +196,13 @@ describe('runtime-approval', () => {
     await view.element.updateComplete;
 
     expect(decide).toHaveBeenCalledOnce();
-    expect(decide).toHaveBeenCalledWith('ws_1', 'task_1', 'approval_1', 'reject', expect.any(AbortSignal));
+    expect(decide).toHaveBeenCalledWith(
+      'ws_1',
+      'task_1',
+      'approval_1',
+      'reject',
+      expect.any(AbortSignal),
+    );
     expect(view.text).toContain('Rejecting');
     expect(view.text).not.toContain('Rejected');
 
@@ -208,14 +254,33 @@ describe('runtime-approval', () => {
     expect(sent[3]).toBe('approve');
   });
 
-  it.each(['rejected', 'expired', 'unavailable'] as const)('renders %s without actions', async (state) => {
-    const view = await approvalFixture(pendingApproval({ state }));
+  it('clears a 409 decision error when an authoritative non-pending state arrives', async () => {
+    const view = await approvalFixture(pendingApproval());
+    decide.mockRejectedValueOnce(new ApiError(409, 'Approval already decided'));
 
-    expect(view.executableControls).toEqual([]);
-    expect(view.text.toLowerCase()).toContain(state);
+    view.approveButton!.click();
+    await flush(view.element);
+    expect(view.text).toContain('Approval already decided');
+
+    view.element.approval = approvedApproval();
+    await flush(view.element);
+
+    expect(view.text).not.toContain('Approval already decided');
+    expect(view.text).toContain('Approved');
     expect(view.approveButton).toBeUndefined();
-    expect(view.rejectButton).toBeUndefined();
   });
+
+  it.each(['rejected', 'expired', 'unavailable'] as const)(
+    'renders %s without actions',
+    async (state) => {
+      const view = await approvalFixture(pendingApproval({ state }));
+
+      expect(view.executableControls).toEqual([]);
+      expect(view.text.toLowerCase()).toContain(state);
+      expect(view.approveButton).toBeUndefined();
+      expect(view.rejectButton).toBeUndefined();
+    },
+  );
 
   it('does not apply a decision response after Task switch and aborts the old request', async () => {
     const pending = withDeferredDecision();
@@ -235,6 +300,20 @@ describe('runtime-approval', () => {
     expect(view.projectionEvents).toEqual([]);
     expect(get).not.toHaveBeenCalled();
     expect(view.approveButton!.disabled).toBe(false);
+  });
+
+  it('recreates an aborted controller when reconnected', async () => {
+    const view = await approvalFixture(pendingApproval());
+    view.element.remove();
+    document.body.append(view.element);
+    await view.element.updateComplete;
+    decide.mockReturnValue(new Promise(() => {}));
+
+    view.approveButton!.click();
+    await view.element.updateComplete;
+
+    const signal = decide.mock.calls[0][4] as AbortSignal;
+    expect(signal.aborted).toBe(false);
   });
 
   it('never renders executable controls in history mode', async () => {

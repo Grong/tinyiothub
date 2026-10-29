@@ -1,8 +1,8 @@
 import { LitElement, html, nothing, type PropertyValues } from 'lit';
 import { customElement, property, state } from 'lit/decorators.js';
 import { ApiError, getWorkspaceId } from '../../api/client.js';
-import { getPlaybackDescriptor } from '../../api/playback.js';
-import { getRuntimeTask, listRuntimeTasks } from '../../api/runtime.js';
+import { getPlaybackDescriptor, isSafePlaybackUrl } from '../../api/playback.js';
+import { getRuntimeTask, listRuntimeTaskEvents, listRuntimeTasks } from '../../api/runtime.js';
 import { connectRuntimeStream } from '../../api/runtime-stream.js';
 import type {
   DeviceJobState,
@@ -13,6 +13,7 @@ import type {
   TaskStatus,
 } from '../../types/runtime.js';
 import { RuntimeProjection, type RuntimeConnection } from './runtime-projection.js';
+import { createDialogFocusTrap, type DialogFocusTrap } from './runtime-dialog-focus.js';
 import {
   isHistoryState,
   switchTaskUrl,
@@ -32,10 +33,13 @@ import './runtime-task.css';
 import './runtime-workbench.css';
 
 const minimumDeviceWidth = 360;
-const collapsedDeviceWidth = 36;
+const collapsedDeviceWidth = 44;
 const deviceWidthStep = 24;
 const deviceWidthKey = 'runtime.devices.width';
 const deviceExpandedKey = 'runtime.devices.expanded';
+const timelinePageSize = 100;
+const playbackRefreshLeadMs = 30_000;
+const playbackRefreshRetryMs = 10_000;
 
 function sameHistory(a: RuntimeHistory | null, b: RuntimeHistory | null): boolean {
   return a?.at === b?.at && a?.event === b?.event;
@@ -74,10 +78,16 @@ export class RuntimeTaskView extends LitElement {
   @state() private switchTasks: RuntimeTask[] = [];
   @state() private switchLoading = false;
   @state() private switchError = '';
+  @state() private timelineLoading = false;
+  @state() private timelineError = '';
+  @state() private timelineHasMore = false;
+  @state() private timelineOldest: number | null = null;
 
   private generation = 0;
   private abort: AbortController | null = null;
   private playbackAbort: AbortController | null = null;
+  private timelineAbort: AbortController | null = null;
+  private descriptorTarget: { deviceId: string; sourceId: string } | null = null;
   private switchAbort: AbortController | null = null;
   private closeStream: (() => void) | null = null;
   private historyEventId = '';
@@ -88,12 +98,21 @@ export class RuntimeTaskView extends LitElement {
   private lastTaskStatus: TaskStatus | null = null;
   private lastJobStates = new Map<string, DeviceJobState>();
   private pendingObjectiveFocus = false;
+  private playbackRefreshTimer: ReturnType<typeof setTimeout> | null = null;
+  private switchTrap: DialogFocusTrap | null = null;
+  private switchTrapTarget: HTMLElement | null = null;
   private motionListener = (event: MediaQueryListEvent) => {
     this.reducedMotion = event.matches;
   };
   private mobileListener = (event: MediaQueryListEvent) => {
     this.mobile = event.matches;
-    if (!event.matches) this.mobilePanel = null;
+    if (event.matches) {
+      // The collapsed rail has no seam toggle below 980px; never trap mobile
+      // users behind a persisted collapsed state.
+      this.setDevicesExpanded(true);
+    } else {
+      this.mobilePanel = null;
+    }
   };
 
   createRenderRoot() {
@@ -110,6 +129,7 @@ export class RuntimeTaskView extends LitElement {
       this.mobileQuery = window.matchMedia('(max-width: 599px)');
       this.mobile = this.mobileQuery.matches;
       this.mobileQuery.addEventListener('change', this.mobileListener);
+      if (this.mobile) this.setDevicesExpanded(true, false);
     }
     if (this.taskId) void this.load();
   }
@@ -125,14 +145,20 @@ export class RuntimeTaskView extends LitElement {
   }
 
   protected updated(): void {
+    this.syncSwitchTrap();
     if (!this.pendingObjectiveFocus || !this.projection) return;
     this.pendingObjectiveFocus = false;
     this.querySelector<HTMLElement>('h1')?.focus({ preventScroll: true });
   }
 
   willUpdate(changed: PropertyValues<this>): void {
+    // Any device change (including one driven by the URL) invalidates the
+    // current signed playback session; never let A's media survive into B.
+    if (changed.has('device') && changed.get('device') !== this.device) this.stopPlayback();
     const taskChanged = changed.has('taskId') && changed.get('taskId') !== undefined;
-    const historyChanged = changed.has('history') && changed.get('history') !== undefined &&
+    const historyChanged =
+      changed.has('history') &&
+      changed.get('history') !== undefined &&
       !sameHistory(changed.get('history') ?? null, this.history);
     if (taskChanged) {
       const previousTaskId = changed.get('taskId');
@@ -164,7 +190,8 @@ export class RuntimeTaskView extends LitElement {
 
   private restoreLayout(): void {
     const storedWidth = Number(localStorage.getItem(deviceWidthKey));
-    if (Number.isFinite(storedWidth) && storedWidth > 0) this.deviceWidth = this.clampDeviceWidth(storedWidth);
+    if (Number.isFinite(storedWidth) && storedWidth > 0)
+      this.deviceWidth = this.clampDeviceWidth(storedWidth);
     this.devicesExpanded = localStorage.getItem(deviceExpandedKey) !== 'false';
   }
 
@@ -215,24 +242,35 @@ export class RuntimeTaskView extends LitElement {
   private finishPointerDrag(): void {
     if (!this.drag) return;
     const seam = this.querySelector<HTMLElement>('[role="separator"]');
-    if (seam && (typeof seam.hasPointerCapture !== 'function' || seam.hasPointerCapture(this.drag.pointerId))) {
+    if (
+      seam &&
+      (typeof seam.hasPointerCapture !== 'function' || seam.hasPointerCapture(this.drag.pointerId))
+    ) {
       seam.releasePointerCapture(this.drag.pointerId);
     }
     this.drag = null;
   }
 
+  private setDevicesExpanded(expanded: boolean, persist = true): void {
+    this.devicesExpanded = expanded;
+    if (persist) localStorage.setItem(deviceExpandedKey, String(expanded));
+  }
+
   private toggleDevices(): void {
-    this.devicesExpanded = !this.devicesExpanded;
-    localStorage.setItem(deviceExpandedKey, String(this.devicesExpanded));
+    this.setDevicesExpanded(!this.devicesExpanded);
   }
 
   private syncUrl(): void {
-    window.history.pushState({}, '', toRuntimeTaskUrl(this.taskId, {
-      view: this.view,
-      device: this.device,
-      at: this.history?.at,
-      event: this.history?.event,
-    }));
+    window.history.pushState(
+      {},
+      '',
+      toRuntimeTaskUrl(this.taskId, {
+        view: this.view,
+        device: this.device,
+        at: this.history?.at,
+        event: this.history?.event,
+      }),
+    );
     window.dispatchEvent(new HashChangeEvent('hashchange'));
   }
 
@@ -240,9 +278,13 @@ export class RuntimeTaskView extends LitElement {
     if (view === this.view) return;
     this.view = view;
     this.syncUrl();
-    this.dispatchEvent(new CustomEvent('view-change', {
-      detail: { view }, bubbles: true, composed: true,
-    }));
+    this.dispatchEvent(
+      new CustomEvent('view-change', {
+        detail: { view },
+        bubbles: true,
+        composed: true,
+      }),
+    );
   }
 
   private get activePanel(): RuntimePanel {
@@ -261,6 +303,7 @@ export class RuntimeTaskView extends LitElement {
     if (panel === 'devices' && !this.mobile) return;
     if (panel === 'devices') {
       this.mobilePanel = 'devices';
+      this.setDevicesExpanded(true);
     } else {
       this.mobilePanel = null;
       this.changeView(panel);
@@ -284,7 +327,11 @@ export class RuntimeTaskView extends LitElement {
     this.selectPanel(panels[next]);
   }
 
-  private jumpToDevices(): void {
+  private async jumpToDevices(): Promise<void> {
+    // A persisted collapsed rail used to be a dead end at tablet widths: the
+    // seam toggle is hidden there, so the anchor must expand the panel first.
+    this.setDevicesExpanded(true);
+    await this.updateComplete;
     const panel = this.querySelector<HTMLElement>('#runtime-devices-panel');
     if (!panel) return;
     panel.scrollIntoView({
@@ -299,7 +346,8 @@ export class RuntimeTaskView extends LitElement {
 
   private playbackAlt(): string {
     const devices = this.projection?.devices ?? [];
-    const device = devices.find((item) => item.deviceId === this.device) ??
+    const device =
+      devices.find((item) => item.deviceId === this.device) ??
       devices.find((item) => item.sources?.some((source) => source.dataKind === 'video')) ??
       devices[0];
     const source = device?.sources?.find((item) => item.dataKind === 'video');
@@ -311,8 +359,10 @@ export class RuntimeTaskView extends LitElement {
   private get playbackTarget(): { deviceId: string; sourceId: string } | null {
     const devices = this.projection?.devices ?? [];
     const ordered = this.device
-      ? [...devices.filter((item) => item.deviceId === this.device),
-          ...devices.filter((item) => item.deviceId !== this.device)]
+      ? [
+          ...devices.filter((item) => item.deviceId === this.device),
+          ...devices.filter((item) => item.deviceId !== this.device),
+        ]
       : devices;
     for (const device of ordered) {
       const source = device.sources?.find((item) => item.dataKind === 'video');
@@ -321,32 +371,130 @@ export class RuntimeTaskView extends LitElement {
     return null;
   }
 
+  /** Tear down media, signed URLs and timers; safe to call repeatedly. */
+  private stopPlayback(): void {
+    this.playbackAbort?.abort();
+    this.playbackAbort = null;
+    this.clearPlaybackRefresh();
+    this.querySelector<RuntimePlayback>('runtime-playback')?.destroy();
+    this.descriptor = undefined;
+    this.descriptorTarget = null;
+    this.playbackError = '';
+    this.playbackLoading = false;
+  }
+
+  private usableDescriptor(descriptor: PlaybackDescriptor): boolean {
+    if (descriptor.protocol !== 'hls' && descriptor.protocol !== 'mjpeg') return false;
+    if (!isSafePlaybackUrl(descriptor.url)) return false;
+    const expiresAt = Date.parse(descriptor.expiresAt);
+    return Number.isFinite(expiresAt) && expiresAt > Date.now();
+  }
+
+  private clearPlaybackRefresh(): void {
+    if (this.playbackRefreshTimer !== null) clearTimeout(this.playbackRefreshTimer);
+    this.playbackRefreshTimer = null;
+  }
+
+  private schedulePlaybackRefresh(target: { deviceId: string; sourceId: string }): void {
+    this.clearPlaybackRefresh();
+    const descriptor = this.descriptor;
+    if (!descriptor) return;
+    const expiresAt = Date.parse(descriptor.expiresAt);
+    if (!Number.isFinite(expiresAt)) return;
+    const delay = Math.max(1_000, expiresAt - Date.now() - playbackRefreshLeadMs);
+    // setTimeout clamps delays above 2^31-1 to ~1ms; a far-future descriptor
+    // must not turn into a refresh loop.
+    if (delay > 2_147_000_000) return;
+    this.playbackRefreshTimer = setTimeout(() => {
+      this.playbackRefreshTimer = null;
+      void this.refreshPlaybackDescriptor(target, expiresAt);
+    }, delay);
+  }
+
+  private async refreshPlaybackDescriptor(
+    target: { deviceId: string; sourceId: string },
+    previousExpiry: number,
+  ): Promise<void> {
+    const controller = this.playbackAbort;
+    const current = this.descriptorTarget;
+    if (
+      !controller ||
+      controller.signal.aborted ||
+      !current ||
+      current.deviceId !== target.deviceId ||
+      current.sourceId !== target.sourceId
+    )
+      return;
+    const generation = this.generation;
+    try {
+      const descriptor = await getPlaybackDescriptor(
+        this.workspaceId,
+        target.deviceId,
+        target.sourceId,
+        controller.signal,
+      );
+      if (generation !== this.generation || controller.signal.aborted) return;
+      if (
+        !this.descriptorTarget ||
+        this.descriptorTarget.deviceId !== target.deviceId ||
+        this.descriptorTarget.sourceId !== target.sourceId
+      )
+        return;
+      if (!this.usableDescriptor(descriptor)) {
+        this.failPlayback();
+        return;
+      }
+      this.descriptor = descriptor;
+      this.schedulePlaybackRefresh(target);
+    } catch {
+      if (generation !== this.generation || controller.signal.aborted) return;
+      if (Date.now() >= previousExpiry) {
+        this.failPlayback();
+        return;
+      }
+      this.playbackRefreshTimer = setTimeout(() => {
+        this.playbackRefreshTimer = null;
+        void this.refreshPlaybackDescriptor(target, previousExpiry);
+      }, playbackRefreshRetryMs);
+    }
+  }
+
+  private failPlayback(): void {
+    this.stopPlayback();
+    this.playbackError = 'playback_unavailable';
+  }
+
   private async playEvidence(): Promise<void> {
     const target = this.playbackTarget;
     if (!target) {
-      this.playbackError = 'playback_unavailable';
+      this.failPlayback();
       return;
     }
     if (this.playbackLoading) return;
     const generation = this.generation;
     this.playbackAbort?.abort();
+    this.clearPlaybackRefresh();
     const controller = new AbortController();
     this.playbackAbort = controller;
     this.playbackLoading = true;
     this.playbackError = '';
     this.descriptor = undefined;
+    this.descriptorTarget = null;
     try {
       const descriptor = await getPlaybackDescriptor(
-        this.workspaceId, target.deviceId, target.sourceId, controller.signal,
+        this.workspaceId,
+        target.deviceId,
+        target.sourceId,
+        controller.signal,
       );
       if (generation !== this.generation) return;
-      const expiresAt = Date.parse(descriptor.expiresAt);
-      if ((descriptor.protocol !== 'hls' && descriptor.protocol !== 'mjpeg') ||
-        !Number.isFinite(expiresAt) || expiresAt <= Date.now()) {
-        this.playbackError = 'playback_unavailable';
+      if (!this.usableDescriptor(descriptor)) {
+        this.failPlayback();
         return;
       }
+      this.descriptorTarget = target;
       this.descriptor = descriptor;
+      this.schedulePlaybackRefresh(target);
     } catch {
       if (generation !== this.generation || controller.signal.aborted) return;
       this.playbackError = 'playback_unavailable';
@@ -373,7 +521,41 @@ export class RuntimeTaskView extends LitElement {
       if (!controller.signal.aborted) this.switchLoading = false;
     }
     await this.updateComplete;
-    this.querySelector<HTMLElement>('[role="option"]')?.focus();
+    this.switchPrimary()?.focus();
+  }
+
+  private switchPrimary(): HTMLElement | null {
+    const dialog = this.querySelector<HTMLElement>('.runtime-task__switch-dialog');
+    if (!dialog) return null;
+    return (
+      dialog.querySelector<HTMLElement>('[role="option"]') ??
+      dialog.querySelector<HTMLElement>('[data-action="keep-task"]')
+    );
+  }
+
+  private syncSwitchTrap(): void {
+    const dialog = this.switchOpen
+      ? this.querySelector<HTMLElement>('.runtime-task__switch-dialog')
+      : null;
+    if (!dialog) {
+      this.switchTrap?.detach();
+      this.switchTrap = null;
+      this.switchTrapTarget = null;
+      return;
+    }
+    if (this.switchTrap && this.switchTrapTarget === dialog) return;
+    this.switchTrap?.detach();
+    this.switchTrapTarget = dialog;
+    this.switchTrap = createDialogFocusTrap(dialog, {
+      onEscape: () => this.closeSwitchTask(),
+      focusables: () => [
+        ...dialog.querySelectorAll<HTMLElement>(
+          'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])',
+        ),
+      ],
+      primary: () => this.switchPrimary(),
+    });
+    this.switchTrap.attach();
   }
 
   private closeSwitchTask(): void {
@@ -393,11 +575,10 @@ export class RuntimeTaskView extends LitElement {
     window.dispatchEvent(new HashChangeEvent('hashchange'));
   }
 
-  private onSwitchKey(event: KeyboardEvent): void {
-    if (event.key === 'Escape') {
-      event.preventDefault();
-      this.closeSwitchTask();
-    }
+  private focusStatus(): void {
+    void this.updateComplete.then(() => {
+      this.querySelector<HTMLElement>('.runtime-task__status')?.focus({ preventScroll: true });
+    });
   }
 
   private syncAnnouncements(): void {
@@ -417,8 +598,11 @@ export class RuntimeTaskView extends LitElement {
       const previous = this.lastJobStates.get(job.id);
       if (previous !== undefined && previous !== job.state) {
         messages.push(`Job ${job.id} ${statusLabel(job.state)}`);
-      } else if (previous === undefined && previousTask !== null &&
-        (job.state === 'accepted' || job.state === 'running')) {
+      } else if (
+        previous === undefined &&
+        previousTask !== null &&
+        (job.state === 'accepted' || job.state === 'running')
+      ) {
         messages.push(`Job ${job.id} ${statusLabel(job.state)}`);
       }
     }
@@ -429,19 +613,22 @@ export class RuntimeTaskView extends LitElement {
   private async locateDevice(event: CustomEvent<{ deviceId: string }>): Promise<void> {
     event.stopPropagation();
     this.device = event.detail.deviceId;
-    if (!this.devicesExpanded) {
-      this.devicesExpanded = true;
-      localStorage.setItem(deviceExpandedKey, 'true');
-    }
+    // A located device is an explicit expand action, so persist it even when
+    // mobile already force-expanded the panel without touching the preference.
+    this.setDevicesExpanded(true);
     this.syncUrl();
     await this.updateComplete;
-    this.querySelector<RuntimeDevices>('runtime-devices')?.focusDevice(this.device, this.reducedMotion);
+    this.querySelector<RuntimeDevices>('runtime-devices')?.focusDevice(
+      this.device,
+      this.reducedMotion,
+    );
   }
 
   private selectHistoryEvent(event: CustomEvent<{ eventId: string }>): void {
     const eventId = event.detail.eventId;
     this.historyEventId = eventId;
-    this.historyOccurredAt = this.projection?.steps.find((step) => step.eventId === eventId)?.occurredAt ?? '';
+    this.historyOccurredAt =
+      this.projection?.steps.find((step) => step.eventId === eventId)?.occurredAt ?? '';
     this.history = { ...this.history, event: eventId };
     this.syncUrl();
   }
@@ -453,8 +640,9 @@ export class RuntimeTaskView extends LitElement {
   private historyTime(): string {
     if (this.history?.at) return this.history.at;
     if (this.history?.event) {
-      const fromProjection = this.projection?.steps
-        .find((step) => step.eventId === this.history?.event)?.occurredAt;
+      const fromProjection = this.projection?.steps.find(
+        (step) => step.eventId === this.history?.event,
+      )?.occurredAt;
       if (fromProjection) return fromProjection;
       if (this.historyEventId === this.history.event) return this.historyOccurredAt;
     }
@@ -466,10 +654,14 @@ export class RuntimeTaskView extends LitElement {
     this.history = null;
     this.historyEventId = '';
     this.historyOccurredAt = '';
-    window.history.replaceState({}, '', toLiveRuntimeTaskUrl(this.taskId, {
-      view: this.view,
-      device: this.device,
-    }));
+    window.history.replaceState(
+      {},
+      '',
+      toLiveRuntimeTaskUrl(this.taskId, {
+        view: this.view,
+        device: this.device,
+      }),
+    );
     window.dispatchEvent(new HashChangeEvent('hashchange'));
   }
 
@@ -479,18 +671,22 @@ export class RuntimeTaskView extends LitElement {
     this.closeStream = null;
     this.abort?.abort();
     this.abort = null;
-    this.playbackAbort?.abort();
-    this.playbackAbort = null;
+    this.timelineAbort?.abort();
+    this.timelineAbort = null;
+    this.stopPlayback();
     this.switchAbort?.abort();
     this.switchAbort = null;
-    this.querySelector<RuntimePlayback>('runtime-playback')?.destroy();
-    this.descriptor = undefined;
-    this.playbackError = '';
-    this.playbackLoading = false;
+    this.switchTrap?.detach();
+    this.switchTrap = null;
+    this.switchTrapTarget = null;
     this.switchOpen = false;
     this.switchTasks = [];
     this.switchLoading = false;
     this.switchError = '';
+    this.timelineLoading = false;
+    this.timelineError = '';
+    this.timelineHasMore = false;
+    this.timelineOldest = null;
     this.projection = null;
   }
 
@@ -511,11 +707,91 @@ export class RuntimeTaskView extends LitElement {
       if (generation !== this.generation || taskId !== this.taskId) return;
       if (!response.result) throw new ApiError(500, 'Task response missing');
       this.installSnapshot(response.result, response.result.cursor);
-      if (!this.historyMode) this.openStream(generation, taskId);
+      if (!this.historyMode) {
+        // Seed the timeline before SSE so a page opened on an existing task
+        // renders its history immediately, then stream only newer deltas.
+        await this.seedTimeline(generation, taskId);
+        if (generation !== this.generation || taskId !== this.taskId) return;
+        this.openStream(generation, taskId);
+      }
     } catch (error) {
       if (generation !== this.generation || this.abort?.signal.aborted) return;
       this.connection = 'offline';
       this.error = error instanceof ApiError ? error.message : 'Network error loading Runtime task';
+    }
+  }
+
+  private async seedTimeline(generation: number, taskId: string): Promise<void> {
+    this.timelineAbort?.abort();
+    const controller = new AbortController();
+    this.timelineAbort = controller;
+    this.timelineLoading = true;
+    this.timelineError = '';
+    this.timelineHasMore = false;
+    this.timelineOldest = null;
+    try {
+      const response = await listRuntimeTaskEvents(
+        this.workspaceId,
+        taskId,
+        timelinePageSize,
+        undefined,
+        controller.signal,
+      );
+      if (generation !== this.generation || taskId !== this.taskId || controller.signal.aborted)
+        return;
+      const page = response.result;
+      if (!page) throw new ApiError(500, 'Timeline response missing');
+      this.projection?.mergeSteps(page.events);
+      this.revision += 1;
+      this.timelineHasMore = page.hasMore;
+      this.timelineOldest = page.oldestCursor;
+    } catch (error) {
+      if (generation !== this.generation || taskId !== this.taskId || controller.signal.aborted)
+        return;
+      this.timelineError = error instanceof ApiError ? error.message : 'Unable to load timeline';
+    } finally {
+      if (generation === this.generation && taskId === this.taskId) this.timelineLoading = false;
+    }
+  }
+
+  private retryTimeline(): void {
+    if (this.timelineHasMore && this.timelineOldest !== null) void this.loadEarlier();
+    else void this.seedTimeline(this.generation, this.taskId);
+  }
+
+  private async loadEarlier(): Promise<void> {
+    const before = this.timelineOldest;
+    if (this.timelineLoading || before === null || !this.timelineHasMore) return;
+    const generation = this.generation;
+    const taskId = this.taskId;
+    this.timelineAbort?.abort();
+    const controller = new AbortController();
+    this.timelineAbort = controller;
+    this.timelineLoading = true;
+    this.timelineError = '';
+    try {
+      const response = await listRuntimeTaskEvents(
+        this.workspaceId,
+        taskId,
+        timelinePageSize,
+        before,
+        controller.signal,
+      );
+      if (generation !== this.generation || taskId !== this.taskId || controller.signal.aborted)
+        return;
+      const page = response.result;
+      if (!page) throw new ApiError(500, 'Timeline response missing');
+      this.projection?.mergeSteps(page.events);
+      this.revision += 1;
+      this.timelineHasMore = page.hasMore;
+      this.timelineOldest = page.oldestCursor ?? before;
+    } catch (error) {
+      if (generation !== this.generation || taskId !== this.taskId || controller.signal.aborted)
+        return;
+      this.timelineError =
+        error instanceof ApiError ? error.message : 'Unable to load earlier events';
+    } finally {
+      if (generation === this.generation && taskId === this.taskId) this.timelineLoading = false;
     }
   }
 
@@ -534,7 +810,8 @@ export class RuntimeTaskView extends LitElement {
       this.revision += 1;
     } catch (error) {
       if (generation !== this.generation || this.abort?.signal.aborted) return;
-      this.error = error instanceof ApiError ? error.message : 'Network error loading Runtime history';
+      this.error =
+        error instanceof ApiError ? error.message : 'Network error loading Runtime history';
     }
   }
 
@@ -551,7 +828,8 @@ export class RuntimeTaskView extends LitElement {
       this.installSnapshot(response.result, response.result.cursor);
     } catch (error) {
       if (generation !== this.generation || this.abort?.signal.aborted) return;
-      this.error = error instanceof ApiError ? error.message : 'Network error refreshing Runtime task';
+      this.error =
+        error instanceof ApiError ? error.message : 'Network error refreshing Runtime task';
     }
   }
 
@@ -559,6 +837,25 @@ export class RuntimeTaskView extends LitElement {
     if (this.projection) this.projection.replaceWithSnapshot(snapshot, cursor);
     else this.projection = new RuntimeProjection(snapshot, { history: this.historyMode });
     this.revision += 1;
+    this.invalidatePlaybackTarget();
+  }
+
+  /**
+   * Descriptors are bound to the device/source that issued them. If a refreshed
+   * projection no longer resolves the same target (or none), fail closed.
+   */
+  private invalidatePlaybackTarget(): void {
+    if (!this.descriptor) return;
+    const target = this.playbackTarget;
+    const current = this.descriptorTarget;
+    if (
+      !target ||
+      !current ||
+      target.deviceId !== current.deviceId ||
+      target.sourceId !== current.sourceId
+    ) {
+      this.stopPlayback();
+    }
   }
 
   private openStream(generation: number, taskId: string): void {
@@ -597,63 +894,203 @@ export class RuntimeTaskView extends LitElement {
     void this.revision;
     const currentWidth = this.devicesExpanded ? this.deviceWidth : collapsedDeviceWidth;
     return html`
-      ${this.playbackError
-        ? html`<p class="runtime-task__error" role="status" data-playback-error>${this.playbackError}</p>`
-        : nothing}
-      ${this.descriptor
-        ? html`<runtime-playback .descriptor=${this.descriptor} .alt=${this.playbackAlt()}></runtime-playback>`
-        : nothing}
-      <section class="runtime-workbench" data-view=${this.activePanel}
-        style=${`--runtime-device-width: ${currentWidth}px`}>
+      ${
+        this.playbackError
+          ? html`<p class="runtime-task__error" role="status" data-playback-error>
+              ${this.playbackError}
+            </p>`
+          : nothing
+      }
+      ${
+        this.descriptor
+          ? html`<runtime-playback
+              .descriptor=${this.descriptor}
+              .alt=${this.playbackAlt()}
+            ></runtime-playback>`
+          : nothing
+      }
+      <section class="runtime-task__timeline" aria-label="Timeline">
+        ${
+          this.timelineLoading
+            ? html`<p class="runtime-task__timeline-state" data-timeline-loading>
+                Loading activity…
+              </p>`
+            : nothing
+        }
+        ${
+          this.timelineError
+            ? html`<div class="runtime-task__timeline-error" data-timeline-error>
+                <p role="alert">${this.timelineError}</p>
+                <button type="button" data-action="retry-timeline" @click=${this.retryTimeline}>
+                  Retry
+                </button>
+              </div>`
+            : nothing
+        }
+        ${
+          this.timelineHasMore
+            ? html`<button
+                type="button"
+                class="runtime-task__timeline-more"
+                data-action="load-earlier"
+                ?disabled=${this.timelineLoading}
+                @click=${this.loadEarlier}
+              >
+                ${this.timelineLoading ? 'Loading earlier events…' : 'Load earlier events'}
+              </button>`
+            : nothing
+        }
+        ${
+          !this.timelineLoading &&
+          !this.timelineError &&
+          !this.timelineHasMore &&
+          projection.steps.length === 0
+            ? html`<p class="runtime-task__timeline-state" data-timeline-empty>
+                No timeline events yet
+              </p>`
+            : nothing
+        }
+      </section>
+      <section
+        class="runtime-workbench"
+        data-view=${this.activePanel}
+        style=${`--runtime-device-width: ${currentWidth}px`}
+      >
         <div class="runtime-workbench__main">
           <div class="runtime-view-tabs-row">
-            <div class="runtime-view-tabs" role="tablist" aria-label="Runtime view" @keydown=${this.onTabKey}>
-              <button type="button" role="tab" data-view="loop" id="runtime-tab-loop"
-                aria-controls="runtime-panel" aria-selected=${this.activePanel === 'loop'}
+            <div
+              class="runtime-view-tabs"
+              role="tablist"
+              aria-label="Runtime view"
+              @keydown=${this.onTabKey}
+            >
+              <button
+                type="button"
+                role="tab"
+                data-view="loop"
+                id="runtime-tab-loop"
+                aria-controls="runtime-panel"
+                aria-selected=${this.activePanel === 'loop'}
                 tabindex=${this.activePanel === 'loop' ? '0' : '-1'}
-                @click=${() => this.selectPanel('loop', false)}>Agent Loop</button>
-              <button type="button" role="tab" data-view="flow" id="runtime-tab-flow"
-                aria-controls="runtime-panel" aria-selected=${this.activePanel === 'flow'}
+                @click=${() => this.selectPanel('loop', false)}
+              >
+                Agent Loop
+              </button>
+              <button
+                type="button"
+                role="tab"
+                data-view="flow"
+                id="runtime-tab-flow"
+                aria-controls="runtime-panel"
+                aria-selected=${this.activePanel === 'flow'}
                 tabindex=${this.activePanel === 'flow' ? '0' : '-1'}
-                @click=${() => this.selectPanel('flow', false)}>Flow</button>
-              ${this.mobile
-                ? html`<button type="button" role="tab" data-view="devices" id="runtime-tab-devices"
-                    aria-controls="runtime-devices-panel" aria-selected=${this.activePanel === 'devices'}
-                    tabindex=${this.activePanel === 'devices' ? '0' : '-1'}
-                    @click=${() => this.selectPanel('devices', false)}>Devices</button>`
-                : nothing}
+                @click=${() => this.selectPanel('flow', false)}
+              >
+                Flow
+              </button>
+              ${
+                this.mobile
+                  ? html`<button
+                      type="button"
+                      role="tab"
+                      data-view="devices"
+                      id="runtime-tab-devices"
+                      aria-controls="runtime-devices-panel"
+                      aria-selected=${this.activePanel === 'devices'}
+                      tabindex=${this.activePanel === 'devices' ? '0' : '-1'}
+                      @click=${() => this.selectPanel('devices', false)}
+                    >
+                      Devices
+                    </button>`
+                  : nothing
+              }
             </div>
-            <button type="button" class="runtime-task__devices-anchor" @click=${this.jumpToDevices}>Devices</button>
+            <button type="button" class="runtime-task__devices-anchor" @click=${this.jumpToDevices}>
+              Devices
+            </button>
           </div>
-          <div role="tabpanel" id="runtime-panel" class="runtime-workbench__panel"
-            aria-labelledby=${`runtime-tab-${this.view}`}>
-            ${this.view === 'flow'
-              ? html`<runtime-flow .projection=${projection} .revision=${this.revision} .reducedMotion=${this.reducedMotion}
-                  @locate-device=${this.locateDevice} @event-select=${this.selectHistoryEvent}></runtime-flow>`
-              : html`<runtime-loop .projection=${projection} .revision=${this.revision}
-                  .readOnly=${this.historyMode}
-                  @locate-device=${this.locateDevice} @refresh-request=${this.refreshProjection}
-                  @projection-change=${this.onProjectionChange}></runtime-loop>`}
+          <div
+            role="tabpanel"
+            id="runtime-panel"
+            class="runtime-workbench__panel"
+            aria-labelledby=${`runtime-tab-${this.view}`}
+          >
+            ${
+              this.view === 'flow'
+                ? html`<runtime-flow
+                    .projection=${projection}
+                    .revision=${this.revision}
+                    .reducedMotion=${this.reducedMotion}
+                    @locate-device=${this.locateDevice}
+                    @event-select=${this.selectHistoryEvent}
+                  ></runtime-flow>`
+                : html`<runtime-loop
+                    .projection=${projection}
+                    .revision=${this.revision}
+                    .readOnly=${this.historyMode}
+                    @locate-device=${this.locateDevice}
+                    @refresh-request=${this.refreshProjection}
+                    @projection-change=${this.onProjectionChange}
+                  ></runtime-loop>`
+            }
           </div>
         </div>
         <div class="runtime-seam">
-          <div class="runtime-seam__handle" role="separator" tabindex=${this.devicesExpanded ? '0' : '-1'}
+          <div
+            class="runtime-seam__handle"
+            role="separator"
+            tabindex=${this.devicesExpanded ? '0' : '-1'}
             aria-label="Resize associated devices. Use Left and Right arrow keys in 24 pixel steps."
-            aria-orientation="vertical" aria-valuenow=${currentWidth}
+            aria-orientation="vertical"
+            aria-valuenow=${currentWidth}
             aria-valuemin=${this.devicesExpanded ? minimumDeviceWidth : collapsedDeviceWidth}
             aria-valuemax=${this.maximumDeviceWidth}
-            aria-valuetext=${this.devicesExpanded ? `${currentWidth} pixels` : 'Devices collapsed, 36 pixels'}
-            @keydown=${this.onSeamKey} @pointerdown=${this.onPointerDown} @pointermove=${this.onPointerMove}
-            @pointerup=${this.onPointerEnd} @pointercancel=${this.onPointerEnd}></div>
-          <button type="button" class="runtime-seam__toggle" aria-controls="runtime-devices-panel"
-            aria-expanded=${this.devicesExpanded} aria-label=${this.devicesExpanded ? 'Collapse devices' : 'Expand devices'}
-            @click=${this.toggleDevices}>${this.devicesExpanded ? '›' : '‹'}</button>
+            aria-valuetext=${this.devicesExpanded ? `${currentWidth} pixels` : 'Devices collapsed, 44 pixels'}
+            @keydown=${this.onSeamKey}
+            @pointerdown=${this.onPointerDown}
+            @pointermove=${this.onPointerMove}
+            @pointerup=${this.onPointerEnd}
+            @pointercancel=${this.onPointerEnd}
+          ></div>
+          <button
+            type="button"
+            class="runtime-seam__toggle"
+            aria-controls="runtime-devices-panel"
+            aria-expanded=${this.devicesExpanded}
+            aria-label=${this.devicesExpanded ? 'Collapse devices' : 'Expand devices'}
+            @click=${this.toggleDevices}
+          >
+            ${this.devicesExpanded ? '›' : '‹'}
+          </button>
         </div>
-        <aside id="runtime-devices-panel" class="runtime-devices-panel ${this.devicesExpanded ? '' : 'is-collapsed'}"
-          style="width: ${currentWidth}px;">
-          <runtime-devices .projection=${projection} .revision=${this.revision} .selectedDevice=${this.device}
-            ?hidden=${!this.devicesExpanded} @locate-device=${this.locateDevice}></runtime-devices>
-          ${this.devicesExpanded ? nothing : html`<div class="runtime-devices-rail"><span>Devices</span></div>`}
+        <aside
+          id="runtime-devices-panel"
+          class="runtime-devices-panel ${this.devicesExpanded ? '' : 'is-collapsed'}"
+          role=${this.mobile ? 'tabpanel' : 'complementary'}
+          aria-labelledby=${this.mobile ? 'runtime-tab-devices' : nothing}
+          style="width: ${currentWidth}px;"
+        >
+          <runtime-devices
+            .projection=${projection}
+            .revision=${this.revision}
+            .selectedDevice=${this.device}
+            ?hidden=${!this.devicesExpanded}
+            @locate-device=${this.locateDevice}
+          ></runtime-devices>
+          ${
+            this.devicesExpanded
+              ? nothing
+              : html`<button
+                  type="button"
+                  class="runtime-devices-rail"
+                  aria-controls="runtime-devices-panel"
+                  aria-expanded="false"
+                  aria-label="Expand devices"
+                  @click=${() => this.setDevicesExpanded(true)}
+                >
+                  <span>Devices</span>
+                </button>`
+          }
         </aside>
       </section>
     `;
@@ -662,93 +1099,144 @@ export class RuntimeTaskView extends LitElement {
   private renderHistoryBanner() {
     if (!this.historyMode) return nothing;
     const time = this.historyTime();
-    return html`<section class="runtime-task__history" data-history-banner
-      aria-labelledby="runtime-history-title">
+    return html`<section
+      class="runtime-task__history"
+      data-history-banner
+      aria-labelledby="runtime-history-title"
+    >
       <strong id="runtime-history-title">History · read-only</strong>
       ${time ? html`<span> · ${time}</span>` : nothing}
-      <button type="button" data-action="back-to-live" @click=${this.backToLive}>Back to live</button>
+      <button type="button" data-action="back-to-live" @click=${this.backToLive}>
+        Back to live
+      </button>
     </section>`;
   }
 
   private renderConnectionBanner() {
     if (this.connection !== 'offline') return nothing;
     return html`<p class="runtime-task__connection" data-connection="offline" role="status">
-      <strong>Offline</strong> · showing the last known state. Live updates resume when the connection returns.
+      <strong>Offline</strong> · showing the last known state. Live updates resume when the
+      connection returns.
     </p>`;
   }
 
   render() {
     const projection = this.projection;
-    const pendingApprovals = projection?.approvals.filter((approval) => approval.state === 'pending').length ?? 0;
+    const pendingApprovals =
+      projection?.approvals.filter((approval) => approval.state === 'pending').length ?? 0;
     return html`
       <article class="runtime-task" aria-busy=${projection ? 'false' : 'true'}>
         <nav class="runtime-task__navigation" aria-label="Runtime task navigation">
           <a href="#/runtime">← Runtime</a>
-          <button type="button" class="runtime-task__switch" data-action="switch-task"
-            @click=${this.openSwitchTask}>Switch task</button>
+          <button
+            type="button"
+            class="runtime-task__switch"
+            data-action="switch-task"
+            @click=${this.openSwitchTask}
+          >
+            Switch task
+          </button>
         </nav>
-        <div class="runtime-announcer" data-announcer aria-live="polite" aria-atomic="true"
-          >${this.announcement}</div>
+        <div class="runtime-announcer" data-announcer aria-live="polite" aria-atomic="true">
+          ${this.announcement}
+        </div>
         <header class="runtime-task-header">
           <h1 class="runtime-objective" tabindex="-1">${this.objectiveLabel}</h1>
-          <div role="status" class="runtime-task__status">
+          <div class="runtime-task__status" tabindex="-1">
             ${projection?.task.status ?? this.connection}
           </div>
           <p class="runtime-task__intervention ${pendingApprovals ? 'has-approval' : ''}">
             ${pendingApprovals ? `Approval required (${pendingApprovals})` : 'No intervention required'}
           </p>
-          ${projection
-            ? html`<runtime-task-controls .workspaceId=${this.workspaceId} .taskId=${this.taskId}
-                .projection=${projection} .revision=${this.revision} .readOnly=${this.historyMode}
-                @projection-change=${this.onProjectionChange}
-                @refresh-request=${this.refreshProjection}></runtime-task-controls>`
-            : nothing}
-          ${projection && this.playbackTarget && !this.historyMode
-            ? html`<div class="runtime-task__playback-actions">
-                <button type="button" data-action="play-evidence" ?disabled=${this.playbackLoading}
-                  @click=${this.playEvidence}>${this.playbackLoading ? 'Loading evidence…' : 'Play evidence'}</button>
-              </div>`
-            : nothing}
+          ${
+            projection
+              ? html`<runtime-task-controls
+                  .workspaceId=${this.workspaceId}
+                  .taskId=${this.taskId}
+                  .projection=${projection}
+                  .revision=${this.revision}
+                  .readOnly=${this.historyMode}
+                  @projection-change=${this.onProjectionChange}
+                  @focus-status-request=${this.focusStatus}
+                  @refresh-request=${this.refreshProjection}
+                ></runtime-task-controls>`
+              : nothing
+          }
+          ${
+            projection && this.playbackTarget && !this.historyMode
+              ? html`<div class="runtime-task__playback-actions">
+                  <button
+                    type="button"
+                    data-action="play-evidence"
+                    ?disabled=${this.playbackLoading}
+                    @click=${this.playEvidence}
+                  >
+                    ${this.playbackLoading ? 'Loading evidence…' : 'Play evidence'}
+                  </button>
+                </div>`
+              : nothing
+          }
           <slot name="task-actions"></slot>
         </header>
-        ${this.renderHistoryBanner()}
-        ${this.renderConnectionBanner()}
+        ${this.renderHistoryBanner()} ${this.renderConnectionBanner()}
         ${this.error ? html`<p role="alert" class="runtime-task__error">${this.error}</p>` : ''}
         <details class="runtime-task__details">
           <summary>Details and IDs</summary>
           <dl>
-            <dt>Task ID</dt><dd>${this.taskId}</dd>
-            <dt>Run ID</dt><dd>${projection?.task.currentRunId ?? 'None'}</dd>
-            <dt>Session key</dt><dd>${projection?.task.sessionKey ?? 'None'}</dd>
+            <dt>Task ID</dt>
+            <dd>${this.taskId}</dd>
+            <dt>Run ID</dt>
+            <dd>${projection?.task.currentRunId ?? 'None'}</dd>
+            <dt>Session key</dt>
+            <dd>${projection?.task.sessionKey ?? 'None'}</dd>
           </dl>
         </details>
-        ${projection
-          ? this.renderProjection()
-          : html`<div class="runtime-loading" data-loading aria-hidden="true">
-              <span></span><span></span><span></span>
-            </div>`}
-        ${this.switchOpen
-          ? html`<div class="runtime-task__switch-overlay" role="dialog" aria-modal="true"
-              aria-labelledby="runtime-switch-title" @keydown=${this.onSwitchKey}>
-              <section class="runtime-task__switch-dialog">
-                <h2 id="runtime-switch-title">Switch task</h2>
-                ${this.switchLoading ? html`<p role="status">Loading tasks…</p>` : nothing}
-                ${this.switchError ? html`<p role="alert">${this.switchError}</p>` : nothing}
-                <div role="listbox" aria-label="Runtime tasks">
-                  ${this.switchTasks.map((task) => html`
-                    <button type="button" role="option" aria-label=${task.id}
-                      aria-selected=${task.id === this.taskId} @click=${() => this.chooseTask(task.id)}>
-                      <strong>${task.objective}</strong>
-                      <span>${task.id} · ${statusLabel(task.status)}</span>
-                    </button>`)}
-                </div>
-                ${!this.switchLoading && !this.switchError && this.switchTasks.length === 0
-                  ? html`<p>No other Runtime tasks</p>`
-                  : nothing}
-                <button type="button" data-action="keep-task" @click=${this.closeSwitchTask}>Keep current task</button>
-              </section>
-            </div>`
-          : nothing}
+        ${
+          projection
+            ? this.renderProjection()
+            : html`<div class="runtime-loading" data-loading aria-hidden="true">
+                <span></span><span></span><span></span>
+              </div>`
+        }
+        ${
+          this.switchOpen
+            ? html`<div
+                class="runtime-task__switch-overlay"
+                role="dialog"
+                aria-modal="true"
+                aria-labelledby="runtime-switch-title"
+              >
+                <section class="runtime-task__switch-dialog" tabindex="-1">
+                  <h2 id="runtime-switch-title">Switch task</h2>
+                  ${this.switchLoading ? html`<p role="status">Loading tasks…</p>` : nothing}
+                  ${this.switchError ? html`<p role="alert">${this.switchError}</p>` : nothing}
+                  <div role="listbox" aria-label="Runtime tasks">
+                    ${this.switchTasks.map(
+                      (task) =>
+                        html` <button
+                          type="button"
+                          role="option"
+                          aria-label=${task.id}
+                          aria-selected=${task.id === this.taskId}
+                          @click=${() => this.chooseTask(task.id)}
+                        >
+                          <strong>${task.objective}</strong>
+                          <span>${task.id} · ${statusLabel(task.status)}</span>
+                        </button>`,
+                    )}
+                  </div>
+                  ${
+                    !this.switchLoading && !this.switchError && this.switchTasks.length === 0
+                      ? html`<p>No other Runtime tasks</p>`
+                      : nothing
+                  }
+                  <button type="button" data-action="keep-task" @click=${this.closeSwitchTask}>
+                    Keep current task
+                  </button>
+                </section>
+              </div>`
+            : nothing
+        }
       </article>
     `;
   }

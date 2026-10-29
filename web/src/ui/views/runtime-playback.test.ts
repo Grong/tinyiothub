@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { isSafePlaybackUrl } from '../../api/playback.js';
 import type { PlaybackDescriptor } from '../../types/runtime.js';
 import './runtime-playback.js';
 import type { RuntimePlayback } from './runtime-playback.js';
@@ -42,12 +43,16 @@ vi.mock('hls.js', () => ({ default: FakeHls }));
 
 const mounted: RuntimePlayback[] = [];
 
-function descriptor(id: string, protocol: PlaybackDescriptor['protocol'] = 'hls'): PlaybackDescriptor {
+function descriptor(
+  id: string,
+  protocol: PlaybackDescriptor['protocol'] = 'hls',
+): PlaybackDescriptor {
   return {
     protocol,
-    url: protocol === 'hls'
-      ? `https://camera.example/${id}.m3u8`
-      : `https://camera.example/${id}.mjpg`,
+    url:
+      protocol === 'hls'
+        ? `https://camera.example/${id}.m3u8`
+        : `https://camera.example/${id}.mjpg`,
     expiresAt: '2099-10-27T10:05:00Z',
   };
 }
@@ -248,5 +253,74 @@ describe('runtime-playback errors and accessibility', () => {
     expect(image?.alt).toBe('Live camera frame');
     expect(element.shadowRoot?.querySelector('video')).toBeNull();
     expect(element.shadowRoot?.textContent).toContain('Captions unavailable');
+  });
+
+  it('never assigns an expired MJPEG descriptor to an image element', async () => {
+    const element = await mount({
+      protocol: 'mjpeg',
+      url: 'https://camera.example/expired.mjpg',
+      expiresAt: '2026-10-27T10:05:00Z',
+    });
+
+    expect(element.shadowRoot?.querySelector('img')).toBeNull();
+    expect(element.shadowRoot?.textContent).toContain('Playback unavailable');
+    expect(FakeHls.activeCount).toBe(0);
+  });
+
+  it('rejects remote plain-HTTP and credential-bearing URLs before media is created', async () => {
+    for (const url of [
+      'http://camera.example/frame.mjpg',
+      'https://user:secret@camera.example/frame.mjpg',
+      'javascript:alert(1)',
+      'data:image/jpeg;base64,AAAA',
+      'not a url',
+    ]) {
+      const element = await mount({
+        protocol: 'mjpeg',
+        url,
+        expiresAt: '2099-10-27T10:05:00Z',
+      });
+      expect(element.shadowRoot?.querySelector('img'), url).toBeNull();
+      expect(element.shadowRoot?.textContent).toContain('Playback unavailable');
+    }
+    expect(FakeHls.activeCount).toBe(0);
+  });
+
+  it('binds one media error listener at a time while switching descriptors', async () => {
+    const add = vi.spyOn(HTMLImageElement.prototype, 'addEventListener');
+    const remove = vi.spyOn(HTMLImageElement.prototype, 'removeEventListener');
+    const element = await mount(descriptor('first-frame', 'mjpeg'));
+    const first = element.shadowRoot?.querySelector('img') as HTMLImageElement;
+    const errorAdds = () => add.mock.calls.filter(([type]) => type === 'error').length;
+    expect(errorAdds()).toBe(1);
+
+    element.descriptor = descriptor('second-frame', 'mjpeg');
+    await element.updateComplete;
+
+    expect(
+      remove.mock.calls.some(
+        ([type, handler]) => type === 'error' && add.mock.calls[0][1] === handler,
+      ),
+    ).toBe(true);
+    expect(errorAdds()).toBe(2);
+    expect(first.getAttribute('src')).toBe(descriptor('second-frame', 'mjpeg').url);
+    expect(element.shadowRoot?.querySelectorAll('img')).toHaveLength(1);
+  });
+});
+
+describe('isSafePlaybackUrl', () => {
+  it('accepts HTTPS and loopback HTTP only', () => {
+    expect(isSafePlaybackUrl('https://camera.example/live.m3u8')).toBe(true);
+    expect(isSafePlaybackUrl('http://localhost:8080/frame.mjpg')).toBe(true);
+    expect(isSafePlaybackUrl('http://127.0.0.1/frame.mjpg')).toBe(true);
+    expect(isSafePlaybackUrl('http://[::1]:9000/frame.mjpg')).toBe(true);
+  });
+
+  it('rejects other schemes, remote HTTP, credentials and malformed URLs', () => {
+    expect(isSafePlaybackUrl('http://camera.example/frame.mjpg')).toBe(false);
+    expect(isSafePlaybackUrl('javascript:alert(1)')).toBe(false);
+    expect(isSafePlaybackUrl('data:image/jpeg;base64,AAAA')).toBe(false);
+    expect(isSafePlaybackUrl('https://user:secret@camera.example/frame.mjpg')).toBe(false);
+    expect(isSafePlaybackUrl('not a url')).toBe(false);
   });
 });

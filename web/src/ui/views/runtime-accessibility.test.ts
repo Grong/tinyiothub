@@ -1,10 +1,16 @@
 import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from 'vitest';
 import { ApiError } from '../../api/client.js';
-import { cancelRuntimeTask, getRuntimeTask } from '../../api/runtime.js';
+import {
+  cancelRuntimeTask,
+  getRuntimeTask,
+  listRuntimeTaskEvents,
+  listRuntimeTasks,
+} from '../../api/runtime.js';
 import { connectRuntimeStream, type RuntimeStreamCallbacks } from '../../api/runtime-stream.js';
 import type {
   DeviceJobState,
   RuntimeEvent,
+  RuntimeTask,
   TaskProjection,
   TaskStatus,
 } from '../../types/runtime.js';
@@ -17,6 +23,8 @@ vi.mock('../../api/runtime.js', async (importOriginal) => {
   return {
     ...actual,
     getRuntimeTask: vi.fn(),
+    listRuntimeTaskEvents: vi.fn(),
+    listRuntimeTasks: vi.fn(),
     pauseRuntimeTask: vi.fn(),
     resumeRuntimeTask: vi.fn(),
     cancelRuntimeTask: vi.fn(),
@@ -25,6 +33,8 @@ vi.mock('../../api/runtime.js', async (importOriginal) => {
 vi.mock('../../api/runtime-stream.js', () => ({ connectRuntimeStream: vi.fn() }));
 
 const get = vi.mocked(getRuntimeTask);
+const listEvents = vi.mocked(listRuntimeTaskEvents);
+const listTasks = vi.mocked(listRuntimeTasks);
 const cancel = vi.mocked(cancelRuntimeTask);
 const connect = vi.mocked(connectRuntimeStream);
 let view: RuntimeTaskView;
@@ -65,6 +75,23 @@ function snapshot(id = 'task_1', status: TaskStatus = 'active'): TaskProjection 
         fields: [{ name: 'occupancy', value: '0', unit: null }],
       },
     ],
+  };
+}
+
+function listedTask(id: string): RuntimeTask {
+  return {
+    id,
+    workspaceId: 'ws_1',
+    idempotencyKey: `key_${id}`,
+    objective: `Objective ${id}`,
+    sessionKey: null,
+    createdBy: 'user_1',
+    status: 'active',
+    currentRunId: null,
+    stateVersion: 0,
+    createdAt: '2026-10-27T10:00:00Z',
+    updatedAt: '2026-10-27T10:00:00Z',
+    endedAt: null,
   };
 }
 
@@ -196,8 +223,7 @@ async function workbenchFixture(
   view.view = 'loop';
   view.device = null;
   document.body.append(view);
-  await view.updateComplete;
-  await Promise.resolve();
+  for (let index = 0; index < 4; index += 1) await Promise.resolve();
   await view.updateComplete;
 
   if (options.offline !== false) {
@@ -283,6 +309,13 @@ beforeEach(() => {
   window.history.replaceState({}, '', '/');
   get.mockReset();
   cancel.mockReset();
+  listEvents.mockReset();
+  listEvents.mockResolvedValue({
+    code: 0,
+    msg: '',
+    result: { events: [], oldestCursor: null, hasMore: false },
+  });
+  listTasks.mockReset();
   close = vi.fn();
   connect.mockImplementation((input) => {
     streamCallbacks = input.callbacks;
@@ -474,5 +507,105 @@ describe('Runtime workbench accessibility contracts', () => {
     await flush();
 
     expect(required<HTMLElement>('[role="alert"]').textContent).toContain('Task unavailable');
+  });
+
+  it('traps Tab in the switch-task dialog and closes on Escape from outside', async () => {
+    listTasks.mockResolvedValue({
+      code: 0,
+      msg: '',
+      result: { tasks: [listedTask('task_2')], limit: 50, offset: 0 },
+    });
+    await workbenchFixture();
+
+    const switchButton = required<HTMLButtonElement>('button[data-action="switch-task"]');
+    switchButton.focus();
+    switchButton.click();
+    await flush();
+    await flush();
+
+    required<HTMLElement>('.runtime-task__switch-dialog');
+    const option = required<HTMLButtonElement>('[role="option"]');
+    const keep = required<HTMLButtonElement>('[data-action="keep-task"]');
+    expect(document.activeElement).toBe(option);
+
+    keep.focus();
+    keep.dispatchEvent(new KeyboardEvent('keydown', { key: 'Tab', bubbles: true }));
+    expect(document.activeElement).toBe(option);
+
+    option.focus();
+    option.dispatchEvent(
+      new KeyboardEvent('keydown', { key: 'Tab', shiftKey: true, bubbles: true }),
+    );
+    expect(document.activeElement).toBe(keep);
+
+    (document.activeElement as HTMLElement | null)?.blur();
+    expect(document.activeElement).toBe(document.body);
+    document.body.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    await flush();
+    await flush();
+
+    expect(view.querySelector('.runtime-task__switch-dialog')).toBeNull();
+    expect(document.activeElement).toBe(switchButton);
+  });
+
+  it('expands a persisted collapsed devices rail through a real control', async () => {
+    vi.stubGlobal('matchMedia', (query: string) => ({
+      matches: false,
+      media: query,
+      onchange: null,
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+      addListener: vi.fn(),
+      removeListener: vi.fn(),
+      dispatchEvent: vi.fn(),
+    }));
+    localStorage.setItem('runtime.devices.expanded', 'false');
+    await workbenchFixture();
+
+    const panel = required<HTMLElement>('#runtime-devices-panel');
+    expect(panel.classList.contains('is-collapsed')).toBe(true);
+    const expand = required<HTMLButtonElement>('.runtime-devices-rail');
+    expect(expand.getAttribute('aria-label')).toBe('Expand devices');
+
+    expand.click();
+    await flush();
+
+    expect(panel.classList.contains('is-collapsed')).toBe(false);
+    expect(localStorage.getItem('runtime.devices.expanded')).toBe('true');
+    expect(required<HTMLElement>('[role="separator"]').getAttribute('aria-valuenow')).not.toBe(
+      '44',
+    );
+  });
+
+  it('force-expands on mobile and survives returning to the desktop breakpoint', async () => {
+    let mobileHandler: ((event: MediaQueryListEvent) => void) | null = null;
+    vi.stubGlobal('matchMedia', (query: string) => ({
+      matches: false,
+      media: query,
+      onchange: null,
+      addEventListener: (_type: string, handler: (event: MediaQueryListEvent) => void) => {
+        if (query === '(max-width: 599px)') mobileHandler = handler;
+      },
+      removeEventListener: vi.fn(),
+      addListener: vi.fn(),
+      removeListener: vi.fn(),
+      dispatchEvent: vi.fn(),
+    }));
+    localStorage.setItem('runtime.devices.expanded', 'false');
+    await workbenchFixture();
+
+    const panel = required<HTMLElement>('#runtime-devices-panel');
+    expect(panel.classList.contains('is-collapsed')).toBe(true);
+    expect(mobileHandler).not.toBeNull();
+
+    mobileHandler!({ matches: true } as MediaQueryListEvent);
+    await flush();
+    expect(panel.classList.contains('is-collapsed')).toBe(false);
+    expect(required<HTMLButtonElement>('[role="tab"][data-view="devices"]')).not.toBeNull();
+
+    mobileHandler!({ matches: false } as MediaQueryListEvent);
+    await flush();
+    expect(view.querySelector('[role="tab"][data-view="devices"]')).toBeNull();
+    expect(panel.classList.contains('is-collapsed')).toBe(false);
   });
 });

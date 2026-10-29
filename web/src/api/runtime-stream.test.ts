@@ -4,26 +4,61 @@ import type { RuntimeEvent, RuntimeTask, TaskProjection } from '../types/runtime
 
 function task(over: Partial<RuntimeTask> = {}): RuntimeTask {
   return {
-    id: 'task_1', workspaceId: 'ws_1', idempotencyKey: 'key_1', objective: 'Inspect pumps',
-    sessionKey: null, createdBy: 'user_1', status: 'active', currentRunId: null, stateVersion: 0,
-    createdAt: '2026-10-27T10:00:00Z', updatedAt: '2026-10-27T10:00:00Z', endedAt: null, ...over,
+    id: 'task_1',
+    workspaceId: 'ws_1',
+    idempotencyKey: 'key_1',
+    objective: 'Inspect pumps',
+    sessionKey: null,
+    createdBy: 'user_1',
+    status: 'active',
+    currentRunId: null,
+    stateVersion: 0,
+    createdAt: '2026-10-27T10:00:00Z',
+    updatedAt: '2026-10-27T10:00:00Z',
+    endedAt: null,
+    ...over,
   };
 }
 
 function snapshotWithNoDevices(over: Partial<TaskProjection> = {}): TaskProjection {
   return {
-    task: task(), runs: [], jobs: [], approvals: [], watches: [], evidence: [], associations: [], devices: [], summary: null,
-    cursor: 0, ...over,
+    task: task(),
+    runs: [],
+    jobs: [],
+    approvals: [],
+    watches: [],
+    evidence: [],
+    associations: [],
+    devices: [],
+    summary: null,
+    cursor: 0,
+    ...over,
   };
 }
 
-function runtimeEvent(eventId: string, eventType: string, data: Record<string, unknown> = {},
-  over: Partial<RuntimeEvent> = {}): RuntimeEvent {
+function runtimeEvent(
+  eventId: string,
+  eventType: string,
+  data: Record<string, unknown> = {},
+  over: Partial<RuntimeEvent> = {},
+): RuntimeEvent {
   return {
-    cursor: Number(eventId.replace(/\D/g, '')) || 1, eventId, eventType,
-    occurredAt: '2026-10-27T10:01:00Z', workspaceId: 'ws_1', taskId: 'task_1', runId: null,
-    toolCallId: null, jobId: null, approvalId: null, deviceId: null, sourceId: null,
-    sourceSeq: null, evidenceId: null, data, ...over,
+    cursor: Number(eventId.replace(/\D/g, '')) || 1,
+    eventId,
+    eventType,
+    occurredAt: '2026-10-27T10:01:00Z',
+    workspaceId: 'ws_1',
+    taskId: 'task_1',
+    runId: null,
+    toolCallId: null,
+    jobId: null,
+    approvalId: null,
+    deviceId: null,
+    sourceId: null,
+    sourceSeq: null,
+    evidenceId: null,
+    data,
+    ...over,
   };
 }
 
@@ -36,26 +71,38 @@ function controlledResponse() {
   let controller: ReadableStreamDefaultController<Uint8Array> | null = null;
   let cancelled = false;
   const body = new ReadableStream<Uint8Array>({
-    start(value) { controller = value; },
-    cancel() { cancelled = true; },
+    start(value) {
+      controller = value;
+    },
+    cancel() {
+      cancelled = true;
+    },
   });
   const readerCancel = vi.fn();
   const getReader = body.getReader.bind(body);
-  Object.defineProperty(body, 'getReader', { value: () => {
-    const reader = getReader();
-    const cancel = reader.cancel.bind(reader);
-    reader.cancel = (reason?: unknown) => {
-      readerCancel();
-      return cancel(reason);
-    };
-    return reader;
-  } });
+  Object.defineProperty(body, 'getReader', {
+    value: () => {
+      const reader = getReader();
+      const cancel = reader.cancel.bind(reader);
+      reader.cancel = (reason?: unknown) => {
+        readerCancel();
+        return cancel(reason);
+      };
+      return reader;
+    },
+  });
   return {
     response: new Response(body, { status: 200 }),
     readerCancel,
-    push(text: string) { controller?.enqueue(encoder.encode(text)); },
-    error() { controller?.error(new Error('aborted')); },
-    get cancelled() { return cancelled; },
+    push(text: string) {
+      controller?.enqueue(encoder.encode(text));
+    },
+    error() {
+      controller?.error(new Error('aborted'));
+    },
+    get cancelled() {
+      return cancelled;
+    },
   };
 }
 
@@ -105,7 +152,10 @@ describe('Runtime SSE cursor client', () => {
     vi.stubGlobal('fetch', mock);
     const handler = callbacks();
     const close = connectRuntimeStream({
-      workspaceId: 'ws/1', taskId: 'task:1', after: 3, callbacks: handler,
+      workspaceId: 'ws/1',
+      taskId: 'task:1',
+      after: 3,
+      callbacks: handler,
     });
     await flush();
 
@@ -115,7 +165,9 @@ describe('Runtime SSE cursor client', () => {
     expect(new Headers(init.headers).get('X-Workspace-Id')).toBe('header-workspace');
 
     const snapshot = snapshotWithNoDevices({ task: task({ id: 'task:1' }), cursor: 4 });
-    streams[0].push(`event: snapshot\ndata: ${JSON.stringify({ snapshot, cursor: 4 }).slice(0, 40)}`);
+    streams[0].push(
+      `event: snapshot\ndata: ${JSON.stringify({ snapshot, cursor: 4 }).slice(0, 40)}`,
+    );
     await flush();
     expect(handler.calls.filter((call) => call.startsWith('snapshot'))).toEqual([]);
     // Send a complete frame instead: the partial frame above intentionally remains buffered.
@@ -123,13 +175,21 @@ describe('Runtime SSE cursor client', () => {
     streams[0].push(`${remainder}\n\n`);
     const first = runtimeEvent('event_5', 'read_device', {}, { cursor: 5, taskId: 'task:1' });
     streams[0].push(frame('event', { event: first }) + frame('event', { event: first }));
-    streams[0].push(frame('resync', {
-      snapshot: snapshotWithNoDevices({ task: task({ id: 'task:1' }), cursor: 8 }), cursor: 8, reason: 'lagged',
-    }));
+    streams[0].push(
+      frame('resync', {
+        snapshot: snapshotWithNoDevices({ task: task({ id: 'task:1' }), cursor: 8 }),
+        cursor: 8,
+        reason: 'lagged',
+      }),
+    );
     await flush();
 
     expect(handler.calls).toEqual([
-      'connection:connecting', 'connection:online', 'snapshot:4', 'event:event_5', 'resync:8',
+      'connection:connecting',
+      'connection:online',
+      'snapshot:4',
+      'event:event_5',
+      'resync:8',
     ]);
     close();
     await flush();
@@ -141,16 +201,23 @@ describe('Runtime SSE cursor client', () => {
     vi.useFakeTimers();
     const first = controlledResponse();
     const second = controlledResponse();
-    const mock = vi.fn()
+    const mock = vi
+      .fn()
       .mockImplementationOnce(() => Promise.resolve(first.response))
       .mockImplementation(() => Promise.resolve(second.response));
     vi.stubGlobal('fetch', mock);
     const close = connectRuntimeStream({
-      workspaceId: 'ws', taskId: 'task_1', callbacks: callbacks(),
-      baseDelayMs: 1000, maxDelayMs: 2000, jitterMs: 0,
+      workspaceId: 'ws',
+      taskId: 'task_1',
+      callbacks: callbacks(),
+      baseDelayMs: 1000,
+      maxDelayMs: 2000,
+      jitterMs: 0,
     });
     await vi.advanceTimersByTimeAsync(0);
-    first.push(frame('event', { event: runtimeEvent('event_7', 'task.paused', {}, { cursor: 7 }) }));
+    first.push(
+      frame('event', { event: runtimeEvent('event_7', 'task.paused', {}, { cursor: 7 }) }),
+    );
     await vi.advanceTimersByTimeAsync(0);
     first.error();
     await vi.advanceTimersByTimeAsync(999);
@@ -167,7 +234,10 @@ describe('Runtime SSE cursor client', () => {
     let current = true;
     const handler = callbacks();
     const close = connectRuntimeStream({
-      workspaceId: 'ws', taskId: 'old', callbacks: handler, isCurrent: () => current,
+      workspaceId: 'ws',
+      taskId: 'old',
+      callbacks: handler,
+      isCurrent: () => current,
     });
     await flush();
     current = false;
@@ -187,13 +257,24 @@ describe('Runtime SSE cursor client', () => {
     const handler = callbacks();
     const close = connectRuntimeStream({ workspaceId: 'ws', taskId: 'task_1', callbacks: handler });
     await flush();
-    streams[0].push(frame('snapshot', {
-      snapshot: snapshotWithNoDevices({ task: { ...snapshotWithNoDevices().task, id: 'other', objective: 'private objective' } }),
-      cursor: 0,
-    }));
-    streams[0].push(frame('event', {
-      event: runtimeEvent('event_1', 'read_device', { text: 'private objective' }, { taskId: 'other' }),
-    }));
+    streams[0].push(
+      frame('snapshot', {
+        snapshot: snapshotWithNoDevices({
+          task: { ...snapshotWithNoDevices().task, id: 'other', objective: 'private objective' },
+        }),
+        cursor: 0,
+      }),
+    );
+    streams[0].push(
+      frame('event', {
+        event: runtimeEvent(
+          'event_1',
+          'read_device',
+          { text: 'private objective' },
+          { taskId: 'other' },
+        ),
+      }),
+    );
     await flush();
 
     expect(handler.calls).toEqual(['connection:connecting', 'connection:online']);
@@ -206,18 +287,32 @@ describe('Runtime SSE cursor client', () => {
     vi.stubGlobal('fetch', mock);
     const handler = callbacks();
     const close = connectRuntimeStream({
-      workspaceId: 'ws', taskId: 'task_1', after: 10, callbacks: handler,
+      workspaceId: 'ws',
+      taskId: 'task_1',
+      after: 10,
+      callbacks: handler,
     });
     await flush();
-    streams[0].push(frame('snapshot', {
-      snapshot: snapshotWithNoDevices({ cursor: 20 }), cursor: 20,
-    }));
-    streams[0].push(frame('event', { event: runtimeEvent('event_11', 'read_device', {}, { cursor: 11 }) }));
-    streams[0].push(frame('event', { event: runtimeEvent('event_12', 'read_device', {}, { cursor: 12 }) }));
+    streams[0].push(
+      frame('snapshot', {
+        snapshot: snapshotWithNoDevices({ cursor: 20 }),
+        cursor: 20,
+      }),
+    );
+    streams[0].push(
+      frame('event', { event: runtimeEvent('event_11', 'read_device', {}, { cursor: 11 }) }),
+    );
+    streams[0].push(
+      frame('event', { event: runtimeEvent('event_12', 'read_device', {}, { cursor: 12 }) }),
+    );
     await flush();
 
     expect(handler.calls).toEqual([
-      'connection:connecting', 'connection:online', 'snapshot:20', 'event:event_11', 'event:event_12',
+      'connection:connecting',
+      'connection:online',
+      'snapshot:20',
+      'event:event_11',
+      'event:event_12',
     ]);
     close();
   });
@@ -226,36 +321,54 @@ describe('Runtime SSE cursor client', () => {
     vi.useFakeTimers();
     const first = controlledResponse();
     const second = controlledResponse();
-    const mock = vi.fn()
+    const mock = vi
+      .fn()
       .mockImplementationOnce(() => Promise.resolve(first.response))
       .mockImplementation(() => Promise.resolve(second.response));
     vi.stubGlobal('fetch', mock);
     const handler = callbacks();
     const close = connectRuntimeStream({
-      workspaceId: 'ws', taskId: 'task_1', after: 10, callbacks: handler, baseDelayMs: 1000, jitterMs: 0,
+      workspaceId: 'ws',
+      taskId: 'task_1',
+      after: 10,
+      callbacks: handler,
+      baseDelayMs: 1000,
+      jitterMs: 0,
     });
     await vi.advanceTimersByTimeAsync(0);
-    first.push(frame('snapshot', {
-      snapshot: snapshotWithNoDevices({ cursor: 20 }), cursor: 20,
-    }));
-    first.push(frame('event', { event: runtimeEvent('event_11', 'read_device', {}, { cursor: 11 }) }));
+    first.push(
+      frame('snapshot', {
+        snapshot: snapshotWithNoDevices({ cursor: 20 }),
+        cursor: 20,
+      }),
+    );
+    first.push(
+      frame('event', { event: runtimeEvent('event_11', 'read_device', {}, { cursor: 11 }) }),
+    );
     await vi.advanceTimersByTimeAsync(0);
     first.error();
     await vi.advanceTimersByTimeAsync(1000);
 
     expect(mock.mock.calls[1][0]).toContain('after=11');
-    second.push(frame('snapshot', {
-      snapshot: snapshotWithNoDevices({ cursor: 20 }), cursor: 20,
-    }));
+    second.push(
+      frame('snapshot', {
+        snapshot: snapshotWithNoDevices({ cursor: 20 }),
+        cursor: 20,
+      }),
+    );
     for (let cursor = 12; cursor <= 20; cursor += 1) {
-      second.push(frame('event', {
-        event: runtimeEvent(`event_${cursor}`, 'read_device', {}, { cursor }),
-      }));
+      second.push(
+        frame('event', {
+          event: runtimeEvent(`event_${cursor}`, 'read_device', {}, { cursor }),
+        }),
+      );
     }
     await vi.advanceTimersByTimeAsync(0);
 
     const delivered = handler.calls.filter((call) => call.startsWith('event:'));
-    expect(delivered).toEqual(Array.from({ length: 10 }, (_, index) => `event:event_${index + 11}`));
+    expect(delivered).toEqual(
+      Array.from({ length: 10 }, (_, index) => `event:event_${index + 11}`),
+    );
     close();
   });
 
@@ -266,11 +379,94 @@ describe('Runtime SSE cursor client', () => {
     const mock = vi.fn(() => Promise.resolve(nonOk));
     vi.stubGlobal('fetch', mock);
     const close = connectRuntimeStream({
-      workspaceId: 'ws', taskId: 'task_1', callbacks: callbacks(), jitterMs: 0,
+      workspaceId: 'ws',
+      taskId: 'task_1',
+      callbacks: callbacks(),
+      jitterMs: 0,
     });
     await vi.advanceTimersByTimeAsync(0);
 
     expect(response.cancelled).toBe(true);
+    close();
+  });
+
+  it('stops permanently on 401 instead of retrying with stale credentials', async () => {
+    vi.useFakeTimers();
+    const unauthorized = new Response('unauthorized', { status: 401 });
+    const mock = vi.fn(() => Promise.resolve(unauthorized));
+    vi.stubGlobal('fetch', mock);
+    const handler = callbacks();
+    const close = connectRuntimeStream({
+      workspaceId: 'ws',
+      taskId: 'task_1',
+      callbacks: handler,
+      jitterMs: 0,
+    });
+    await vi.advanceTimersByTimeAsync(0);
+    await vi.advanceTimersByTimeAsync(120_000);
+
+    expect(mock).toHaveBeenCalledTimes(1);
+    expect(handler.calls).toContain('connection:offline');
+    close();
+  });
+
+  it('keeps escalating backoff when a stream opens but never stays healthy', async () => {
+    vi.useFakeTimers();
+    const first = controlledResponse();
+    const second = controlledResponse();
+    const third = controlledResponse();
+    const mock = vi
+      .fn()
+      .mockImplementationOnce(() => Promise.resolve(first.response))
+      .mockImplementationOnce(() => Promise.resolve(second.response))
+      .mockImplementation(() => Promise.resolve(third.response));
+    vi.stubGlobal('fetch', mock);
+    const close = connectRuntimeStream({
+      workspaceId: 'ws',
+      taskId: 'task_1',
+      callbacks: callbacks(),
+      baseDelayMs: 1000,
+      maxDelayMs: 30_000,
+      jitterMs: 0,
+    });
+    await vi.advanceTimersByTimeAsync(0);
+    first.error();
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(mock).toHaveBeenCalledTimes(2);
+    second.error();
+    await vi.advanceTimersByTimeAsync(1_999);
+    expect(mock).toHaveBeenCalledTimes(2);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(mock).toHaveBeenCalledTimes(3);
+    close();
+  });
+
+  it('bounds replay dedupe so a long-lived stream cannot grow memory forever', async () => {
+    const { mock, streams } = streamingFetch();
+    vi.stubGlobal('fetch', mock);
+    const handler = callbacks();
+    const close = connectRuntimeStream({
+      workspaceId: 'ws',
+      taskId: 'task_1',
+      callbacks: handler,
+      maxDedupeIds: 2,
+    });
+    await flush();
+    for (const cursor of [1, 2, 3, 1]) {
+      streams[0].push(
+        frame('event', {
+          event: runtimeEvent(`event_${cursor}`, 'read_device', {}, { cursor }),
+        }),
+      );
+    }
+    await flush();
+
+    expect(handler.calls.filter((call) => call.startsWith('event:'))).toEqual([
+      'event:event_1',
+      'event:event_2',
+      'event:event_3',
+      'event:event_1',
+    ]);
     close();
   });
 
@@ -279,7 +475,10 @@ describe('Runtime SSE cursor client', () => {
     const mock = vi.fn(() => Promise.reject(new Error('offline')));
     vi.stubGlobal('fetch', mock);
     const close = connectRuntimeStream({
-      workspaceId: 'ws', taskId: 'task', callbacks: callbacks(), jitterMs: 0,
+      workspaceId: 'ws',
+      taskId: 'task',
+      callbacks: callbacks(),
+      jitterMs: 0,
     });
     await vi.advanceTimersByTimeAsync(0);
     close();

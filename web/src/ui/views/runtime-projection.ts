@@ -13,22 +13,54 @@ import type {
   TaskStatus,
 } from '../../types/runtime.js';
 
-const associatedTools = new Set(['read_device', 'call_device', 'set_device', 'stop_device', 'watch_device']);
+const associatedTools = new Set([
+  'read_device',
+  'call_device',
+  'set_device',
+  'stop_device',
+  'watch_device',
+]);
 const terminalTasks = new Set<TaskStatus>(['completed', 'failed', 'cancelled']);
 const taskStatuses = new Set<TaskStatus>([
-  'active', 'waiting_job', 'waiting_watch', 'needs_approval', 'paused', 'cancelling',
-  'completed', 'failed', 'cancelled',
+  'active',
+  'waiting_job',
+  'waiting_watch',
+  'needs_approval',
+  'paused',
+  'cancelling',
+  'completed',
+  'failed',
+  'cancelled',
 ]);
 const jobStates = new Set<DeviceJobState>([
-  'accepted', 'running', 'done', 'failed', 'rejected', 'cancelled', 'cancelled_unknown', 'interrupted',
+  'accepted',
+  'running',
+  'done',
+  'failed',
+  'rejected',
+  'cancelled',
+  'cancelled_unknown',
+  'interrupted',
 ]);
-const approvalStates = new Set<ApprovalState>(['pending', 'approved', 'rejected', 'expired', 'unavailable']);
+const approvalStates = new Set<ApprovalState>([
+  'pending',
+  'approved',
+  'rejected',
+  'expired',
+  'unavailable',
+]);
 
-export type RuntimeDeviceRef = RuntimeDeviceAssociation & Partial<Omit<RuntimeDeviceFacts, 'deviceId'>>;
+export type RuntimeDeviceRef = RuntimeDeviceAssociation &
+  Partial<Omit<RuntimeDeviceFacts, 'deviceId'>>;
 
 export type RuntimeProjectedJob = Partial<RuntimeJob> & Pick<RuntimeJob, 'id' | 'state'>;
-export type RuntimeProjectedApproval = Partial<RuntimeApproval> & Pick<RuntimeApproval, 'id' | 'state'>;
+export type RuntimeProjectedApproval = Partial<RuntimeApproval> &
+  Pick<RuntimeApproval, 'id' | 'state'>;
 export type RuntimeConnection = 'connecting' | 'online' | 'offline';
+
+function byCursor(a: RuntimeEvent, b: RuntimeEvent): number {
+  return a.cursor - b.cursor || a.eventId.localeCompare(b.eventId);
+}
 
 function watchId(event: RuntimeEvent): string | null {
   if (typeof event.data.watchId === 'string') return event.data.watchId;
@@ -36,7 +68,10 @@ function watchId(event: RuntimeEvent): string | null {
   return match?.[1] ?? null;
 }
 
-export function groupRuntimeTasks(tasks: RuntimeTask[]): { current: RuntimeTask[]; recent: RuntimeTask[] } {
+export function groupRuntimeTasks(tasks: RuntimeTask[]): {
+  current: RuntimeTask[];
+  recent: RuntimeTask[];
+} {
   const byActivity = (a: RuntimeTask, b: RuntimeTask) =>
     b.updatedAt.localeCompare(a.updatedAt) || a.id.localeCompare(b.id);
   return {
@@ -74,20 +109,27 @@ export class RuntimeProjection {
     return {
       ...this.baseSnapshot,
       jobs: this.jobs.filter((job): job is RuntimeJob => this.isCompleteJob(job)),
-      approvals: this.approvals.filter((approval): approval is RuntimeApproval => this.isCompleteApproval(approval)),
+      approvals: this.approvals.filter((approval): approval is RuntimeApproval =>
+        this.isCompleteApproval(approval),
+      ),
       watches: [...this.watches],
       evidence: [...this.evidence],
-      associations: this.devices.map(({ deviceId, sourceIds }) => ({ deviceId, sourceIds: [...sourceIds] })),
+      associations: this.devices.map(({ deviceId, sourceIds }) => ({
+        deviceId,
+        sourceIds: [...sourceIds],
+      })),
       devices: this.devices.flatMap((device) => {
         if (typeof device.health !== 'string' || !device.sources || !device.fields) return [];
-        return [{
-          deviceId: device.deviceId,
-          health: device.health,
-          zone: device.zone ?? null,
-          position: device.position ?? null,
-          sources: device.sources.map((source) => ({ ...source })),
-          fields: device.fields.map((field) => ({ ...field })),
-        }];
+        return [
+          {
+            deviceId: device.deviceId,
+            health: device.health,
+            zone: device.zone ?? null,
+            position: device.position ?? null,
+            sources: device.sources.map((source) => ({ ...source })),
+            fields: device.fields.map((field) => ({ ...field })),
+          },
+        ];
       }),
       cursor: this.cursor,
     };
@@ -104,25 +146,38 @@ export class RuntimeProjection {
   /** Keep already-rendered steps while a history snapshot freezes the projection. */
   restoreHistorySteps(events: RuntimeEvent[]): void {
     this.frozenHistory = true;
-    this.steps = [...events].sort(
-      (a, b) => a.cursor - b.cursor || a.eventId.localeCompare(b.eventId),
-    );
+    this.steps = [...events].sort(byCursor);
     this.eventIds = new Set(this.steps.map((event) => event.eventId));
   }
 
-  apply(event: RuntimeEvent): void {
-    if (this.eventIds.has(event.eventId) || this.frozenHistory) return;
-    this.eventIds.add(event.eventId);
-    this.steps.push(event);
-    this.steps.sort((a, b) => a.cursor - b.cursor || a.eventId.localeCompare(b.eventId));
-    this.cursor = Math.max(this.cursor, event.cursor);
+  /** Merge a bounded timeline page or live deltas into the shown steps. */
+  mergeSteps(events: RuntimeEvent[]): void {
+    if (this.frozenHistory) return;
+    let changed = false;
+    for (const event of events) {
+      if (this.eventIds.has(event.eventId)) continue;
+      this.eventIds.add(event.eventId);
+      this.steps.push(event);
+      changed = true;
+    }
+    if (!changed) return;
+    this.steps.sort(byCursor);
+    this.cursor = Math.max(this.cursor, this.steps.at(-1)?.cursor ?? this.cursor);
     this.rebuild();
   }
 
+  apply(event: RuntimeEvent): void {
+    this.mergeSteps([event]);
+  }
+
   replaceWithSnapshot(snapshot: TaskProjection, cursor = snapshot.cursor): void {
-    const postSnapshotSteps = this.steps
-      .filter((event) => event.cursor > cursor)
-      .sort((a, b) => a.cursor - b.cursor || a.eventId.localeCompare(b.eventId));
+    // Binding user decision: a same-Task snapshot must never erase the timeline.
+    // Only a Task switch (or an explicit clear) replaces the shown steps.
+    const sameTask = snapshot.task.id === this.baseSnapshot.task.id;
+    // A stale same-Task response must not regress Task/job state that newer
+    // events already advanced; ignoring it is safer than partially merging.
+    if (sameTask && cursor < this.baseCursor) return;
+    const retainedSteps = sameTask ? this.steps : [];
     this.baseSnapshot = {
       ...snapshot,
       task: { ...snapshot.task },
@@ -131,16 +186,22 @@ export class RuntimeProjection {
       approvals: snapshot.approvals.map((approval) => ({ ...approval })),
       watches: snapshot.watches.map((watch) => ({ ...watch })),
       evidence: snapshot.evidence.map((evidence) => ({ ...evidence })),
-      associations: snapshot.associations.map((association) => ({ ...association, sourceIds: [...association.sourceIds] })),
+      associations: snapshot.associations.map((association) => ({
+        ...association,
+        sourceIds: [...association.sourceIds],
+      })),
       devices: snapshot.devices.map((device) => ({
-        ...device, sources: device.sources.map((source) => ({ ...source })), fields: device.fields.map((field) => ({ ...field })),
+        ...device,
+        sources: device.sources.map((source) => ({ ...source })),
+        fields: device.fields.map((field) => ({ ...field })),
       })),
       cursor,
     };
-    this.baseCursor = cursor;
-    this.cursor = Math.max(cursor, postSnapshotSteps.at(-1)?.cursor ?? cursor);
-    this.eventIds = new Set(postSnapshotSteps.map((event) => event.eventId));
-    this.steps = postSnapshotSteps;
+    // Never move the snapshot guard backwards on a stale same-Task response.
+    this.baseCursor = sameTask ? Math.max(this.baseCursor, cursor) : cursor;
+    this.steps = [...retainedSteps].sort(byCursor);
+    this.cursor = Math.max(cursor, this.steps.at(-1)?.cursor ?? cursor);
+    this.eventIds = new Set(this.steps.map((event) => event.eventId));
     this.rebuild();
   }
 
@@ -155,25 +216,33 @@ export class RuntimeProjection {
     for (const association of this.baseSnapshot.associations) {
       this.associate(association.deviceId);
       for (const sourceId of association.sourceIds) this.associate(association.deviceId, sourceId);
-      const facts = this.baseSnapshot.devices.find((device) => device.deviceId === association.deviceId);
+      const facts = this.baseSnapshot.devices.find(
+        (device) => device.deviceId === association.deviceId,
+      );
       const device = this.devices.find((item) => item.deviceId === association.deviceId);
-      if (device && facts) Object.assign(device, {
-        health: facts.health,
-        zone: facts.zone,
-        position: facts.position,
-        sources: facts.sources.map((source) => ({ ...source })),
-        fields: facts.fields.map((field) => ({ ...field })),
-      });
+      if (device && facts)
+        Object.assign(device, {
+          health: facts.health,
+          zone: facts.zone,
+          position: facts.position,
+          sources: facts.sources.map((source) => ({ ...source })),
+          fields: facts.fields.map((field) => ({ ...field })),
+        });
     }
 
     for (const event of this.steps) {
-      const deviceId = event.deviceId ??
+      const deviceId =
+        event.deviceId ??
         (associatedTools.has(event.eventType) && typeof event.data.deviceId === 'string'
           ? event.data.deviceId
           : null);
       if (
-        associatedTools.has(event.eventType) || event.jobId || event.approvalId ||
-        event.eventType.startsWith('watch.') || event.sourceId || event.evidenceId
+        associatedTools.has(event.eventType) ||
+        event.jobId ||
+        event.approvalId ||
+        event.eventType.startsWith('watch.') ||
+        event.sourceId ||
+        event.evidenceId
       ) {
         this.associate(deviceId, event.sourceId);
         if (deviceId && Array.isArray(event.data.sourceIds)) {
@@ -197,7 +266,8 @@ export class RuntimeProjection {
   private applyTaskEvent(task: RuntimeTask, event: RuntimeEvent): void {
     if (event.eventType.startsWith('task.')) {
       const status = event.eventType.slice('task.'.length) as TaskStatus;
-      const version = typeof event.data.stateVersion === 'number' ? event.data.stateVersion : task.stateVersion;
+      const version =
+        typeof event.data.stateVersion === 'number' ? event.data.stateVersion : task.stateVersion;
       if (taskStatuses.has(status) && version >= task.stateVersion) {
         task.status = status;
         task.stateVersion = version;
@@ -205,14 +275,18 @@ export class RuntimeProjection {
         if (terminalTasks.has(status)) task.endedAt = event.occurredAt;
       }
     }
-    if (event.runId && (event.eventType === 'run.started' || event.eventType === 'task.run_bound')) {
+    if (
+      event.runId &&
+      (event.eventType === 'run.started' || event.eventType === 'task.run_bound')
+    ) {
       task.currentRunId = event.runId;
     }
   }
 
   private upsertJob(event: RuntimeEvent): void {
     const id = event.jobId!;
-    const state = typeof event.data.state === 'string' ? event.data.state as DeviceJobState : null;
+    const state =
+      typeof event.data.state === 'string' ? (event.data.state as DeviceJobState) : null;
     let job = this.jobs.find((item) => item.id === id);
     if (!job && state && jobStates.has(state)) {
       job = { id, state };
@@ -228,7 +302,8 @@ export class RuntimeProjection {
     if (typeof event.data.tool === 'string') job.tool = event.data.tool;
     if ('argsJson' in event.data) job.argsJson = event.data.argsJson;
     if ('progressJson' in event.data) job.progressJson = event.data.progressJson;
-    if ('resultJson' in event.data) job.resultJson = event.data.resultJson as RuntimeJob['resultJson'];
+    if ('resultJson' in event.data)
+      job.resultJson = event.data.resultJson as RuntimeJob['resultJson'];
     if (typeof event.data.driverCallId === 'string' || event.data.driverCallId === null) {
       job.driverCallId = event.data.driverCallId as string | null;
     }
@@ -247,7 +322,7 @@ export class RuntimeProjection {
 
   private upsertApproval(event: RuntimeEvent): void {
     const id = event.approvalId!;
-    const state = typeof event.data.state === 'string' ? event.data.state as ApprovalState : null;
+    const state = typeof event.data.state === 'string' ? (event.data.state as ApprovalState) : null;
     let approval = this.approvals.find((item) => item.id === id);
     if (!approval && state && approvalStates.has(state)) {
       approval = { id, state };
@@ -290,7 +365,8 @@ export class RuntimeProjection {
     this.evidence.push({
       evidenceId: event.evidenceId!,
       mime: event.data.mime,
-      sourceSeq: event.sourceSeq ?? (typeof event.data.sourceSeq === 'number' ? event.data.sourceSeq : 0),
+      sourceSeq:
+        event.sourceSeq ?? (typeof event.data.sourceSeq === 'number' ? event.data.sourceSeq : 0),
       mediaTime: typeof event.data.mediaTime === 'string' ? event.data.mediaTime : event.occurredAt,
       expiresAt: typeof event.data.expiresAt === 'string' ? event.data.expiresAt : null,
       deviceId: event.deviceId ?? '',
@@ -328,11 +404,13 @@ export class RuntimeProjection {
         if (!field || typeof field !== 'object') return [];
         const item = field as Record<string, unknown>;
         if (typeof item.name !== 'string') return [];
-        return [{
-          name: item.name,
-          value: typeof item.value === 'string' ? item.value : null,
-          unit: typeof item.unit === 'string' ? item.unit : null,
-        }];
+        return [
+          {
+            name: item.name,
+            value: typeof item.value === 'string' ? item.value : null,
+            unit: typeof item.unit === 'string' ? item.unit : null,
+          },
+        ];
       });
     }
   }
@@ -348,13 +426,21 @@ export class RuntimeProjection {
   }
 
   private isCompleteJob(job: RuntimeProjectedJob): job is RuntimeJob {
-    return typeof job.workspaceId === 'string' && typeof job.deviceId === 'string' &&
-      typeof job.tool === 'string' && typeof job.startedAt === 'string';
+    return (
+      typeof job.workspaceId === 'string' &&
+      typeof job.deviceId === 'string' &&
+      typeof job.tool === 'string' &&
+      typeof job.startedAt === 'string'
+    );
   }
 
   private isCompleteApproval(approval: RuntimeProjectedApproval): approval is RuntimeApproval {
-    return typeof approval.workspaceId === 'string' && typeof approval.taskId === 'string' &&
-      typeof approval.runId === 'string' && typeof approval.deviceId === 'string' &&
-      typeof approval.tool === 'string';
+    return (
+      typeof approval.workspaceId === 'string' &&
+      typeof approval.taskId === 'string' &&
+      typeof approval.runId === 'string' &&
+      typeof approval.deviceId === 'string' &&
+      typeof approval.tool === 'string'
+    );
   }
 }

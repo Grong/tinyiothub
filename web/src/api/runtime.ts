@@ -2,6 +2,7 @@ import { ApiClient, type ApiResponse } from './client.js';
 import type {
   CreateTaskResult,
   RuntimeApprovalDecisionResult,
+  RuntimeEventsPage,
   RuntimeTaskListResult,
   TaskProjection,
 } from '../types/runtime.js';
@@ -17,10 +18,14 @@ export function createRuntimeTask(
   idempotencyKey: string,
   signal?: AbortSignal,
 ): Promise<ApiResponse<CreateTaskResult>> {
-  return ApiClient.post(taskPath(workspaceId), { text }, {
-    headers: { 'Idempotency-Key': idempotencyKey },
-    signal,
-  });
+  return ApiClient.post(
+    taskPath(workspaceId),
+    { text },
+    {
+      headers: { 'Idempotency-Key': idempotencyKey },
+      signal,
+    },
+  );
 }
 
 export function listRuntimeTasks(
@@ -30,6 +35,24 @@ export function listRuntimeTasks(
   signal?: AbortSignal,
 ): Promise<ApiResponse<RuntimeTaskListResult>> {
   return ApiClient.get(taskPath(workspaceId), { limit, offset }, signal);
+}
+
+/**
+ * Bounded Task timeline page. `before` is exclusive; omitted means the newest
+ * page. The server caps `limit` at 200 and reports `oldestCursor`/`hasMore`.
+ */
+export function listRuntimeTaskEvents(
+  workspaceId: string,
+  taskId: string,
+  limit = 100,
+  before?: number,
+  signal?: AbortSignal,
+): Promise<ApiResponse<RuntimeEventsPage>> {
+  return ApiClient.get(
+    `${taskPath(workspaceId, taskId)}/events`,
+    before === undefined ? { limit } : { limit, before },
+    signal,
+  );
 }
 
 export function getRuntimeTask(

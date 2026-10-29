@@ -85,7 +85,10 @@ test('entering history destroys live playback on the same Task', async ({ page }
   await expect.poll(() => activePlayers(page)).toBe(1);
 
   await page.getByRole('tab', { name: 'Flow' }).click();
-  await page.getByRole('button', { name: /Historical event/ }).first().click();
+  await page
+    .getByRole('button', { name: /Historical event/ })
+    .first()
+    .click();
   await expect(page.getByText('History · read-only')).toBeVisible();
   await expect(page.locator('video')).toHaveCount(0);
   await expect.poll(() => activePlayers(page)).toBe(0);
@@ -102,6 +105,167 @@ test('expired image evidence is shown as unavailable without media or a player',
   await expect(page.locator('video')).toHaveCount(0);
   expect(await mediaRequests(request)).toBe(before);
   expect(await activePlayers(page)).toBe(0);
+});
+
+test('initial timeline seeds Loop and Flow before SSE opens at the newest cursor', async ({
+  page,
+}) => {
+  const streamUrls: string[] = [];
+  page.on('request', (request) => {
+    if (request.url().includes('/agent/tasks/task_timeline/stream')) streamUrls.push(request.url());
+  });
+  await openRuntimeTask(page, 'task_timeline');
+
+  const loop = page.locator('runtime-loop');
+  await expect(loop.locator('[data-event-id="event_1"]')).toHaveCount(1);
+  await expect(loop.locator('[data-event-id="event_3"]')).toHaveCount(1);
+  await page.getByRole('tab', { name: 'Flow' }).click();
+  const flow = page.locator('runtime-flow');
+  await expect(flow.locator('[data-event-id="event_1"]')).toHaveCount(1);
+  await expect(flow.locator('[data-event-id="event_3"]')).toHaveCount(1);
+  await expect.poll(() => streamUrls.some((url) => /[?&]after=3(?:&|$)/.test(url))).toBe(true);
+});
+
+test('load earlier pages backwards from the oldest seeded cursor', async ({ page }) => {
+  await openRuntimeTask(page, 'task_timeline_paged');
+  const loop = page.locator('runtime-loop');
+  await expect(loop.locator('[data-event-id="event_21"]')).toHaveCount(1);
+  await expect(loop.locator('[data-event-id="event_120"]')).toHaveCount(1);
+  await expect(loop.locator('[data-event-id="event_1"]')).toHaveCount(0);
+
+  await page.getByRole('button', { name: 'Load earlier events' }).click();
+
+  await expect(loop.locator('[data-event-id="event_1"]')).toHaveCount(1);
+  await expect(loop.locator('[data-event-id="event_21"]')).toHaveCount(1);
+  await expect(page.getByRole('button', { name: 'Load earlier events' })).toHaveCount(0);
+});
+
+test('device change destroys the old playback before playing the new device', async ({
+  page,
+  request,
+}) => {
+  await openRuntimeTask(page, 'task_two_cameras');
+  await page.getByRole('button', { name: 'Play evidence' }).click();
+  const image = page.locator('runtime-playback img');
+  await expect(image).toHaveAttribute('src', /frame-a\.png/);
+  await expect(image).toHaveAttribute('alt', /cam-a/);
+  const afterA = await mediaRequests(request);
+  expect(afterA).toBeGreaterThan(0);
+
+  await page.locator('runtime-loop [data-device-id="cam-b"]').click();
+  await expect(page.locator('runtime-playback')).toHaveCount(0);
+  await page.waitForTimeout(300);
+  expect(await mediaRequests(request)).toBe(afterA);
+
+  await page.getByRole('button', { name: 'Play evidence' }).click();
+  await expect(page.locator('runtime-playback img')).toHaveAttribute('src', /frame-b\.png/);
+  await expect(page.locator('runtime-playback img')).toHaveAttribute('alt', /cam-b/);
+  await expect(page.locator('runtime-playback img')).not.toHaveAttribute('src', /frame-a\.png/);
+});
+
+test('expired MJPEG and unsafe playback URLs fail closed without media requests', async ({
+  page,
+  request,
+}) => {
+  await openRuntimeTask(page, 'task_expired_mjpeg');
+  const beforeExpired = await mediaRequests(request);
+  await page.getByRole('button', { name: 'Play evidence' }).click();
+  await expect(page.getByText('playback_unavailable', { exact: true })).toBeVisible();
+  await expect(page.locator('runtime-playback')).toHaveCount(0);
+  expect(await mediaRequests(request)).toBe(beforeExpired);
+
+  await openRuntimeTask(page, 'task_unsafe_playback');
+  const beforeUnsafe = await mediaRequests(request);
+  await page.getByRole('button', { name: 'Play evidence' }).click();
+  await expect(page.getByText('playback_unavailable', { exact: true })).toBeVisible();
+  await expect(page.locator('runtime-playback')).toHaveCount(0);
+  expect(await mediaRequests(request)).toBe(beforeUnsafe);
+});
+
+test('approval decisions meet 44px touch targets at 360px', async ({ page }) => {
+  await page.setViewportSize({ width: 360, height: 800 });
+  await openRuntimeTask(page, 'task_approval');
+  for (const name of ['Approve once', 'Reject']) {
+    const button = page.getByRole('button', { name, exact: true });
+    await expect(button).toBeVisible();
+    const style = await button.evaluate((element) => {
+      const computed = getComputedStyle(element);
+      const box = element.getBoundingClientRect();
+      return {
+        minWidth: computed.minWidth,
+        minHeight: computed.minHeight,
+        width: box.width,
+        height: box.height,
+      };
+    });
+    expect(style.minWidth, name).toBe('44px');
+    expect(style.minHeight, name).toBe('44px');
+    expect(style.width, name).toBeGreaterThanOrEqual(44);
+    expect(style.height, name).toBeGreaterThanOrEqual(44);
+  }
+});
+
+test('switch-task dialog traps Tab and closes on Escape from outside', async ({ page }) => {
+  await openRuntimeTask(page, 'task_timeline');
+  const opener = page.getByRole('button', { name: 'Switch task' });
+  await opener.click();
+  const dialog = page.getByRole('dialog', { name: 'Switch task' });
+  await expect(dialog).toBeVisible();
+  const first = dialog.getByRole('option').first();
+  const last = dialog.getByRole('button', { name: 'Keep current task' });
+  await expect(first).toBeFocused();
+
+  await page.keyboard.press('Shift+Tab');
+  await expect(last).toBeFocused();
+  await page.keyboard.press('Tab');
+  await expect(first).toBeFocused();
+
+  // Escape must work even when focus escaped the dialog.
+  await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
+  await page.keyboard.press('Escape');
+  await expect(dialog).toHaveCount(0);
+  await expect(opener).toBeFocused();
+});
+
+test('browser back and forward restore the active Runtime view', async ({ page }) => {
+  await openRuntimeTask(page, 'task_timeline');
+  await page.getByRole('tab', { name: 'Flow' }).click();
+  await expect(page).toHaveURL(/view=flow/);
+  await page.getByRole('tab', { name: 'Agent Loop' }).click();
+  await expect(page).not.toHaveURL(/view=flow/);
+
+  await page.goBack();
+  await expect(page).toHaveURL(/view=flow/);
+  await expect(page.getByRole('tab', { name: 'Flow' })).toHaveAttribute('aria-selected', 'true');
+  await page.goForward();
+  await expect(page.getByRole('tab', { name: 'Agent Loop' })).toHaveAttribute(
+    'aria-selected',
+    'true',
+  );
+});
+
+test('persisted collapsed rail expands at tablet width', async ({ page }) => {
+  await page.setViewportSize({ width: 768, height: 900 });
+  await page.addInitScript(() => localStorage.setItem('runtime.devices.expanded', 'false'));
+  await openRuntimeTask(page, 'task_timeline');
+  const rail = page.getByRole('button', { name: 'Expand devices' });
+  await expect(rail).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Associated devices' })).not.toBeVisible();
+
+  await rail.click();
+  await expect(page.getByRole('heading', { name: 'Associated devices' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Expand devices' })).toHaveCount(0);
+});
+
+test('playback at 360px does not overflow horizontally', async ({ page }) => {
+  await page.setViewportSize({ width: 360, height: 800 });
+  await openRuntimeTask(page, 'task_two_cameras');
+  await page.getByRole('button', { name: 'Play evidence' }).click();
+  await expect(page.locator('runtime-playback img')).toBeVisible();
+  const overflow = await page.evaluate(
+    () => document.documentElement.scrollWidth - window.innerWidth,
+  );
+  expect(overflow).toBeLessThanOrEqual(1);
 });
 
 test('CORS success plays direct fixture media and CORS failure is visible', async ({
@@ -177,6 +341,7 @@ test('approval stays single-flight and stale decisions cannot cross Tasks', asyn
   await page.getByRole('button', { name: 'Approve once' }).click();
   await page.getByRole('button', { name: 'Switch task' }).click();
   await page.getByRole('option', { name: 'task_without_video' }).click();
+  expect(await decisionRequests(request, 'task_approval_delayed')).toBe(1);
   await releaseDelayedDecision(request);
   await expect(page.getByRole('button', { name: 'Approve once' })).toHaveCount(0);
   await expect(page).toHaveURL(/#\/runtime\/tasks\/task_without_video/);
@@ -212,8 +377,12 @@ test('approval reject, conflict, expiry and unavailable expose current facts onl
 test('stale SSE duplicates are suppressed and resync keeps one event', async ({ page }) => {
   await openRuntimeTask(page, 'task_sse_resync');
   await expect(page.locator('[data-event-id="event_1"]')).toHaveCount(1);
+  // The fixture replays a newer event twice and then resets the cursor; the
+  // live projection must keep exactly one copy of each.
+  await expect(page.locator('[data-event-id="event_2"]')).toHaveCount(1);
   await page.waitForTimeout(500);
   await expect(page.locator('[data-event-id="event_1"]')).toHaveCount(1);
+  await expect(page.locator('[data-event-id="event_2"]')).toHaveCount(1);
 });
 
 test('seam supports keyboard and pointer resize at desktop width', async ({ page }) => {

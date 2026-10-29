@@ -1,8 +1,8 @@
 import Hls from 'hls.js';
-import { LitElement, html, nothing, type PropertyValues } from 'lit';
+import { LitElement, css, html, nothing, type PropertyValues } from 'lit';
 import { customElement, property, state } from 'lit/decorators.js';
+import { isSafePlaybackUrl } from '../../api/playback.js';
 import type { PlaybackDescriptor } from '../../types/runtime.js';
-import './runtime-playback.css';
 
 type PlaybackWindow = Window & { __runtimeActivePlayers?: number };
 
@@ -32,6 +32,42 @@ export class RuntimePlayback extends LitElement {
   private loadAbort?: AbortController;
   private generation = 0;
   private ownsPlayer = false;
+  private errorMedia?: HTMLVideoElement | HTMLImageElement;
+  private errorHandler?: () => void;
+
+  static styles = css`
+    :host {
+      display: block;
+    }
+
+    .runtime-playback {
+      display: grid;
+      gap: var(--space-2);
+      min-width: 0;
+    }
+
+    .runtime-playback__media {
+      display: block;
+      width: 100%;
+      min-width: 0;
+      max-width: 100%;
+      max-height: 70vh;
+      border-radius: var(--radius-md);
+      background: var(--glass-bg);
+      object-fit: contain;
+    }
+
+    .runtime-playback__unavailable,
+    .runtime-playback__captions {
+      margin: 0;
+      color: var(--runtime-muted, var(--muted));
+      font-size: 12px;
+    }
+
+    .runtime-playback__unavailable {
+      color: var(--runtime-warn, var(--warn));
+    }
+  `;
 
   disconnectedCallback(): void {
     this.destroyPlayer();
@@ -71,10 +107,38 @@ export class RuntimePlayback extends LitElement {
     metric('runtime_playback_error', { reason });
   }
 
-  private isLive(descriptor: PlaybackDescriptor): boolean {
-    if (descriptor.protocol !== 'hls' && descriptor.protocol !== 'mjpeg') return false;
+  /** Single place that decides whether a descriptor may reach a media element. */
+  private usableDescriptor(): PlaybackDescriptor | null {
+    const descriptor = this.descriptor;
+    if (!descriptor) return null;
+    if (descriptor.protocol !== 'hls' && descriptor.protocol !== 'mjpeg') return null;
+    if (!isSafePlaybackUrl(descriptor.url)) return null;
     const expiresAt = Date.parse(descriptor.expiresAt);
-    return Number.isFinite(expiresAt) && expiresAt > Date.now();
+    return Number.isFinite(expiresAt) && expiresAt > Date.now() ? descriptor : null;
+  }
+
+  private unavailableReason(descriptor: PlaybackDescriptor): string {
+    if (descriptor.protocol !== 'hls' && descriptor.protocol !== 'mjpeg') {
+      return 'unsupported_protocol';
+    }
+    if (!isSafePlaybackUrl(descriptor.url)) return 'unsafe_url';
+    return 'descriptor_expired';
+  }
+
+  private bindMediaError(media: HTMLVideoElement | HTMLImageElement, generation: number): void {
+    this.unbindMediaError();
+    const handler = () => this.showUnavailable(generation, 'media_error');
+    media.addEventListener('error', handler);
+    this.errorMedia = media;
+    this.errorHandler = handler;
+  }
+
+  private unbindMediaError(): void {
+    if (this.errorMedia && this.errorHandler) {
+      this.errorMedia.removeEventListener('error', this.errorHandler);
+    }
+    this.errorMedia = undefined;
+    this.errorHandler = undefined;
   }
 
   private startPlayer(): void {
@@ -84,34 +148,30 @@ export class RuntimePlayback extends LitElement {
     const descriptor = this.descriptor;
     if (!descriptor) return;
 
-    if (!this.isLive(descriptor)) {
+    const usable = this.usableDescriptor();
+    if (!usable) {
       this.unavailable = true;
-      metric('runtime_playback_error', {
-        reason:
-          descriptor.protocol === 'hls' || descriptor.protocol === 'mjpeg'
-            ? 'descriptor_expired'
-            : 'unsupported_protocol',
-      });
+      metric('runtime_playback_error', { reason: this.unavailableReason(descriptor) });
       return;
     }
 
     const media = this.renderRoot.querySelector<HTMLVideoElement | HTMLImageElement>(
-      descriptor.protocol === 'mjpeg' ? 'img' : 'video',
+      usable.protocol === 'mjpeg' ? 'img' : 'video',
     );
     if (!media) return;
     this.media = media;
-    media.addEventListener('error', () => this.showUnavailable(generation, 'media_error'));
+    this.bindMediaError(media, generation);
 
-    if (descriptor.protocol === 'mjpeg') {
+    if (usable.protocol === 'mjpeg') {
       this.acquirePlayer('mjpeg');
-      (media as HTMLImageElement).src = descriptor.url;
+      (media as HTMLImageElement).src = usable.url;
       return;
     }
 
     const video = media as HTMLVideoElement;
     if (video.canPlayType('application/vnd.apple.mpegurl')) {
       this.acquirePlayer('hls_native');
-      video.src = descriptor.url;
+      video.src = usable.url;
     } else if (Hls.isSupported()) {
       const hls = new Hls({ enableWorker: true });
       this.hls = hls;
@@ -120,7 +180,7 @@ export class RuntimePlayback extends LitElement {
         this.showUnavailable(generation, 'hls_fatal');
       });
       this.acquirePlayer('hls');
-      hls.loadSource(descriptor.url);
+      hls.loadSource(usable.url);
       hls.attachMedia(video);
     } else {
       queueMicrotask(() => this.showUnavailable(generation, 'hls_unsupported'));
@@ -131,6 +191,7 @@ export class RuntimePlayback extends LitElement {
     this.generation += 1;
     this.loadAbort?.abort();
     this.loadAbort = undefined;
+    this.unbindMediaError();
     if (this.hls) {
       const hls = this.hls;
       this.hls = undefined;
@@ -154,16 +215,13 @@ export class RuntimePlayback extends LitElement {
   }
 
   render() {
+    const usable = this.usableDescriptor();
     return html`
       <div class="runtime-playback">
         ${
-          this.descriptor?.protocol === 'mjpeg'
-            ? html`<img
-                class="runtime-playback__media"
-                alt=${this.alt}
-                .src=${this.descriptor.url}
-              />`
-            : this.descriptor?.protocol === 'hls'
+          usable?.protocol === 'mjpeg'
+            ? html`<img class="runtime-playback__media" alt=${this.alt} .src=${usable.url} />`
+            : usable?.protocol === 'hls'
               ? html`<video
                   class="runtime-playback__media"
                   controls

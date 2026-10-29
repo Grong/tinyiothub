@@ -192,6 +192,40 @@ const fixtures: Record<string, Fixture> = {
     }),
     events: [runtimeEvent('task_video', 1, 'read_device', { deviceId: 'cam-allowed' })],
   },
+  task_timeline: {
+    projection: projection('task_timeline', { devices: videoDevices }),
+    events: [
+      runtimeEvent('task_timeline', 1, 'run.started', { runId: 'run_task_timeline' }),
+      runtimeEvent('task_timeline', 2, 'reason.updated', { text: 'Checking the entrance camera' }),
+      runtimeEvent('task_timeline', 3, 'read_device', { deviceId: 'cam-allowed' }),
+    ],
+  },
+  task_timeline_paged: {
+    projection: projection('task_timeline_paged', { devices: videoDevices }),
+    events: Array.from({ length: 120 }, (_, index) => {
+      const cursor = index + 1;
+      return cursor % 2 === 1
+        ? runtimeEvent('task_timeline_paged', cursor, 'run.note', { text: `step ${cursor}` })
+        : runtimeEvent('task_timeline_paged', cursor, 'read_device', { deviceId: 'cam-allowed' });
+    }),
+  },
+  task_two_cameras: {
+    projection: projection('task_two_cameras', {
+      devices: [device('cam-a'), device('cam-b')],
+    }),
+    events: [
+      runtimeEvent('task_two_cameras', 1, 'read_device', { deviceId: 'cam-a' }),
+      runtimeEvent('task_two_cameras', 2, 'read_device', { deviceId: 'cam-b' }),
+    ],
+  },
+  task_expired_mjpeg: {
+    projection: projection('task_expired_mjpeg', { devices: [device('cam-expired-mjpeg')] }),
+    events: [],
+  },
+  task_unsafe_playback: {
+    projection: projection('task_unsafe_playback', { devices: [device('cam-unsafe')] }),
+    events: [],
+  },
   task_expired_evidence: {
     projection: projection('task_expired_evidence', {
       devices: videoDevices,
@@ -349,12 +383,6 @@ function currentTask(id: string): Json | null {
   return found ? (found.task as Json) : null;
 }
 
-function currentApproval(taskId: string): Json | null {
-  const found = taskProjection(taskId);
-  const approvals = (found?.approvals ?? []) as Json[];
-  return approvals[0] ?? null;
-}
-
 function setApprovalState(taskId: string, state: string, decision: string | null): Json | null {
   const found = taskProjection(taskId);
   if (!found) return null;
@@ -376,10 +404,31 @@ function playbackFor(deviceId: string): Json | null {
       expiresAt: '2026-10-27T10:05:00Z',
     };
   }
+  if (deviceId === 'cam-expired-mjpeg') {
+    return {
+      protocol: 'mjpeg',
+      url: `${origin}/allowed/frame-a.png?sig=expired`,
+      expiresAt: '2026-10-27T10:05:00Z',
+    };
+  }
+  if (deviceId === 'cam-unsafe') {
+    return {
+      protocol: 'mjpeg',
+      url: 'javascript:alert(1)',
+      expiresAt: future(),
+    };
+  }
   if (deviceId === 'cam-webrtc') {
     return {
       protocol: 'webrtc',
       url: `${origin}/allowed/live.m3u8?sig=fixture`,
+      expiresAt: future(),
+    };
+  }
+  if (deviceId === 'cam-a' || deviceId === 'cam-b') {
+    return {
+      protocol: 'mjpeg',
+      url: `${origin}/allowed/frame-${deviceId === 'cam-a' ? 'a' : 'b'}.png`,
       expiresAt: future(),
     };
   }
@@ -409,7 +458,12 @@ function apiError(res: ServerResponse, status: number, message: string): void {
   json(res, status, { code: status, msg: message, result: null });
 }
 
-function handleEventStream(req: IncomingMessage, res: ServerResponse, taskId: string): void {
+function handleEventStream(
+  req: IncomingMessage,
+  res: ServerResponse,
+  taskId: string,
+  after: number,
+): void {
   if (taskId === 'task_offline') {
     apiError(res, 503, 'stream offline');
     return;
@@ -431,12 +485,17 @@ function handleEventStream(req: IncomingMessage, res: ServerResponse, taskId: st
   send('snapshot', { snapshot, cursor: snapshot.cursor });
 
   if (taskId === 'task_sse_resync') {
-    const event = fixture.events[0];
+    // Exercise duplicate suppression with an event newer than the seeded page,
+    // then an authoritative cursor reset.
+    const next = Math.max(after, Number(fixture.events[0]?.cursor ?? 0)) + 1;
+    const event = { ...fixture.events[0], cursor: next, eventId: `event_${next}` };
     send('event', { event });
     send('event', { event });
     send('resync', { snapshot, cursor: 0 });
   } else {
-    for (const event of fixture.events) send('event', { event });
+    for (const event of fixture.events) {
+      if ((event.cursor as number) > after) send('event', { event });
+    }
   }
 
   const keepalive = setInterval(() => res.write(': keepalive\n\n'), 15_000);
@@ -444,7 +503,7 @@ function handleEventStream(req: IncomingMessage, res: ServerResponse, taskId: st
   res.on('close', () => clearInterval(keepalive));
 }
 
-function serveMedia(req: IncomingMessage, res: ServerResponse, path: string): void {
+function serveMedia(_req: IncomingMessage, res: ServerResponse, path: string): void {
   counters.mediaRequests += 1;
   const allowed = path.startsWith('/allowed/');
   const relative = allowed ? path.slice('/allowed/'.length) : path.slice('/denied/'.length);
@@ -549,7 +608,34 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
 
   const stream = rest.match(/^agent\/tasks\/([^/]+)\/stream$/);
   if (stream) {
-    handleEventStream(req, res, stream[1]);
+    const afterParam = Number(url.searchParams.get('after') ?? '0');
+    handleEventStream(req, res, stream[1], Number.isFinite(afterParam) ? afterParam : 0);
+    return;
+  }
+
+  const timeline = rest.match(/^agent\/tasks\/([^/]+)\/events$/);
+  if (timeline) {
+    const fixture = fixtures[timeline[1]];
+    if (!fixture) {
+      apiError(res, 404, 'Task not found');
+      return;
+    }
+    const requestedLimit = Number(url.searchParams.get('limit'));
+    const limit = Number.isFinite(requestedLimit)
+      ? Math.min(200, Math.max(1, Math.floor(requestedLimit)))
+      : 100;
+    const beforeParam = url.searchParams.get('before');
+    const before = beforeParam === null ? null : Number(beforeParam);
+    const eligible =
+      before !== null && Number.isFinite(before)
+        ? fixture.events.filter((event) => (event.cursor as number) < before)
+        : fixture.events;
+    const page = eligible.slice(-limit);
+    ok(res, {
+      events: page,
+      oldestCursor: page.length ? page[0].cursor : null,
+      hasMore: eligible.length > page.length,
+    });
     return;
   }
 

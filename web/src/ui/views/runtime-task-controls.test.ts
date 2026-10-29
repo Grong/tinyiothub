@@ -26,29 +26,56 @@ const pause = vi.mocked(pauseRuntimeTask);
 const resume = vi.mocked(resumeRuntimeTask);
 const cancel = vi.mocked(cancelRuntimeTask);
 
-function task(id = 'task_1', status: TaskStatus = 'active', over: Partial<RuntimeTask> = {}): RuntimeTask {
+function task(
+  id = 'task_1',
+  status: TaskStatus = 'active',
+  over: Partial<RuntimeTask> = {},
+): RuntimeTask {
   return {
-    id, workspaceId: 'ws_1', idempotencyKey: `key_${id}`, objective: `Objective ${id}`,
-    sessionKey: null, createdBy: 'user_1', status, currentRunId: 'run_1', stateVersion: 0,
-    createdAt: '2026-10-27T10:00:00Z', updatedAt: '2026-10-27T10:00:00Z', endedAt: null,
+    id,
+    workspaceId: 'ws_1',
+    idempotencyKey: `key_${id}`,
+    objective: `Objective ${id}`,
+    sessionKey: null,
+    createdBy: 'user_1',
+    status,
+    currentRunId: 'run_1',
+    stateVersion: 0,
+    createdAt: '2026-10-27T10:00:00Z',
+    updatedAt: '2026-10-27T10:00:00Z',
+    endedAt: null,
     ...over,
   };
 }
 
 function job(over: Partial<RuntimeJob> = {}): RuntimeJob {
   return {
-    id: 'job_1', workspaceId: 'ws_1', deviceId: 'dev_1', tool: 'set_device',
-    argsJson: { value: 21 }, state: 'running', stopRequestedAt: null,
-    progressJson: null, resultJson: null, taskId: 'task_1', runId: 'run_1',
-    toolCallId: 'call_1', driverCallId: null, timeoutMs: 1000,
-    startedAt: '2026-10-27T10:00:00Z', endedAt: null,
+    id: 'job_1',
+    workspaceId: 'ws_1',
+    deviceId: 'dev_1',
+    tool: 'set_device',
+    argsJson: { value: 21 },
+    state: 'running',
+    stopRequestedAt: null,
+    progressJson: null,
+    resultJson: null,
+    taskId: 'task_1',
+    runId: 'run_1',
+    toolCallId: 'call_1',
+    driverCallId: null,
+    timeoutMs: 1000,
+    startedAt: '2026-10-27T10:00:00Z',
+    endedAt: null,
     ...over,
   };
 }
 
 function watch(id = 'watch_1'): RuntimeWatch {
   return {
-    id, condition: { thingId: 'dev_watch' }, persistent: true, timeoutSecs: 30,
+    id,
+    condition: { thingId: 'dev_watch' },
+    persistent: true,
+    timeoutSecs: 30,
     createdAt: '2026-10-27T10:00:00Z',
   };
 }
@@ -62,16 +89,29 @@ function projectionSnapshot(
   const watches = options.watches ?? [];
   return {
     task: task(id, status),
-    runs: [], jobs, approvals: [], watches, evidence: [], summary: null, cursor: 0,
+    runs: [],
+    jobs,
+    approvals: [],
+    watches,
+    evidence: [],
+    summary: null,
+    cursor: 0,
     associations: jobs.map((item) => ({ deviceId: item.deviceId, sourceIds: [] })),
     devices: [],
   };
 }
 
-function deferred<T>(): { promise: Promise<T>; resolve: (value: T) => void; reject: (error: unknown) => void } {
+function deferred<T>(): {
+  promise: Promise<T>;
+  resolve: (value: T) => void;
+  reject: (error: unknown) => void;
+} {
   let resolve!: (value: T) => void;
   let reject!: (error: unknown) => void;
-  const promise = new Promise<T>((res, rej) => { resolve = res; reject = rej; });
+  const promise = new Promise<T>((res, rej) => {
+    resolve = res;
+    reject = rej;
+  });
   return { promise, resolve, reject };
 }
 
@@ -108,13 +148,27 @@ async function controlsFixture(snapshot: TaskProjection): Promise<ControlsFixtur
   return {
     element,
     projection,
-    get text() { return element.textContent ?? ''; },
-    get pauseButton() { return element.querySelector<HTMLButtonElement>('button[data-action="pause"]'); },
-    get resumeButton() { return element.querySelector<HTMLButtonElement>('button[data-action="resume"]'); },
-    get primaryButton() { return element.querySelector<HTMLButtonElement>('button[data-action="primary"]'); },
-    get dangerButton() { return element.querySelector<HTMLButtonElement>('button[data-action="danger"]'); },
-    get cancelDialogOpen() { return element.querySelector('runtime-confirm-dialog') !== null; },
-    get executableControls() { return [...element.querySelectorAll<HTMLElement>('[data-executable]')]; },
+    get text() {
+      return element.textContent ?? '';
+    },
+    get pauseButton() {
+      return element.querySelector<HTMLButtonElement>('button[data-action="pause"]');
+    },
+    get resumeButton() {
+      return element.querySelector<HTMLButtonElement>('button[data-action="resume"]');
+    },
+    get primaryButton() {
+      return element.querySelector<HTMLButtonElement>('button[data-action="primary"]');
+    },
+    get dangerButton() {
+      return element.querySelector<HTMLButtonElement>('button[data-action="danger"]');
+    },
+    get cancelDialogOpen() {
+      return element.querySelector('runtime-confirm-dialog') !== null;
+    },
+    get executableControls() {
+      return [...element.querySelectorAll<HTMLElement>('[data-executable]')];
+    },
     emitted,
     openCancel: async () => {
       element.querySelector<HTMLButtonElement>('button[data-action="overflow"]')!.click();
@@ -198,7 +252,9 @@ describe('runtime-task-controls', () => {
   });
 
   it('cancel requires confirmation and defaults to keep running', async () => {
-    const controls = await controlsFixture(projectionSnapshot('active', { jobs: [job()], watches: [watch()] }));
+    const controls = await controlsFixture(
+      projectionSnapshot('active', { jobs: [job()], watches: [watch()] }),
+    );
 
     await controls.openCancel();
     expect(cancel).not.toHaveBeenCalled();
@@ -214,25 +270,33 @@ describe('runtime-task-controls', () => {
   });
 
   it('cancel dialog names the objective, active work, devices and unknown-result risk', async () => {
-    const controls = await controlsFixture(projectionSnapshot('active', {
-      jobs: [job({ id: 'job_live', deviceId: 'dev_live', state: 'running' }), job({ id: 'job_done', deviceId: 'dev_done', state: 'done' })],
-      watches: [watch()],
-    }));
+    const controls = await controlsFixture(
+      projectionSnapshot('active', {
+        jobs: [
+          job({ id: 'job_live', deviceId: 'dev_live', state: 'running' }),
+          job({ id: 'job_done', deviceId: 'dev_done', state: 'done' }),
+        ],
+        watches: [watch()],
+      }),
+    );
 
     await controls.openCancel();
 
-    expect(controls.text).toContain('Objective task_1');
-    expect(controls.text).toContain('1 active job');
-    expect(controls.text).toContain('1 active watch');
-    expect(controls.text).toContain('dev_live');
-    expect(controls.text.toLowerCase()).toContain('unknown');
-    expect(controls.text).toContain('Keep running');
+    const text = controls.text.replace(/\s+/g, ' ');
+    expect(text).toContain('Objective task_1');
+    expect(text).toContain('1 active job');
+    expect(text).toContain('1 active watch');
+    expect(text).toContain('dev_live');
+    expect(text.toLowerCase()).toContain('unknown');
+    expect(text).toContain('Keep running');
   });
 
   it('submits one cancel request even for repeated danger clicks and keeps Cancelling after close', async () => {
     const response = deferred<{ code: number; msg: string; result: TaskProjection }>();
     cancel.mockReturnValue(response.promise);
     const controls = await controlsFixture(projectionSnapshot('active', { jobs: [job()] }));
+    const focusRequests = vi.fn();
+    controls.element.addEventListener('focus-status-request', focusRequests);
 
     await controls.openCancel();
     const danger = controls.dangerButton!;
@@ -248,6 +312,7 @@ describe('runtime-task-controls', () => {
     await flush(controls.element);
     expect(controls.text).toContain('Cancelling');
     expect(controls.emitted[0].task.status).toBe('cancelling');
+    expect(focusRequests).toHaveBeenCalledOnce();
   });
 
   it('restores a failed cancel to the original state with a visible error', async () => {
@@ -283,8 +348,24 @@ describe('runtime-task-controls', () => {
     expect(controls.cancelDialogOpen).toBe(false);
   });
 
+  it('recreates an aborted controller when reconnected', async () => {
+    const controls = await controlsFixture(projectionSnapshot('active'));
+    controls.element.remove();
+    document.body.append(controls.element);
+    await controls.element.updateComplete;
+    pause.mockReturnValue(new Promise(() => {}));
+
+    controls.pauseButton!.click();
+    await controls.element.updateComplete;
+
+    const signal = pause.mock.calls[0][2] as AbortSignal;
+    expect(signal.aborted).toBe(false);
+  });
+
   it('renders no executable controls for history or terminal Tasks', async () => {
-    const done = await controlsFixture(projectionSnapshot('completed', { jobs: [job({ state: 'done' })] }));
+    const done = await controlsFixture(
+      projectionSnapshot('completed', { jobs: [job({ state: 'done' })] }),
+    );
     expect(done.executableControls).toEqual([]);
     expect(done.pauseButton).toBeNull();
     expect(done.resumeButton).toBeNull();
@@ -297,12 +378,14 @@ describe('runtime-task-controls', () => {
   });
 
   it('renders cancellation attention with affected devices and an explicit refresh', async () => {
-    const controls = await controlsFixture(projectionSnapshot('failed', {
-      jobs: [
-        job({ id: 'job_unknown_a', deviceId: 'dev_a', state: 'cancelled_unknown' }),
-        job({ id: 'job_unknown_b', deviceId: 'dev_b', state: 'cancelled_unknown' }),
-      ],
-    }));
+    const controls = await controlsFixture(
+      projectionSnapshot('failed', {
+        jobs: [
+          job({ id: 'job_unknown_a', deviceId: 'dev_a', state: 'cancelled_unknown' }),
+          job({ id: 'job_unknown_b', deviceId: 'dev_b', state: 'cancelled_unknown' }),
+        ],
+      }),
+    );
     const refresh = vi.fn();
     controls.element.addEventListener('refresh-request', refresh);
 
@@ -310,7 +393,9 @@ describe('runtime-task-controls', () => {
     expect(controls.text).toContain('dev_a');
     expect(controls.text).toContain('dev_b');
     expect(controls.text).not.toContain('All stopped');
-    const button = controls.element.querySelector<HTMLButtonElement>('button[data-action="refresh-status"]')!;
+    const button = controls.element.querySelector<HTMLButtonElement>(
+      'button[data-action="refresh-status"]',
+    )!;
     expect(button.textContent).toContain('Refresh status');
     button.click();
     expect(refresh).toHaveBeenCalledOnce();

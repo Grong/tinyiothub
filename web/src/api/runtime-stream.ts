@@ -20,7 +20,12 @@ export interface RuntimeStreamInput {
   baseDelayMs?: number;
   maxDelayMs?: number;
   jitterMs?: number;
+  /** Replay dedupe is bounded so a long-lived task cannot grow it forever. */
+  maxDedupeIds?: number;
 }
+
+const stableStreamMs = 5_000;
+const defaultMaxDedupeIds = 500;
 
 type RuntimeFrame =
   | { type: 'snapshot'; projection: TaskProjection; cursor: number }
@@ -29,7 +34,7 @@ type RuntimeFrame =
 
 function record(value: unknown): Record<string, unknown> | null {
   return value !== null && typeof value === 'object' && !Array.isArray(value)
-    ? value as Record<string, unknown>
+    ? (value as Record<string, unknown>)
     : null;
 }
 
@@ -40,7 +45,8 @@ export function parseRuntimeStreamFrame(frame: SseEvent): RuntimeFrame | null {
     if (!data) return null;
     if (frame.event === 'event') {
       const event = record(data.event);
-      if (!event || typeof event.eventId !== 'string' || typeof event.cursor !== 'number') return null;
+      if (!event || typeof event.eventId !== 'string' || typeof event.cursor !== 'number')
+        return null;
       return { type: 'event', event: event as unknown as RuntimeEvent };
     }
     const projection = record(data.snapshot);
@@ -77,8 +83,13 @@ function sleep(ms: number, signal: AbortSignal): Promise<void> {
 
 export function connectRuntimeStream(input: RuntimeStreamInput): () => void {
   const {
-    workspaceId, taskId, callbacks,
-    baseDelayMs = 1000, maxDelayMs = 30_000, jitterMs = 250,
+    workspaceId,
+    taskId,
+    callbacks,
+    baseDelayMs = 1000,
+    maxDelayMs = 30_000,
+    jitterMs = 250,
+    maxDedupeIds = defaultMaxDedupeIds,
   } = input;
   const isCurrent = input.isCurrent ?? (() => true);
   let closed = false;
@@ -89,7 +100,8 @@ export function connectRuntimeStream(input: RuntimeStreamInput): () => void {
   const eventIds = new Set<string>();
 
   const active = () => !closed && isCurrent();
-  const path = () => `/workspaces/${encodeURIComponent(workspaceId)}/agent/tasks/${encodeURIComponent(taskId)}/stream?after=${encodeURIComponent(String(cursor))}`;
+  const path = () =>
+    `/workspaces/${encodeURIComponent(workspaceId)}/agent/tasks/${encodeURIComponent(taskId)}/stream?after=${encodeURIComponent(String(cursor))}`;
 
   const deliver = (frame: RuntimeFrame): void => {
     if (!active()) return;
@@ -97,6 +109,11 @@ export function connectRuntimeStream(input: RuntimeStreamInput): () => void {
       if (frame.event.taskId !== null && frame.event.taskId !== taskId) return;
       if (eventIds.has(frame.event.eventId)) return;
       eventIds.add(frame.event.eventId);
+      while (eventIds.size > maxDedupeIds) {
+        const oldest = eventIds.values().next().value;
+        if (oldest === undefined) break;
+        eventIds.delete(oldest);
+      }
       cursor = Math.max(cursor, frame.event.cursor);
       callbacks.event(frame.event);
       return;
@@ -116,6 +133,7 @@ export function connectRuntimeStream(input: RuntimeStreamInput): () => void {
       controller = new AbortController();
       const signal = controller.signal;
       let opened = false;
+      let openedAt = 0;
       try {
         const headers: Record<string, string> = { Accept: 'text/event-stream' };
         const token = getAuthToken();
@@ -123,7 +141,9 @@ export function connectRuntimeStream(input: RuntimeStreamInput): () => void {
         if (token) headers.Authorization = `Bearer ${token}`;
         if (headerWorkspaceId) headers['X-Workspace-Id'] = headerWorkspaceId;
         const response = await fetch(buildUrl(path()), {
-          headers, credentials: 'include', signal,
+          headers,
+          credentials: 'include',
+          signal,
         });
         if (!active()) break;
         if (!response.ok || !response.body) {
@@ -133,10 +153,16 @@ export function connectRuntimeStream(input: RuntimeStreamInput): () => void {
             // The response body may already be closed.
           }
           controller.abort();
+          // Authentication cannot heal by retrying; stop instead of hammering.
+          if (response.status === 401 || response.status === 403) {
+            closed = true;
+            callbacks.connection('offline');
+            return;
+          }
           throw new Error(`HTTP ${response.status}`);
         }
         opened = true;
-        retry = baseDelayMs;
+        openedAt = Date.now();
         callbacks.connection('online');
         const reader = response.body.getReader();
         const decoder = new TextDecoder();
@@ -167,6 +193,9 @@ export function connectRuntimeStream(input: RuntimeStreamInput): () => void {
       }
       if (!active()) break;
       if (!opened) callbacks.connection('offline');
+      // Only a stream that stayed healthy for a while proves the endpoint is
+      // stable enough to reset backoff; flapping connections keep escalating.
+      if (opened && Date.now() - openedAt >= stableStreamMs) retry = baseDelayMs;
       const jitter = jitterMs > 0 ? Math.floor(Math.random() * jitterMs) : 0;
       sleeper = new AbortController();
       await sleep(retry + jitter, sleeper.signal);
