@@ -49,7 +49,9 @@ describe('runtime-confirm-dialog', () => {
     danger(dialog).dispatchEvent(new KeyboardEvent('keydown', { key: 'Tab', bubbles: true }));
     expect(document.activeElement).toBe(primary(dialog));
 
-    primary(dialog).dispatchEvent(new KeyboardEvent('keydown', { key: 'Tab', shiftKey: true, bubbles: true }));
+    primary(dialog).dispatchEvent(
+      new KeyboardEvent('keydown', { key: 'Tab', shiftKey: true, bubbles: true }),
+    );
     expect(document.activeElement).toBe(danger(dialog));
   });
 
@@ -66,7 +68,7 @@ describe('runtime-confirm-dialog', () => {
     expect(dangerEvent).not.toHaveBeenCalled();
   });
 
-  it('submits only the body-selected action and blocks repeats while busy', async () => {
+  it('submits only the body-selected action', async () => {
     const dialog = await mount();
     const primaryEvent = vi.fn();
     const dangerEvent = vi.fn();
@@ -76,12 +78,6 @@ describe('runtime-confirm-dialog', () => {
     primary(dialog).click();
     expect(primaryEvent).toHaveBeenCalledOnce();
     expect(dangerEvent).not.toHaveBeenCalled();
-
-    dialog.busy = true;
-    await dialog.updateComplete;
-    danger(dialog).click();
-    expect(dangerEvent).not.toHaveBeenCalled();
-    expect(danger(dialog).disabled).toBe(true);
   });
 
   it('emits the danger action only when the danger button is chosen', async () => {

@@ -1,0 +1,374 @@
+/* Runtime workbench: responsive layout, theme tokens, focus and motion. */
+
+.runtime-workbench {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto var(--runtime-device-width, 360px);
+  align-items: start;
+  gap: var(--space-3);
+  min-width: 0;
+  margin-top: var(--space-4);
+  color: var(--text);
+  background: var(--bg);
+  font-family: var(--font-body);
+  font-size: 16px;
+}
+
+.runtime-workbench__main,
+.runtime-workbench__panel,
+.runtime-devices-panel {
+  min-width: 0;
+}
+
+.runtime-view-tabs-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2) var(--space-3);
+  margin-bottom: var(--space-3);
+}
+
+.runtime-view-tabs {
+  display: inline-flex;
+  gap: var(--space-1);
+  margin-bottom: 0;
+  padding: 3px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-full);
+  background: var(--bg-elevated);
+}
+
+.runtime-view-tabs [role='tab'] {
+  min-block-size: 44px;
+  padding: 0 var(--space-4);
+  border: 0;
+  border-radius: var(--radius-full);
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.runtime-view-tabs [role='tab'][aria-selected='true'] {
+  background: var(--accent-subtle);
+  color: var(--text-strong);
+  box-shadow: inset 0 0 0 1px var(--accent);
+}
+
+.runtime-view-tabs [data-view='devices'] {
+  display: none;
+}
+
+.runtime-task__devices-anchor {
+  display: none;
+  padding: 0 var(--space-3);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-full);
+  background: transparent;
+  color: var(--accent);
+  cursor: pointer;
+}
+
+/* Runtime-local touch targets. Global button sizes are untouched. */
+.runtime-workbench button,
+.runtime-workbench [role='button'],
+.runtime-task button,
+.runtime-task [role='button'] {
+  min-block-size: 44px;
+  min-inline-size: 44px;
+}
+
+.runtime-workbench pre,
+.runtime-workbench .runtime-data,
+.runtime-device-card__facts,
+.flow-lane__events small,
+.runtime-task__history time {
+  font-size: 14px;
+  font-variant-numeric: tabular-nums;
+}
+
+.runtime-workbench :focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
+  box-shadow: var(--focus-ring);
+}
+
+.runtime-seam {
+  display: none;
+}
+
+.runtime-devices-rail {
+  display: flex;
+  justify-content: center;
+  height: 100%;
+  min-height: 160px;
+  padding-top: var(--space-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  color: var(--muted);
+}
+
+.runtime-devices-rail span {
+  writing-mode: vertical-rl;
+}
+
+/* History / connection banners (moved out of inline render styles). */
+.runtime-task__history {
+  margin: var(--space-3) 0;
+  padding: var(--space-3);
+  border: 1px solid var(--warn);
+  border-radius: var(--radius-md);
+  background: var(--warn-subtle);
+  color: var(--text);
+}
+
+.runtime-task__history strong {
+  color: var(--warn);
+}
+
+.runtime-task__history [data-action='back-to-live'] {
+  margin-left: var(--space-3);
+  padding: 0 var(--space-3);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-md);
+  background: var(--bg-elevated);
+  color: var(--text);
+  cursor: pointer;
+}
+
+.runtime-task__connection {
+  margin: var(--space-2) 0;
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--danger);
+  border-radius: var(--radius-md);
+  background: var(--danger-subtle);
+  color: var(--text);
+}
+
+.runtime-task__connection strong {
+  color: var(--danger);
+}
+
+/* Safe-default confirmation dialog. */
+.runtime-confirm-dialog__overlay {
+  position: fixed;
+  inset: 0;
+  z-index: var(--z-modal, 400);
+  display: grid;
+  place-items: center;
+  padding: var(--space-4);
+  background: var(--overlay-backdrop);
+}
+
+.runtime-confirm-dialog {
+  width: min(480px, 100%);
+  padding: var(--space-4);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-lg);
+  background: var(--card);
+  color: var(--text);
+  box-shadow: var(--shadow-lg);
+}
+
+.runtime-confirm-dialog h2 {
+  margin: 0 0 var(--space-3);
+  font-size: 18px;
+}
+
+.runtime-confirm-dialog__body {
+  color: var(--text);
+}
+
+.runtime-confirm-dialog__body p {
+  margin: 0 0 var(--space-2);
+}
+
+.runtime-confirm-dialog__actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: var(--space-2);
+  margin-top: var(--space-4);
+}
+
+.runtime-confirm-dialog button {
+  min-block-size: 44px;
+  min-inline-size: 44px;
+  padding: 0 14px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-md);
+  background: var(--bg-elevated);
+  color: var(--text);
+  cursor: pointer;
+}
+
+.runtime-confirm-dialog button[data-action='primary'] {
+  border-color: var(--accent);
+  font-weight: 600;
+}
+
+.runtime-confirm-dialog button[data-action='danger'] {
+  border-color: var(--danger);
+  background: var(--danger-subtle);
+  color: var(--danger);
+}
+
+.runtime-confirm-dialog button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
+  box-shadow: var(--focus-ring);
+}
+
+/* Screen-reader-only announcements and loading skeleton. */
+.runtime-announcer,
+.runtime-sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.runtime-loading {
+  display: grid;
+  gap: var(--space-2);
+  margin-top: var(--space-4);
+}
+
+.runtime-loading span {
+  display: block;
+  height: 14px;
+  border-radius: var(--radius-sm);
+  background: var(--bg-hover);
+}
+
+.runtime-loading span:nth-child(2) {
+  width: 80%;
+}
+
+.runtime-loading span:nth-child(3) {
+  width: 60%;
+}
+
+@media (min-width: 980px) {
+  .runtime-seam {
+    position: relative;
+    display: flex;
+    align-self: stretch;
+    justify-content: center;
+    min-width: 24px;
+    min-height: 180px;
+  }
+
+  .runtime-seam__handle {
+    width: 12px;
+    height: 100%;
+    cursor: col-resize;
+    touch-action: none;
+  }
+
+  .runtime-seam__handle::after {
+    content: '';
+    display: block;
+    width: 2px;
+    height: 100%;
+    margin: auto;
+    background: var(--border-strong);
+  }
+
+  .runtime-seam__toggle {
+    position: absolute;
+    top: 50%;
+    width: 24px;
+    height: 44px;
+    padding: 0;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    background: var(--bg-elevated);
+    color: var(--text);
+    cursor: pointer;
+  }
+}
+
+@media (min-width: 600px) and (max-width: 979px) {
+  .runtime-task__devices-anchor {
+    display: inline-flex;
+    align-items: center;
+  }
+}
+
+@media (max-width: 979px) {
+  .runtime-workbench {
+    display: flex;
+    flex-direction: column;
+  }
+
+  .runtime-seam {
+    display: none;
+  }
+
+  .runtime-workbench__main {
+    order: 1;
+  }
+
+  .runtime-devices-panel,
+  .runtime-workbench .runtime-devices {
+    order: 3;
+    width: 100% !important;
+  }
+}
+
+@media (max-width: 599px) {
+  .runtime-view-tabs [data-view='devices'] {
+    display: inline-flex;
+    align-items: center;
+  }
+
+  .runtime-workbench[data-view='loop'] .runtime-devices-panel,
+  .runtime-workbench[data-view='flow'] .runtime-devices-panel {
+    display: none;
+  }
+
+  .runtime-workbench[data-view='devices'] .runtime-workbench__main {
+    display: none;
+  }
+
+  .runtime-task__devices-anchor {
+    display: none;
+  }
+}
+
+@media (max-width: 399px) {
+  .runtime-task-header {
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+    gap: var(--space-2);
+  }
+
+  .runtime-objective {
+    overflow-wrap: anywhere;
+  }
+
+  .runtime-task__navigation {
+    flex-wrap: wrap;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .runtime-workbench *,
+  .runtime-workbench *::before,
+  .runtime-workbench *::after {
+    animation: none !important;
+    scroll-behavior: auto !important;
+    transition: none !important;
+  }
+
+  .runtime-data-particles,
+  .runtime-workbench .flow-particle {
+    display: none;
+  }
+}

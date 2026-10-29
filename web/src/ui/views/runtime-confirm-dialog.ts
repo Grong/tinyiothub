@@ -15,13 +15,24 @@ export class RuntimeConfirmDialog extends LitElement {
   @property({ attribute: false }) body: string | TemplateResult = '';
   @property() primaryLabel = 'Keep running';
   @property() dangerLabel = 'Cancel task';
-  @property({ type: Boolean }) busy = false;
 
   private readonly titleId = `runtime-confirm-dialog-title-${++dialogCount}`;
   private readonly bodyId = `runtime-confirm-dialog-body-${dialogCount}`;
 
   createRenderRoot() {
     return this;
+  }
+
+  connectedCallback(): void {
+    super.connectedCallback();
+    document.addEventListener('keydown', this.onDocumentKeydown, true);
+    document.addEventListener('focusin', this.onDocumentFocusIn, true);
+  }
+
+  disconnectedCallback(): void {
+    document.removeEventListener('keydown', this.onDocumentKeydown, true);
+    document.removeEventListener('focusin', this.onDocumentFocusIn, true);
+    super.disconnectedCallback();
   }
 
   protected firstUpdated(): void {
@@ -37,16 +48,15 @@ export class RuntimeConfirmDialog extends LitElement {
   }
 
   private close(): void {
-    if (this.busy) return;
     this.dispatchEvent(new CustomEvent('confirm-primary', { bubbles: true, composed: true }));
   }
 
   private confirmDanger(): void {
-    if (this.busy) return;
     this.dispatchEvent(new CustomEvent('confirm-danger', { bubbles: true, composed: true }));
   }
 
-  private onKeydown(event: KeyboardEvent): void {
+  private readonly onDocumentKeydown = (event: KeyboardEvent): void => {
+    if (!this.isConnected) return;
     if (event.key === 'Escape') {
       event.preventDefault();
       event.stopPropagation();
@@ -70,39 +80,33 @@ export class RuntimeConfirmDialog extends LitElement {
       event.preventDefault();
       first.focus();
     }
-  }
+  };
+
+  private readonly onDocumentFocusIn = (event: FocusEvent): void => {
+    if (!this.isConnected) return;
+    const target = event.target;
+    if (target instanceof Node && this.contains(target)) return;
+    this.primaryButton()?.focus();
+  };
 
   render() {
-    const style = html`<style>
-      runtime-confirm-dialog { display: block; }
-      .runtime-confirm-dialog__overlay {
-        position: fixed; inset: 0; z-index: 60; display: grid; place-items: center;
-        padding: var(--space-4, 16px); background: rgba(2, 6, 23, 0.62);
-      }
-      .runtime-confirm-dialog {
-        width: min(480px, 100%); padding: var(--space-4, 16px);
-        border: 1px solid var(--glass-border, rgba(148, 163, 184, 0.3));
-        border-radius: var(--radius-lg, 14px); background: var(--surface, #111827);
-        box-shadow: var(--shadow-lg, 0 24px 60px rgba(0, 0, 0, 0.45));
-      }
-      .runtime-confirm-dialog h2 { margin: 0 0 var(--space-3, 12px); font-size: 18px; }
-      .runtime-confirm-dialog__body { color: var(--text, #e5e7eb); }
-      .runtime-confirm-dialog__body p { margin: 0 0 var(--space-2, 8px); }
-      .runtime-confirm-dialog__actions { display: flex; flex-wrap: wrap; gap: var(--space-2, 8px); justify-content: flex-end; margin-top: var(--space-4, 16px); }
-      .runtime-confirm-dialog button { min-height: 38px; padding: 0 14px; border-radius: var(--radius-md, 10px); border: 1px solid var(--glass-border, rgba(148, 163, 184, 0.3)); background: var(--bg-subtle, rgba(255, 255, 255, 0.06)); color: inherit; cursor: pointer; }
-      .runtime-confirm-dialog button[data-action="primary"] { border-color: var(--accent, #38bdf8); font-weight: 600; }
-      .runtime-confirm-dialog button[data-action="danger"] { border-color: var(--danger, #ef4444); background: var(--danger-subtle, rgba(239, 68, 68, 0.12)); color: var(--danger, #ef4444); }
-      .runtime-confirm-dialog button:disabled { opacity: 0.55; cursor: default; }
-      .runtime-confirm-dialog button:focus-visible { outline: 2px solid var(--accent-glow-strong, #38bdf8); outline-offset: 2px; }
-    </style>`;
-    return html`${style}<div class="runtime-confirm-dialog__overlay" role="dialog" aria-modal="true"
-      aria-labelledby=${this.titleId} aria-describedby=${this.bodyId} @keydown=${this.onKeydown}>
+    return html`<div
+      class="runtime-confirm-dialog__overlay"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby=${this.titleId}
+      aria-describedby=${this.bodyId}
+    >
       <div class="runtime-confirm-dialog">
         <h2 id=${this.titleId}>${this.title}</h2>
         <div class="runtime-confirm-dialog__body" id=${this.bodyId}>${this.body}</div>
         <div class="runtime-confirm-dialog__actions">
-          <button type="button" data-action="primary" ?disabled=${this.busy} @click=${this.close}>${this.primaryLabel}</button>
-          <button type="button" data-action="danger" ?disabled=${this.busy} @click=${this.confirmDanger}>${this.dangerLabel}</button>
+          <button type="button" data-action="primary" @click=${this.close}>
+            ${this.primaryLabel}
+          </button>
+          <button type="button" data-action="danger" @click=${this.confirmDanger}>
+            ${this.dangerLabel}
+          </button>
         </div>
       </div>
     </div>`;

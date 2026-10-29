@@ -7,6 +7,7 @@ import './runtime-playback.css';
 @customElement('runtime-playback')
 export class RuntimePlayback extends LitElement {
   @property({ attribute: false }) descriptor?: PlaybackDescriptor;
+  @property() alt = 'Live camera frame';
   @state() private unavailable = false;
 
   private hls?: Hls;
@@ -91,14 +92,28 @@ export class RuntimePlayback extends LitElement {
   render() {
     return html`
       <div class="runtime-playback">
-        ${this.descriptor?.protocol === 'mjpeg'
-          ? html`<img class="runtime-playback__media" alt="Live camera frame" .src=${this.descriptor.url} />`
-          : this.descriptor?.protocol === 'hls'
-            ? html`<video class="runtime-playback__media" controls preload="none" playsinline aria-label="Live camera video"></video>`
-            : nothing}
-        ${this.unavailable
-          ? html`<p class="runtime-playback__unavailable" role="status">Playback unavailable</p>`
-          : nothing}
+        ${
+          this.descriptor?.protocol === 'mjpeg'
+            ? html`<img
+                class="runtime-playback__media"
+                alt=${this.alt}
+                .src=${this.descriptor.url}
+              />`
+            : this.descriptor?.protocol === 'hls'
+              ? html`<video
+                  class="runtime-playback__media"
+                  controls
+                  preload="none"
+                  playsinline
+                  aria-label="Live camera video"
+                ></video>`
+              : nothing
+        }
+        ${
+          this.unavailable
+            ? html`<p class="runtime-playback__unavailable" role="status">Playback unavailable</p>`
+            : nothing
+        }
         <p class="runtime-playback__captions">Captions unavailable</p>
       </div>
     `;
