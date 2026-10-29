@@ -3,6 +3,7 @@ use std::sync::Arc;
 use dashmap::DashMap;
 use tinyiothub_core::agent_runs::{EndReason, Outcome, RunReport};
 use tinyiothub_core::agent_task::{AgentTask, TaskStatus, TaskStoreError, TaskWake};
+use tinyiothub_core::device_job::DeviceJob;
 use tinyiothub_core::watch::WatchRule;
 use tinyiothub_runtime::job::service::JobService;
 use tinyiothub_runtime::ports::WatchRuleStore;
@@ -235,12 +236,22 @@ impl TaskCoordinator {
         } else {
             TaskStatus::Cancelled
         };
-        // Cancellation is a terminal transition too: remove owned rules from
-        // persistence and the live engine before the Task leaves Cancelling.
-        self.delete_owned_watches(&task.workspace_id, &task.id).await?;
+        // Commit the durable transition first. If the CAS loses, the Task is not
+        // terminal, so the live engine and its persisted rules must stay intact.
         self.store
             .transition_task(&task.workspace_id, &task.id, task.state_version, terminal, None)
             .await?;
+        match self.collect_owned_watches(&task.workspace_id, &task.id).await {
+            Ok(owned_rules) => {
+                self.send_watch_removals(&task.workspace_id, &owned_rules).await;
+            }
+            Err(error) => {
+                tracing::warn!(task_id = %task.id, %error, "Terminal cancellation watch discovery failed");
+            }
+        }
+        if let Err(error) = self.delete_owned_watch_rows(&task.workspace_id, &task.id).await {
+            tracing::warn!(task_id = %task.id, %error, "Terminal cancellation watch cleanup failed");
+        }
         Ok(())
     }
 
@@ -380,6 +391,7 @@ impl TaskCoordinator {
                 self.finish_cancellation(&task).await?;
                 return Ok(Advance::Recorded);
             }
+            let mut terminal_job: Option<DeviceJob> = None;
             let signal: WakeSignal = if approval_decision {
                 if task.status == TaskStatus::NeedsApproval {
                     task = self
@@ -424,6 +436,7 @@ impl TaskCoordinator {
                         job.state.as_str()
                     )));
                 }
+                terminal_job = Some(job.clone());
                 WakeSignal {
                     workspace_id: task.workspace_id.clone(),
                     priority: crate::runtime::thing_agent::types::Priority::Normal,
@@ -446,7 +459,7 @@ impl TaskCoordinator {
                 return self.steer_existing(run_id, wake_event_id, signal).await;
             }
             let run_id = format!("run_{}", uuid::Uuid::new_v4().simple());
-            self.start_run(task, wake, signal, run_id).await
+            self.start_run(task, wake, signal, run_id, terminal_job).await
         })
     }
 
@@ -475,6 +488,7 @@ impl TaskCoordinator {
         wake: TaskWake,
         signal: WakeSignal,
         run_id: String,
+        terminal_job: Option<DeviceJob>,
     ) -> Result<Advance, TaskError> {
         let ctx = RunContext {
             active_runs: Some(self.active_runs.clone()),
@@ -506,17 +520,19 @@ impl TaskCoordinator {
         let spawned_run_id = run_id.clone();
         tokio::spawn(async move {
             coordinator
-                .execute_run(task, wake, signal, spawned_run_id, ctx, cancel, guard)
+                .execute_run(task, wake, signal, terminal_job, spawned_run_id, ctx, cancel, guard)
                 .await;
         });
         Ok(Advance::Started { run_id })
     }
 
+    #[allow(clippy::too_many_arguments)]
     async fn execute_run(
         &self,
         task: AgentTask,
         wake: TaskWake,
         signal: WakeSignal,
+        terminal_job: Option<DeviceJob>,
         run_id: String,
         ctx: RunContext,
         cancel: CancellationToken,
@@ -595,6 +611,7 @@ impl TaskCoordinator {
             &approval_facts,
             snapshot.as_deref().unwrap_or(""),
             Some(&signal),
+            terminal_job.as_ref(),
         );
         let report = if cancel.is_cancelled() {
             RunReport {
@@ -656,7 +673,12 @@ impl TaskCoordinator {
                 tracing::warn!(run_id = %report.run_id, %error, "Task run final report lost to a newer state");
                 return;
             }
+            // A transient persistence failure must not emit a phantom RunRecorded
+            // or settle the Task on an unpersisted outcome. Requeue the wake so
+            // the router can retry after the store recovers.
             tracing::warn!(run_id = %report.run_id, %error, "Task run final report persistence failed");
+            self.requeue_wake(&task.id, &wake.event_id).await;
+            return;
         }
         self.reports.entry(task.id.clone()).or_default().push(report.clone());
         self.events.emit(AgentEventKind::RunRecorded {
@@ -664,13 +686,13 @@ impl TaskCoordinator {
             problem_key: None,
             dedup_key: signal.dedup_key.clone(),
         });
-        self.finish_task_run_with_steering(&task, &run_id, report.outcome, undelivered)
+        self.finish_task_run_with_steering(&task, &run_id, report.outcome, undelivered, &wake.event_id)
             .await;
     }
 
     #[cfg(test)]
-    async fn finish_task_run(&self, task: &AgentTask, run_id: &str, outcome: Outcome) {
-        self.finish_task_run_with_steering(task, run_id, outcome, Vec::new())
+    async fn finish_task_run(&self, task: &AgentTask, run_id: &str, wake_event_id: &str, outcome: Outcome) {
+        self.finish_task_run_with_steering(task, run_id, outcome, Vec::new(), wake_event_id)
             .await;
     }
 
@@ -680,9 +702,20 @@ impl TaskCoordinator {
         run_id: &str,
         outcome: Outcome,
         undelivered: Vec<String>,
+        wake_event_id: &str,
     ) {
-        let Ok(Some(current)) = self.store.get_task(&task.workspace_id, &task.id).await else {
-            return;
+        let current = match self.store.get_task(&task.workspace_id, &task.id).await {
+            Ok(Some(current)) => current,
+            Ok(None) => {
+                tracing::warn!(task_id = %task.id, "Task run teardown found no Task");
+                self.requeue_wake(&task.id, wake_event_id).await;
+                return;
+            }
+            Err(error) => {
+                tracing::warn!(task_id = %task.id, %error, "Task run teardown read failed");
+                self.requeue_wake(&task.id, wake_event_id).await;
+                return;
+            }
         };
         if current.current_run_id.as_deref() != Some(run_id) {
             return;
@@ -692,6 +725,7 @@ impl TaskCoordinator {
             Err(TaskStoreError::ConcurrentUpdate) => return,
             Err(error) => {
                 tracing::warn!(task_id = %task.id, %error, "Task run binding cleanup failed");
+                self.requeue_wake(&task.id, wake_event_id).await;
                 return;
             }
         };
@@ -771,6 +805,7 @@ impl TaskCoordinator {
             Ok(None) => TaskStatus::Completed,
             Err(error) => {
                 tracing::warn!(task_id = %task.id, %error, "Task waiting relationship read failed");
+                self.requeue_wake(&task.id, wake_event_id).await;
                 return;
             }
         };
@@ -778,8 +813,9 @@ impl TaskCoordinator {
             tracing::warn!(task_id = %current.id, from = ?current.status, to = ?next, %error, "Task completion requested an illegal transition");
             return;
         }
-        // Collect and stop owned rules before the terminal transition: once the
-        // Task is terminal a live rule must already be unable to fire.
+        // Read the owned rules first (no side effects), then commit the durable
+        // transition. Only a successful CAS may stop the live rules or delete
+        // their rows: if the CAS loses, the Task is still waiting on them.
         let owned_rules = if next.is_terminal() {
             match self.collect_owned_watches(&current.workspace_id, &current.id).await {
                 Ok(rules) => rules,
@@ -791,34 +827,46 @@ impl TaskCoordinator {
         } else {
             Vec::new()
         };
-        if next.is_terminal() {
-            self.send_watch_removals(&current.workspace_id, &owned_rules).await;
-        }
         match self
             .store
             .transition_task(&current.workspace_id, &current.id, current.state_version, next, None)
             .await
         {
             Ok(_) => {
-                if next.is_terminal()
-                    && let Err(error) = self.delete_owned_watch_rows(&current.workspace_id, &current.id).await
-                {
-                    tracing::warn!(task_id = %current.id, %error, "Terminal Task watch cleanup failed");
+                if next.is_terminal() {
+                    self.send_watch_removals(&current.workspace_id, &owned_rules).await;
+                    if let Err(error) = self.delete_owned_watch_rows(&current.workspace_id, &current.id).await {
+                        tracing::warn!(task_id = %current.id, %error, "Terminal Task watch cleanup failed");
+                    }
                 }
             }
             Err(error) => {
                 tracing::debug!(task_id = %task.id, %error, "Task completion lost to a newer state");
+                if !matches!(error, TaskStoreError::ConcurrentUpdate) {
+                    self.requeue_wake(&task.id, wake_event_id).await;
+                }
             }
         }
     }
 
-    /// Remove every watch owned by a Task from both persistence and the live
-    /// watch engine. Called on every terminal transition (completed, failed,
-    /// and cancelled) so a finished Task can never fire a stale rule.
-    async fn delete_owned_watches(&self, workspace_id: &str, task_id: &str) -> Result<(), TaskError> {
-        let owned_rules = self.collect_owned_watches(workspace_id, task_id).await?;
-        self.send_watch_removals(workspace_id, &owned_rules).await;
-        self.delete_owned_watch_rows(workspace_id, task_id).await
+    /// Put a wake back on the outbox after a transient teardown failure so the
+    /// router can retry. `mark_wake` never overwrites an explicit requeue with
+    /// a later "dispatched" acknowledgement from the original dispatch.
+    async fn requeue_wake(&self, task_id: &str, event_id: &str) {
+        if event_id.is_empty() {
+            return;
+        }
+        if let Err(error) = self
+            .store
+            .mark_wake(
+                task_id,
+                event_id,
+                tinyiothub_core::agent_task::WakeDispatchState::Pending,
+            )
+            .await
+        {
+            tracing::warn!(%task_id, event_id, %error, "Task wake requeue failed");
+        }
     }
 
     async fn collect_owned_watches(&self, workspace_id: &str, task_id: &str) -> Result<Vec<WatchRule>, TaskError> {
@@ -903,6 +951,10 @@ pub(crate) mod tests {
         state: Mutex<MemoryState>,
         bind_gate: Mutex<Option<(Arc<tokio::sync::Notify>, Arc<tokio::sync::Notify>)>>,
         finish_run_conflicts: Mutex<usize>,
+        finish_run_failures: Mutex<usize>,
+        bind_failures: Mutex<usize>,
+        get_task_failures: Mutex<usize>,
+        transition_conflicts: Mutex<usize>,
     }
 
     impl MemoryTasks {
@@ -947,6 +999,13 @@ pub(crate) mod tests {
         }
 
         async fn get_task(&self, workspace_id: &str, task_id: &str) -> Result<Option<AgentTask>, TaskStoreError> {
+            {
+                let mut failures = self.get_task_failures.lock().expect("get task failures");
+                if *failures > 0 {
+                    *failures -= 1;
+                    return Err(TaskStoreError::Unavailable("injected get_task failure".into()));
+                }
+            }
             Ok(self
                 .state
                 .lock()
@@ -1020,6 +1079,13 @@ pub(crate) mod tests {
             next: TaskStatus,
             wake: Option<&TaskWake>,
         ) -> Result<AgentTask, TaskStoreError> {
+            {
+                let mut conflicts = self.transition_conflicts.lock().expect("transition conflicts");
+                if *conflicts > 0 {
+                    *conflicts -= 1;
+                    return Err(TaskStoreError::ConcurrentUpdate);
+                }
+            }
             let mut state = self.state.lock().expect("tasks");
             let task = state
                 .tasks
@@ -1047,6 +1113,13 @@ pub(crate) mod tests {
             expected_version: i64,
             run_id: Option<&str>,
         ) -> Result<AgentTask, TaskStoreError> {
+            {
+                let mut failures = self.bind_failures.lock().expect("bind failures");
+                if *failures > 0 {
+                    *failures -= 1;
+                    return Err(TaskStoreError::Unavailable("injected bind failure".into()));
+                }
+            }
             let task = {
                 let mut state = self.state.lock().expect("tasks");
                 let task = state.tasks.get_mut(task_id).ok_or(TaskStoreError::ConcurrentUpdate)?;
@@ -1095,6 +1168,13 @@ pub(crate) mod tests {
         }
 
         async fn finish_run(&self, report: &RunReport) -> Result<(), TaskStoreError> {
+            {
+                let mut failures = self.finish_run_failures.lock().expect("finish run failures");
+                if *failures > 0 {
+                    *failures -= 1;
+                    return Err(TaskStoreError::Unavailable("injected finish_run failure".into()));
+                }
+            }
             let mut conflicts = self.finish_run_conflicts.lock().expect("finish run conflicts");
             if *conflicts > 0 {
                 *conflicts -= 1;
@@ -1178,6 +1258,12 @@ pub(crate) mod tests {
                 .wakes
                 .get_mut(&(task_id.into(), event_id.into()))
             {
+                if next == WakeDispatchState::Dispatched && wake.dispatched_at.is_none() {
+                    // The Run explicitly requeued this wake after a teardown
+                    // failure; the original dispatch acknowledgement must not
+                    // overwrite that retry.
+                    return Ok(());
+                }
                 wake.dispatch_state = next;
                 wake.dispatched_at = match next {
                     WakeDispatchState::Dispatched => Some(Utc::now()),
@@ -1892,7 +1978,7 @@ pub(crate) mod tests {
         let fixture = Fixture::new(running.clone());
         fixture
             .coordinator
-            .finish_task_run(&running, "run_existing", Outcome::Acted)
+            .finish_task_run(&running, "run_existing", "event_test", Outcome::Acted)
             .await;
         assert_eq!(fixture.store.task("task_1").status, TaskStatus::Completed);
         let outcome = fixture.coordinator.cancel("ws_1", "task_1").await.expect("late cancel");
@@ -2145,6 +2231,79 @@ pub(crate) mod tests {
     }
 
     #[tokio::test]
+    async fn transient_finish_run_error_requeues_the_wake_without_recording() {
+        let fixture = Fixture::new(task(TaskStatus::Active));
+        *fixture.store.finish_run_failures.lock().expect("finish run failures") = 1;
+        let mut events = fixture.events.subscribe();
+        fixture.add_wake("event_transient");
+        fixture
+            .coordinator
+            .advance("task_1", "event_transient")
+            .await
+            .expect("advance");
+        tokio::time::timeout(std::time::Duration::from_secs(1), async {
+            while *fixture.provider.calls.lock().expect("calls") == 0 {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("run executed");
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+
+        assert_eq!(fixture.store.task("task_1").status, TaskStatus::Active);
+        assert!(
+            fixture.store.state.lock().expect("tasks").reports.is_empty(),
+            "an unpersisted report must not be recorded"
+        );
+        let wake = fixture.store.wake("task_1", "event_transient");
+        assert_eq!(
+            wake.dispatch_state,
+            WakeDispatchState::Pending,
+            "a transient report failure must requeue the wake"
+        );
+        assert!(wake.dispatched_at.is_none());
+        while let Ok(event) = events.try_recv() {
+            assert!(
+                !matches!(event.kind, AgentEventKind::RunRecorded { .. }),
+                "an unpersisted report must not be emitted"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn transient_teardown_read_or_bind_error_requeues_the_wake() {
+        for failure in ["get_task", "bind"] {
+            let mut running = task(TaskStatus::Active);
+            running.current_run_id = Some("run_existing".into());
+            let fixture = Fixture::new(running.clone());
+            fixture.add_wake("event_teardown");
+            fixture.store.claim_pending_wakes(10).await.expect("claim wake");
+            fixture
+                .store
+                .mark_wake("task_1", "event_teardown", WakeDispatchState::Dispatched)
+                .await
+                .expect("dispatch wake");
+            match failure {
+                "get_task" => *fixture.store.get_task_failures.lock().expect("failures") = 1,
+                "bind" => *fixture.store.bind_failures.lock().expect("failures") = 1,
+                _ => unreachable!(),
+            }
+            fixture
+                .coordinator
+                .finish_task_run(&running, "run_existing", "event_teardown", Outcome::Acted)
+                .await;
+            let wake = fixture.store.wake("task_1", "event_teardown");
+            assert_eq!(
+                wake.dispatch_state,
+                WakeDispatchState::Pending,
+                "{failure}: teardown errors must requeue"
+            );
+            assert!(wake.dispatched_at.is_none(), "{failure}");
+            assert_eq!(fixture.store.task("task_1").status, TaskStatus::Active, "{failure}");
+        }
+    }
+
+    #[tokio::test]
     async fn successful_run_waits_for_owned_watch_instead_of_completing() {
         let fixture = Fixture::new(task(TaskStatus::Active));
         fixture.watches.insert(&owned_watch("watch_1")).await.expect("watch");
@@ -2315,7 +2474,7 @@ pub(crate) mod tests {
         fixture.watches.insert(&owned_watch("watch_1")).await.expect("watch");
         fixture
             .coordinator
-            .finish_task_run(&running, "run_existing", Outcome::Failed)
+            .finish_task_run(&running, "run_existing", "event_test", Outcome::Failed)
             .await;
         assert_eq!(
             fixture.store.task("task_1").status,
@@ -2341,7 +2500,7 @@ pub(crate) mod tests {
         let fixture = Fixture::new_with_jobs(running.clone(), Some(jobs));
         fixture
             .coordinator
-            .finish_task_run(&running, "run_existing", Outcome::Failed)
+            .finish_task_run(&running, "run_existing", "event_test", Outcome::Failed)
             .await;
         assert_eq!(fixture.store.task("task_1").status, TaskStatus::WaitingJob);
 
@@ -2379,7 +2538,7 @@ pub(crate) mod tests {
         fixture.watches.insert(&stale).await.expect("other watch");
         fixture
             .coordinator
-            .finish_task_run(&running, "run_existing", Outcome::Failed)
+            .finish_task_run(&running, "run_existing", "event_test", Outcome::Failed)
             .await;
         assert_eq!(fixture.store.task("task_1").status, TaskStatus::Failed);
         assert_eq!(
@@ -2400,6 +2559,53 @@ pub(crate) mod tests {
         assert!(outcome.accepted);
         assert!(token.is_cancelled());
         assert_eq!(fixture.store.task("task_1").status, TaskStatus::Cancelled);
+    }
+
+    #[tokio::test]
+    async fn cancellation_transition_losing_its_cas_keeps_live_and_durable_watches_usable() {
+        let mut cancelling = task(TaskStatus::Cancelling);
+        cancelling.state_version = 2;
+        let fixture = Fixture::new(cancelling.clone());
+        fixture.watches.insert(&owned_watch("watch_1")).await.expect("watch");
+        let (commands, mut received) = mpsc::channel(4);
+        fixture.watch_cmds.insert("ws_1".into(), commands);
+
+        // A stale Task snapshot loses the CAS: the live rule and its durable row
+        // must not be stopped, because the Task is still in Cancelling.
+        let mut stale = cancelling.clone();
+        stale.state_version = 1;
+        let error = fixture
+            .coordinator
+            .finish_cancellation(&stale)
+            .await
+            .expect_err("stale cancellation must lose the CAS");
+        assert!(
+            matches!(error, TaskError::Store(TaskStoreError::ConcurrentUpdate)),
+            "{error:?}"
+        );
+        assert_eq!(fixture.store.task("task_1").status, TaskStatus::Cancelling);
+        assert_eq!(
+            fixture.watches.rules.lock().expect("watches").len(),
+            1,
+            "a failed CAS must leave the durable rule in place"
+        );
+        assert!(received.try_recv().is_err(), "a failed CAS must not stop the live rule");
+
+        // The retry succeeds and only then removes the live rule and its row.
+        fixture
+            .coordinator
+            .finish_cancellation(&fixture.store.task("task_1"))
+            .await
+            .expect("cancellation retry");
+        assert_eq!(fixture.store.task("task_1").status, TaskStatus::Cancelled);
+        assert!(
+            matches!(
+                received.try_recv(),
+                Ok(crate::runtime::thing_agent::WatchCommand::Remove(id)) if id == "watch_1"
+            ),
+            "the successful transition must stop the live rule"
+        );
+        assert!(fixture.watches.rules.lock().expect("watches").is_empty());
     }
 
     #[tokio::test]
@@ -2548,7 +2754,7 @@ pub(crate) mod tests {
         let fixture = Fixture::new_with_jobs(running.clone(), Some(jobs));
         fixture
             .coordinator
-            .finish_task_run(&running, "run_existing", Outcome::Acted)
+            .finish_task_run(&running, "run_existing", "event_test", Outcome::Acted)
             .await;
         assert_eq!(fixture.store.task("task_1").status, TaskStatus::WaitingWatch);
     }
@@ -2561,7 +2767,7 @@ pub(crate) mod tests {
         fixture.watches.insert(&owned_watch("watch_1")).await.expect("watch");
         fixture
             .coordinator
-            .finish_task_run(&running, "run_existing", Outcome::Acted)
+            .finish_task_run(&running, "run_existing", "event_test", Outcome::Acted)
             .await;
         assert_eq!(fixture.store.task("task_1").status, TaskStatus::WaitingJob);
     }

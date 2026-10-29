@@ -738,7 +738,8 @@ impl Db {
              SET dispatch_state = ?,
                  dispatched_at = CASE ? WHEN 'dispatched' THEN ? WHEN 'pending' THEN NULL ELSE dispatched_at END,
                  resolved_at = CASE ? WHEN 'dead' THEN ? WHEN 'pending' THEN NULL ELSE resolved_at END
-             WHERE task_id = ? AND event_id = ? AND resolved_at IS NULL",
+             WHERE task_id = ? AND event_id = ? AND resolved_at IS NULL
+               AND (? != 'dispatched' OR dispatched_at IS NOT NULL)",
         )
         .bind(state)
         .bind(state)
@@ -747,6 +748,7 @@ impl Db {
         .bind(now)
         .bind(task_id)
         .bind(event_id)
+        .bind(state)
         .execute(self.pool())
         .await
         .map_err(unavailable)?

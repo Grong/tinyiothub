@@ -202,6 +202,7 @@ fn task_prompt_is_complete_and_deterministic() {
         &fixture.approvals,
         &fixture.snapshot,
         None,
+        None,
     );
     let b = build_task_prompt(
         &fixture.task,
@@ -210,6 +211,7 @@ fn task_prompt_is_complete_and_deterministic() {
         &fixture.watches,
         &fixture.approvals,
         &fixture.snapshot,
+        None,
         None,
     );
     assert_eq!(a, b, "prompt is not deterministic");

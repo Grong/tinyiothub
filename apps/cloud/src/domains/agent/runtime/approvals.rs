@@ -1177,13 +1177,19 @@ mod tests {
     async fn terminal_job_wakes_start_one_continuation_for_done_stopped_and_interrupted() {
         use tinyiothub_runtime::job::service::JobFinal;
 
-        for (label, final_result, expected_state) in [
-            ("done", JobFinal::Done(json!({"level":7})), "done"),
-            ("stopped", JobFinal::Cancelled { within_grace: true }, "cancelled"),
+        for (label, final_result, expected_state, expected_result) in [
+            (
+                "done",
+                JobFinal::Done(json!({"level": 7, "persisted": true})),
+                "done",
+                Some("\"level\":7"),
+            ),
+            ("stopped", JobFinal::Cancelled { within_grace: true }, "cancelled", None),
             (
                 "interrupted",
                 JobFinal::Interrupted("device connection lost".into()),
                 "interrupted",
+                None,
             ),
         ] {
             let fixture = fixture().await;
@@ -1225,6 +1231,17 @@ mod tests {
                 assert_eq!(prompts.len(), 1, "{label}");
                 assert!(prompts[0].contains(job_id), "{label}: {}", prompts[0]);
                 assert!(prompts[0].contains(expected_state), "{label}: {}", prompts[0]);
+                assert!(
+                    prompts[0].contains("Terminal Job result"),
+                    "{label}: the continuation must include terminal Job facts"
+                );
+                if let Some(expected_result) = expected_result {
+                    assert!(
+                        prompts[0].contains(expected_result),
+                        "{label}: the persisted Job result must reach the continuation prompt: {}",
+                        prompts[0]
+                    );
+                }
             }
             provider.release.notify_waiters();
             let completed = wait_for_task_status(&fixture.db, task_id, TaskStatus::Completed).await;

@@ -1,7 +1,7 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use tinyiothub_core::agent_task::{AgentTask, WakeDispatchState};
+use tinyiothub_core::agent_task::{AgentTask, TaskStatus, WakeDispatchState};
 use tinyiothub_core::device_job::DeviceJob;
 use tinyiothub_core::driver::declaration::DeviceDeclaration;
 use tinyiothub_core::driver::manifest::DriverManifest;
@@ -11,6 +11,19 @@ use crate::Db;
 use crate::error::{DbError, Result};
 
 pub const RUNTIME_EVENT_KIND: &str = "runtime.v1";
+
+/// Exact production page query. Shared with the EXPLAIN regression test so an
+/// edit that makes the bounded page non-indexable cannot pass unnoticed.
+const RUNTIME_EVENTS_PAGE_SQL: &str = "SELECT id, workspace_id, ts, payload FROM hub_ledger
+             WHERE workspace_id = ? AND kind = ?
+               AND (? IS NULL OR id < ?)
+               AND json_extract(payload, '$.taskId') = ?
+             ORDER BY id DESC LIMIT ?";
+
+/// Exact event-id dedupe predicate used inside `append_runtime_event_tx`.
+const RUNTIME_EVENT_DEDUPE_SQL: &str = "SELECT 1 FROM hub_ledger
+             WHERE workspace_id = ? AND kind = ?
+               AND json_extract(payload, '$.eventId') = ?";
 
 #[cfg(any(test, feature = "testing"))]
 #[derive(Debug, Default)]
@@ -484,24 +497,36 @@ async fn load_device_facts(
                         }
                     }
                 }
+                // A late interrupted/unknown Job event must not resurrect a
+                // projection that the terminal transition already deleted.
+                let terminal =
+                    sqlx::query_scalar::<_, String>("SELECT status FROM agent_tasks WHERE workspace_id = ? AND id = ?")
+                        .bind(workspace_id)
+                        .bind(task_id)
+                        .fetch_optional(&mut *connection)
+                        .await?
+                        .and_then(|status| TaskStatus::from_db(&status))
+                        .is_some_and(TaskStatus::is_terminal);
                 // Seed even an empty projection: a device whose first events
                 // carry only null values still needs a row, otherwise every new
                 // event replays the Task's whole ledger and `merge_device_state_delta`
                 // keeps treating the projection as unseeded.
-                sqlx::query(
-                    "INSERT INTO runtime_device_state
-                         (workspace_id, task_id, device_id, state_json, updated_at)
-                     VALUES (?, ?, ?, ?, ?)
-                     ON CONFLICT(workspace_id, task_id, device_id)
-                     DO UPDATE SET state_json = excluded.state_json, updated_at = excluded.updated_at",
-                )
-                .bind(workspace_id)
-                .bind(task_id)
-                .bind(device_id)
-                .bind(Value::Object(merged.clone()).to_string())
-                .bind(Utc::now().to_rfc3339())
-                .execute(&mut *connection)
-                .await?;
+                if !terminal {
+                    sqlx::query(
+                        "INSERT INTO runtime_device_state
+                             (workspace_id, task_id, device_id, state_json, updated_at)
+                         VALUES (?, ?, ?, ?, ?)
+                         ON CONFLICT(workspace_id, task_id, device_id)
+                         DO UPDATE SET state_json = excluded.state_json, updated_at = excluded.updated_at",
+                    )
+                    .bind(workspace_id)
+                    .bind(task_id)
+                    .bind(device_id)
+                    .bind(Value::Object(merged.clone()).to_string())
+                    .bind(Utc::now().to_rfc3339())
+                    .execute(&mut *connection)
+                    .await?;
+                }
                 Some(Value::Object(merged))
             }
         };
@@ -634,26 +659,25 @@ pub(crate) async fn append_runtime_event_tx(
         data: input.data,
     };
     let payload = encode_event_payload(&event)?;
-    let inserted = sqlx::query_as::<_, RuntimeLedgerRow>(
+    let insert_sql = format!(
         "INSERT INTO hub_ledger (workspace_id, ts, kind, thing_id, payload)
          SELECT ?, ?, ?, ?, ?
          WHERE NOT EXISTS (
-             SELECT 1 FROM hub_ledger
-             WHERE workspace_id = ? AND kind = ?
-               AND json_extract(payload, '$.eventId') = ?
+             {RUNTIME_EVENT_DEDUPE_SQL}
          )
-         RETURNING id, workspace_id, ts, payload",
-    )
-    .bind(&event.workspace_id)
-    .bind(event.occurred_at.to_rfc3339())
-    .bind(RUNTIME_EVENT_KIND)
-    .bind(&event.device_id)
-    .bind(&payload)
-    .bind(&event.workspace_id)
-    .bind(RUNTIME_EVENT_KIND)
-    .bind(&event.event_id)
-    .fetch_optional(&mut *connection)
-    .await?;
+         RETURNING id, workspace_id, ts, payload"
+    );
+    let inserted = sqlx::query_as::<_, RuntimeLedgerRow>(sqlx::AssertSqlSafe(insert_sql))
+        .bind(&event.workspace_id)
+        .bind(event.occurred_at.to_rfc3339())
+        .bind(RUNTIME_EVENT_KIND)
+        .bind(&event.device_id)
+        .bind(&payload)
+        .bind(&event.workspace_id)
+        .bind(RUNTIME_EVENT_KIND)
+        .bind(&event.event_id)
+        .fetch_optional(&mut *connection)
+        .await?;
     let inserted_new = inserted.is_some();
     let row = match inserted {
         Some(row) => row,
@@ -754,21 +778,15 @@ impl Db {
         limit: i64,
     ) -> Result<RuntimeEventPage> {
         let limit = limit.clamp(1, 200);
-        let mut rows = sqlx::query_as::<_, RuntimeLedgerRow>(
-            "SELECT id, workspace_id, ts, payload FROM hub_ledger
-             WHERE workspace_id = ? AND kind = ?
-               AND (? IS NULL OR id < ?)
-               AND json_extract(payload, '$.taskId') = ?
-             ORDER BY id DESC LIMIT ?",
-        )
-        .bind(workspace_id)
-        .bind(RUNTIME_EVENT_KIND)
-        .bind(before)
-        .bind(before)
-        .bind(task_id)
-        .bind(limit + 1)
-        .fetch_all(self.pool())
-        .await?;
+        let mut rows = sqlx::query_as::<_, RuntimeLedgerRow>(RUNTIME_EVENTS_PAGE_SQL)
+            .bind(workspace_id)
+            .bind(RUNTIME_EVENT_KIND)
+            .bind(before)
+            .bind(before)
+            .bind(task_id)
+            .bind(limit + 1)
+            .fetch_all(self.pool())
+            .await?;
         let has_more = rows.len() > limit as usize;
         rows.truncate(limit as usize);
         let events = rows.into_iter().map(decode_event).collect::<Result<Vec<_>>>()?;
@@ -1165,7 +1183,7 @@ mod tests {
     use tinyiothub_core::media::MediaEvidenceRecord;
 
     use crate::Db;
-    use crate::runtime_event::RuntimeEventInput;
+    use crate::runtime_event::{RUNTIME_EVENT_DEDUPE_SQL, RUNTIME_EVENTS_PAGE_SQL, RuntimeEventInput};
 
     async fn seed_workspace(pool: &SqlitePool, workspace_id: &str) {
         sqlx::query(
@@ -1298,39 +1316,38 @@ mod tests {
     async fn task_page_and_event_dedupe_queries_use_their_bounded_indexes() {
         let pool = crate::test_helpers::test_pool().await;
         seed_workspace(&pool, "ws-1").await;
-        let plan = |sql: &'static str| {
-            let pool = pool.clone();
-            async move {
-                sqlx::query_as::<_, (i64, i64, i64, String)>(sql)
-                    .fetch_all(&pool)
-                    .await
-                    .expect("query plan")
-                    .into_iter()
-                    .map(|(_, _, _, detail)| detail)
-                    .collect::<Vec<_>>()
-            }
-        };
-        let page = plan(
-            "EXPLAIN QUERY PLAN
-             SELECT id, workspace_id, ts, payload FROM hub_ledger
-             WHERE workspace_id = 'ws-1' AND kind = 'runtime.v1'
-               AND (NULL IS NULL OR id < NULL)
-               AND json_extract(payload, '$.taskId') = 'task-1'
-             ORDER BY id DESC LIMIT 51",
-        )
-        .await;
+        let page = sqlx::query_as::<_, (i64, i64, i64, String)>(sqlx::AssertSqlSafe(format!(
+            "EXPLAIN QUERY PLAN {RUNTIME_EVENTS_PAGE_SQL}"
+        )))
+        .bind("ws-1")
+        .bind(super::RUNTIME_EVENT_KIND)
+        .bind(None::<i64>)
+        .bind(None::<i64>)
+        .bind("task-1")
+        .bind(51_i64)
+        .fetch_all(&pool)
+        .await
+        .expect("page query plan")
+        .into_iter()
+        .map(|(_, _, _, detail)| detail)
+        .collect::<Vec<_>>();
         assert!(
             page.iter()
                 .any(|detail| detail.contains("idx_hub_ledger_runtime_task_page")),
             "{page:?}"
         );
-        let dedupe = plan(
-            "EXPLAIN QUERY PLAN
-             SELECT 1 FROM hub_ledger
-             WHERE workspace_id = 'ws-1' AND kind = 'runtime.v1'
-               AND json_extract(payload, '$.eventId') = 'event-1'",
-        )
-        .await;
+        let dedupe = sqlx::query_as::<_, (i64, i64, i64, String)>(sqlx::AssertSqlSafe(format!(
+            "EXPLAIN QUERY PLAN {RUNTIME_EVENT_DEDUPE_SQL}"
+        )))
+        .bind("ws-1")
+        .bind(super::RUNTIME_EVENT_KIND)
+        .bind("event-1")
+        .fetch_all(&pool)
+        .await
+        .expect("dedupe query plan")
+        .into_iter()
+        .map(|(_, _, _, detail)| detail)
+        .collect::<Vec<_>>();
         assert!(
             dedupe
                 .iter()
@@ -1681,6 +1698,33 @@ mod tests {
         .await
         .expect("updated projection");
         assert_eq!(state, r#"{"temperature":"22"}"#);
+    }
+
+    #[tokio::test]
+    async fn late_device_event_does_not_reseed_a_terminal_task_projection() {
+        let pool = crate::test_helpers::test_pool().await;
+        seed_workspace(&pool, "ws-1").await;
+        let db = Db::new(pool);
+        seed_task(&db, "ws-1", "task-1").await;
+        sqlx::query("UPDATE agent_tasks SET status = 'failed' WHERE id = 'task-1'")
+            .execute(db.pool())
+            .await
+            .expect("terminal Task");
+
+        let mut late = event("late-terminal", "task-1");
+        late.event_type = "read_device".into();
+        late.device_id = Some("dev-late".into());
+        late.data = json!({"state":{"temperature":"22"}});
+        db.append_runtime_event(late).await.expect("late append");
+
+        let rows: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM runtime_device_state
+             WHERE workspace_id = 'ws-1' AND task_id = 'task-1' AND device_id = 'dev-late'",
+        )
+        .fetch_one(db.pool())
+        .await
+        .expect("projection rows");
+        assert_eq!(rows, 0, "a terminal Task must not regain a device projection");
     }
 
     #[tokio::test]

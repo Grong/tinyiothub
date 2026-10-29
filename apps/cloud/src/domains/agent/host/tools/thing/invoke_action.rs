@@ -12,11 +12,26 @@ use tinyiothub_agent::runtime::thing_agent::seams::approval::{
     ApprovalDecision, ApprovalInput, ApprovalSeam, DefaultApproval,
 };
 use tinyiothub_agent::runtime::thing_agent::{ArbitrationRegistry, DEFAULT_LEASE_TTL};
+use tinyiothub_core::device_job::DeviceJobState;
 use tinyiothub_runtime::access::resources::ResourceResolver;
 use tinyiothub_skills::trust::ToolSafety;
 
 use super::{PendingActionStore, resource_specs, store_pending_action, tool_err, tool_ok, validate_action_params};
 use crate::domains::thing::service::ThingService;
+
+/// Human-facing status for a deduplicated response. `jobState` stays the
+/// authoritative machine value; `status` must not call an interrupted or
+/// physically unknown Job "accepted".
+fn deduped_status(state: DeviceJobState) -> &'static str {
+    match state {
+        DeviceJobState::Accepted | DeviceJobState::Running => "accepted",
+        DeviceJobState::Done => "completed",
+        DeviceJobState::Failed => "failed",
+        DeviceJobState::Rejected => "rejected",
+        DeviceJobState::Cancelled => "cancelled",
+        DeviceJobState::CancelledUnknown | DeviceJobState::Interrupted => "unknown",
+    }
+}
 
 pub struct InvokeActionTool {
     // pub(crate) so the T11 autonomous variant (tools/autonomous_invoke.rs,
@@ -91,7 +106,7 @@ impl InvokeActionTool {
                 return tool_ok(json!({
                     "thingId": thing_id,
                     "actionName": action_name,
-                    "status": "accepted",
+                    "status": deduped_status(existing.state),
                     "jobId": existing.id,
                     "jobState": existing.state.as_str(),
                     "deduplicated": true,
@@ -124,7 +139,7 @@ impl InvokeActionTool {
             return tool_ok(json!({
                 "thingId": thing_id,
                 "actionName": action_name,
-                "status": "accepted",
+                "status": deduped_status(existing.state),
                 "jobId": existing.id,
                 "jobState": existing.state.as_str(),
                 "deduplicated": true,

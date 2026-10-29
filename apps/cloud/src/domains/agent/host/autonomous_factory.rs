@@ -900,6 +900,15 @@ mod tests {
             let output: serde_json::Value = serde_json::from_str(&output.output).expect("tool output");
             assert_eq!(output["jobId"], "job:run-old:dev-1:1", "{state}: {output}");
             assert_eq!(output["jobState"], state, "{state}: {output}");
+            assert_eq!(
+                output["status"],
+                if state == "accepted" || state == "running" {
+                    "accepted"
+                } else {
+                    "unknown"
+                },
+                "{state}: status must be derived from the physical Job state: {output}"
+            );
             assert_eq!(output["deduplicated"], true, "{state}: {output}");
             assert_eq!(job_rows(&pool).await, 1, "{state} must not create a Job");
             assert!(
@@ -923,6 +932,113 @@ mod tests {
             worker.submitted.lock().expect("submitted").as_slice(),
             ["job:run-2:dev-1:1".to_string()]
         );
+    }
+
+    #[tokio::test]
+    async fn recovery_dedupe_only_matches_the_exact_device_tool_and_arguments() {
+        let pool = test_pool().await;
+        let db = Arc::new(tinyiothub_storage::Db::new(pool.clone()));
+        seed_task_owned_device(&pool, &db, "ws-exact", "dev-1", "task-1", "run-old", false).await;
+        sqlx::query("INSERT INTO things (id, name, workspace_id, thing_type) VALUES ('dev-2', 'Thing dev-2', 'ws-exact', 'device')")
+            .execute(&pool)
+            .await
+            .expect("second device");
+        sqlx::query(
+            "INSERT INTO thing_actions (id, thing_id, name) VALUES ('act-set-level-dev-2', 'dev-2', 'set_level')",
+        )
+        .execute(&pool)
+        .await
+        .expect("second device action");
+        sqlx::query(
+            "INSERT INTO thing_actions (id, thing_id, name) VALUES ('act-set-mode-dev-1', 'dev-1', 'set_mode')",
+        )
+        .execute(&pool)
+        .await
+        .expect("second tool");
+        let worker = Arc::new(SubmittingWorker::default());
+        let jobs = job_service(&db, worker.clone());
+        jobs.submit(tinyiothub_runtime::job::service::JobRequest {
+            job_id: Some("job:run-old:dev-1:1".into()),
+            workspace_id: "ws-exact".into(),
+            device_id: "dev-1".into(),
+            tool: "set_level".into(),
+            args_json: serde_json::json!({"level": 7}),
+            task_id: Some("task-1".into()),
+            run_id: Some("run-old".into()),
+            tool_call_id: Some("run-old:dev-1:1".into()),
+        })
+        .await
+        .expect("seed in-flight Job");
+        worker.submitted.lock().expect("submitted").clear();
+
+        let run_ctx = task_run_context("ws-exact", "task-1", "run-new").await;
+        let tools = build_autonomous_tools(
+            &pool,
+            "ws-exact",
+            db.clone(),
+            new_run_context_slot(Arc::clone(&run_ctx)),
+            Arc::new(ThingEventBus::new()),
+            Arc::new(ThrottleState::new(60)),
+            &ThingToolContext {
+                pending_actions: Some(Arc::new(dashmap::DashMap::new())),
+                jobs: Some(jobs.clone()),
+                ..Default::default()
+            },
+        );
+        let call = call_device(&tools);
+
+        // Mirror the runner's dispatch-time counter: each call gets the next
+        // per-device sequence, so the three negative cases cannot collide on
+        // the stable tool-call id and mask the args/device/tool filter.
+        for (label, args, device, sequence) in [
+            (
+                "different arguments",
+                serde_json::json!({"thingId":"dev-1","action":"set_level","params":{"level":8}}),
+                "dev-1",
+                1,
+            ),
+            (
+                "different device",
+                serde_json::json!({"thingId":"dev-2","action":"set_level","params":{"level":7}}),
+                "dev-2",
+                1,
+            ),
+            (
+                "different tool",
+                serde_json::json!({"thingId":"dev-1","action":"set_mode","params":{"level":7}}),
+                "dev-1",
+                2,
+            ),
+        ] {
+            run_ctx.write().await.action_counts.insert(device.to_string(), sequence);
+            let output = call.execute(args).await.expect("new action");
+            assert!(
+                output.success,
+                "{label}: {}",
+                output.error.unwrap_or_else(|| "tool failed without an error".into())
+            );
+            let output: serde_json::Value = serde_json::from_str(&output.output).expect("tool output");
+            assert_ne!(output["jobId"], "job:run-old:dev-1:1", "{label}: {output}");
+            assert!(output.get("deduplicated").is_none(), "{label}: {output}");
+            assert_eq!(
+                worker.submitted.lock().expect("submitted").len(),
+                match label {
+                    "different arguments" => 1,
+                    "different device" => 2,
+                    _ => 3,
+                },
+                "{label}: the action must be submitted"
+            );
+            assert_eq!(
+                job_rows(&pool).await,
+                match label {
+                    "different arguments" => 2,
+                    "different device" => 3,
+                    _ => 4,
+                },
+                "{label}: a distinct action must create a distinct Job"
+            );
+        }
     }
 
     #[tokio::test]
