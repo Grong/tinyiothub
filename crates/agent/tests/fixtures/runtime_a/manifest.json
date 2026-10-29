@@ -1,0 +1,14 @@
+{
+  "workspaceId": "ws_fixture_a",
+  "devices": [
+    {
+      "id": "dev_zone_a",
+      "name": "Zone A controller",
+      "sources": ["temperature", "valve"],
+      "initial": {
+        "temperature": 31.5,
+        "valve": "closed"
+      }
+    }
+  ]
+}

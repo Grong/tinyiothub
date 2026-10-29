@@ -44,7 +44,7 @@
   border: 0;
   border-radius: var(--radius-full);
   background: transparent;
-  color: var(--muted);
+  color: var(--runtime-muted);
   cursor: pointer;
 }
 
@@ -64,7 +64,7 @@
   border: 1px solid var(--border-strong);
   border-radius: var(--radius-full);
   background: transparent;
-  color: var(--accent);
+  color: var(--runtime-link);
   cursor: pointer;
 }
 
@@ -104,7 +104,7 @@
   padding-top: var(--space-3);
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
-  color: var(--muted);
+  color: var(--runtime-muted);
 }
 
 .runtime-devices-rail span {
@@ -122,7 +122,7 @@
 }
 
 .runtime-task__history strong {
-  color: var(--warn);
+  color: var(--runtime-warn);
 }
 
 .runtime-task__history [data-action='back-to-live'] {
@@ -145,7 +145,7 @@
 }
 
 .runtime-task__connection strong {
-  color: var(--danger);
+  color: var(--runtime-danger);
 }
 
 /* Safe-default confirmation dialog. */

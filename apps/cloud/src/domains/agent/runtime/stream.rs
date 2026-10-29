@@ -1,6 +1,8 @@
 use std::collections::{HashSet, VecDeque};
 use std::convert::Infallible;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::Instant;
 
 use axum::extract::{Extension, Path, Query, State};
 use axum::response::sse::{Event, KeepAlive, Sse};
@@ -134,6 +136,24 @@ pub struct RuntimeStreamHub {
     senders: DashMap<String, Sender<RuntimeEvent>>,
     connections: Arc<DashMap<String, usize>>,
     capacity: usize,
+    connections_opened: AtomicU64,
+    connections_closed: AtomicU64,
+    resyncs: AtomicU64,
+    duplicates_dropped: AtomicU64,
+    first_frames: AtomicU64,
+    first_frame_ms_total: AtomicU64,
+}
+
+#[derive(Debug, Clone, Default, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RuntimeStreamMetrics {
+    pub active_connections: u64,
+    pub connections_opened: u64,
+    pub connections_closed: u64,
+    pub resyncs: u64,
+    pub duplicates_dropped: u64,
+    pub first_frames: u64,
+    pub first_frame_ms_total: u64,
 }
 
 impl RuntimeStreamHub {
@@ -142,7 +162,44 @@ impl RuntimeStreamHub {
             senders: DashMap::new(),
             connections: Arc::new(DashMap::new()),
             capacity: capacity.max(1),
+            connections_opened: AtomicU64::new(0),
+            connections_closed: AtomicU64::new(0),
+            resyncs: AtomicU64::new(0),
+            duplicates_dropped: AtomicU64::new(0),
+            first_frames: AtomicU64::new(0),
+            first_frame_ms_total: AtomicU64::new(0),
         }
+    }
+
+    pub fn metrics(&self) -> RuntimeStreamMetrics {
+        RuntimeStreamMetrics {
+            active_connections: self.connections.iter().map(|entry| *entry.value() as u64).sum(),
+            connections_opened: self.connections_opened.load(Ordering::Relaxed),
+            connections_closed: self.connections_closed.load(Ordering::Relaxed),
+            resyncs: self.resyncs.load(Ordering::Relaxed),
+            duplicates_dropped: self.duplicates_dropped.load(Ordering::Relaxed),
+            first_frames: self.first_frames.load(Ordering::Relaxed),
+            first_frame_ms_total: self.first_frame_ms_total.load(Ordering::Relaxed),
+        }
+    }
+
+    fn record_duplicate(&self) {
+        self.duplicates_dropped.fetch_add(1, Ordering::Relaxed);
+    }
+
+    fn record_resync(&self, reason: &str) {
+        self.resyncs.fetch_add(1, Ordering::Relaxed);
+        tracing::warn!(metric = "runtime_sse_resync", reason, "runtime stream resync");
+    }
+
+    fn record_first_frame(&self, elapsed_ms: u64) {
+        self.first_frames.fetch_add(1, Ordering::Relaxed);
+        self.first_frame_ms_total.fetch_add(elapsed_ms, Ordering::Relaxed);
+        tracing::info!(
+            metric = "runtime_sse_first_frame",
+            elapsed_ms,
+            "runtime stream first frame"
+        );
     }
 
     fn sender(&self, workspace_id: &str) -> Sender<RuntimeEvent> {
@@ -219,7 +276,15 @@ impl RuntimeStreamHub {
                 }
             }
         }
-        let guard = ConnectionGuard::new(self.connections.clone(), workspace_id.to_string());
+        let guard = ConnectionGuard::new(self, workspace_id.to_string());
+        self.connections_opened.fetch_add(1, Ordering::Relaxed);
+        tracing::info!(
+            metric = "runtime_sse_connected",
+            %workspace_id,
+            %task_id,
+            active = self.active_connections(workspace_id),
+            "runtime stream connected"
+        );
         Ok(RuntimeConnection {
             db,
             workspace_id: workspace_id.to_string(),
@@ -228,6 +293,9 @@ impl RuntimeStreamHub {
             pending,
             last_cursor: cursor,
             seen: HashSet::new(),
+            hub: self.clone(),
+            connected_at: Instant::now(),
+            first_frame: false,
             _guard: guard,
         })
     }
@@ -240,15 +308,15 @@ impl Default for RuntimeStreamHub {
 }
 
 struct ConnectionGuard {
-    connections: Arc<DashMap<String, usize>>,
+    hub: Arc<RuntimeStreamHub>,
     workspace_id: String,
 }
 
 impl ConnectionGuard {
-    fn new(connections: Arc<DashMap<String, usize>>, workspace_id: String) -> Self {
-        *connections.entry(workspace_id.clone()).or_insert(0) += 1;
+    fn new(hub: &Arc<RuntimeStreamHub>, workspace_id: String) -> Self {
+        *hub.connections.entry(workspace_id.clone()).or_insert(0) += 1;
         Self {
-            connections,
+            hub: hub.clone(),
             workspace_id,
         }
     }
@@ -256,10 +324,17 @@ impl ConnectionGuard {
 
 impl Drop for ConnectionGuard {
     fn drop(&mut self) {
-        if let Some(mut count) = self.connections.get_mut(&self.workspace_id) {
+        let connections = &self.hub.connections;
+        if let Some(mut count) = connections.get_mut(&self.workspace_id) {
             *count = count.saturating_sub(1);
         }
-        self.connections.remove_if(&self.workspace_id, |_, count| *count == 0);
+        connections.remove_if(&self.workspace_id, |_, count| *count == 0);
+        self.hub.connections_closed.fetch_add(1, Ordering::Relaxed);
+        tracing::info!(
+            metric = "runtime_sse_disconnected",
+            workspace_id = %self.workspace_id,
+            "runtime stream disconnected"
+        );
     }
 }
 
@@ -271,16 +346,28 @@ pub struct RuntimeConnection {
     pending: VecDeque<RuntimeFrame>,
     last_cursor: i64,
     seen: HashSet<String>,
+    hub: Arc<RuntimeStreamHub>,
+    connected_at: Instant,
+    first_frame: bool,
     _guard: ConnectionGuard,
 }
 
 impl RuntimeConnection {
+    fn record_first_frame(&mut self) {
+        if !self.first_frame {
+            self.first_frame = true;
+            self.hub
+                .record_first_frame(self.connected_at.elapsed().as_millis() as u64);
+        }
+    }
+
     pub async fn next_frame(&mut self) -> Option<RuntimeFrame> {
         loop {
             if let Some(frame) = self.pending.pop_front() {
                 if let RuntimeFrame::Event { event } = &frame {
                     self.seen.insert(event.event_id.clone());
                 }
+                self.record_first_frame();
                 return Some(frame);
             }
             match self.events.recv().await {
@@ -289,6 +376,7 @@ impl RuntimeConnection {
                         || event.cursor <= self.last_cursor
                         || self.seen.contains(&event.event_id)
                     {
+                        self.hub.record_duplicate();
                         continue;
                     }
                     if event.cursor > self.last_cursor + 1 && self.missed_task_event_before(&event).await? {
@@ -303,6 +391,7 @@ impl RuntimeConnection {
                     }
                     self.last_cursor = event.cursor;
                     self.seen.insert(event.event_id.clone());
+                    self.record_first_frame();
                     return Some(RuntimeFrame::Event { event: Box::new(event) });
                 }
                 Err(RecvError::Lagged(skipped)) => {
@@ -337,6 +426,7 @@ impl RuntimeConnection {
     }
 
     async fn resync(&mut self, reason: &str) -> Option<RuntimeFrame> {
+        self.hub.record_resync(reason);
         let projection = self
             .db
             .runtime_projection(&self.workspace_id, &self.task_id)

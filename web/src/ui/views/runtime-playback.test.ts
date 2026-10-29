@@ -48,7 +48,7 @@ function descriptor(id: string, protocol: PlaybackDescriptor['protocol'] = 'hls'
     url: protocol === 'hls'
       ? `https://camera.example/${id}.m3u8`
       : `https://camera.example/${id}.mjpg`,
-    expiresAt: '2026-10-27T10:05:00Z',
+    expiresAt: '2099-10-27T10:05:00Z',
   };
 }
 

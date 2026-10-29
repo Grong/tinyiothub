@@ -1,0 +1,389 @@
+//! Runtime drain readiness, rollout gauges, and unknown-Job dispositions.
+//!
+//! Rollout drain observes durable rows only. It never changes Task status in
+//! bulk: cancellation still goes through the existing per-Task Cancel path.
+
+use serde::Serialize;
+use tinyiothub_core::device_job::DeviceJobError;
+
+use crate::Db;
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RuntimeDrainCounts {
+    pub nonterminal_tasks: u64,
+    pub active_runs: u64,
+    pub active_jobs: u64,
+    pub active_watches: u64,
+    pub pending_approvals: u64,
+    pub pending_outbox: u64,
+    pub unresolved_unknown: u64,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TaskGauges {
+    pub active: u64,
+    pub waiting_job: u64,
+    pub waiting_watch: u64,
+    pub needs_approval: u64,
+    pub paused: u64,
+    pub cancelling: u64,
+    pub completed: u64,
+    pub failed: u64,
+    pub cancelled: u64,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ApprovalGauges {
+    pub pending: u64,
+    pub approved: u64,
+    pub rejected: u64,
+    pub expired: u64,
+    pub unavailable: u64,
+    pub oldest_pending_age_secs: u64,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OutboxGauges {
+    pub pending: u64,
+    pub dispatched: u64,
+    pub dead: u64,
+    pub oldest_pending_age_secs: u64,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct JobGauges {
+    pub accepted: u64,
+    pub running: u64,
+    pub done: u64,
+    pub failed: u64,
+    pub rejected: u64,
+    pub cancelled: u64,
+    pub cancelled_unknown: u64,
+    pub interrupted: u64,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WatchGauges {
+    pub active: u64,
+    pub total: u64,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EvidenceGauges {
+    pub count: u64,
+    pub bytes: u64,
+    pub expired: u64,
+}
+
+/// Durable gauges for rollout dashboards. These are observations, not quotas.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RuntimeMetrics {
+    pub drain: RuntimeDrainCounts,
+    pub tasks: TaskGauges,
+    pub approvals: ApprovalGauges,
+    pub outbox: OutboxGauges,
+    pub jobs: JobGauges,
+    pub watches: WatchGauges,
+    pub evidence: EvidenceGauges,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum UnknownDispositionOutcome {
+    Recorded,
+    AlreadyRecorded,
+    NotFound,
+    NotUnknown,
+}
+
+fn storage(error: impl std::fmt::Display) -> DeviceJobError {
+    DeviceJobError::Storage(error.to_string())
+}
+
+fn count(value: i64) -> u64 {
+    u64::try_from(value).unwrap_or(0)
+}
+
+async fn status_counts(
+    db: &Db,
+    sql: &'static str,
+    workspace_id: Option<&str>,
+) -> Result<Vec<(String, i64)>, DeviceJobError> {
+    sqlx::query_as::<_, (String, i64)>(sql)
+        .bind(workspace_id)
+        .bind(workspace_id)
+        .fetch_all(db.pool())
+        .await
+        .map_err(storage)
+}
+
+impl Db {
+    pub async fn runtime_drain_counts(&self, workspace_id: Option<&str>) -> Result<RuntimeDrainCounts, DeviceJobError> {
+        let (
+            nonterminal_tasks,
+            active_runs,
+            active_jobs,
+            active_watches,
+            pending_approvals,
+            pending_outbox,
+            unresolved_unknown,
+        ): (i64, i64, i64, i64, i64, i64, i64) = sqlx::query_as(
+            "SELECT
+               (SELECT COUNT(*) FROM agent_tasks t
+                 WHERE (? IS NULL OR t.workspace_id = ?)
+                   AND t.status NOT IN ('completed', 'failed', 'cancelled')),
+               (SELECT COUNT(*) FROM agent_tasks t
+                 WHERE (? IS NULL OR t.workspace_id = ?)
+                   AND t.current_run_id IS NOT NULL
+                   AND t.status NOT IN ('completed', 'failed', 'cancelled')),
+               (SELECT COUNT(*) FROM device_jobs j
+                 WHERE (? IS NULL OR j.workspace_id = ?) AND j.state IN ('accepted', 'running')),
+               (SELECT COUNT(*) FROM watch_rules w
+                 WHERE (? IS NULL OR w.workspace_id = ?) AND w.owner_task_id IS NOT NULL),
+               (SELECT COUNT(*) FROM task_approvals a
+                 WHERE (? IS NULL OR a.workspace_id = ?) AND a.state = 'pending'),
+               (SELECT COUNT(*) FROM task_wake_outbox o
+                 JOIN agent_tasks t ON t.id = o.task_id
+                 WHERE (? IS NULL OR t.workspace_id = ?)
+                   AND o.dispatch_state = 'pending' AND o.resolved_at IS NULL),
+               (SELECT COUNT(*) FROM device_jobs j
+                 WHERE (? IS NULL OR j.workspace_id = ?) AND j.state = 'cancelled_unknown'
+                   AND NOT EXISTS (
+                     SELECT 1 FROM runtime_unknown_dispositions d WHERE d.job_id = j.id
+                   ))",
+        )
+        .bind(workspace_id)
+        .bind(workspace_id)
+        .bind(workspace_id)
+        .bind(workspace_id)
+        .bind(workspace_id)
+        .bind(workspace_id)
+        .bind(workspace_id)
+        .bind(workspace_id)
+        .bind(workspace_id)
+        .bind(workspace_id)
+        .bind(workspace_id)
+        .bind(workspace_id)
+        .bind(workspace_id)
+        .bind(workspace_id)
+        .fetch_one(self.pool())
+        .await
+        .map_err(storage)?;
+        Ok(RuntimeDrainCounts {
+            nonterminal_tasks: count(nonterminal_tasks),
+            active_runs: count(active_runs),
+            active_jobs: count(active_jobs),
+            active_watches: count(active_watches),
+            pending_approvals: count(pending_approvals),
+            pending_outbox: count(pending_outbox),
+            unresolved_unknown: count(unresolved_unknown),
+        })
+    }
+
+    pub async fn runtime_metrics(&self, workspace_id: Option<&str>) -> Result<RuntimeMetrics, DeviceJobError> {
+        let drain = self.runtime_drain_counts(workspace_id).await?;
+        let task_rows = status_counts(
+            self,
+            "SELECT status, COUNT(*) FROM agent_tasks
+             WHERE (? IS NULL OR workspace_id = ?) GROUP BY status",
+            workspace_id,
+        )
+        .await?;
+        let approval_rows = status_counts(
+            self,
+            "SELECT state, COUNT(*) FROM task_approvals
+             WHERE (? IS NULL OR workspace_id = ?) GROUP BY state",
+            workspace_id,
+        )
+        .await?;
+        let outbox_rows = status_counts(
+            self,
+            "SELECT o.dispatch_state, COUNT(*) FROM task_wake_outbox o
+             JOIN agent_tasks t ON t.id = o.task_id
+             WHERE (? IS NULL OR t.workspace_id = ?)
+               AND (o.dispatch_state = 'dead' OR o.resolved_at IS NULL)
+             GROUP BY o.dispatch_state",
+            workspace_id,
+        )
+        .await?;
+        let job_rows = status_counts(
+            self,
+            "SELECT state, COUNT(*) FROM device_jobs
+             WHERE (? IS NULL OR workspace_id = ?) GROUP BY state",
+            workspace_id,
+        )
+        .await?;
+        let (watch_active, watch_total): (i64, i64) = sqlx::query_as(
+            "SELECT
+               COALESCE(SUM(CASE WHEN owner_task_id IS NOT NULL THEN 1 ELSE 0 END), 0),
+               COUNT(*)
+             FROM watch_rules WHERE (? IS NULL OR workspace_id = ?)",
+        )
+        .bind(workspace_id)
+        .bind(workspace_id)
+        .fetch_one(self.pool())
+        .await
+        .map_err(storage)?;
+        let (evidence_count, evidence_bytes, expired_evidence): (i64, i64, i64) = sqlx::query_as(
+            "SELECT COUNT(*), COALESCE(SUM(size_bytes), 0),
+                    COALESCE(SUM(CASE WHEN expires_at <= strftime('%Y-%m-%dT%H:%M:%fZ', 'now') THEN 1 ELSE 0 END), 0)
+             FROM media_evidence WHERE (? IS NULL OR workspace_id = ?)",
+        )
+        .bind(workspace_id)
+        .bind(workspace_id)
+        .fetch_one(self.pool())
+        .await
+        .map_err(storage)?;
+        let oldest_pending_approval: i64 = sqlx::query_scalar(
+            "SELECT COALESCE(MAX(0, CAST(strftime('%s', 'now') - strftime('%s', MIN(requested_at)) AS INTEGER)), 0)
+             FROM task_approvals WHERE (? IS NULL OR workspace_id = ?) AND state = 'pending'",
+        )
+        .bind(workspace_id)
+        .bind(workspace_id)
+        .fetch_one(self.pool())
+        .await
+        .map_err(storage)?;
+        let oldest_pending_outbox: i64 = sqlx::query_scalar(
+            "SELECT COALESCE(MAX(0, CAST(strftime('%s', 'now') - strftime('%s', MIN(o.created_at)) AS INTEGER)), 0)
+             FROM task_wake_outbox o JOIN agent_tasks t ON t.id = o.task_id
+             WHERE (? IS NULL OR t.workspace_id = ?)
+               AND o.dispatch_state = 'pending' AND o.resolved_at IS NULL",
+        )
+        .bind(workspace_id)
+        .bind(workspace_id)
+        .fetch_one(self.pool())
+        .await
+        .map_err(storage)?;
+
+        let mut tasks = TaskGauges::default();
+        for (state, value) in task_rows {
+            match state.as_str() {
+                "active" => tasks.active = count(value),
+                "waiting_job" => tasks.waiting_job = count(value),
+                "waiting_watch" => tasks.waiting_watch = count(value),
+                "needs_approval" => tasks.needs_approval = count(value),
+                "paused" => tasks.paused = count(value),
+                "cancelling" => tasks.cancelling = count(value),
+                "completed" => tasks.completed = count(value),
+                "failed" => tasks.failed = count(value),
+                "cancelled" => tasks.cancelled = count(value),
+                _ => {}
+            }
+        }
+        let mut approvals = ApprovalGauges {
+            oldest_pending_age_secs: count(oldest_pending_approval),
+            ..ApprovalGauges::default()
+        };
+        for (state, value) in approval_rows {
+            match state.as_str() {
+                "pending" => approvals.pending = count(value),
+                "approved" => approvals.approved = count(value),
+                "rejected" => approvals.rejected = count(value),
+                "expired" => approvals.expired = count(value),
+                "unavailable" => approvals.unavailable = count(value),
+                _ => {}
+            }
+        }
+        let mut outbox = OutboxGauges {
+            oldest_pending_age_secs: count(oldest_pending_outbox),
+            ..OutboxGauges::default()
+        };
+        for (state, value) in outbox_rows {
+            match state.as_str() {
+                "pending" => outbox.pending = count(value),
+                "dispatched" => outbox.dispatched = count(value),
+                "dead" => outbox.dead = count(value),
+                _ => {}
+            }
+        }
+        let mut jobs = JobGauges::default();
+        for (state, value) in job_rows {
+            match state.as_str() {
+                "accepted" => jobs.accepted = count(value),
+                "running" => jobs.running = count(value),
+                "done" => jobs.done = count(value),
+                "failed" => jobs.failed = count(value),
+                "rejected" => jobs.rejected = count(value),
+                "cancelled" => jobs.cancelled = count(value),
+                "cancelled_unknown" => jobs.cancelled_unknown = count(value),
+                "interrupted" => jobs.interrupted = count(value),
+                _ => {}
+            }
+        }
+        Ok(RuntimeMetrics {
+            drain,
+            tasks,
+            approvals,
+            outbox,
+            jobs,
+            watches: WatchGauges {
+                active: count(watch_active),
+                total: count(watch_total),
+            },
+            evidence: EvidenceGauges {
+                count: count(evidence_count),
+                bytes: count(evidence_bytes),
+                expired: count(expired_evidence),
+            },
+        })
+    }
+
+    /// Record an administrator's physical disposition for an unknown Job.
+    /// The Job row itself is not rewritten and no side effect is replayed.
+    pub async fn record_unknown_disposition(
+        &self,
+        workspace_id: &str,
+        job_id: &str,
+        disposition: &str,
+        recorded_by: &str,
+    ) -> Result<UnknownDispositionOutcome, DeviceJobError> {
+        let row: Option<(String, Option<String>, String)> =
+            sqlx::query_as("SELECT state, task_id, device_id FROM device_jobs WHERE workspace_id = ? AND id = ?")
+                .bind(workspace_id)
+                .bind(job_id)
+                .fetch_optional(self.pool())
+                .await
+                .map_err(storage)?;
+        let Some((state, task_id, device_id)) = row else {
+            return Ok(UnknownDispositionOutcome::NotFound);
+        };
+        if state != "cancelled_unknown" {
+            return Ok(UnknownDispositionOutcome::NotUnknown);
+        }
+        let affected = sqlx::query(
+            "INSERT OR IGNORE INTO runtime_unknown_dispositions
+                 (job_id, workspace_id, task_id, device_id, disposition, recorded_by, recorded_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?)",
+        )
+        .bind(job_id)
+        .bind(workspace_id)
+        .bind(task_id)
+        .bind(&device_id)
+        .bind(disposition)
+        .bind(recorded_by)
+        .bind(chrono::Utc::now())
+        .execute(self.pool())
+        .await
+        .map_err(storage)?
+        .rows_affected();
+        if affected == 1 {
+            tracing::info!(
+                metric = "runtime_unknown_disposition",
+                %workspace_id,
+                %job_id,
+                %device_id,
+                "unknown Job disposition recorded"
+            );
+            Ok(UnknownDispositionOutcome::Recorded)
+        } else {
+            Ok(UnknownDispositionOutcome::AlreadyRecorded)
+        }
+    }
+}

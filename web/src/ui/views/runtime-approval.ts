@@ -125,10 +125,14 @@ export class RuntimeApprovalView extends LitElement {
       </div>`;
     }
     if (state === 'approved') {
-      return html`<p class="runtime-approval__state" data-approval-state="approved">Approved${approval.deciderId ? ` · ${approval.deciderId}` : ''}${approval.decidedAt ? ` · ${approval.decidedAt}` : ''}</p>`;
+      return html`<p class="runtime-approval__state" data-approval-state="approved">
+        <span>Approved</span>${approval.deciderId ? html`<span> · ${approval.deciderId}</span>` : nothing}${approval.decidedAt ? html`<span> · ${approval.decidedAt}</span>` : nothing}
+      </p>`;
     }
     if (state === 'rejected') {
-      return html`<p class="runtime-approval__state" data-approval-state="rejected">Rejected${approval.deciderId ? ` · ${approval.deciderId}` : ''}${approval.decidedAt ? ` · ${approval.decidedAt}` : ''}</p>`;
+      return html`<p class="runtime-approval__state" data-approval-state="rejected">
+        <span>Rejected</span>${approval.deciderId ? html`<span> · ${approval.deciderId}</span>` : nothing}${approval.decidedAt ? html`<span> · ${approval.decidedAt}</span>` : nothing}
+      </p>`;
     }
     if (state === 'expired') {
       return html`<p class="runtime-approval__state" data-approval-state="expired">Expired · this approval request is no longer valid.</p>`;

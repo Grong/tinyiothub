@@ -55,7 +55,7 @@ export class RuntimeProjection {
   connection: RuntimeConnection = 'connecting';
   cursor = 0;
 
-  readonly frozenHistory: boolean;
+  frozenHistory: boolean;
   eventIds = new Set<string>();
   private baseSnapshot: TaskProjection;
   private baseCursor = 0;
@@ -99,6 +99,15 @@ export class RuntimeProjection {
 
   setConnection(connection: RuntimeConnection): void {
     this.connection = connection;
+  }
+
+  /** Keep already-rendered steps while a history snapshot freezes the projection. */
+  restoreHistorySteps(events: RuntimeEvent[]): void {
+    this.frozenHistory = true;
+    this.steps = [...events].sort(
+      (a, b) => a.cursor - b.cursor || a.eventId.localeCompare(b.eventId),
+    );
+    this.eventIds = new Set(this.steps.map((event) => event.eventId));
   }
 
   apply(event: RuntimeEvent): void {

@@ -19,10 +19,10 @@ runtime-playback {
 .runtime-playback__unavailable,
 .runtime-playback__captions {
   margin: 0;
-  color: var(--muted);
+  color: var(--runtime-muted, var(--muted));
   font-size: 12px;
 }
 
 .runtime-playback__unavailable {
-  color: #fbbf24;
+  color: var(--runtime-warn, var(--warn));
 }

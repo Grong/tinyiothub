@@ -1,0 +1,15 @@
+{
+  "taskId": "task_runtime_a",
+  "workspaceId": "ws_fixture_a",
+  "deviceId": "dev_zone_a",
+  "objective": "Read the greenhouse temperature, open the valve when above threshold, then verify",
+  "steps": [
+    {
+      "read": "temperature",
+      "if": { "operator": "gt", "value": 30 },
+      "then": [{ "write": "valve", "value": "open" }]
+    },
+    { "read": "valve", "expect": "open" }
+  ],
+  "expectedTools": ["read_device", "set_device", "read_device"]
+}

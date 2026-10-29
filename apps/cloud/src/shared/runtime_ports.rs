@@ -42,7 +42,29 @@ impl tinyiothub_runtime::ports::MediaEvidenceStore for DbMediaEvidenceStore {
         &self,
         row: &tinyiothub_core::media::MediaEvidenceRecord,
     ) -> Result<tinyiothub_core::media::MediaEvidenceRecord, tinyiothub_core::media::MediaError> {
-        let (stored, event) = self.db.put_media_evidence_and_event(row).await?;
+        let (stored, event) = match self.db.put_media_evidence_and_event(row).await {
+            Ok(value) => value,
+            Err(error) => {
+                tracing::warn!(
+                    metric = "runtime_evidence_failure",
+                    workspace_id = %row.workspace_id,
+                    device_id = %row.device_id,
+                    mime = %row.mime,
+                    %error,
+                    "media evidence persistence failed"
+                );
+                return Err(error);
+            }
+        };
+        tracing::info!(
+            metric = "runtime_evidence_stored",
+            workspace_id = %stored.workspace_id,
+            evidence_id = %stored.id,
+            device_id = %stored.device_id,
+            size_bytes = stored.size_bytes,
+            mime = %stored.mime,
+            "media evidence stored"
+        );
         if let (Some(recorder), Some(event)) = (&self.recorder, event) {
             recorder.publish(event);
         }
@@ -60,7 +82,16 @@ impl tinyiothub_runtime::ports::MediaEvidenceStore for DbMediaEvidenceStore {
         &self,
         now: chrono::DateTime<chrono::Utc>,
     ) -> Result<Vec<tinyiothub_core::media::MediaEvidenceRecord>, tinyiothub_core::media::MediaError> {
-        self.db.delete_expired_media(now).await
+        let deleted = self.db.delete_expired_media(now).await?;
+        if !deleted.is_empty() {
+            tracing::info!(
+                metric = "runtime_evidence_expired",
+                count = deleted.len(),
+                bytes = deleted.iter().map(|row| row.size_bytes).sum::<u64>(),
+                "expired media evidence removed"
+            );
+        }
+        Ok(deleted)
     }
 
     async fn storage_is_referenced(&self, path: &str) -> Result<bool, tinyiothub_core::media::MediaError> {

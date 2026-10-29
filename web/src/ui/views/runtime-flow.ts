@@ -30,10 +30,11 @@ export class RuntimeFlow extends LitElement {
       <h3>${channel.toUpperCase()}</h3>
       ${channel === 'data' ? this.reducedMotion
         ? html`<p class="flow-static"><span aria-hidden="true">●</span> Static data bus</p>`
-        : html`<span class="flow-particle" aria-hidden="true"></span><p class="flow-static flow-static--media"><span aria-hidden="true">●</span> Static data bus</p>`
+        : html`<span class="flow-particle runtime-data-particles" aria-hidden="true"></span><p class="flow-static flow-static--media"><span aria-hidden="true">●</span> Static data bus</p>`
         : html`<span class="flow-control-icon" aria-hidden="true">→</span>`}
       ${events.length ? html`<ol class="flow-lane__events">${events.map((event) => html`<li>
         <button type="button" data-event-id=${event.eventId} data-cursor=${event.cursor}
+          aria-label=${`Historical event ${event.eventId}`}
           @click=${() => this.selectEvent(event.eventId)}>
           <strong>${event.eventType}</strong><span>${event.deviceId ?? 'Task'}</span><small>Cursor ${event.cursor}</small>
         </button>

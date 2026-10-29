@@ -17,17 +17,17 @@ pub mod tasks;
 pub mod types;
 
 #[derive(Clone)]
-pub(crate) struct DbTaskStore {
+pub struct DbTaskStore {
     db: Arc<Db>,
     recorder: Option<stream::RuntimeRecorder>,
 }
 
 impl DbTaskStore {
-    pub(crate) fn new(db: Arc<Db>) -> Self {
+    pub fn new(db: Arc<Db>) -> Self {
         Self { db, recorder: None }
     }
 
-    pub(crate) fn with_recorder(mut self, recorder: stream::RuntimeRecorder) -> Self {
+    pub fn with_recorder(mut self, recorder: stream::RuntimeRecorder) -> Self {
         self.recorder = Some(recorder);
         self
     }
@@ -47,6 +47,13 @@ impl TaskStore for DbTaskStore {
         wake: &TaskWake,
     ) -> Result<CreateTaskOutcome, TaskStoreError> {
         let (outcome, event) = self.db.create_task_with_wake_and_event(task, wake).await?;
+        tracing::info!(
+            metric = "runtime_task_created",
+            workspace_id = %task.workspace_id,
+            task_id = %task.id,
+            created_by = %task.created_by,
+            "runtime task created"
+        );
         self.publish(event);
         Ok(outcome)
     }
@@ -91,6 +98,14 @@ impl TaskStore for DbTaskStore {
             .db
             .transition_task_and_event(workspace_id, task_id, expected_version, next, wake)
             .await?;
+        tracing::info!(
+            metric = "runtime_task_transition",
+            workspace_id = %workspace_id,
+            task_id = %task_id,
+            status = ?task.status,
+            state_version = task.state_version,
+            "runtime task transition"
+        );
         self.publish(event);
         Ok(task)
     }
@@ -111,6 +126,15 @@ impl TaskStore for DbTaskStore {
 
     async fn begin_run(&self, task: &AgentTask, wake_event_id: &str, run_id: &str) -> Result<bool, TaskStoreError> {
         let (started, event) = self.db.begin_run_and_event(task, wake_event_id, run_id).await?;
+        if started {
+            tracing::info!(
+                metric = "runtime_run_started",
+                workspace_id = %task.workspace_id,
+                task_id = %task.id,
+                run_id = %run_id,
+                "runtime run started"
+            );
+        }
         if let Some(event) = event {
             self.publish(event);
         }
@@ -119,6 +143,15 @@ impl TaskStore for DbTaskStore {
 
     async fn finish_run(&self, report: &RunReport) -> Result<(), TaskStoreError> {
         let event = self.db.finish_run_and_event(report).await?;
+        tracing::info!(
+            metric = "runtime_run_final",
+            workspace_id = %report.workspace_id,
+            run_id = %report.run_id,
+            outcome = ?report.outcome,
+            duration_ms = report.duration_ms,
+            verified = report.verified,
+            "runtime run final"
+        );
         self.publish(event);
         Ok(())
     }

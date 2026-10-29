@@ -11,7 +11,8 @@
     "lint": "eslint src/",
     "lint:fix": "eslint src/ --fix",
     "format": "prettier --write \"src/**/*.{ts,js,json,css}\"",
-    "format:check": "prettier --check \"src/**/*.{ts,js,json,css}\""
+    "format:check": "prettier --check \"src/**/*.{ts,js,json,css}\"",
+    "test:browser": "playwright test"
   },
   "dependencies": {
     "@lit-labs/signals": "^0.2.0",
@@ -26,6 +27,8 @@
     "three": "^0.184.0"
   },
   "devDependencies": {
+    "@axe-core/playwright": "4.10.2",
+    "@playwright/test": "1.56.1",
     "@types/dompurify": "^3.2.0",
     "@types/node": "^22.10.5",
     "@vitest/browser": "^4.0.18",

@@ -191,6 +191,9 @@ impl JobService {
             ended_at: None,
         };
         self.inner.store.create_job(&job).await?;
+        tracing::info!(metric="runtime_job_accepted", workspace_id=%job.workspace_id,
+            task_id=?job.task_id, run_id=?job.run_id, job_id=%job.id,
+            device_id=%job.device_id, "device job accepted");
         self.inner.workspaces.insert(job.id.clone(), job.workspace_id.clone());
         self.notification(&job.id);
         self.restore_deadline(&job);
@@ -305,6 +308,9 @@ impl JobService {
         if !inserted {
             return Ok(Some(job));
         }
+        tracing::info!(metric="runtime_job_accepted", workspace_id=%job.workspace_id,
+            task_id=?job.task_id, run_id=?job.run_id, job_id=%job.id,
+            device_id=%job.device_id, approved=true, "device job accepted");
         let cmd = ThingCommand {
             id: job.id.clone(),
             thing_id: job.device_id.clone(),
@@ -393,6 +399,12 @@ impl JobService {
                 worker.complete_job(&job.id);
             }
             self.notify(&job.id);
+            tracing::info!(metric="runtime_job_final", workspace_id=%job.workspace_id,
+                task_id=?job.task_id, run_id=?job.run_id, job_id=%job.id,
+                device_id=%job.device_id, state=?job.state, "runtime job final");
+            tracing::info!(metric="runtime_job_duration", job_id=%job.id,
+                state=?job.state, duration_ms=(chrono::Utc::now() - job.started_at).num_milliseconds().max(0),
+                "runtime job duration");
         }
         Ok(FinishOutcome {
             wake_created: transitioned && wake_created,

@@ -4,25 +4,98 @@ view-runtime-task {
 .runtime-task {
   width: 100%;
   min-width: 0;
+  /* Runtime-local text colors keep AA contrast in both themes without
+     changing the shared design tokens. */
+  --runtime-link: var(--accent);
+  --runtime-muted: var(--muted);
+  --runtime-warn: var(--warn);
+  --runtime-danger: var(--danger);
+}
+:root[data-theme='light'] .runtime-task {
+  --runtime-link: #0369a1;
+  --runtime-muted: #52525b;
+  --runtime-warn: #92400e;
+  --runtime-danger: #b91c1c;
+}
+:root:not([data-theme='light']) .runtime-task {
+  --runtime-muted: #a1a1aa;
 }
 .runtime-task__navigation {
   display: flex;
   gap: var(--space-3);
   margin-bottom: var(--space-3);
 }
-.runtime-task__navigation a {
-  color: var(--accent);
+.runtime-task__navigation a,
+.runtime-task__switch {
+  color: var(--runtime-link);
+}
+.runtime-task__switch {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  font: inherit;
+  text-decoration: underline;
+  cursor: pointer;
+}
+.runtime-task__playback-actions {
+  margin: var(--space-2) 0;
+}
+.runtime-task__playback-actions button {
+  min-height: 44px;
+  padding: 0 14px;
+  border: 1px solid var(--glass-border, rgba(148, 163, 184, 0.3));
+  border-radius: var(--radius-md, 10px);
+  background: var(--bg-subtle, rgba(255, 255, 255, 0.06));
+  color: inherit;
+  cursor: pointer;
+}
+.runtime-task__switch-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  display: grid;
+  place-items: center;
+  padding: var(--space-3);
+  background: rgba(0, 0, 0, 0.55);
+}
+.runtime-task__switch-dialog {
+  width: min(560px, 100%);
+  max-height: 80vh;
+  overflow: auto;
+  padding: var(--space-4);
+  border: 1px solid var(--glass-border, rgba(148, 163, 184, 0.3));
+  border-radius: var(--radius-lg, 14px);
+  background: var(--surface, #111827);
+  color: var(--text, inherit);
+}
+.runtime-task__switch-dialog [role='option'] {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  width: 100%;
+  min-height: 44px;
+  margin: 4px 0;
+  padding: 8px 12px;
+  border: 1px solid var(--glass-border, rgba(148, 163, 184, 0.3));
+  border-radius: var(--radius-md, 10px);
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.runtime-task__switch-dialog [role='option'][aria-selected='true'] {
+  border-color: var(--accent);
 }
 .runtime-task h1 {
   margin-bottom: var(--space-2);
 }
 .runtime-task__status,
 .runtime-task__intervention {
-  color: var(--muted);
+  color: var(--runtime-muted);
 }
 .runtime-task__intervention.has-approval,
 .runtime-task__error {
-  color: var(--danger);
+  color: var(--runtime-danger);
 }
 .runtime-task__details {
   margin: var(--space-3) 0;

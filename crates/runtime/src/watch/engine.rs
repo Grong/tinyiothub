@@ -191,6 +191,13 @@ impl WatchEngine {
             });
             self.append_ledger(&rule.workspace_id, "watch_timeout", Some(&thing_id), payload)
                 .await;
+            tracing::info!(
+                metric = "runtime_watch_timeout",
+                workspace_id = %rule.workspace_id,
+                rule_id = %rule.id,
+                thing_id = %thing_id,
+                "watch timeout"
+            );
             self.remove_rule(&id);
             self.retire_persisted(&rule, "timeout", None, None, None).await;
         }
@@ -212,6 +219,13 @@ impl WatchEngine {
             let payload = json!({ "v": 1, "rule_id": rule.id, "reason": "thing_deleted" });
             self.append_ledger(&rule.workspace_id, "watch_expired", Some(thing_id), payload)
                 .await;
+            tracing::info!(
+                metric = "runtime_watch_expired",
+                workspace_id = %rule.workspace_id,
+                rule_id = %rule.id,
+                thing_id = %thing_id,
+                "watch expired"
+            );
             self.remove_rule(&id);
             self.retire_persisted(&rule, "invalid", None, None, None).await;
         }
@@ -308,6 +322,15 @@ impl WatchEngine {
         });
         self.append_ledger(&rule.workspace_id, "watch_hit", Some(&thing_id), payload)
             .await;
+        tracing::info!(
+            metric = "runtime_watch_hit",
+            workspace_id = %rule.workspace_id,
+            rule_id = %rule.id,
+            thing_id = %thing_id,
+            owner_task_id = ?rule.owner_task_id,
+            persistent = rule.persistent,
+            "watch hit"
+        );
         let wake_value = Some(current_value.to_string());
         let wake_health = Some(health_str(summary.health).to_string());
         let wake_zone = Some(summary.zone.clone());

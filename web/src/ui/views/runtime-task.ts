@@ -1,17 +1,21 @@
 import { LitElement, html, nothing, type PropertyValues } from 'lit';
 import { customElement, property, state } from 'lit/decorators.js';
 import { ApiError, getWorkspaceId } from '../../api/client.js';
-import { getRuntimeTask } from '../../api/runtime.js';
+import { getPlaybackDescriptor } from '../../api/playback.js';
+import { getRuntimeTask, listRuntimeTasks } from '../../api/runtime.js';
 import { connectRuntimeStream } from '../../api/runtime-stream.js';
 import type {
   DeviceJobState,
   PlaybackDescriptor,
+  RuntimeEvent,
+  RuntimeTask,
   TaskProjection,
   TaskStatus,
 } from '../../types/runtime.js';
 import { RuntimeProjection, type RuntimeConnection } from './runtime-projection.js';
 import {
   isHistoryState,
+  switchTaskUrl,
   toLiveRuntimeTaskUrl,
   toRuntimeTaskUrl,
   type RuntimeHistory,
@@ -64,9 +68,17 @@ export class RuntimeTaskView extends LitElement {
   @state() private announcement = '';
   @state() private mobilePanel: RuntimePanel | null = null;
   @state() private mobile = false;
+  @state() private playbackError = '';
+  @state() private playbackLoading = false;
+  @state() private switchOpen = false;
+  @state() private switchTasks: RuntimeTask[] = [];
+  @state() private switchLoading = false;
+  @state() private switchError = '';
 
   private generation = 0;
   private abort: AbortController | null = null;
+  private playbackAbort: AbortController | null = null;
+  private switchAbort: AbortController | null = null;
   private closeStream: (() => void) | null = null;
   private historyEventId = '';
   private historyOccurredAt = '';
@@ -134,9 +146,21 @@ export class RuntimeTaskView extends LitElement {
       this.lastTaskStatus = null;
       this.lastJobStates = new Map();
     }
-    if (taskChanged || historyChanged) {
+    if (taskChanged) {
       this.cleanupTask();
       if (this.taskId) void this.load();
+    } else if (historyChanged) {
+      if (this.historyMode) {
+        const steps = this.projection?.steps ?? [];
+        this.closeStream?.();
+        this.closeStream = null;
+        this.abort?.abort();
+        this.abort = null;
+        if (this.taskId) void this.loadHistory(steps);
+      } else {
+        this.cleanupTask();
+        if (this.taskId) void this.load();
+      }
     }
     if (this.projection) this.syncAnnouncements();
   }
@@ -165,7 +189,8 @@ export class RuntimeTaskView extends LitElement {
     const target = event.target as HTMLElement | null;
     if (target?.matches('input, textarea, [contenteditable="true"]')) return;
     event.preventDefault();
-    const delta = event.key === 'ArrowLeft' ? -deviceWidthStep : deviceWidthStep;
+    // The devices panel sits on the right, so moving the seam left widens it.
+    const delta = event.key === 'ArrowLeft' ? deviceWidthStep : -deviceWidthStep;
     this.setDeviceWidth(this.deviceWidth + delta);
   }
 
@@ -286,6 +311,98 @@ export class RuntimeTaskView extends LitElement {
     return 'Live camera frame';
   }
 
+  private get playbackTarget(): { deviceId: string; sourceId: string } | null {
+    const devices = this.projection?.devices ?? [];
+    const ordered = this.device
+      ? [...devices.filter((item) => item.deviceId === this.device),
+          ...devices.filter((item) => item.deviceId !== this.device)]
+      : devices;
+    for (const device of ordered) {
+      const source = device.sources?.find((item) => item.dataKind === 'video');
+      if (source) return { deviceId: device.deviceId, sourceId: source.id };
+    }
+    return null;
+  }
+
+  private async playEvidence(): Promise<void> {
+    const target = this.playbackTarget;
+    if (!target) {
+      this.playbackError = 'playback_unavailable';
+      return;
+    }
+    if (this.playbackLoading) return;
+    const generation = this.generation;
+    this.playbackAbort?.abort();
+    const controller = new AbortController();
+    this.playbackAbort = controller;
+    this.playbackLoading = true;
+    this.playbackError = '';
+    this.descriptor = undefined;
+    try {
+      const descriptor = await getPlaybackDescriptor(
+        this.workspaceId, target.deviceId, target.sourceId, controller.signal,
+      );
+      if (generation !== this.generation) return;
+      const expiresAt = Date.parse(descriptor.expiresAt);
+      if ((descriptor.protocol !== 'hls' && descriptor.protocol !== 'mjpeg') ||
+        !Number.isFinite(expiresAt) || expiresAt <= Date.now()) {
+        this.playbackError = 'playback_unavailable';
+        return;
+      }
+      this.descriptor = descriptor;
+    } catch {
+      if (generation !== this.generation || controller.signal.aborted) return;
+      this.playbackError = 'playback_unavailable';
+    } finally {
+      if (generation === this.generation) this.playbackLoading = false;
+    }
+  }
+
+  private async openSwitchTask(): Promise<void> {
+    this.switchOpen = true;
+    this.switchError = '';
+    this.switchAbort?.abort();
+    const controller = new AbortController();
+    this.switchAbort = controller;
+    this.switchLoading = true;
+    try {
+      const response = await listRuntimeTasks(this.workspaceId, 50, 0, controller.signal);
+      if (controller.signal.aborted) return;
+      this.switchTasks = response.result?.tasks ?? [];
+    } catch {
+      if (controller.signal.aborted) return;
+      this.switchError = 'Unable to load Runtime tasks';
+    } finally {
+      if (!controller.signal.aborted) this.switchLoading = false;
+    }
+    await this.updateComplete;
+    this.querySelector<HTMLElement>('[role="option"]')?.focus();
+  }
+
+  private closeSwitchTask(): void {
+    this.switchOpen = false;
+    void this.updateComplete.then(() => {
+      this.querySelector<HTMLButtonElement>('[data-action="switch-task"]')?.focus();
+    });
+  }
+
+  private chooseTask(taskId: string): void {
+    if (!taskId || taskId === this.taskId) {
+      this.closeSwitchTask();
+      return;
+    }
+    this.switchOpen = false;
+    window.history.pushState({}, '', switchTaskUrl(taskId, this.view));
+    window.dispatchEvent(new HashChangeEvent('hashchange'));
+  }
+
+  private onSwitchKey(event: KeyboardEvent): void {
+    if (event.key === 'Escape') {
+      event.preventDefault();
+      this.closeSwitchTask();
+    }
+  }
+
   private syncAnnouncements(): void {
     const projection = this.projection;
     if (!projection) return;
@@ -365,8 +482,18 @@ export class RuntimeTaskView extends LitElement {
     this.closeStream = null;
     this.abort?.abort();
     this.abort = null;
+    this.playbackAbort?.abort();
+    this.playbackAbort = null;
+    this.switchAbort?.abort();
+    this.switchAbort = null;
     this.querySelector<RuntimePlayback>('runtime-playback')?.destroy();
     this.descriptor = undefined;
+    this.playbackError = '';
+    this.playbackLoading = false;
+    this.switchOpen = false;
+    this.switchTasks = [];
+    this.switchLoading = false;
+    this.switchError = '';
     this.projection = null;
   }
 
@@ -392,6 +519,25 @@ export class RuntimeTaskView extends LitElement {
       if (generation !== this.generation || this.abort?.signal.aborted) return;
       this.connection = 'offline';
       this.error = error instanceof ApiError ? error.message : 'Network error loading Runtime task';
+    }
+  }
+
+  private async loadHistory(steps: RuntimeEvent[]): Promise<void> {
+    const generation = ++this.generation;
+    const taskId = this.taskId;
+    this.abort = new AbortController();
+    this.error = '';
+    try {
+      const response = await getRuntimeTask(this.workspaceId, taskId, this.abort.signal);
+      if (generation !== this.generation || taskId !== this.taskId) return;
+      if (!response.result) throw new ApiError(500, 'Task response missing');
+      const projection = new RuntimeProjection(response.result, { history: true });
+      projection.restoreHistorySteps(steps);
+      this.projection = projection;
+      this.revision += 1;
+    } catch (error) {
+      if (generation !== this.generation || this.abort?.signal.aborted) return;
+      this.error = error instanceof ApiError ? error.message : 'Network error loading Runtime history';
     }
   }
 
@@ -454,6 +600,9 @@ export class RuntimeTaskView extends LitElement {
     void this.revision;
     const currentWidth = this.devicesExpanded ? this.deviceWidth : collapsedDeviceWidth;
     return html`
+      ${this.playbackError
+        ? html`<p class="runtime-task__error" role="status" data-playback-error>${this.playbackError}</p>`
+        : nothing}
       ${this.descriptor
         ? html`<runtime-playback .descriptor=${this.descriptor} .alt=${this.playbackAlt()}></runtime-playback>`
         : nothing}
@@ -538,7 +687,8 @@ export class RuntimeTaskView extends LitElement {
       <article class="runtime-task" aria-busy=${projection ? 'false' : 'true'}>
         <nav class="runtime-task__navigation" aria-label="Runtime task navigation">
           <a href="#/runtime">← Runtime</a>
-          <a href="#/runtime">Switch task</a>
+          <button type="button" class="runtime-task__switch" data-action="switch-task"
+            @click=${this.openSwitchTask}>Switch task</button>
         </nav>
         <div class="runtime-announcer" data-announcer aria-live="polite" aria-atomic="true"
           >${this.announcement}</div>
@@ -555,6 +705,12 @@ export class RuntimeTaskView extends LitElement {
                 .projection=${projection} .revision=${this.revision} .readOnly=${this.historyMode}
                 @projection-change=${this.onProjectionChange}
                 @refresh-request=${this.refreshProjection}></runtime-task-controls>`
+            : nothing}
+          ${projection && this.playbackTarget && !this.historyMode
+            ? html`<div class="runtime-task__playback-actions">
+                <button type="button" data-action="play-evidence" ?disabled=${this.playbackLoading}
+                  @click=${this.playEvidence}>${this.playbackLoading ? 'Loading evidence…' : 'Play evidence'}</button>
+              </div>`
             : nothing}
           <slot name="task-actions"></slot>
         </header>
@@ -574,6 +730,28 @@ export class RuntimeTaskView extends LitElement {
           : html`<div class="runtime-loading" data-loading aria-hidden="true">
               <span></span><span></span><span></span>
             </div>`}
+        ${this.switchOpen
+          ? html`<div class="runtime-task__switch-overlay" role="dialog" aria-modal="true"
+              aria-labelledby="runtime-switch-title" @keydown=${this.onSwitchKey}>
+              <section class="runtime-task__switch-dialog">
+                <h2 id="runtime-switch-title">Switch task</h2>
+                ${this.switchLoading ? html`<p role="status">Loading tasks…</p>` : nothing}
+                ${this.switchError ? html`<p role="alert">${this.switchError}</p>` : nothing}
+                <div role="listbox" aria-label="Runtime tasks">
+                  ${this.switchTasks.map((task) => html`
+                    <button type="button" role="option" aria-label=${task.id}
+                      aria-selected=${task.id === this.taskId} @click=${() => this.chooseTask(task.id)}>
+                      <strong>${task.objective}</strong>
+                      <span>${task.id} · ${statusLabel(task.status)}</span>
+                    </button>`)}
+                </div>
+                ${!this.switchLoading && !this.switchError && this.switchTasks.length === 0
+                  ? html`<p>No other Runtime tasks</p>`
+                  : nothing}
+                <button type="button" data-action="keep-task" @click=${this.closeSwitchTask}>Keep current task</button>
+              </section>
+            </div>`
+          : nothing}
       </article>
     `;
   }

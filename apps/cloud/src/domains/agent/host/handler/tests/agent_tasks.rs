@@ -93,6 +93,9 @@ async fn count_rows(pool: &sqlx::SqlitePool, table: &str) -> i64 {
     let query = match table {
         "agent_tasks" => "SELECT COUNT(*) FROM agent_tasks",
         "task_wake_outbox" => "SELECT COUNT(*) FROM task_wake_outbox",
+        "device_jobs" => "SELECT COUNT(*) FROM device_jobs",
+        "watch_rules" => "SELECT COUNT(*) FROM watch_rules",
+        "task_approvals" => "SELECT COUNT(*) FROM task_approvals",
         _ => panic!("unsupported test table"),
     };
     sqlx::query_scalar(query).fetch_one(pool).await.expect("row count")
@@ -301,6 +304,59 @@ async fn task_flag_off_preserves_legacy_directive_and_existing_task() {
         .transition_task(WS, task_id, 0, TaskStatus::WaitingJob, None)
         .await
         .expect("move existing task to waiting_job");
+    fixture
+        .db
+        .bind_current_run(task_id, 1, Some("run-existing"))
+        .await
+        .expect("bind existing run");
+    let now = chrono::Utc::now();
+    fixture
+        .db
+        .create_job(&tinyiothub_core::device_job::DeviceJob {
+            id: "job-existing".into(),
+            workspace_id: WS.into(),
+            device_id: "device-1".into(),
+            tool: "inspect".into(),
+            args_json: json!({}),
+            state: tinyiothub_core::device_job::DeviceJobState::Running,
+            stop_requested_at: None,
+            progress_json: None,
+            result_json: None,
+            task_id: Some(task_id.into()),
+            run_id: Some("run-existing".into()),
+            tool_call_id: Some("call-existing".into()),
+            driver_call_id: None,
+            timeout_ms: 1_000,
+            started_at: now,
+            ended_at: None,
+        })
+        .await
+        .expect("existing job");
+    sqlx::query(
+        "INSERT INTO watch_rules (id, workspace_id, kind, condition, persistent, timeout_secs, created_at, owner_task_id)
+         VALUES ('watch-existing', ?, 'property', '{\"v\":1}', 0, 600, ?, ?)",
+    )
+    .bind(WS)
+    .bind(now.to_rfc3339())
+    .bind(task_id)
+    .execute(fixture.db.pool())
+    .await
+    .expect("existing watch");
+    sqlx::query(
+        "INSERT INTO task_approvals
+             (id, workspace_id, task_id, run_id, tool_call_id, device_id, tool, args_json, reason,
+              state, decision, decider_id, requested_at, decided_at, expires_at, decision_event_id, updated_at)
+         VALUES ('approval-existing', ?, ?, 'run-existing', 'call-approval', 'device-1', 'inspect', '{}', 'why',
+                 'pending', NULL, NULL, ?, NULL, ?, 'decision-existing', ?)",
+    )
+    .bind(WS)
+    .bind(task_id)
+    .bind(now)
+    .bind(now + chrono::Duration::minutes(5))
+    .bind(now)
+    .execute(fixture.db.pool())
+    .await
+    .expect("existing approval");
     set_task_flag(fixture.db.pool(), false).await;
 
     let (_, body) = post_task(&fixture.app, &fixture.token, "legacy", None).await;
@@ -308,9 +364,32 @@ async fn task_flag_off_preserves_legacy_directive_and_existing_task() {
     assert_eq!(fixture.legacy_sink.signals().len(), 1);
     let stored = fixture.db.get_task(WS, task_id).await.expect("get").expect("task");
     assert_eq!(stored.status, TaskStatus::WaitingJob);
-    assert_eq!(stored.state_version, 1);
+    assert_eq!(stored.state_version, 2);
+    assert_eq!(stored.current_run_id.as_deref(), Some("run-existing"));
     assert_eq!(count_rows(fixture.db.pool(), "agent_tasks").await, 1);
     assert_eq!(count_rows(fixture.db.pool(), "task_wake_outbox").await, 1);
+    assert_eq!(count_rows(fixture.db.pool(), "device_jobs").await, 1);
+    assert_eq!(count_rows(fixture.db.pool(), "watch_rules").await, 1);
+    assert_eq!(count_rows(fixture.db.pool(), "task_approvals").await, 1);
+    assert_eq!(
+        fixture
+            .db
+            .get_job(WS, "job-existing")
+            .await
+            .expect("get job")
+            .expect("job")
+            .state,
+        tinyiothub_core::device_job::DeviceJobState::Running
+    );
+    let pending: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM task_wake_outbox
+         WHERE task_id = ? AND dispatch_state = 'pending' AND resolved_at IS NULL",
+    )
+    .bind(task_id)
+    .fetch_one(fixture.db.pool())
+    .await
+    .expect("pending wake");
+    assert_eq!(pending, 1);
 }
 
 #[tokio::test]

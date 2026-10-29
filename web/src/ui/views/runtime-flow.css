@@ -2,18 +2,18 @@ runtime-flow { display: block; min-width: 0; }
 .runtime-flow { display: grid; gap: var(--space-3); }
 .runtime-flow h2, .runtime-flow h3 { margin: 0; }
 .runtime-flow h2 { font-size: 18px; }
-.runtime-flow__note, .flow-lane__empty { margin: 0; color: var(--muted); font-size: 12px; }
+.runtime-flow__note, .flow-lane__empty { margin: 0; color: var(--runtime-muted); font-size: 12px; }
 .runtime-flow__ports { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: var(--space-2); margin: 0; padding: 0; list-style: none; }
-.runtime-flow__ports button { width: 100%; padding: var(--space-2); border: 1px solid var(--glass-border); border-radius: var(--radius-md); background: var(--glass-bg); color: var(--accent); cursor: pointer; }
+.runtime-flow__ports button { width: 100%; padding: var(--space-2); border: 1px solid var(--glass-border); border-radius: var(--radius-md); background: var(--glass-bg); color: var(--runtime-link); cursor: pointer; }
 .runtime-flow__lanes { display: grid; gap: var(--space-3); }
 .flow-lane { position: relative; padding: var(--space-3); border: 1px solid var(--glass-border); border-radius: var(--radius-md); background: var(--glass-bg); }
 .flow-lane__events { display: grid; gap: var(--space-2); margin: var(--space-3) 0 0; padding: 0; list-style: none; }
 .flow-lane__events button { display: grid; width: 100%; gap: var(--space-1); padding: var(--space-2); border: 1px solid var(--glass-border); border-radius: var(--radius-md); background: transparent; color: var(--text); text-align: left; cursor: pointer; }
-.flow-lane__events small, .flow-lane__events span { color: var(--muted); }
+.flow-lane__events small, .flow-lane__events span { color: var(--runtime-muted); }
 .flow-particle { position: absolute; top: var(--space-4); right: var(--space-4); width: 8px; height: 8px; border-radius: var(--radius-full); background: var(--accent); animation: runtime-flow-particle 1.8s ease-in-out infinite; }
-.flow-static { margin: var(--space-2) 0 0; color: var(--muted); font-size: 12px; }
+.flow-static { margin: var(--space-2) 0 0; color: var(--runtime-muted); font-size: 12px; }
 .flow-static--media { display: none; }
-.flow-control-icon { position: absolute; top: var(--space-3); right: var(--space-4); color: var(--accent); }
+.flow-control-icon { position: absolute; top: var(--space-3); right: var(--space-4); color: var(--runtime-link); }
 @keyframes runtime-flow-particle { 0%, 100% { opacity: 0.35; transform: translateX(0); } 50% { opacity: 1; transform: translateX(-24px); } }
 @media (prefers-reduced-motion: reduce) {
   .flow-particle { display: none; animation: none; }

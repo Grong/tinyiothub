@@ -146,7 +146,7 @@ describe('Runtime Task detail shell', () => {
 
     expect(view.querySelector('h1')?.textContent).toBe('Objective task_1');
     expect(view.querySelector('a[href="#/runtime"]')?.textContent).toContain('Runtime');
-    expect(view.querySelector('a[href="#/runtime"] + a')?.textContent).toContain('Switch task');
+    expect(view.querySelector('button[data-action="switch-task"]')?.textContent).toContain('Switch task');
     expect(view.textContent).toContain('active');
     expect(view.querySelector('summary')?.textContent).toContain('Details');
     expect(view.textContent).toContain('run_1');
@@ -172,7 +172,7 @@ describe('Runtime Task detail shell', () => {
       return Promise.resolve({ code: 0, msg: '', result: snapshot(id) });
     });
     await mount();
-    view.descriptor = { protocol: 'mjpeg', url: 'https://localhost/frame', expiresAt: '2026-10-27T10:05:00Z' };
+    view.descriptor = { protocol: 'mjpeg', url: 'https://localhost/frame', expiresAt: '2099-10-27T10:05:00Z' };
     await view.updateComplete;
     const playback = view.querySelector('runtime-playback') as RuntimePlayback;
     vi.spyOn(playback, 'destroy').mockImplementation(() => order.push('destroy'));
@@ -233,7 +233,7 @@ describe('Runtime Task detail shell', () => {
     expect(connect).not.toHaveBeenCalled();
     expect(view.textContent).toContain('History');
 
-    view.descriptor = { protocol: 'mjpeg', url: 'https://localhost/frame', expiresAt: '2026-10-27T10:05:00Z' };
+    view.descriptor = { protocol: 'mjpeg', url: 'https://localhost/frame', expiresAt: '2099-10-27T10:05:00Z' };
     await view.updateComplete;
     const playback = view.querySelector('runtime-playback') as RuntimePlayback;
     const destroy = vi.spyOn(playback, 'destroy');
@@ -272,13 +272,13 @@ describe('Runtime Task detail shell', () => {
     expect(seam.getAttribute('aria-orientation')).toBe('vertical');
     expect(seam.getAttribute('aria-valuemin')).toBe('360');
     expect(seam.getAttribute('aria-valuemax')).toBe('900');
-    await key('ArrowRight');
+    await key('ArrowLeft');
     expect(seam.getAttribute('aria-valuenow')).toBe('384');
     expect(localStorage.getItem('runtime.devices.width')).toBe('384');
-    await key('ArrowLeft');
-    await key('ArrowLeft');
+    await key('ArrowRight');
+    await key('ArrowRight');
     expect(seam.getAttribute('aria-valuenow')).toBe('360');
-    for (let index = 0; index < 30; index += 1) await key('ArrowRight');
+    for (let index = 0; index < 30; index += 1) await key('ArrowLeft');
     expect(seam.getAttribute('aria-valuenow')).toBe('900');
     expect(localStorage.getItem('runtime.devices.width')).toBe('900');
     const input = document.createElement('input');

@@ -19,7 +19,7 @@ describe('getPlaybackDescriptor', () => {
       result: {
         protocol: 'hls',
         url: 'https://camera.example/live.m3u8?sig=synthetic',
-        expires_at: '2026-10-27T10:05:00Z',
+        expires_at: '2099-10-27T10:05:00Z',
       },
     }), { status: 200, headers: { 'Content-Type': 'application/json' } }));
 
@@ -28,7 +28,7 @@ describe('getPlaybackDescriptor', () => {
     expect(descriptor).toEqual({
       protocol: 'hls',
       url: 'https://camera.example/live.m3u8?sig=synthetic',
-      expiresAt: '2026-10-27T10:05:00Z',
+      expiresAt: '2099-10-27T10:05:00Z',
     });
     const [url, init] = vi.mocked(fetch).mock.calls[0];
     expect(String(url)).toContain('/workspaces/ws_1/devices/device_1/sources/front/playback');

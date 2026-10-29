@@ -1,0 +1,294 @@
+import AxeBuilder from '@axe-core/playwright';
+import { expect, test, type APIRequestContext, type Page } from '@playwright/test';
+
+const FIXTURE = 'http://127.0.0.1:3002';
+
+interface FixtureCounts {
+  mediaRequests: number;
+  cancelRequests: number;
+  decisionRequests: Record<string, number>;
+}
+
+async function counts(request: APIRequestContext): Promise<FixtureCounts> {
+  const response = await request.get(`${FIXTURE}/__fixtures__/counts`);
+  return response.json() as Promise<FixtureCounts>;
+}
+
+async function mediaRequests(request: APIRequestContext): Promise<number> {
+  return (await counts(request)).mediaRequests;
+}
+
+async function decisionRequests(request: APIRequestContext, taskId: string): Promise<number> {
+  return (await counts(request)).decisionRequests[taskId] ?? 0;
+}
+
+async function releaseDelayedDecision(request: APIRequestContext): Promise<void> {
+  await request.post(`${FIXTURE}/__fixtures__/release-decision`);
+}
+
+async function openRuntimeTask(
+  page: Page,
+  taskId: string,
+  history = taskId.endsWith('_history'),
+): Promise<void> {
+  await page.goto(`/#/runtime/tasks/${encodeURIComponent(taskId)}`);
+  await expect(page.locator('.runtime-task[aria-busy="false"]')).toBeVisible();
+  if (!history) return;
+  await page.getByRole('tab', { name: 'Flow' }).click();
+  await expect(page.getByRole('button', { name: /Historical event/ }).first()).toBeVisible();
+  await page
+    .getByRole('button', { name: /Historical event/ })
+    .first()
+    .click();
+  await expect(page.getByText('History · read-only')).toBeVisible();
+}
+
+async function activePlayers(page: Page): Promise<number> {
+  return page.evaluate(
+    () => (window as Window & { __runtimeActivePlayers?: number }).__runtimeActivePlayers ?? 0,
+  );
+}
+
+test.beforeEach(async ({ page, request }) => {
+  await request.post(`${FIXTURE}/__fixtures__/reset`);
+  await page.addInitScript(() => {
+    localStorage.setItem('auth-token', 'e2e-token');
+    localStorage.setItem('workspace-id', 'ws_e2e');
+    localStorage.setItem(
+      'openclaw.control.settings.v1',
+      JSON.stringify({ theme: 'dark', chatShowThinking: true, sessionKey: 'main' }),
+    );
+  });
+});
+
+test('task switch destroys playback and blocks stale media', async ({ page, request }) => {
+  await openRuntimeTask(page, 'task_video');
+  await page.getByRole('button', { name: 'Play evidence' }).click();
+  await expect(page.locator('video')).toBeVisible();
+  await expect.poll(() => activePlayers(page)).toBe(1);
+
+  await page.getByRole('button', { name: 'Switch task' }).click();
+  await page.getByRole('option', { name: 'task_without_video' }).click();
+  await expect(page.locator('video')).toHaveCount(0);
+  await expect(page).toHaveURL(/#\/runtime\/tasks\/task_without_video/);
+
+  const oldOriginRequests = await mediaRequests(request);
+  await page.waitForTimeout(1500);
+  expect(await mediaRequests(request)).toBe(oldOriginRequests);
+  expect(await activePlayers(page)).toBe(0);
+});
+
+test('CORS success plays direct fixture media and CORS failure is visible', async ({
+  page,
+  request,
+}) => {
+  await openRuntimeTask(page, 'task_cors_allowed');
+  await page.getByRole('button', { name: 'Play evidence' }).click();
+  await expect(page.locator('video')).toBeVisible();
+  await expect.poll(() => mediaRequests(request)).toBeGreaterThan(0);
+  await expect(page.getByText('Playback unavailable')).toHaveCount(0);
+
+  await openRuntimeTask(page, 'task_cors_denied');
+  await page.getByRole('button', { name: 'Play evidence' }).click();
+  await expect(page.getByText('playback_unavailable', { exact: true })).toBeVisible({
+    timeout: 20_000,
+  });
+  await expect.poll(() => mediaRequests(request)).toBeGreaterThan(0);
+  await expect.poll(() => activePlayers(page)).toBe(0);
+});
+
+test('expired signatures and unsupported protocols fail closed without media requests', async ({
+  page,
+  request,
+}) => {
+  await openRuntimeTask(page, 'task_expired_signature');
+  const beforeExpired = await mediaRequests(request);
+  await page.getByRole('button', { name: 'Play evidence' }).click();
+  await expect(page.getByText('playback_unavailable', { exact: true })).toBeVisible();
+  expect(await mediaRequests(request)).toBe(beforeExpired);
+  expect(await activePlayers(page)).toBe(0);
+
+  await openRuntimeTask(page, 'task_unsupported_protocol');
+  const beforeUnsupported = await mediaRequests(request);
+  await page.getByRole('button', { name: 'Play evidence' }).click();
+  await expect(page.getByText('playback_unavailable', { exact: true })).toBeVisible();
+  expect(await mediaRequests(request)).toBe(beforeUnsupported);
+  await expect(page.locator('video')).toHaveCount(0);
+});
+
+test('responsive tabs, keyboard history, reduced motion, and AA remain usable', async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.emulateMedia({ reducedMotion: 'reduce' });
+  await openRuntimeTask(page, 'task_history');
+  await page.getByRole('tab', { name: 'Devices' }).click();
+  await expect(page.getByRole('heading', { name: 'Associated devices' })).toBeVisible();
+  await page.getByRole('tab', { name: 'Flow' }).click();
+  await page.getByRole('button', { name: 'Historical event event_2' }).click();
+  await expect(page.getByText('History · read-only')).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Cancel task' })).toHaveCount(0);
+  expect(await page.locator('.runtime-data-particles').isVisible()).toBe(false);
+
+  const results = await new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa']).analyze();
+  expect(results.violations).toEqual([]);
+});
+
+test('approval stays single-flight and stale decisions cannot cross Tasks', async ({
+  page,
+  request,
+}) => {
+  await openRuntimeTask(page, 'task_approval');
+  const approve = page.getByRole('button', { name: 'Approve once' });
+  await approve.evaluate((button: HTMLButtonElement) => {
+    button.click();
+    button.click();
+  });
+  await expect(page.getByText('Approved', { exact: true })).toBeVisible();
+  expect(await decisionRequests(request, 'task_approval')).toBe(1);
+
+  await openRuntimeTask(page, 'task_approval_delayed');
+  await page.getByRole('button', { name: 'Approve once' }).click();
+  await page.getByRole('button', { name: 'Switch task' }).click();
+  await page.getByRole('option', { name: 'task_without_video' }).click();
+  await releaseDelayedDecision(request);
+  await expect(page.getByRole('button', { name: 'Approve once' })).toHaveCount(0);
+  await expect(page).toHaveURL(/#\/runtime\/tasks\/task_without_video/);
+
+  await openRuntimeTask(page, 'task_approval_history');
+  await expect(page.getByText('History · read-only')).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Approve once' })).toHaveCount(0);
+});
+
+test('approval reject, conflict, expiry and unavailable expose current facts only', async ({
+  page,
+}) => {
+  await openRuntimeTask(page, 'task_reject');
+  await page.getByRole('button', { name: 'Reject' }).click();
+  await expect(page.getByText('Rejected', { exact: true })).toBeVisible();
+
+  await openRuntimeTask(page, 'task_approval_conflict');
+  await page.getByRole('button', { name: 'Approve once' }).click();
+  await expect(page.getByRole('alert')).toContainText('conflict');
+  await expect(page.getByText('Approved', { exact: true })).toHaveCount(0);
+
+  await openRuntimeTask(page, 'task_approval_expired');
+  await expect(page.getByText('Expired · this approval request is no longer valid.')).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Approve once' })).toHaveCount(0);
+
+  await openRuntimeTask(page, 'task_approval_unavailable');
+  await expect(
+    page.getByText('Unavailable · this approval request cannot be decided.'),
+  ).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Approve once' })).toHaveCount(0);
+});
+
+test('stale SSE duplicates are suppressed and resync keeps one event', async ({ page }) => {
+  await openRuntimeTask(page, 'task_sse_resync');
+  await expect(page.locator('[data-event-id="event_1"]')).toHaveCount(1);
+  await page.waitForTimeout(500);
+  await expect(page.locator('[data-event-id="event_1"]')).toHaveCount(1);
+});
+
+test('seam supports keyboard and pointer resize at desktop width', async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await openRuntimeTask(page, 'task_video');
+  const seam = page.locator('[role="separator"]');
+  await seam.focus();
+  const initial = Number(await seam.getAttribute('aria-valuenow'));
+  await seam.press('ArrowLeft');
+  await expect(seam).toHaveAttribute('aria-valuenow', String(initial + 24));
+
+  const beforeDrag = Number(await seam.getAttribute('aria-valuenow'));
+  const box = await seam.boundingBox();
+  if (!box) throw new Error('seam box missing');
+  // Avoid the centered collapse toggle so the drag targets the handle itself.
+  const dragY = box.y + Math.min(24, box.height / 4);
+  await page.mouse.move(box.x + box.width / 2, dragY);
+  await page.mouse.down();
+  await page.mouse.move(box.x - 80, dragY, { steps: 5 });
+  await page.mouse.up();
+  await expect
+    .poll(async () => Number(await seam.getAttribute('aria-valuenow')))
+    .toBeGreaterThan(beforeDrag);
+});
+
+test('destructive confirmation traps focus, defaults safe, and returns focus', async ({
+  page,
+  request,
+}) => {
+  await openRuntimeTask(page, 'task_cancel');
+  const overflow = page.getByRole('button', { name: 'More task actions' });
+  await overflow.click();
+  await page.getByRole('menuitem', { name: 'Cancel task' }).click();
+  const dialog = page.getByRole('dialog', { name: 'Cancel task' });
+  await expect(dialog).toBeVisible();
+  await expect(dialog.getByRole('button', { name: 'Keep running' })).toBeFocused();
+  await page.keyboard.press('Tab');
+  await expect(dialog.getByRole('button', { name: 'Cancel task' })).toBeFocused();
+  await page.keyboard.press('Tab');
+  await expect(dialog.getByRole('button', { name: 'Keep running' })).toBeFocused();
+  await page.keyboard.press('Escape');
+  await expect(dialog).toHaveCount(0);
+  await expect(overflow).toBeFocused();
+  expect((await counts(request)).cancelRequests).toBe(0);
+
+  await overflow.click();
+  await page.getByRole('menuitem', { name: 'Cancel task' }).click();
+  await page
+    .getByRole('dialog', { name: 'Cancel task' })
+    .getByRole('button', { name: 'Cancel task' })
+    .click();
+  await expect.poll(async () => (await counts(request)).cancelRequests).toBe(1);
+});
+
+test('360px has no horizontal overflow and 200% zoom keeps controls reachable', async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 360, height: 800 });
+  await openRuntimeTask(page, 'task_video');
+  const overflow360 = await page.evaluate(
+    () => document.documentElement.scrollWidth - window.innerWidth,
+  );
+  expect(overflow360).toBeLessThanOrEqual(1);
+  await expect(page.getByRole('tab', { name: 'Agent Loop' })).toBeVisible();
+
+  await page.setViewportSize({ width: 640, height: 800 });
+  const overflowZoom = await page.evaluate(
+    () => document.documentElement.scrollWidth - window.innerWidth,
+  );
+  expect(overflowZoom).toBeLessThanOrEqual(1);
+  await expect(page.getByRole('button', { name: 'Play evidence' })).toBeVisible();
+});
+
+test('light and dark Runtime surfaces meet WCAG AA', async ({ page }) => {
+  await openRuntimeTask(page, 'task_video');
+  for (const theme of ['light', 'dark']) {
+    await page.evaluate((next) => {
+      if (next === 'light') document.documentElement.setAttribute('data-theme', 'light');
+      else document.documentElement.removeAttribute('data-theme');
+    }, theme);
+    const results = await new AxeBuilder({ page })
+      .include('.runtime-task')
+      .withTags(['wcag2a', 'wcag2aa'])
+      .analyze();
+    expect(results.violations, `${theme} violations`).toEqual([]);
+  }
+});
+
+test('empty, error, offline and partial projections stay honest', async ({ page }) => {
+  await openRuntimeTask(page, 'task_empty');
+  await expect(page.getByText('No agent activity yet')).toBeVisible();
+  await expect(page.getByText('No referenced devices')).toBeVisible();
+
+  await page.goto('/#/runtime/tasks/task_error');
+  await expect(page.getByRole('alert')).toContainText('fixture failure');
+
+  await openRuntimeTask(page, 'task_offline');
+  await expect(page.locator('[data-connection="offline"]')).toBeVisible({ timeout: 15_000 });
+
+  await openRuntimeTask(page, 'task_partial');
+  await expect(page.locator('.runtime-task')).toBeVisible();
+  await expect(page.locator('[data-device-card][data-device-id="ghost-device"]')).toBeVisible();
+  await expect(page.locator('[data-device-card][data-device-id="cam-allowed"]')).toBeVisible();
+});

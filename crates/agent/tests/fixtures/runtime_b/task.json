@@ -1,0 +1,15 @@
+{
+  "taskId": "task_runtime_b",
+  "workspaceId": "ws_fixture_b",
+  "deviceId": "dev_zone_b",
+  "objective": "Inspect the entrance image, stop the pump if occupied, then verify",
+  "steps": [
+    {
+      "read": "occupancy",
+      "if": { "operator": "gt", "value": 0 },
+      "then": [{ "write": "pump", "value": "stopped" }]
+    },
+    { "read": "pump", "expect": "stopped" }
+  ],
+  "expectedTools": ["read_device", "set_device", "read_device"]
+}

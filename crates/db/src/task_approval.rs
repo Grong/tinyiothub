@@ -292,7 +292,19 @@ impl Db {
             Ok((task, vec![task_event, approval_event]))
         }
         .await;
-        finish_immediate(connection, result).await
+        let outcome = finish_immediate(connection, result).await;
+        if outcome.is_ok() {
+            tracing::info!(
+                metric = "runtime_approval_requested",
+                workspace_id = %approval.workspace_id,
+                task_id = %approval.task_id,
+                approval_id = %approval.id,
+                device_id = %approval.device_id,
+                tool = %approval.tool,
+                "approval requested"
+            );
+        }
+        outcome
     }
 
     pub async fn task_approval_scoped(
@@ -425,7 +437,27 @@ impl Db {
             ))
         }
         .await;
-        finish_immediate(connection, result).await
+        let outcome = finish_immediate(connection, result).await;
+        match &outcome {
+            Ok((decision, _)) => tracing::info!(
+                metric = "runtime_approval_decided",
+                workspace_id = %workspace_id,
+                task_id = %task_id,
+                approval_id = %approval_id,
+                state = %decision.approval.state.as_str(),
+                deduplicated = decision.deduplicated,
+                "approval decision"
+            ),
+            Err(TaskApprovalStoreError::DecisionConflict) => tracing::warn!(
+                metric = "runtime_approval_conflict",
+                workspace_id = %workspace_id,
+                task_id = %task_id,
+                approval_id = %approval_id,
+                "approval decision conflict"
+            ),
+            Err(_) => {}
+        }
+        outcome
     }
 
     pub async fn list_task_approvals(
@@ -513,7 +545,13 @@ impl Db {
             Ok((events.len() as u64, events))
         }
         .await;
-        finish_immediate(connection, result).await
+        let outcome = finish_immediate(connection, result).await;
+        if let Ok((expired, _)) = &outcome
+            && *expired > 0
+        {
+            tracing::info!(metric = "runtime_approval_expired", count = *expired, "approval expiry");
+        }
+        outcome
     }
 
     pub async fn submit_approved_job_and_events(
@@ -795,7 +833,23 @@ impl Db {
             Ok((task, events))
         }
         .await;
-        finish_immediate(connection, result).await
+        let outcome = finish_immediate(connection, result).await;
+        if let Ok((_, events)) = &outcome {
+            let unavailable = events
+                .iter()
+                .filter(|event| event.event_type == "approval.unavailable")
+                .count();
+            if unavailable > 0 {
+                tracing::info!(
+                    metric = "runtime_approval_unavailable",
+                    workspace_id = %workspace_id,
+                    task_id = %task_id,
+                    count = unavailable,
+                    "cancel marked approvals unavailable"
+                );
+            }
+        }
+        outcome
     }
 }
 

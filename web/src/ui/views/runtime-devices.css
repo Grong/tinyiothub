@@ -1,7 +1,7 @@
 runtime-devices { display: block; min-width: 0; }
 .runtime-devices { display: grid; gap: var(--space-3); }
 .runtime-devices h2 { margin: 0; font-size: 18px; }
-.runtime-devices h2 span { color: var(--muted); font-size: 12px; }
+.runtime-devices h2 span { color: var(--runtime-muted); font-size: 12px; }
 .runtime-devices__list { display: grid; gap: var(--space-3); }
 .runtime-device-card {
   padding: var(--space-3);
@@ -11,12 +11,12 @@ runtime-devices { display: block; min-width: 0; }
 }
 .runtime-device-card.is-selected { border-color: var(--accent-glow-strong); box-shadow: inset 0 0 0 1px var(--accent-glow-strong); }
 .runtime-device-card h3 { margin: 0; font-size: 14px; overflow-wrap: anywhere; }
-.runtime-device-card h3 button { border: 0; padding: 0; background: transparent; color: var(--accent); cursor: pointer; text-align: left; }
+.runtime-device-card h3 button { border: 0; padding: 0; background: transparent; color: var(--runtime-link); cursor: pointer; text-align: left; }
 .runtime-device-card h3:focus { outline: 2px solid var(--accent-glow-strong); outline-offset: 3px; }
-.runtime-device-card__availability { color: var(--muted); }
+.runtime-device-card__availability { color: var(--runtime-muted); }
 .runtime-device-card__job { font-size: 12px; }
 .runtime-device-card__facts { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 2fr); gap: var(--space-1) var(--space-2); font-size: 12px; }
-.runtime-device-card__facts dt, .runtime-device-card__declaration, .runtime-devices__empty { color: var(--muted); }
+.runtime-device-card__facts dt, .runtime-device-card__declaration, .runtime-devices__empty { color: var(--runtime-muted); }
 .runtime-device-card__facts dd { margin: 0; overflow-wrap: anywhere; }
 .runtime-device-card__declaration { font-size: 12px; }
 @media (prefers-reduced-motion: reduce) {

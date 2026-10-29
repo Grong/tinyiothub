@@ -577,7 +577,8 @@ impl Db {
 
     pub async fn claim_pending_wakes(&self, limit: i64) -> Result<Vec<TaskWake>, TaskStoreError> {
         let now = Utc::now();
-        sqlx::query_as::<_, TaskWakeRow>(
+        let started = std::time::Instant::now();
+        let claimed = sqlx::query_as::<_, TaskWakeRow>(
             "UPDATE task_wake_outbox
              SET dispatched_at = ?
              WHERE (task_id, event_id) IN (
@@ -594,7 +595,22 @@ impl Db {
         .map_err(unavailable)?
         .into_iter()
         .map(TaskWake::try_from)
-        .collect()
+        .collect::<Result<Vec<_>, _>>()?;
+        if !claimed.is_empty() {
+            let oldest_lag_ms = claimed
+                .iter()
+                .map(|wake| (now - wake.created_at).num_milliseconds().max(0) as u64)
+                .max()
+                .unwrap_or(0);
+            tracing::info!(
+                metric = "runtime_outbox_claimed",
+                count = claimed.len(),
+                oldest_lag_ms,
+                claim_ms = started.elapsed().as_millis() as u64,
+                "wake outbox claimed"
+            );
+        }
+        Ok(claimed)
     }
 
     pub async fn recover_claimed_wakes(&self) -> Result<usize, TaskStoreError> {
@@ -617,7 +633,7 @@ impl Db {
     ) -> Result<(), TaskStoreError> {
         let state = state.as_str();
         let now = Utc::now();
-        sqlx::query(
+        let affected = sqlx::query(
             "UPDATE task_wake_outbox
              SET dispatch_state = ?,
                  dispatched_at = CASE ? WHEN 'dispatched' THEN ? WHEN 'pending' THEN NULL ELSE dispatched_at END,
@@ -633,7 +649,17 @@ impl Db {
         .bind(event_id)
         .execute(self.pool())
         .await
-        .map_err(unavailable)?;
+        .map_err(unavailable)?
+        .rows_affected();
+        if affected == 1 {
+            tracing::info!(
+                metric = "runtime_outbox_marked",
+                %task_id,
+                %event_id,
+                state,
+                "wake outbox marked"
+            );
+        }
         Ok(())
     }
 
@@ -650,6 +676,14 @@ impl Db {
         .await
         .map_err(unavailable)?
         .rows_affected();
+        if affected > 0 {
+            tracing::info!(
+                metric = "runtime_outbox_retried",
+                %workspace_id,
+                %event_id,
+                "dead wake retried"
+            );
+        }
         Ok(affected > 0)
     }
 

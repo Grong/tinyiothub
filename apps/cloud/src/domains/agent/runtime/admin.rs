@@ -1,11 +1,15 @@
+use std::time::Instant;
+
+use axum::Json;
 use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Extension, Router};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::json;
 use tinyiothub_core::agent_task::WakeDispatchState;
+use tinyiothub_storage::runtime_admin::{RuntimeDrainCounts, UnknownDispositionOutcome};
 use tinyiothub_web::response::ApiResponseBuilder;
 use tinyiothub_web::security::Claims;
 
@@ -22,6 +26,74 @@ where
         .route("/outbox", get(list_outbox))
         .route("/outbox/{event_id}/retry", post(retry_dead_wake))
         .route("/jobs", get(list_jobs))
+        .route("/drain", get(get_drain_status))
+        .route("/drain/cancel", post(cancel_drain_batch))
+        .route("/unknown/{job_id}/disposition", post(record_unknown_disposition))
+        .route("/metrics", get(runtime_metrics))
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DrainStatus {
+    pub nonterminal_tasks: u64,
+    pub active_runs: u64,
+    pub active_jobs: u64,
+    pub active_watches: u64,
+    pub pending_approvals: u64,
+    pub pending_outbox: u64,
+    pub unresolved_unknown: u64,
+}
+
+impl DrainStatus {
+    pub fn can_hide_workbench(&self) -> bool {
+        self.nonterminal_tasks == 0
+            && self.active_runs == 0
+            && self.active_jobs == 0
+            && self.active_watches == 0
+            && self.pending_approvals == 0
+            && self.pending_outbox == 0
+            && self.unresolved_unknown == 0
+    }
+
+    /// Media shutdown uses the same gate: a nonzero category can still hold
+    /// evidence or a physical side effect that has not settled.
+    pub fn can_hide_media(&self) -> bool {
+        self.can_hide_workbench()
+    }
+}
+
+impl From<RuntimeDrainCounts> for DrainStatus {
+    fn from(counts: RuntimeDrainCounts) -> Self {
+        Self {
+            nonterminal_tasks: counts.nonterminal_tasks,
+            active_runs: counts.active_runs,
+            active_jobs: counts.active_jobs,
+            active_watches: counts.active_watches,
+            pending_approvals: counts.pending_approvals,
+            pending_outbox: counts.pending_outbox,
+            unresolved_unknown: counts.unresolved_unknown,
+        }
+    }
+}
+
+fn drain_json(status: &DrainStatus) -> serde_json::Value {
+    json!({
+        "drain": status,
+        "canHideWorkbench": status.can_hide_workbench(),
+        "canHideMedia": status.can_hide_media(),
+    })
+}
+
+async fn load_drain(state: &AgentState, workspace_id: &str) -> Result<DrainStatus, Response> {
+    state
+        .db
+        .runtime_drain_counts(Some(workspace_id))
+        .await
+        .map(DrainStatus::from)
+        .map_err(|error| {
+            tracing::error!(%workspace_id, %error, "load runtime drain status failed");
+            error_response(StatusCode::SERVICE_UNAVAILABLE, "Runtime drain 不可用")
+        })
 }
 
 #[derive(Deserialize)]
@@ -124,6 +196,201 @@ pub async fn list_jobs(
     }
 }
 
+pub async fn get_drain_status(
+    State(state): State<AgentState>,
+    Extension(claims): Extension<Claims>,
+    Query(scope): Query<AdminWorkspaceScope>,
+) -> Response {
+    if let Err(response) = check_agent_admin_response(&state, &claims, &scope.workspace_id).await {
+        return response;
+    }
+    match load_drain(&state, &scope.workspace_id).await {
+        Ok(status) => ApiResponseBuilder::success(drain_json(&status)).into_response(),
+        Err(response) => response,
+    }
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DrainCancelRequest {
+    pub workspace_id: String,
+    pub task_ids: Vec<String>,
+}
+
+/// Cancel a caller-fixed ID batch. Every ID goes through the existing
+/// per-Task Cancel path; no bulk status update and no implicit discovery.
+pub async fn cancel_drain_batch(
+    State(state): State<AgentState>,
+    Extension(claims): Extension<Claims>,
+    Json(request): Json<DrainCancelRequest>,
+) -> Response {
+    if let Err(response) = check_agent_admin_response(&state, &claims, &request.workspace_id).await {
+        return response;
+    }
+    if request.task_ids.is_empty() {
+        return error_response(StatusCode::BAD_REQUEST, "taskIds 不能为空");
+    }
+    let Some(manager) = state.thing_agents.as_ref() else {
+        return error_response(StatusCode::SERVICE_UNAVAILABLE, "Task 服务不可用");
+    };
+    let requested = request.task_ids.len();
+    let mut cancelled = 0usize;
+    let mut results = Vec::with_capacity(requested);
+    for task_id in request.task_ids {
+        match manager.cancel_task(&request.workspace_id, &task_id).await {
+            Ok(_) => {
+                cancelled += 1;
+                results.push(json!({"taskId": task_id, "outcome": "cancelled"}));
+            }
+            Err(error) => {
+                tracing::warn!(
+                    workspace_id = %request.workspace_id,
+                    %task_id,
+                    error = ?error,
+                    "drain batch cancel failed for Task"
+                );
+                results.push(json!({"taskId": task_id, "outcome": "failed"}));
+            }
+        }
+    }
+    tracing::info!(
+        metric = "runtime_drain_cancel_batch",
+        workspace_id = %request.workspace_id,
+        requested,
+        cancelled,
+        "runtime drain cancel batch"
+    );
+    let drain = state
+        .db
+        .runtime_drain_counts(Some(&request.workspace_id))
+        .await
+        .ok()
+        .map(DrainStatus::from);
+    ApiResponseBuilder::success(json!({
+        "requested": requested,
+        "cancelled": cancelled,
+        "results": results,
+        "drain": drain,
+        "canHideWorkbench": drain.as_ref().map(DrainStatus::can_hide_workbench),
+        "canHideMedia": drain.as_ref().map(DrainStatus::can_hide_media),
+    }))
+    .into_response()
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DispositionRequest {
+    pub workspace_id: String,
+    pub disposition: String,
+}
+
+pub async fn record_unknown_disposition(
+    State(state): State<AgentState>,
+    Extension(claims): Extension<Claims>,
+    Path(job_id): Path<String>,
+    Json(request): Json<DispositionRequest>,
+) -> Response {
+    if let Err(response) = check_agent_admin_response(&state, &claims, &request.workspace_id).await {
+        return response;
+    }
+    let disposition = request.disposition.trim();
+    if disposition.is_empty() || disposition.chars().count() > 500 {
+        return error_response(StatusCode::BAD_REQUEST, "disposition 须为 1..=500 个字符");
+    }
+    match state
+        .db
+        .record_unknown_disposition(&request.workspace_id, &job_id, disposition, &claims.user_id)
+        .await
+    {
+        Ok(UnknownDispositionOutcome::Recorded | UnknownDispositionOutcome::AlreadyRecorded) => {
+            match load_drain(&state, &request.workspace_id).await {
+                Ok(status) => ApiResponseBuilder::success(json!({
+                    "jobId": job_id,
+                    "dispositionRecorded": true,
+                    "physicalStateReplayed": false,
+                    "drain": status,
+                    "canHideWorkbench": status.can_hide_workbench(),
+                    "canHideMedia": status.can_hide_media(),
+                }))
+                .into_response(),
+                Err(response) => response,
+            }
+        }
+        Ok(UnknownDispositionOutcome::NotFound) => error_response(StatusCode::NOT_FOUND, "Job 不存在"),
+        Ok(UnknownDispositionOutcome::NotUnknown) => {
+            error_response(StatusCode::CONFLICT, "仅 cancelled_unknown Job 可登记处置")
+        }
+        Err(error) => {
+            tracing::error!(%job_id, %error, "record unknown disposition failed");
+            error_response(StatusCode::SERVICE_UNAVAILABLE, "未知结果处置不可用")
+        }
+    }
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MetricsQuery {
+    pub workspace_id: Option<String>,
+}
+
+pub async fn runtime_metrics(
+    State(state): State<AgentState>,
+    Extension(claims): Extension<Claims>,
+    Query(query): Query<MetricsQuery>,
+) -> Response {
+    if let Err(response) = check_admin_read_access(&state, &claims, query.workspace_id.as_deref()).await {
+        return response;
+    }
+    let started = Instant::now();
+    let snapshot = match state.db.runtime_metrics(query.workspace_id.as_deref()).await {
+        Ok(snapshot) => snapshot,
+        Err(error) => {
+            tracing::error!(%error, "load runtime metrics failed");
+            return error_response(StatusCode::SERVICE_UNAVAILABLE, "Runtime 指标不可用");
+        }
+    };
+    let db_query_ms = started.elapsed().as_millis() as u64;
+    let stream = state.runtime_stream.metrics();
+    let mut system = sysinfo::System::new_all();
+    system.refresh_memory();
+    let rss_bytes = system
+        .process(sysinfo::Pid::from_u32(std::process::id()))
+        .map_or(0, sysinfo::Process::memory);
+    let total_memory = system.total_memory().max(1);
+    let rss_percent = (rss_bytes as f64 / total_memory as f64) * 100.0;
+    let disks = sysinfo::Disks::new_with_refreshed_list();
+    let (disk_total, disk_used) = disks.iter().fold((0u64, 0u64), |(total, used), disk| {
+        (
+            total + disk.total_space(),
+            used + disk.total_space().saturating_sub(disk.available_space()),
+        )
+    });
+    let disk_used_percent = if disk_total == 0 {
+        0.0
+    } else {
+        (disk_used as f64 / disk_total as f64) * 100.0
+    };
+    tracing::info!(
+        metric = "runtime_host_metrics",
+        rss_bytes,
+        rss_percent,
+        disk_used_percent,
+        db_query_ms,
+        "runtime host metrics"
+    );
+    ApiResponseBuilder::success(json!({
+        "metrics": snapshot,
+        "stream": stream,
+        "host": {
+            "rssBytes": rss_bytes,
+            "rssPercent": rss_percent,
+            "diskUsedPercent": disk_used_percent,
+        },
+        "dbQueryMs": db_query_ms,
+    }))
+    .into_response()
+}
+
 #[cfg(test)]
 mod tests {
     use axum::body::Body;
@@ -203,6 +470,182 @@ mod tests {
             .body(Body::empty())
             .expect("request");
         response_parts(app.clone().oneshot(request).await.expect("response")).await
+    }
+
+    async fn post_json(app: &axum::Router, token: &str, uri: &str, body: Value) -> (StatusCode, Value) {
+        let request = Request::builder()
+            .method("POST")
+            .uri(uri)
+            .header("Authorization", auth_header(token))
+            .header("Content-Type", "application/json")
+            .body(Body::from(body.to_string()))
+            .expect("request");
+        response_parts(app.clone().oneshot(request).await.expect("response")).await
+    }
+
+    #[test]
+    fn drain_gate_blocks_every_nonzero_category() {
+        let zero = super::DrainStatus {
+            nonterminal_tasks: 0,
+            active_runs: 0,
+            active_jobs: 0,
+            active_watches: 0,
+            pending_approvals: 0,
+            pending_outbox: 0,
+            unresolved_unknown: 0,
+        };
+        assert!(zero.can_hide_workbench());
+        assert!(zero.can_hide_media());
+        let statuses = [
+            super::DrainStatus {
+                nonterminal_tasks: 1,
+                ..zero
+            },
+            super::DrainStatus { active_runs: 1, ..zero },
+            super::DrainStatus { active_jobs: 1, ..zero },
+            super::DrainStatus {
+                active_watches: 1,
+                ..zero
+            },
+            super::DrainStatus {
+                pending_approvals: 1,
+                ..zero
+            },
+            super::DrainStatus {
+                pending_outbox: 1,
+                ..zero
+            },
+            super::DrainStatus {
+                unresolved_unknown: 1,
+                ..zero
+            },
+        ];
+        for status in statuses {
+            assert!(!status.can_hide_workbench(), "{status:?}");
+            assert!(!status.can_hide_media(), "{status:?}");
+        }
+    }
+
+    async fn insert_unknown_job(db: &tinyiothub_storage::Db, id: &str) {
+        db.create_job(&job(id, DeviceJobState::Running))
+            .await
+            .expect("unknown insert");
+        db.finish_job(
+            id,
+            DeviceJobState::CancelledUnknown,
+            &json!({"reason":"cancel_unknown"}),
+            None,
+        )
+        .await
+        .expect("unknown finish");
+    }
+
+    #[tokio::test]
+    async fn drain_counts_unknown_until_administrator_records_disposition() {
+        let (app, db, admin, reader) = fixture().await;
+        insert_unknown_job(&db, "unknown-drain").await;
+        let drain_uri = format!("/api/v1/admin/runtime/drain?workspaceId={WS}");
+        let (status, _) = request(&app, &reader, "GET", &drain_uri).await;
+        assert_eq!(status, StatusCode::FORBIDDEN);
+        let (status, body) = request(&app, &admin, "GET", &drain_uri).await;
+        assert_eq!(status, StatusCode::OK, "drain: {body}");
+        assert_eq!(body["result"]["drain"]["unresolvedUnknown"], 1);
+        assert_eq!(body["result"]["canHideWorkbench"], false);
+        assert_eq!(body["result"]["canHideMedia"], false);
+
+        let uri = "/api/v1/admin/runtime/unknown/unknown-drain/disposition";
+        let (status, body) = post_json(
+            &app,
+            &admin,
+            uri,
+            json!({"workspaceId": WS, "disposition": "inspected: valve physically closed"}),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "disposition: {body}");
+        assert_eq!(body["result"]["drain"]["unresolvedUnknown"], 0);
+        assert_eq!(body["result"]["physicalStateReplayed"], false);
+        assert_eq!(
+            db.get_job(WS, "unknown-drain").await.expect("get").expect("job").state,
+            DeviceJobState::CancelledUnknown,
+            "disposition must never rewrite or replay the Job"
+        );
+        let jobs = db.active_jobs(Some(WS), true).await.expect("unknown jobs");
+        assert_eq!(jobs.len(), 1);
+
+        let (status, body) = post_json(
+            &app,
+            &admin,
+            uri,
+            json!({"workspaceId": WS, "disposition": "inspected again"}),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "idempotent disposition: {body}");
+        assert_eq!(body["result"]["drain"]["unresolvedUnknown"], 0);
+
+        let (status, _) = post_json(&app, &admin, uri, json!({"workspaceId": WS, "disposition": "   "})).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+
+        let (status, _) = post_json(
+            &app,
+            &admin,
+            "/api/v1/admin/runtime/unknown/missing/disposition",
+            json!({"workspaceId": WS, "disposition": "inspected"}),
+        )
+        .await;
+        assert_eq!(status, StatusCode::NOT_FOUND);
+
+        let known = job("known-drain", DeviceJobState::Running);
+        db.create_job(&known).await.expect("known job");
+        let (status, _) = post_json(
+            &app,
+            &admin,
+            "/api/v1/admin/runtime/unknown/known-drain/disposition",
+            json!({"workspaceId": WS, "disposition": "inspected"}),
+        )
+        .await;
+        assert_eq!(status, StatusCode::CONFLICT);
+    }
+
+    #[tokio::test]
+    async fn drain_cancel_requires_fixed_ids_and_never_bulk_mutates() {
+        let (app, db, admin, reader) = fixture().await;
+        let uri = "/api/v1/admin/runtime/drain/cancel";
+        let (status, _) = post_json(
+            &app,
+            &reader,
+            uri,
+            json!({"workspaceId": WS, "taskIds": ["task-admin"]}),
+        )
+        .await;
+        assert_eq!(status, StatusCode::FORBIDDEN);
+        let (status, _) = post_json(&app, &admin, uri, json!({"workspaceId": WS, "taskIds": []})).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        let (status, body) = post_json(&app, &admin, uri, json!({"workspaceId": WS, "taskIds": ["task-admin"]})).await;
+        assert_eq!(
+            status,
+            StatusCode::SERVICE_UNAVAILABLE,
+            "no manager is wired in this fixture: {body}"
+        );
+        let task = db.get_task(WS, "task-admin").await.expect("get").expect("task");
+        assert_eq!(task.status, tinyiothub_core::agent_task::TaskStatus::Active);
+        assert_eq!(task.state_version, 1);
+    }
+
+    #[tokio::test]
+    async fn runtime_metrics_expose_durable_gauges_and_bound_access() {
+        let (app, db, admin, reader) = fixture().await;
+        insert_unknown_job(&db, "unknown-metrics").await;
+        let uri = format!("/api/v1/admin/runtime/metrics?workspaceId={WS}");
+        let (status, _) = request(&app, &reader, "GET", &uri).await;
+        assert_eq!(status, StatusCode::FORBIDDEN);
+        let (status, body) = request(&app, &admin, "GET", &uri).await;
+        assert_eq!(status, StatusCode::OK, "metrics: {body}");
+        assert_eq!(body["result"]["metrics"]["drain"]["unresolvedUnknown"], 1);
+        assert_eq!(body["result"]["metrics"]["outbox"]["dead"], 1);
+        assert!(body["result"]["stream"]["activeConnections"].is_number());
+        assert!(body["result"]["host"]["rssBytes"].is_number());
+        assert!(body["result"]["host"]["diskUsedPercent"].is_number());
+        assert!(body["result"]["dbQueryMs"].is_number());
     }
 
     #[tokio::test]

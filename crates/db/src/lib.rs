@@ -75,6 +75,8 @@ pub mod policy;
 pub mod pool;
 /// Role persistence and row types.
 pub mod role;
+/// Runtime rollout drain gauges and unknown-Job dispositions.
+pub mod runtime_admin;
 /// Ordered runtime event envelopes and Task projection queries.
 pub mod runtime_event;
 /// Persistent agent Task and wake outbox storage.

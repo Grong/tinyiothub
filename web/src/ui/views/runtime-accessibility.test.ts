@@ -93,7 +93,7 @@ function telemetryEvent(cursor = 2): RuntimeEvent {
     cursor,
     eventId: `telemetry:${cursor}`,
     eventType: 'read_device',
-    occurredAt: '2026-10-27T10:05:00Z',
+    occurredAt: '2099-10-27T10:05:00Z',
     workspaceId: 'ws_1',
     taskId: 'task_1',
     runId: 'run_1',
@@ -210,7 +210,7 @@ async function workbenchFixture(
   view.descriptor = {
     protocol: 'mjpeg',
     url: 'https://camera.example/front.mjpg',
-    expiresAt: '2026-10-27T10:05:00Z',
+    expiresAt: '2099-10-27T10:05:00Z',
   };
   await view.updateComplete;
   await view.querySelector<HTMLElement & { updateComplete: Promise<unknown> }>('runtime-playback')
