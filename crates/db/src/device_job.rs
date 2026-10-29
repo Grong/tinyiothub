@@ -477,7 +477,8 @@ impl Db {
                 "SELECT id, workspace_id, device_id, tool, args_json, state, stop_requested_at,
                         progress_json, result_json, task_id, run_id, tool_call_id, driver_call_id, timeout_ms, started_at, ended_at
                  FROM device_jobs
-                 WHERE (? IS NULL OR workspace_id = ?) AND state = 'cancelled_unknown'
+                 WHERE (? IS NULL OR workspace_id = ?)
+                   AND state IN ('cancelled_unknown', 'interrupted')
                  ORDER BY started_at, id",
             )
             .bind(workspace_id)
@@ -748,6 +749,18 @@ mod tests {
             .await
             .expect("unknown");
         assert!(db.active_jobs(None, false).await.expect("active").is_empty());
-        assert_eq!(db.active_jobs(None, true).await.expect("unknown").len(), 1);
+        let interrupted = sample_job("job_interrupted", "task_1");
+        db.create_job(&interrupted).await.expect("interrupted job");
+        db.finish_job(
+            &interrupted.id,
+            DeviceJobState::Interrupted,
+            &json!({"reason":"worker call lost"}),
+            None,
+        )
+        .await
+        .expect("interrupted");
+        let unknown = db.active_jobs(None, true).await.expect("unknown");
+        assert_eq!(unknown.len(), 2, "interrupted Jobs stay visible for manual disposition");
+        assert!(unknown.iter().any(|job| job.id == "job_interrupted"));
     }
 }

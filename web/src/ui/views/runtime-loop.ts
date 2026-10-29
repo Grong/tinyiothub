@@ -186,6 +186,14 @@ export class RuntimeLoop extends LitElement {
   }
 
   private renderEvidence(evidence: EvidenceRef): TemplateResult {
+    const expiresAt = evidence.expiresAt ? Date.parse(evidence.expiresAt) : Number.NaN;
+    if (Number.isFinite(expiresAt) && expiresAt <= Date.now()) {
+      return html`<div class="runtime-loop__evidence runtime-loop__evidence--expired"
+        data-evidence-expired=${evidence.evidenceId} role="status">
+        <span>Image evidence</span><span>${evidence.evidenceId}</span>
+        <small>Image evidence unavailable (expired) · ${evidence.mediaTime}</small>
+      </div>`;
+    }
     return html`<button class="runtime-loop__evidence" type="button" data-evidence-id=${evidence.evidenceId}
       @click=${() => this.locate(evidence.deviceId, evidence.evidenceId)}>
       <span>Image evidence</span><span>${evidence.evidenceId}</span><small>${evidence.mediaTime}</small>

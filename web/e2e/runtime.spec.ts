@@ -78,6 +78,32 @@ test('task switch destroys playback and blocks stale media', async ({ page, requ
   expect(await activePlayers(page)).toBe(0);
 });
 
+test('entering history destroys live playback on the same Task', async ({ page }) => {
+  await openRuntimeTask(page, 'task_video', false);
+  await page.getByRole('button', { name: 'Play evidence' }).click();
+  await expect(page.locator('video')).toBeVisible();
+  await expect.poll(() => activePlayers(page)).toBe(1);
+
+  await page.getByRole('tab', { name: 'Flow' }).click();
+  await page.getByRole('button', { name: /Historical event/ }).first().click();
+  await expect(page.getByText('History · read-only')).toBeVisible();
+  await expect(page.locator('video')).toHaveCount(0);
+  await expect.poll(() => activePlayers(page)).toBe(0);
+});
+
+test('expired image evidence is shown as unavailable without media or a player', async ({
+  page,
+  request,
+}) => {
+  await openRuntimeTask(page, 'task_expired_evidence');
+  const before = await mediaRequests(request);
+  await expect(page.getByText('Image evidence unavailable (expired)')).toBeVisible();
+  await expect(page.locator('button[data-evidence-id="evidence_expired"]')).toHaveCount(0);
+  await expect(page.locator('video')).toHaveCount(0);
+  expect(await mediaRequests(request)).toBe(before);
+  expect(await activePlayers(page)).toBe(0);
+});
+
 test('CORS success plays direct fixture media and CORS failure is visible', async ({
   page,
   request,
@@ -259,6 +285,20 @@ test('360px has no horizontal overflow and 200% zoom keeps controls reachable', 
   );
   expect(overflowZoom).toBeLessThanOrEqual(1);
   await expect(page.getByRole('button', { name: 'Play evidence' })).toBeVisible();
+});
+
+test('768px keeps tabs and the devices rail without horizontal overflow', async ({ page }) => {
+  await page.setViewportSize({ width: 768, height: 900 });
+  await openRuntimeTask(page, 'task_history');
+  await expect(page.getByRole('tab', { name: 'Agent Loop' })).toBeVisible();
+  await expect(page.getByRole('tab', { name: 'Flow' })).toBeVisible();
+  await expect(page.getByRole('tab', { name: 'Devices' })).toHaveCount(0);
+  await expect(page.getByRole('heading', { name: 'Associated devices' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Devices', exact: true })).toBeVisible();
+  const overflow = await page.evaluate(
+    () => document.documentElement.scrollWidth - window.innerWidth,
+  );
+  expect(overflow).toBeLessThanOrEqual(1);
 });
 
 test('light and dark Runtime surfaces meet WCAG AA', async ({ page }) => {

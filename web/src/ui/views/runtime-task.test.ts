@@ -487,6 +487,7 @@ describe('Runtime Task detail shell', () => {
     withEvidence.associations = [{ deviceId: 'dev_1', sourceIds: ['camera'] }];
     withEvidence.evidence = [{
       evidenceId: 'evidence_history', mime: 'image/png', sourceSeq: 1, mediaTime: '2026-10-27T10:00:00Z',
+      expiresAt: '2099-10-27T10:00:00Z',
       deviceId: 'dev_1', sourceId: 'camera', taskId: 'task_1', runId: null, toolCallId: null, jobId: null,
     }];
     get.mockResolvedValue({ code: 0, msg: '', result: withEvidence });

@@ -169,6 +169,28 @@ describe('runtime-loop', () => {
     expect(locate.mock.calls[0][0].detail).toEqual({ deviceId: 'dev_1', evidenceId: 'evidence_1' });
   });
 
+  it('marks expired image evidence unavailable without a device-location action', async () => {
+    const projection = new RuntimeProjection(snapshot());
+    projection.replaceWithSnapshot({
+      ...projection.snapshot,
+      associations: [{ deviceId: 'dev_1', sourceIds: ['camera'] }],
+      evidence: [{
+        evidenceId: 'evidence_expired', mime: 'image/png', sourceSeq: 9,
+        mediaTime: '2026-10-27T10:03:00Z', expiresAt: '2026-10-27T10:05:00Z',
+        deviceId: 'dev_1', sourceId: 'camera', taskId: 'task_1', runId: 'run_1',
+        toolCallId: null, jobId: null,
+      }],
+    });
+    const loop = await mount(projection);
+    const locate = vi.fn();
+    loop.addEventListener('locate-device', locate);
+
+    expect(loop.textContent).toContain('Image evidence unavailable (expired)');
+    expect(loop.querySelector('button[data-evidence-id="evidence_expired"]')).toBeNull();
+    expect(loop.querySelector('[data-evidence-expired="evidence_expired"]')).not.toBeNull();
+    expect(locate).not.toHaveBeenCalled();
+  });
+
   it('fills ToolCard details from production-shaped live accepted and terminal events', async () => {
     const projection = new RuntimeProjection(snapshot());
     projection.apply(event({
@@ -197,6 +219,7 @@ describe('runtime-loop', () => {
       associations: [{ deviceId: 'dev_1', sourceIds: ['camera'] }],
       evidence: [{
         evidenceId: 'evidence_reload', mime: 'image/png', sourceSeq: 9, mediaTime: '2026-10-27T10:03:00Z',
+        expiresAt: '2099-10-27T10:03:00Z',
         deviceId: 'dev_1', sourceId: 'camera', taskId: 'task_1', runId: 'run_1', toolCallId: null, jobId: null,
       }],
     });

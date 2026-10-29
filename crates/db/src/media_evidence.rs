@@ -102,6 +102,7 @@ impl Db {
                         data: serde_json::json!({
                             "mime": stored.mime,
                             "mediaTime": stored.media_time,
+                            "expiresAt": stored.expires_at,
                             "sourceSeq": stored.source_seq,
                         }),
                     },

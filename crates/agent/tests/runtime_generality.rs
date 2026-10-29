@@ -220,7 +220,7 @@ struct Harness {
 impl Harness {
     fn new(manifest: &FixtureManifest, task: &FixtureTask) -> Self {
         let jobs = Arc::new(MemoryJobs::default());
-        let worker = Arc::new(RecordingWorker::default());
+        let worker = Arc::new(RecordingWorker);
         let service = JobService::new(
             jobs.clone(),
             Arc::new(RecordingWorkers { worker }),

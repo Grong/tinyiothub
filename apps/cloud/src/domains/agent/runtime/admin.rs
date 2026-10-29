@@ -1,3 +1,5 @@
+use std::future::Future;
+use std::pin::Pin;
 use std::time::Instant;
 
 use axum::Json;
@@ -8,7 +10,9 @@ use axum::routing::{get, post};
 use axum::{Extension, Router};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
+use tinyiothub_agent::runtime::thing_agent::ThingAgentManager;
 use tinyiothub_core::agent_task::WakeDispatchState;
+use tinyiothub_storage::Db;
 use tinyiothub_storage::runtime_admin::{RuntimeDrainCounts, UnknownDispositionOutcome};
 use tinyiothub_web::response::ApiResponseBuilder;
 use tinyiothub_web::security::Claims;
@@ -217,6 +221,86 @@ pub struct DrainCancelRequest {
     pub task_ids: Vec<String>,
 }
 
+/// The per-Task Cancel operation used by the fixed-batch drain rollback.
+/// Implemented for the real manager and for deterministic test doubles.
+trait DrainTaskCancel: Send + Sync {
+    fn cancel<'a>(
+        &'a self,
+        workspace_id: &'a str,
+        task_id: &'a str,
+    ) -> Pin<Box<dyn Future<Output = Result<(), String>> + Send + 'a>>;
+}
+
+impl DrainTaskCancel for ThingAgentManager {
+    fn cancel<'a>(
+        &'a self,
+        workspace_id: &'a str,
+        task_id: &'a str,
+    ) -> Pin<Box<dyn Future<Output = Result<(), String>> + Send + 'a>> {
+        Box::pin(async move {
+            self.cancel_task(workspace_id, task_id)
+                .await
+                .map(|_| ())
+                .map_err(|error| error.to_string())
+        })
+    }
+}
+
+struct DrainCancelReport {
+    requested: usize,
+    cancelled: usize,
+    results: Vec<serde_json::Value>,
+    drain: Option<DrainStatus>,
+}
+
+/// Cancel exactly the supplied IDs, one per-Task Cancel call each, then
+/// recompute drain from the committed post-cancel state.
+async fn cancel_fixed_task_batch<C: DrainTaskCancel + ?Sized>(
+    db: &Db,
+    cancellations: &C,
+    workspace_id: &str,
+    task_ids: &[String],
+) -> DrainCancelReport {
+    let requested = task_ids.len();
+    let mut cancelled = 0usize;
+    let mut results = Vec::with_capacity(requested);
+    for task_id in task_ids {
+        match cancellations.cancel(workspace_id, task_id).await {
+            Ok(()) => {
+                cancelled += 1;
+                results.push(json!({"taskId": task_id, "outcome": "cancelled"}));
+            }
+            Err(error) => {
+                tracing::warn!(
+                    %workspace_id,
+                    %task_id,
+                    %error,
+                    "drain batch cancel failed for Task"
+                );
+                results.push(json!({"taskId": task_id, "outcome": "failed"}));
+            }
+        }
+    }
+    tracing::info!(
+        metric = "runtime_drain_cancel_batch",
+        %workspace_id,
+        requested,
+        cancelled,
+        "runtime drain cancel batch"
+    );
+    let drain = db
+        .runtime_drain_counts(Some(workspace_id))
+        .await
+        .ok()
+        .map(DrainStatus::from);
+    DrainCancelReport {
+        requested,
+        cancelled,
+        results,
+        drain,
+    }
+}
+
 /// Cancel a caller-fixed ID batch. Every ID goes through the existing
 /// per-Task Cancel path; no bulk status update and no implicit discovery.
 pub async fn cancel_drain_batch(
@@ -233,46 +317,20 @@ pub async fn cancel_drain_batch(
     let Some(manager) = state.thing_agents.as_ref() else {
         return error_response(StatusCode::SERVICE_UNAVAILABLE, "Task 服务不可用");
     };
-    let requested = request.task_ids.len();
-    let mut cancelled = 0usize;
-    let mut results = Vec::with_capacity(requested);
-    for task_id in request.task_ids {
-        match manager.cancel_task(&request.workspace_id, &task_id).await {
-            Ok(_) => {
-                cancelled += 1;
-                results.push(json!({"taskId": task_id, "outcome": "cancelled"}));
-            }
-            Err(error) => {
-                tracing::warn!(
-                    workspace_id = %request.workspace_id,
-                    %task_id,
-                    error = ?error,
-                    "drain batch cancel failed for Task"
-                );
-                results.push(json!({"taskId": task_id, "outcome": "failed"}));
-            }
-        }
-    }
-    tracing::info!(
-        metric = "runtime_drain_cancel_batch",
-        workspace_id = %request.workspace_id,
-        requested,
-        cancelled,
-        "runtime drain cancel batch"
-    );
-    let drain = state
-        .db
-        .runtime_drain_counts(Some(&request.workspace_id))
-        .await
-        .ok()
-        .map(DrainStatus::from);
+    let report = cancel_fixed_task_batch(
+        state.db.as_ref(),
+        manager.as_ref(),
+        &request.workspace_id,
+        &request.task_ids,
+    )
+    .await;
     ApiResponseBuilder::success(json!({
-        "requested": requested,
-        "cancelled": cancelled,
-        "results": results,
-        "drain": drain,
-        "canHideWorkbench": drain.as_ref().map(DrainStatus::can_hide_workbench),
-        "canHideMedia": drain.as_ref().map(DrainStatus::can_hide_media),
+        "requested": report.requested,
+        "cancelled": report.cancelled,
+        "results": report.results,
+        "drain": report.drain,
+        "canHideWorkbench": report.drain.as_ref().map(DrainStatus::can_hide_workbench),
+        "canHideMedia": report.drain.as_ref().map(DrainStatus::can_hide_media),
     }))
     .into_response()
 }
@@ -318,7 +376,7 @@ pub async fn record_unknown_disposition(
         }
         Ok(UnknownDispositionOutcome::NotFound) => error_response(StatusCode::NOT_FOUND, "Job 不存在"),
         Ok(UnknownDispositionOutcome::NotUnknown) => {
-            error_response(StatusCode::CONFLICT, "仅 cancelled_unknown Job 可登记处置")
+            error_response(StatusCode::CONFLICT, "仅 cancelled_unknown/interrupted Job 可登记处置")
         }
         Err(error) => {
             tracing::error!(%job_id, %error, "record unknown disposition failed");
@@ -607,6 +665,62 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn drain_counts_interrupted_unknown_until_dispositioned() {
+        let (app, db, admin, _) = fixture().await;
+        db.create_job(&job("interrupted-drain", DeviceJobState::Running))
+            .await
+            .expect("interrupted insert");
+        db.finish_job(
+            "interrupted-drain",
+            DeviceJobState::Interrupted,
+            &json!({"reason":"worker call lost"}),
+            None,
+        )
+        .await
+        .expect("interrupted finish");
+
+        let drain_uri = format!("/api/v1/admin/runtime/drain?workspaceId={WS}");
+        let (status, body) = request(&app, &admin, "GET", &drain_uri).await;
+        assert_eq!(status, StatusCode::OK, "drain: {body}");
+        assert_eq!(body["result"]["drain"]["unresolvedUnknown"], 1);
+        assert_eq!(body["result"]["canHideWorkbench"], false);
+        assert_eq!(body["result"]["canHideMedia"], false);
+
+        let uri = "/api/v1/admin/runtime/unknown/interrupted-drain/disposition";
+        let (status, body) = post_json(
+            &app,
+            &admin,
+            uri,
+            json!({"workspaceId": WS, "disposition": "inspected: pump physically stopped"}),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "interrupted disposition: {body}");
+        assert_eq!(body["result"]["drain"]["unresolvedUnknown"], 0);
+        assert_eq!(body["result"]["physicalStateReplayed"], false);
+        assert_eq!(
+            db.get_job(WS, "interrupted-drain")
+                .await
+                .expect("get")
+                .expect("job")
+                .state,
+            DeviceJobState::Interrupted,
+            "disposition must never rewrite or replay an interrupted Job"
+        );
+
+        db.transition_task(WS, "task-admin", 1, TaskStatus::Cancelling, None)
+            .await
+            .expect("cancel task");
+        db.transition_task(WS, "task-admin", 2, TaskStatus::Cancelled, None)
+            .await
+            .expect("finish cancel");
+        let (status, body) = request(&app, &admin, "GET", &drain_uri).await;
+        assert_eq!(status, StatusCode::OK, "settled drain: {body}");
+        assert_eq!(body["result"]["drain"]["unresolvedUnknown"], 0);
+        assert_eq!(body["result"]["canHideWorkbench"], true);
+        assert_eq!(body["result"]["canHideMedia"], true);
+    }
+
+    #[tokio::test]
     async fn drain_cancel_requires_fixed_ids_and_never_bulk_mutates() {
         let (app, db, admin, reader) = fixture().await;
         let uri = "/api/v1/admin/runtime/drain/cancel";
@@ -629,6 +743,87 @@ mod tests {
         let task = db.get_task(WS, "task-admin").await.expect("get").expect("task");
         assert_eq!(task.status, tinyiothub_core::agent_task::TaskStatus::Active);
         assert_eq!(task.state_version, 1);
+    }
+
+    struct StubCancel {
+        db: tinyiothub_storage::Db,
+        calls: std::sync::Mutex<Vec<String>>,
+    }
+
+    impl super::DrainTaskCancel for StubCancel {
+        fn cancel<'a>(
+            &'a self,
+            workspace_id: &'a str,
+            task_id: &'a str,
+        ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<(), String>> + Send + 'a>> {
+            Box::pin(async move {
+                self.calls.lock().expect("calls").push(task_id.to_string());
+                if task_id == "missing-task" {
+                    return Err("task not found".to_string());
+                }
+                let task = self
+                    .db
+                    .get_task(workspace_id, task_id)
+                    .await
+                    .map_err(|error| error.to_string())?
+                    .ok_or_else(|| "task not found".to_string())?;
+                if task.status.is_terminal() {
+                    return Ok(());
+                }
+                let cancelling = self
+                    .db
+                    .transition_task(workspace_id, task_id, task.state_version, TaskStatus::Cancelling, None)
+                    .await
+                    .map_err(|error| error.to_string())?;
+                self.db
+                    .transition_task(
+                        workspace_id,
+                        task_id,
+                        cancelling.state_version,
+                        TaskStatus::Cancelled,
+                        None,
+                    )
+                    .await
+                    .map(|_| ())
+                    .map_err(|error| error.to_string())
+            })
+        }
+    }
+
+    #[tokio::test]
+    async fn drain_cancel_batch_calls_per_task_cancel_and_recomputes_drain() {
+        let (_, db, _, _) = fixture().await;
+        let before = db.runtime_drain_counts(Some(WS)).await.expect("before");
+        assert_eq!(before.nonterminal_tasks, 1);
+        assert!(!super::DrainStatus::from(before).can_hide_workbench());
+
+        let stub = StubCancel {
+            db: db.clone(),
+            calls: std::sync::Mutex::new(Vec::new()),
+        };
+        let task_ids = vec!["task-admin".to_string(), "missing-task".to_string()];
+        let report = super::cancel_fixed_task_batch(&db, &stub, WS, &task_ids).await;
+
+        assert_eq!(report.requested, 2);
+        assert_eq!(report.cancelled, 1);
+        assert_eq!(report.results[0]["taskId"], "task-admin");
+        assert_eq!(report.results[0]["outcome"], "cancelled");
+        assert_eq!(report.results[1]["taskId"], "missing-task");
+        assert_eq!(report.results[1]["outcome"], "failed");
+        assert_eq!(
+            stub.calls.lock().expect("calls").as_slice(),
+            ["task-admin", "missing-task"],
+            "exactly one Cancel call per supplied ID"
+        );
+
+        let drain = report.drain.expect("post-cancel drain");
+        assert_eq!(drain.nonterminal_tasks, 0);
+        assert!(drain.can_hide_workbench());
+        assert!(drain.can_hide_media());
+        assert_eq!(
+            db.get_task(WS, "task-admin").await.expect("get").expect("task").status,
+            TaskStatus::Cancelled
+        );
     }
 
     #[tokio::test]

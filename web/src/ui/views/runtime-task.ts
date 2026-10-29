@@ -152,10 +152,7 @@ export class RuntimeTaskView extends LitElement {
     } else if (historyChanged) {
       if (this.historyMode) {
         const steps = this.projection?.steps ?? [];
-        this.closeStream?.();
-        this.closeStream = null;
-        this.abort?.abort();
-        this.abort = null;
+        this.cleanupTask();
         if (this.taskId) void this.loadHistory(steps);
       } else {
         this.cleanupTask();

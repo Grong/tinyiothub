@@ -175,6 +175,7 @@ pub struct TaskEvidenceProjection {
     pub mime: String,
     pub source_seq: u64,
     pub media_time: DateTime<Utc>,
+    pub expires_at: DateTime<Utc>,
     pub device_id: String,
     pub source_id: String,
     pub task_id: Option<String>,
@@ -727,6 +728,7 @@ impl Db {
                 String,
                 i64,
                 DateTime<Utc>,
+                DateTime<Utc>,
                 String,
                 String,
                 Option<String>,
@@ -735,7 +737,7 @@ impl Db {
                 Option<String>,
             ),
         >(
-            "SELECT id, mime, source_seq, media_time, device_id, source_id, task_id, run_id, tool_call_id, job_id
+            "SELECT id, mime, source_seq, media_time, expires_at, device_id, source_id, task_id, run_id, tool_call_id, job_id
              FROM media_evidence WHERE workspace_id = ? AND task_id = ? ORDER BY created_at, id",
         )
         .bind(workspace_id)
@@ -750,6 +752,7 @@ impl Db {
                     mime,
                     source_seq,
                     media_time,
+                    expires_at,
                     device_id,
                     source_id,
                     task_id,
@@ -762,6 +765,7 @@ impl Db {
                         mime,
                         source_seq: u64::try_from(source_seq).map_err(internal)?,
                         media_time,
+                        expires_at,
                         device_id,
                         source_id,
                         task_id,
@@ -1259,6 +1263,7 @@ mod tests {
         assert!(serialized.get("events").is_none());
         assert!(serialized.get("storagePath").is_none());
         assert!(serialized["evidence"][0].get("storagePath").is_none());
+        assert!(serialized["evidence"][0].get("expiresAt").is_some());
         assert!(
             db.runtime_projection("ws-1", "missing")
                 .await

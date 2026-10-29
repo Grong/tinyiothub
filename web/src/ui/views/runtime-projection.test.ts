@@ -124,6 +124,7 @@ describe('RuntimeProjection', () => {
       ],
       evidence: [{
         evidenceId: 'evidence_only', mime: 'image/jpeg', sourceSeq: 3, mediaTime: '2026-10-27T10:02:00Z',
+        expiresAt: '2099-10-27T10:02:00Z',
         deviceId: 'dev_evidence', sourceId: 'camera', taskId: 'task_1', runId: null, toolCallId: null, jobId: null,
       }],
     }));

@@ -97,6 +97,7 @@ export interface EvidenceRef {
   mime: string;
   sourceSeq: number;
   mediaTime: string;
+  expiresAt: string | null;
   deviceId: string;
   sourceId: string;
   taskId: string | null;

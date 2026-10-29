@@ -20,6 +20,7 @@ runtime-loop { display: block; min-width: 0; }
 }
 .runtime-loop__evidence-list { display: grid; gap: var(--space-2); }
 .runtime-loop__evidence { display: grid; gap: var(--space-1); padding: var(--space-2); }
+.runtime-loop__evidence--expired { color: var(--runtime-muted); }
 .runtime-loop__evidence small, .runtime-loop__empty { color: var(--runtime-muted); }
 .runtime-loop pre { max-width: 100%; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; }
 @media (prefers-reduced-motion: reduce) {

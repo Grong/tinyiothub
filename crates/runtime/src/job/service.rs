@@ -1052,6 +1052,48 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn long_running_job_continuation_reuses_one_job_and_one_side_effect() {
+        let mut fixture = JobFixture::new().await;
+        let job = fixture.accepted_job("job_long", "task_long").await;
+        assert_eq!(fixture.worker.submitted.lock().expect("submitted lock").len(), 1);
+
+        // The model wait window expires while the physical Job is still active.
+        let waited = fixture.service.wait(&job.id, Duration::from_millis(10)).await;
+        assert!(matches!(waited, JobWait::Running { ref job_id } if job_id == &job.id));
+        assert_eq!(fixture.job(&job.id).await.state, DeviceJobState::Accepted);
+
+        // A restarted service rediscovers the same active Job instead of
+        // submitting the side effect again.
+        fixture.restart();
+        let recovery = fixture.service.recover().await.expect("recover");
+        assert_eq!(recovery.interrupted, 0);
+        let active = fixture
+            .service
+            .task_jobs("ws_1", "task_long", false)
+            .await
+            .expect("active jobs");
+        assert_eq!(active.len(), 1);
+        assert_eq!(active[0].id, job.id);
+        assert_eq!(fixture.worker.submitted.lock().expect("submitted lock").len(), 1);
+
+        let terminal = fixture
+            .service
+            .finish(&job.id, JobFinal::Done(json!({"ok":true})))
+            .await
+            .expect("terminal");
+        assert!(terminal.wake_created);
+        assert_eq!(fixture.wake_count("task_long").await, 1);
+        let duplicate = fixture
+            .service
+            .finish(&job.id, JobFinal::Done(json!({"ok":true})))
+            .await
+            .expect("duplicate terminal");
+        assert!(!duplicate.wake_created);
+        assert_eq!(fixture.wake_count("task_long").await, 1);
+        assert_eq!(fixture.worker.submitted.lock().expect("submitted lock").len(), 1);
+    }
+
+    #[tokio::test]
     async fn progress_updates_projection_without_waking_task() {
         let fixture = JobFixture::new().await;
         let job = fixture.accepted_job("job_progress", "task_progress").await;

@@ -15,6 +15,7 @@ function projectionFromFixtureB(): RuntimeProjection {
     },
     runs: [], jobs: [], approvals: [], watches: [], evidence: [{
       evidenceId: 'evidence_camera', mime: 'image/jpeg', sourceSeq: 4, mediaTime: '2026-10-27T10:01:30Z',
+      expiresAt: '2099-10-27T10:01:30Z',
       deviceId: 'fixture-b-camera', sourceId: 'still', taskId: 'task_b', runId: null, toolCallId: null, jobId: null,
     }], summary: null, cursor: 0,
     associations: [

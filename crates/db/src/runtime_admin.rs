@@ -154,7 +154,8 @@ impl Db {
                  WHERE (? IS NULL OR t.workspace_id = ?)
                    AND o.dispatch_state = 'pending' AND o.resolved_at IS NULL),
                (SELECT COUNT(*) FROM device_jobs j
-                 WHERE (? IS NULL OR j.workspace_id = ?) AND j.state = 'cancelled_unknown'
+                 WHERE (? IS NULL OR j.workspace_id = ?)
+                   AND j.state IN ('cancelled_unknown', 'interrupted')
                    AND NOT EXISTS (
                      SELECT 1 FROM runtime_unknown_dispositions d WHERE d.job_id = j.id
                    ))",
@@ -335,8 +336,9 @@ impl Db {
         })
     }
 
-    /// Record an administrator's physical disposition for an unknown Job.
-    /// The Job row itself is not rewritten and no side effect is replayed.
+    /// Record an administrator's physical disposition for a Job whose physical
+    /// outcome is unknown (`cancelled_unknown` or `interrupted`). The Job row
+    /// itself is not rewritten and no side effect is replayed.
     pub async fn record_unknown_disposition(
         &self,
         workspace_id: &str,
@@ -354,7 +356,7 @@ impl Db {
         let Some((state, task_id, device_id)) = row else {
             return Ok(UnknownDispositionOutcome::NotFound);
         };
-        if state != "cancelled_unknown" {
+        if state != "cancelled_unknown" && state != "interrupted" {
             return Ok(UnknownDispositionOutcome::NotUnknown);
         }
         let affected = sqlx::query(

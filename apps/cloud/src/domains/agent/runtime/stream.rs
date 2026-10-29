@@ -140,6 +140,7 @@ pub struct RuntimeStreamHub {
     connections_closed: AtomicU64,
     resyncs: AtomicU64,
     duplicates_dropped: AtomicU64,
+    foreign_task_events: AtomicU64,
     first_frames: AtomicU64,
     first_frame_ms_total: AtomicU64,
 }
@@ -152,6 +153,7 @@ pub struct RuntimeStreamMetrics {
     pub connections_closed: u64,
     pub resyncs: u64,
     pub duplicates_dropped: u64,
+    pub foreign_task_events: u64,
     pub first_frames: u64,
     pub first_frame_ms_total: u64,
 }
@@ -166,6 +168,7 @@ impl RuntimeStreamHub {
             connections_closed: AtomicU64::new(0),
             resyncs: AtomicU64::new(0),
             duplicates_dropped: AtomicU64::new(0),
+            foreign_task_events: AtomicU64::new(0),
             first_frames: AtomicU64::new(0),
             first_frame_ms_total: AtomicU64::new(0),
         }
@@ -178,6 +181,7 @@ impl RuntimeStreamHub {
             connections_closed: self.connections_closed.load(Ordering::Relaxed),
             resyncs: self.resyncs.load(Ordering::Relaxed),
             duplicates_dropped: self.duplicates_dropped.load(Ordering::Relaxed),
+            foreign_task_events: self.foreign_task_events.load(Ordering::Relaxed),
             first_frames: self.first_frames.load(Ordering::Relaxed),
             first_frame_ms_total: self.first_frame_ms_total.load(Ordering::Relaxed),
         }
@@ -185,6 +189,10 @@ impl RuntimeStreamHub {
 
     fn record_duplicate(&self) {
         self.duplicates_dropped.fetch_add(1, Ordering::Relaxed);
+    }
+
+    fn record_foreign_task_event(&self) {
+        self.foreign_task_events.fetch_add(1, Ordering::Relaxed);
     }
 
     fn record_resync(&self, reason: &str) {
@@ -372,10 +380,11 @@ impl RuntimeConnection {
             }
             match self.events.recv().await {
                 Ok(event) => {
-                    if event.task_id.as_deref() != Some(self.task_id.as_str())
-                        || event.cursor <= self.last_cursor
-                        || self.seen.contains(&event.event_id)
-                    {
+                    if event.task_id.as_deref() != Some(self.task_id.as_str()) {
+                        self.hub.record_foreign_task_event();
+                        continue;
+                    }
+                    if event.cursor <= self.last_cursor || self.seen.contains(&event.event_id) {
                         self.hub.record_duplicate();
                         continue;
                     }
@@ -634,6 +643,31 @@ mod tests {
             tokio::time::timeout(Duration::from_millis(50), connection.next_frame())
                 .await
                 .is_err()
+        );
+        assert_eq!(
+            hub.metrics().duplicates_dropped,
+            0,
+            "a foreign Task event is filtered traffic, not a duplicate"
+        );
+        assert_eq!(hub.metrics().foreign_task_events, 1);
+
+        let duplicate = db.append_runtime_event(input("event-1")).await.expect("first");
+        hub.publish(duplicate.clone());
+        assert!(matches!(
+            connection.next_frame().await,
+            Some(RuntimeFrame::Event { .. })
+        ));
+        hub.publish(duplicate);
+        assert!(
+            tokio::time::timeout(Duration::from_millis(50), connection.next_frame())
+                .await
+                .is_err()
+        );
+        assert_eq!(hub.metrics().duplicates_dropped, 1);
+        assert_eq!(
+            hub.metrics().foreign_task_events,
+            1,
+            "real duplicates must not be counted as foreign Task traffic"
         );
     }
 

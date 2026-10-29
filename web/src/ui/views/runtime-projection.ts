@@ -292,6 +292,7 @@ export class RuntimeProjection {
       mime: event.data.mime,
       sourceSeq: event.sourceSeq ?? (typeof event.data.sourceSeq === 'number' ? event.data.sourceSeq : 0),
       mediaTime: typeof event.data.mediaTime === 'string' ? event.data.mediaTime : event.occurredAt,
+      expiresAt: typeof event.data.expiresAt === 'string' ? event.data.expiresAt : null,
       deviceId: event.deviceId ?? '',
       sourceId: event.sourceId ?? '',
       taskId: event.taskId,

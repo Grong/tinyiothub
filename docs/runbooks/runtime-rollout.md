@@ -99,11 +99,14 @@ provider keys into tickets or dashboards.
 ## 7. Unknown results
 
 1. Record every `cancel_unknown` Task/Job/device ID surfaced by drain or by
-   `cancelled_unknown` Job gauges.
-2. Inspect the physical device state manually.
-3. Enter an administrator disposition at
-   `POST /api/v1/admin/runtime/unknown/{job_id}/disposition`.
-4. Only then confirm `unresolved_unknown` is zero. Never auto-retry.
+   `cancelled_unknown` and `interrupted` Job gauges.
+2. Treat an `interrupted` Job as execution-terminal but physically unknown: it
+   counts in `unresolved_unknown` and blocks drain until dispositioned.
+3. Inspect the physical device state manually.
+4. Enter an administrator disposition at
+   `POST /api/v1/admin/runtime/unknown/{job_id}/disposition` for either a
+   `cancelled_unknown` or an `interrupted` Job.
+5. Only then confirm `unresolved_unknown` is zero. Never auto-retry.
 
 ## 8. Drain completion
 
@@ -142,7 +145,8 @@ elapsed.
 
 - Local watch -> Run and Job -> UI timing targets (<2s and <1s) are recorded as
   local integration evidence only; they are not production p99.
-- Dead outbox = 0 and every `cancelled_unknown` Job has a disposition.
+- Dead outbox = 0 and every `cancelled_unknown` or `interrupted` Job has a
+  disposition.
 - Vision capability failure is honest (`image_unavailable`), and unavailable
   media never falls back to Hub proxying.
 - No video request continues after Task switch, player stop, or history.
@@ -163,8 +167,9 @@ Durable gauges (from the metrics response):
 - `watches.{active,total}`
 - `evidence.{count,bytes,expired}`
 - `host.{rssBytes,rssPercent,diskUsedPercent}` and `dbQueryMs`
-- `stream.{activeConnections,connectionsOpened,connectionsClosed,resyncs,duplicatesDropped,firstFrames,firstFrameMsTotal}`
-  (Runtime SSE counters)
+- `stream.{activeConnections,connectionsOpened,connectionsClosed,resyncs,duplicatesDropped,foreignTaskEvents,firstFrames,firstFrameMsTotal}`
+  (Runtime SSE counters; `foreignTaskEvents` counts frames filtered for another
+  Task and is separate from `duplicatesDropped`)
 
 Structured metrics:
 
@@ -193,7 +198,8 @@ Alerts are observability thresholds only; they are not new quotas:
 - `outbox.oldestPendingAgeSecs > 60`
 - pending outbox growth over a 5-minute window
 - an approved decision with no Job and no recorded deferral for >60s
-- `jobs.cancelledUnknown > 0` or any unresolved unknown disposition
+- `jobs.cancelledUnknown > 0`, `jobs.interrupted > 0`, or any unresolved
+  unknown disposition
 - any Job execution event after its recorded stop
 - a Job still running past its deadline + 60s
 - `host.diskUsedPercent > 80`

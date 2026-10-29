@@ -167,12 +167,13 @@ function runningJob(id: string, deviceId = 'cam-allowed'): Json {
   };
 }
 
-function evidence(id: string, deviceId = 'cam-allowed'): Json {
+function evidence(id: string, deviceId = 'cam-allowed', expiresAt = future(60 * 24 * 7)): Json {
   return {
     evidenceId: id,
     mime: 'image/jpeg',
     sourceSeq: 1,
     mediaTime: '2026-10-27T10:01:00Z',
+    expiresAt,
     deviceId,
     sourceId: 'live',
     taskId: 'task_video',
@@ -188,6 +189,13 @@ const fixtures: Record<string, Fixture> = {
       devices: videoDevices,
       jobs: [runningJob('job_video')],
       evidence: [evidence('evidence_video')],
+    }),
+    events: [runtimeEvent('task_video', 1, 'read_device', { deviceId: 'cam-allowed' })],
+  },
+  task_expired_evidence: {
+    projection: projection('task_expired_evidence', {
+      devices: videoDevices,
+      evidence: [evidence('evidence_expired', 'cam-allowed', '2026-10-27T10:05:00Z')],
     }),
     events: [],
   },
