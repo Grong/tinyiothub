@@ -1,8 +1,10 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
+  isHistoryState,
   parseRuntimeHash,
   replaceRuntimeTask,
   switchTaskUrl,
+  toLiveRuntimeTaskUrl,
   toRuntimeTaskUrl,
 } from './runtime-url-state.js';
 
@@ -42,6 +44,17 @@ describe('Runtime hash URL state', () => {
       taskId: 'task:1', view: 'flow', device: 'dev/1',
       history: { at: '2026-10-27T10:00:00Z', event: 'event:2' },
     });
+  });
+
+  it('detects history only from at or event and builds a live URL that preserves Task, view and device', () => {
+    expect(isHistoryState(null)).toBe(false);
+    expect(isHistoryState({})).toBe(false);
+    expect(isHistoryState({ event: 'e2' })).toBe(true);
+    expect(isHistoryState({ at: '2026-10-27T10:00:00Z' })).toBe(true);
+
+    expect(toLiveRuntimeTaskUrl('task:1', { view: 'flow', device: 'dev/1' }))
+      .toBe('#/runtime/tasks/task%3A1?view=flow&device=dev%2F1');
+    expect(toLiveRuntimeTaskUrl('t1')).toBe('#/runtime/tasks/t1');
   });
 
   it('replace-navigates after create and notifies the hash router', () => {

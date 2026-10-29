@@ -1,11 +1,16 @@
-import { LitElement, html, nothing, type TemplateResult } from 'lit';
-import { customElement, property } from 'lit/decorators.js';
-import type { EvidenceRef, RuntimeEvent } from '../../types/runtime.js';
-import type { RuntimeProjectedJob } from './runtime-projection.js';
+import { LitElement, html, nothing, type PropertyValues, type TemplateResult } from 'lit';
+import { customElement, property, state } from 'lit/decorators.js';
+import { ApiError } from '../../api/client.js';
+import { stopRuntimeJob } from '../../api/runtime.js';
+import type { EvidenceRef, RuntimeEvent, TaskProjection, TaskStatus } from '../../types/runtime.js';
+import type { RuntimeProjectedApproval, RuntimeProjectedJob } from './runtime-projection.js';
 import { RuntimeProjection } from './runtime-projection.js';
+import './runtime-approval.js';
 import './runtime-loop.css';
 
 const toolEvents = new Set(['read_device', 'call_device', 'set_device', 'stop_device', 'watch_device']);
+const stopStates = new Set(['accepted', 'running']);
+const terminalStatuses = new Set<TaskStatus>(['completed', 'failed', 'cancelled']);
 
 function safeJson(value: unknown): string {
   if (value === undefined || value === null) return 'None';
@@ -20,9 +25,37 @@ function safeJson(value: unknown): string {
 export class RuntimeLoop extends LitElement {
   @property({ attribute: false }) projection: RuntimeProjection | null = null;
   @property({ type: Number }) revision = 0;
+  @property({ type: Boolean }) readOnly = false;
+
+  @state() private confirmStopJobId: string | null = null;
+  @state() private stoppingJobId: string | null = null;
+  @state() private stopUnknown = new Set<string>();
+
+  private generation = 0;
+  private controller = new AbortController();
+  private currentTaskId = '';
 
   createRenderRoot() {
     return this;
+  }
+
+  disconnectedCallback(): void {
+    this.generation += 1;
+    this.controller.abort();
+    super.disconnectedCallback();
+  }
+
+  willUpdate(changed: PropertyValues<this>): void {
+    if (!changed.has('projection')) return;
+    const taskId = this.projection?.task.id ?? '';
+    if (taskId === this.currentTaskId) return;
+    this.currentTaskId = taskId;
+    this.generation += 1;
+    this.controller.abort();
+    this.controller = new AbortController();
+    this.confirmStopJobId = null;
+    this.stoppingJobId = null;
+    this.stopUnknown = new Set<string>();
   }
 
   private locate(deviceId: string, evidenceId?: string): void {
@@ -31,6 +64,10 @@ export class RuntimeLoop extends LitElement {
       bubbles: true,
       composed: true,
     }));
+  }
+
+  private requestRefresh(): void {
+    this.dispatchEvent(new CustomEvent('refresh-request', { bubbles: true, composed: true }));
   }
 
   private deviceLink(deviceId: string): TemplateResult {
@@ -53,15 +90,93 @@ export class RuntimeLoop extends LitElement {
     </article>`;
   }
 
+  private renderApproval(approval: RuntimeProjectedApproval): TemplateResult {
+    return html`<runtime-approval
+      .workspaceId=${approval.workspaceId ?? this.projection?.task.workspaceId ?? ''}
+      .taskId=${this.projection?.task.id ?? ''}
+      .approval=${approval}
+      .readOnly=${this.readOnly}></runtime-approval>`;
+  }
+
+  private ownsJob(job: RuntimeProjectedJob): boolean {
+    return Boolean(this.projection && job.taskId === this.projection.task.id);
+  }
+
+  private canOfferStop(job: RuntimeProjectedJob): boolean {
+    const status = this.projection?.task.status;
+    return !this.readOnly && status !== undefined && !terminalStatuses.has(status) &&
+      this.ownsJob(job) && stopStates.has(job.state) && !this.stopUnknown.has(job.id);
+  }
+
+  private openStopConfirmation(job: RuntimeProjectedJob): void {
+    if (!this.canOfferStop(job) || this.stoppingJobId) return;
+    this.confirmStopJobId = job.id;
+  }
+
+  private keepJob(): void {
+    if (this.stoppingJobId) return;
+    this.confirmStopJobId = null;
+  }
+
+  private async requestStop(job: RuntimeProjectedJob): Promise<void> {
+    if (!this.canOfferStop(job) || this.stoppingJobId) return;
+    const generation = this.generation;
+    const taskId = this.projection?.task.id ?? '';
+    this.confirmStopJobId = null;
+    this.stoppingJobId = job.id;
+    this.errorFor(job.id, false);
+    try {
+      const response = await stopRuntimeJob(
+        job.workspaceId ?? this.projection?.task.workspaceId ?? '',
+        taskId,
+        job.id,
+        this.controller.signal,
+      );
+      if (!response.result) throw new ApiError(500, 'Task projection missing');
+      if (generation !== this.generation) return;
+      this.dispatchEvent(new CustomEvent<TaskProjection>('projection-change', {
+        detail: response.result, bubbles: true, composed: true,
+      }));
+    } catch {
+      if (generation !== this.generation || this.controller.signal.aborted) return;
+      this.errorFor(job.id, true);
+    } finally {
+      if (generation === this.generation) this.stoppingJobId = null;
+    }
+  }
+
+  private errorFor(jobId: string, unknown: boolean): void {
+    this.stopUnknown = new Set(
+      unknown
+        ? [...this.stopUnknown, jobId]
+        : [...this.stopUnknown].filter((id) => id !== jobId),
+    );
+  }
+
   private renderJob(job: RuntimeProjectedJob): TemplateResult {
+    const unknown = job.state === 'cancelled_unknown' || this.stopUnknown.has(job.id);
+    const confirming = this.confirmStopJobId === job.id;
+    const stopping = this.stoppingJobId === job.id;
     return html`<section class="tool-card" data-job-id=${job.id}>
       <header><strong>${job.tool ?? 'Device job'}</strong><span>${job.state}</span></header>
       ${job.deviceId ? html`<p>${this.deviceLink(job.deviceId)}</p>` : nothing}
-      ${job.state === 'cancelled_unknown'
+      ${unknown
         ? html`<p role="alert">Stop result unknown</p>
-          <button class="btn" type="button" @click=${() => this.dispatchEvent(new CustomEvent('refresh-request', {
-            bubbles: true, composed: true,
-          }))}>Refresh status</button>`
+          <button class="btn" type="button" data-action="refresh-status" @click=${this.requestRefresh}>Refresh status</button>`
+        : nothing}
+      ${!unknown && (confirming || stopping)
+        ? html`<div class="runtime-loop__stop-confirm" role="group" aria-label="Stop job confirmation">
+          <p>Stops only this job; the rest of the task continues.</p>
+          ${stopping
+            ? html`<p role="status">Stopping…</p>`
+            : html`<button class="btn" type="button" data-action="keep-job" @click=${this.keepJob}>Keep job</button>`}
+          <button class="btn" type="button" data-action="confirm-stop" data-executable
+            ?disabled=${stopping} @click=${() => this.requestStop(job)}>Confirm stop</button>
+        </div>`
+        : nothing}
+      ${!unknown && !confirming && !stopping && this.canOfferStop(job)
+        ? html`<button class="btn" type="button" data-action="stop-job" data-executable
+            @click=${() => this.openStopConfirmation(job)}>Stop job</button>`
         : nothing}
       <details><summary>${job.state === 'done' ? 'Done/Details' : 'Details'}</summary>
         <dl><dt>Arguments</dt><dd><pre>${safeJson(job.argsJson)}</pre></dd>
@@ -81,12 +196,31 @@ export class RuntimeLoop extends LitElement {
     void this.revision;
     const projection = this.projection;
     if (!projection) return nothing;
+
+    const approvalById = new Map<string, RuntimeProjectedApproval>();
+    for (const approval of projection.approvals) {
+      if (typeof approval.id === 'string' && typeof approval.tool === 'string') {
+        approvalById.set(approval.id, approval);
+      }
+    }
+    const renderedApprovals = new Set<string>();
+    const steps = projection.steps.map((event) => {
+      const approval = event.approvalId ? approvalById.get(event.approvalId) : undefined;
+      if (approval) renderedApprovals.add(approval.id);
+      return html`${this.renderEvent(event)}${approval ? this.renderApproval(approval) : nothing}`;
+    });
+    const orphanApprovals = [...approvalById.values()]
+      .filter((approval) => !renderedApprovals.has(approval.id));
+
     const imageEvidence = projection.evidence.filter((evidence) => evidence.deviceId && evidence.mime.startsWith('image/'));
     return html`<section class="runtime-loop" aria-label="Agent Loop">
       <h2>Agent Loop</h2>
-      ${projection.jobs.length || projection.steps.length || projection.evidence.length ? nothing : html`<p class="runtime-loop__empty">No agent activity yet</p>`}
+      ${projection.jobs.length || projection.steps.length || projection.evidence.length || projection.approvals.length ? nothing : html`<p class="runtime-loop__empty">No agent activity yet</p>`}
       <div class="runtime-loop__jobs">${projection.jobs.map((job) => this.renderJob(job))}</div>
-      <div class="runtime-loop__steps">${projection.steps.map((event) => this.renderEvent(event))}</div>
+      ${orphanApprovals.length
+        ? html`<div class="runtime-loop__approvals">${orphanApprovals.map((approval) => this.renderApproval(approval))}</div>`
+        : nothing}
+      <div class="runtime-loop__steps">${steps}</div>
       ${imageEvidence.length ? html`<section aria-label="Image evidence" class="runtime-loop__evidence-list">
         ${imageEvidence.map((evidence) => this.renderEvidence(evidence))}
       </section>` : nothing}

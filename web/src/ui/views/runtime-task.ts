@@ -5,7 +5,14 @@ import { getRuntimeTask } from '../../api/runtime.js';
 import { connectRuntimeStream } from '../../api/runtime-stream.js';
 import type { PlaybackDescriptor, TaskProjection } from '../../types/runtime.js';
 import { RuntimeProjection, type RuntimeConnection } from './runtime-projection.js';
-import { toRuntimeTaskUrl, type RuntimeHistory, type RuntimeView } from './runtime-url-state.js';
+import {
+  isHistoryState,
+  toLiveRuntimeTaskUrl,
+  toRuntimeTaskUrl,
+  type RuntimeHistory,
+  type RuntimeView,
+} from './runtime-url-state.js';
+import './runtime-task-controls.js';
 import './runtime-playback.js';
 import type { RuntimePlayback } from './runtime-playback.js';
 import './runtime-loop.js';
@@ -44,6 +51,8 @@ export class RuntimeTaskView extends LitElement {
   private generation = 0;
   private abort: AbortController | null = null;
   private closeStream: (() => void) | null = null;
+  private historyEventId = '';
+  private historyOccurredAt = '';
   private drag: { pointerId: number; startX: number; startWidth: number } | null = null;
   private motionQuery: MediaQueryList | null = null;
   private motionListener = (event: MediaQueryListEvent) => {
@@ -77,6 +86,10 @@ export class RuntimeTaskView extends LitElement {
     const taskChanged = changed.has('taskId') && changed.get('taskId') !== undefined;
     const historyChanged = changed.has('history') && changed.get('history') !== undefined &&
       !sameHistory(changed.get('history') ?? null, this.history);
+    if (taskChanged) {
+      this.historyEventId = '';
+      this.historyOccurredAt = '';
+    }
     if (taskChanged || historyChanged) {
       this.cleanupTask();
       if (this.taskId) void this.load();
@@ -178,8 +191,38 @@ export class RuntimeTaskView extends LitElement {
   }
 
   private selectHistoryEvent(event: CustomEvent<{ eventId: string }>): void {
-    this.history = { ...this.history, event: event.detail.eventId };
+    const eventId = event.detail.eventId;
+    this.historyEventId = eventId;
+    this.historyOccurredAt = this.projection?.steps.find((step) => step.eventId === eventId)?.occurredAt ?? '';
+    this.history = { ...this.history, event: eventId };
     this.syncUrl();
+  }
+
+  private get historyMode(): boolean {
+    return isHistoryState(this.history);
+  }
+
+  private historyTime(): string {
+    if (this.history?.at) return this.history.at;
+    if (this.history?.event) {
+      const fromProjection = this.projection?.steps
+        .find((step) => step.eventId === this.history?.event)?.occurredAt;
+      if (fromProjection) return fromProjection;
+      if (this.historyEventId === this.history.event) return this.historyOccurredAt;
+    }
+    return '';
+  }
+
+  private backToLive(): void {
+    if (!this.historyMode) return;
+    this.history = null;
+    this.historyEventId = '';
+    this.historyOccurredAt = '';
+    window.history.replaceState({}, '', toLiveRuntimeTaskUrl(this.taskId, {
+      view: this.view,
+      device: this.device,
+    }));
+    window.dispatchEvent(new HashChangeEvent('hashchange'));
   }
 
   private cleanupTask(): void {
@@ -193,6 +236,12 @@ export class RuntimeTaskView extends LitElement {
     this.projection = null;
   }
 
+  private onProjectionChange(event: CustomEvent<TaskProjection>): void {
+    event.stopPropagation();
+    const snapshot = event.detail;
+    this.installSnapshot(snapshot, snapshot.cursor);
+  }
+
   private async load(): Promise<void> {
     const generation = ++this.generation;
     const taskId = this.taskId;
@@ -204,7 +253,7 @@ export class RuntimeTaskView extends LitElement {
       if (generation !== this.generation || taskId !== this.taskId) return;
       if (!response.result) throw new ApiError(500, 'Task response missing');
       this.installSnapshot(response.result, response.result.cursor);
-      if (!this.history) this.openStream(generation, taskId);
+      if (!this.historyMode) this.openStream(generation, taskId);
     } catch (error) {
       if (generation !== this.generation || this.abort?.signal.aborted) return;
       this.connection = 'offline';
@@ -231,7 +280,7 @@ export class RuntimeTaskView extends LitElement {
 
   private installSnapshot(snapshot: TaskProjection, cursor: number): void {
     if (this.projection) this.projection.replaceWithSnapshot(snapshot, cursor);
-    else this.projection = new RuntimeProjection(snapshot, { history: this.history !== null });
+    else this.projection = new RuntimeProjection(snapshot, { history: this.historyMode });
     this.revision += 1;
   }
 
@@ -287,7 +336,9 @@ export class RuntimeTaskView extends LitElement {
               ? html`<runtime-flow .projection=${projection} .revision=${this.revision} .reducedMotion=${this.reducedMotion}
                   @locate-device=${this.locateDevice} @event-select=${this.selectHistoryEvent}></runtime-flow>`
               : html`<runtime-loop .projection=${projection} .revision=${this.revision}
-                  @locate-device=${this.locateDevice} @refresh-request=${this.refreshProjection}></runtime-loop>`}
+                  .readOnly=${this.historyMode}
+                  @locate-device=${this.locateDevice} @refresh-request=${this.refreshProjection}
+                  @projection-change=${this.onProjectionChange}></runtime-loop>`}
           </div>
         </div>
         <div class="runtime-seam">
@@ -313,6 +364,27 @@ export class RuntimeTaskView extends LitElement {
     `;
   }
 
+  private renderHistoryBanner() {
+    if (!this.historyMode) return nothing;
+    const time = this.historyTime();
+    return html`<section class="runtime-task__history" data-history-banner role="status"
+      aria-label="History mode"
+      style="margin: var(--space-3) 0; padding: var(--space-3); border: 1px solid var(--warning, #f59e0b); border-radius: var(--radius-md); background: var(--warning-subtle, rgba(245, 158, 11, 0.08)); color: var(--warning, #f59e0b);">
+      <strong>History · read-only</strong>
+      ${time ? html`<span> · ${time}</span>` : nothing}
+      <button type="button" data-action="back-to-live" @click=${this.backToLive}
+        style="margin-left: var(--space-3);">Back to live</button>
+    </section>`;
+  }
+
+  private renderConnectionBanner() {
+    if (this.connection !== 'offline') return nothing;
+    return html`<p class="runtime-task__connection" data-connection="offline" role="status"
+      style="margin: var(--space-2) 0; padding: var(--space-2) var(--space-3); border: 1px solid var(--danger, #ef4444); border-radius: var(--radius-md); color: var(--danger, #ef4444);">
+      <strong>Offline</strong> · showing the last known state. Live updates resume when the connection returns.
+    </p>`;
+  }
+
   render() {
     const projection = this.projection;
     const pendingApprovals = projection?.approvals.filter((approval) => approval.state === 'pending').length ?? 0;
@@ -326,14 +398,20 @@ export class RuntimeTaskView extends LitElement {
           <h1>${projection?.task.objective ?? 'Runtime task'}</h1>
           <div role="status" class="runtime-task__status">
             ${projection?.task.status ?? this.connection}
-            ${this.connection === 'offline' ? ' · Offline' : ''}
-            ${this.history ? ' · History' : ''}
           </div>
           <p class="runtime-task__intervention ${pendingApprovals ? 'has-approval' : ''}">
             ${pendingApprovals ? `Approval required (${pendingApprovals})` : 'No intervention required'}
           </p>
+          ${projection
+            ? html`<runtime-task-controls .workspaceId=${this.workspaceId} .taskId=${this.taskId}
+                .projection=${projection} .readOnly=${this.historyMode}
+                @projection-change=${this.onProjectionChange}
+                @refresh-request=${this.refreshProjection}></runtime-task-controls>`
+            : nothing}
           <slot name="task-actions"></slot>
         </header>
+        ${this.renderHistoryBanner()}
+        ${this.renderConnectionBanner()}
         ${this.error ? html`<p role="alert" class="runtime-task__error">${this.error}</p>` : ''}
         <details class="runtime-task__details">
           <summary>Details and IDs</summary>

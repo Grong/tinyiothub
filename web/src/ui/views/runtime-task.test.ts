@@ -1,31 +1,41 @@
 import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from 'vitest';
-import { getRuntimeTask } from '../../api/runtime.js';
+import { getRuntimeTask, pauseRuntimeTask } from '../../api/runtime.js';
 import { connectRuntimeStream, type RuntimeStreamCallbacks } from '../../api/runtime-stream.js';
-import type { RuntimeEvent, TaskProjection } from '../../types/runtime.js';
+import type { RuntimeEvent, TaskProjection, TaskStatus } from '../../types/runtime.js';
 import type { RuntimePlayback } from './runtime-playback.js';
+import { parseRuntimeHash, type RuntimeView } from './runtime-url-state.js';
 import './runtime-task.js';
 import type { RuntimeTaskView } from './runtime-task.js';
 
 vi.mock('../../api/runtime.js', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../../api/runtime.js')>();
-  return { ...actual, getRuntimeTask: vi.fn() };
+  return { ...actual, getRuntimeTask: vi.fn(), pauseRuntimeTask: vi.fn() };
 });
 vi.mock('../../api/runtime-stream.js', () => ({ connectRuntimeStream: vi.fn() }));
 
 const get = vi.mocked(getRuntimeTask);
+const pause = vi.mocked(pauseRuntimeTask);
 const connect = vi.mocked(connectRuntimeStream);
 let view: RuntimeTaskView;
 let close: Mock<() => void>;
 let streamCallbacks: RuntimeStreamCallbacks;
 
-function snapshot(id = 'task_1'): TaskProjection {
+function snapshot(id = 'task_1', status: TaskStatus = 'active'): TaskProjection {
   return {
     task: {
       id, workspaceId: 'ws_1', idempotencyKey: `key_${id}`, objective: `Objective ${id}`,
-      sessionKey: 'agent:ws:user/session', createdBy: 'user_1', status: 'active', currentRunId: 'run_1',
+      sessionKey: 'agent:ws:user/session', createdBy: 'user_1', status, currentRunId: 'run_1',
       stateVersion: 0, createdAt: '2026-10-27T10:00:00Z', updatedAt: '2026-10-27T10:00:00Z', endedAt: null,
     },
     runs: [], jobs: [], approvals: [], watches: [], evidence: [], associations: [], devices: [], summary: null, cursor: 0,
+  };
+}
+
+function liveEvent(eventId: string, cursor = 3): RuntimeEvent {
+  return {
+    cursor, eventId, eventType: 'read_device', occurredAt: '2026-10-27T10:04:00Z',
+    workspaceId: 'ws_1', taskId: 'task_1', runId: null, toolCallId: null, jobId: null,
+    approvalId: null, deviceId: 'dev_live', sourceId: null, sourceSeq: null, evidenceId: null, data: {},
   };
 }
 
@@ -46,14 +56,38 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-async function mount(history: { event?: string; at?: string } | null = null): Promise<void> {
+async function mount(
+  history: { event?: string; at?: string } | null = null,
+  options: { view?: RuntimeView; device?: string | null } = {},
+): Promise<void> {
   view = document.createElement('view-runtime-task') as RuntimeTaskView;
   view.taskId = 'task_1';
+  view.view = options.view ?? 'loop';
+  view.device = options.device ?? null;
   view.history = history;
   document.body.append(view);
   await view.updateComplete;
   await Promise.resolve();
   await view.updateComplete;
+}
+
+async function mountFromHash(hash: string): Promise<void> {
+  const route = parseRuntimeHash(hash);
+  if (!route || route.name !== 'task') throw new Error(`not a Task route: ${hash}`);
+  window.history.replaceState({}, '', hash);
+  view = document.createElement('view-runtime-task') as RuntimeTaskView;
+  view.taskId = route.taskId;
+  view.view = route.view;
+  view.device = route.device;
+  view.history = route.history;
+  document.body.append(view);
+  await view.updateComplete;
+  await Promise.resolve();
+  await view.updateComplete;
+}
+
+function executableControls(): HTMLElement[] {
+  return [...view.querySelectorAll<HTMLElement>('[data-executable]')];
 }
 
 describe('Runtime Task detail shell', () => {
@@ -326,5 +360,117 @@ describe('Runtime Task detail shell', () => {
     expect(view.querySelector('runtime-devices')?.textContent).toContain('dev_live');
     expect(connect).toHaveBeenCalledOnce();
     expect(get).toHaveBeenCalledTimes(2);
+  });
+
+  it('freezes history, removes executable controls, and resyncs back to live', async () => {
+    get.mockResolvedValue({ code: 0, msg: '', result: snapshot() });
+    await mount();
+    const liveCallbacks = streamCallbacks;
+
+    view.history = { event: 'event_2' };
+    view.view = 'flow';
+    await view.updateComplete;
+    await Promise.resolve();
+    await view.updateComplete;
+
+    const banner = view.querySelector<HTMLElement>('[data-history-banner]');
+    expect(banner?.textContent).toContain('History · read-only');
+    expect(executableControls()).toEqual([]);
+    expect(connect).toHaveBeenCalledOnce();
+
+    liveCallbacks.event(liveEvent('event_3'));
+    await view.updateComplete;
+    const frozen = (view as unknown as { projection?: { eventIds: Set<string> } }).projection;
+    expect(frozen?.eventIds.has('event_3')).toBe(false);
+
+    const fetchesBefore = get.mock.calls.length;
+    view.querySelector<HTMLButtonElement>('button[data-action="back-to-live"]')!.click();
+    await view.updateComplete;
+    await Promise.resolve();
+    await view.updateComplete;
+
+    expect(window.location.hash).toBe('#/runtime/tasks/task_1?view=flow');
+    expect(get.mock.calls.length - fetchesBefore).toBe(1);
+    expect(view.querySelector('[data-history-banner]')).toBeNull();
+    expect(connect).toHaveBeenCalledTimes(2);
+  });
+
+  it('shows a factual history time and preserves Task, view and device on Back to live', async () => {
+    get.mockResolvedValue({ code: 0, msg: '', result: snapshot() });
+    await mountFromHash('#/runtime/tasks/task_1?view=flow&device=dev_1&at=2026-10-27T10%3A00%3A00Z');
+
+    expect(view.querySelector('[data-history-banner]')?.textContent).toContain('2026-10-27T10:00:00Z');
+    view.querySelector<HTMLButtonElement>('button[data-action="back-to-live"]')!.click();
+    await view.updateComplete;
+    await Promise.resolve();
+    await view.updateComplete;
+
+    expect(window.location.hash).toBe('#/runtime/tasks/task_1?view=flow&device=dev_1');
+    expect(view.querySelector('[data-history-banner]')).toBeNull();
+  });
+
+  it('stays live when only a device is selected', async () => {
+    get.mockResolvedValue({ code: 0, msg: '', result: snapshot() });
+    await mount(null, { device: 'dev_1' });
+
+    expect(view.querySelector('[data-history-banner]')).toBeNull();
+    expect(connect).toHaveBeenCalledOnce();
+  });
+
+  it('renders stale/offline as a separate connection banner, never as history or a terminal Task', async () => {
+    get.mockResolvedValue({ code: 0, msg: '', result: snapshot() });
+    await mount();
+
+    streamCallbacks.connection('offline');
+    await view.updateComplete;
+
+    const connection = view.querySelector<HTMLElement>('[data-connection="offline"]');
+    expect(connection).not.toBeNull();
+    expect(connection?.textContent?.toLowerCase()).toContain('offline');
+    expect(view.textContent).not.toContain('History · read-only');
+    expect(view.querySelector('.runtime-task__status')?.textContent).toContain('active');
+    expect(view.textContent).not.toContain('All stopped');
+    expect(view.querySelector('[data-history-banner]')).toBeNull();
+  });
+
+  it('keeps history details and evidence readable while no mutation controls exist', async () => {
+    const withEvidence = snapshot();
+    withEvidence.associations = [{ deviceId: 'dev_1', sourceIds: ['camera'] }];
+    withEvidence.evidence = [{
+      evidenceId: 'evidence_history', mime: 'image/png', sourceSeq: 1, mediaTime: '2026-10-27T10:00:00Z',
+      deviceId: 'dev_1', sourceId: 'camera', taskId: 'task_1', runId: null, toolCallId: null, jobId: null,
+    }];
+    get.mockResolvedValue({ code: 0, msg: '', result: withEvidence });
+    await mount({ event: 'event_2' });
+
+    expect(view.querySelector('[data-evidence-id="evidence_history"]')).not.toBeNull();
+    expect(executableControls()).toEqual([]);
+    expect(view.querySelector('runtime-task-controls button[data-action="pause"]')).toBeNull();
+    expect(view.querySelector('runtime-task-controls button[data-action="overflow"]')).toBeNull();
+  });
+
+  it('renders no executable controls for a terminal Task', async () => {
+    get.mockResolvedValue({ code: 0, msg: '', result: snapshot('task_1', 'completed') });
+    await mount();
+
+    expect(executableControls()).toEqual([]);
+    expect(view.querySelector('button[data-action="pause"]')).toBeNull();
+  });
+
+  it('installs the server projection returned by a header pause control', async () => {
+    get.mockResolvedValue({ code: 0, msg: '', result: snapshot() });
+    pause.mockResolvedValue({ code: 0, msg: '', result: snapshot('task_1', 'paused') });
+    await mount();
+
+    view.querySelector<HTMLButtonElement>('runtime-task-controls button[data-action="pause"]')!.click();
+    await Promise.resolve();
+    await Promise.resolve();
+    await view.updateComplete;
+
+    expect(pause).toHaveBeenCalledOnce();
+    expect(view.querySelector('h1')?.textContent).toBe('Objective task_1');
+    expect(view.querySelector('.runtime-task__status')?.textContent).toContain('paused');
+    expect(view.querySelector('runtime-task-controls button[data-action="resume"]')).not.toBeNull();
+    expect(connect).toHaveBeenCalledOnce();
   });
 });

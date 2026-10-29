@@ -76,6 +76,19 @@ export function switchTaskUrl(taskId: string, view: RuntimeView = 'loop'): strin
   return toRuntimeTaskUrl(taskId, { view });
 }
 
+/** History requires an `at` or `event` cursor; a device selection alone stays live. */
+export function isHistoryState(history: RuntimeHistory | null | undefined): boolean {
+  return Boolean(history?.at || history?.event);
+}
+
+/** Return to live without changing the current Task, view or selected device. */
+export function toLiveRuntimeTaskUrl(
+  taskId: string,
+  state: Pick<RuntimeTaskUrlState, 'view' | 'device'> = {},
+): string {
+  return toRuntimeTaskUrl(taskId, { view: state.view, device: state.device });
+}
+
 export function replaceRuntimeTask(taskId: string, view: RuntimeView = 'loop'): void {
   window.history.replaceState({}, '', switchTaskUrl(taskId, view));
   window.dispatchEvent(new HashChangeEvent('hashchange'));

@@ -56,9 +56,9 @@ export class RuntimeProjection {
   cursor = 0;
 
   readonly frozenHistory: boolean;
+  eventIds = new Set<string>();
   private baseSnapshot: TaskProjection;
   private baseCursor = 0;
-  private eventIds = new Set<string>();
 
   constructor(snapshot: TaskProjection, options: { history?: boolean } = {}) {
     this.baseSnapshot = snapshot;
