@@ -239,19 +239,49 @@ pub(crate) async fn count_problem_runs(
 /// 已有完成报告的 run_id）。逐行条件更新（status 仍为 'running' 才
 /// 生效），启动期执行一次，行数有界。返回标记行数。
 pub(crate) async fn interrupt_zombie_running_runs(pool: &SqlitePool, known_active: &[String]) -> Result<u64> {
-    let rows: Vec<(String,)> = sqlx::query_as("SELECT id FROM agent_runs WHERE status = 'running'")
-        .fetch_all(pool)
-        .await?;
+    let rows: Vec<(String, String, Option<String>, Option<String>)> =
+        sqlx::query_as("SELECT id, workspace_id, task_id, wake_event_id FROM agent_runs WHERE status = 'running'")
+            .fetch_all(pool)
+            .await?;
     let mut marked = 0u64;
-    for (id,) in rows {
+    for (id, workspace_id, task_id, _wake_event_id) in rows {
         if known_active.iter().any(|k| k == &id) {
             continue;
         }
-        let result = sqlx::query("UPDATE agent_runs SET status = 'interrupted' WHERE id = ? AND status = 'running'")
+        // The status fact and its `run.interrupted` event commit together, so a
+        // restart never changes a persisted Run without the matching event.
+        let mut tx = pool.begin().await?;
+        let affected = sqlx::query("UPDATE agent_runs SET status = 'interrupted' WHERE id = ? AND status = 'running'")
             .bind(&id)
-            .execute(pool)
-            .await?;
-        marked += result.rows_affected();
+            .execute(&mut *tx)
+            .await?
+            .rows_affected();
+        if affected == 0 {
+            tx.commit().await?;
+            continue;
+        }
+        crate::runtime_event::append_runtime_event_tx(
+            &mut tx,
+            crate::runtime_event::RuntimeEventInput {
+                event_id: format!("run:{id}:interrupted"),
+                event_type: "run.interrupted".into(),
+                occurred_at: chrono::Utc::now(),
+                workspace_id,
+                task_id,
+                run_id: Some(id.clone()),
+                tool_call_id: None,
+                job_id: None,
+                approval_id: None,
+                device_id: None,
+                source_id: None,
+                source_seq: None,
+                evidence_id: None,
+                data: serde_json::json!({"state":"interrupted"}),
+            },
+        )
+        .await?;
+        tx.commit().await?;
+        marked += 1;
     }
     Ok(marked)
 }
@@ -793,6 +823,20 @@ mod tests {
         assert_eq!(status_of("ghost").await, "interrupted");
         assert_eq!(status_of("owned").await, "running", "registry 认领的 run 不判僵尸");
         assert_eq!(status_of("done").await, "completed", "completed 行不动");
+        let event = db
+            .runtime_event_by_id("ws_1", "run:ghost:interrupted")
+            .await
+            .expect("lookup")
+            .expect("interrupted event");
+        assert_eq!(event.event_type, "run.interrupted");
+        assert_eq!(event.run_id.as_deref(), Some("ghost"));
+        assert_eq!(event.data["state"], "interrupted");
+        assert!(
+            db.runtime_event_by_id("ws_1", "run:owned:interrupted")
+                .await
+                .expect("lookup")
+                .is_none()
+        );
 
         // 幂等：同一认领集再次 reconcile 无行可标。
         let marked = db
@@ -800,6 +844,18 @@ mod tests {
             .await
             .expect("reconcile again");
         assert_eq!(marked, 0);
+        let interrupted_events: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM hub_ledger
+             WHERE workspace_id = 'ws_1' AND kind = 'runtime.v1'
+               AND json_extract(payload, '$.eventType') = 'run.interrupted'",
+        )
+        .fetch_one(&pool)
+        .await
+        .expect("count interrupted events");
+        assert_eq!(
+            interrupted_events, 1,
+            "repeated reconciliation must not append another interrupted event"
+        );
         // 认领集为空时，残留的 running 行全部判僵尸。
         let marked = db
             .interrupt_zombie_running_agent_runs(&[])

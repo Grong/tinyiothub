@@ -31,6 +31,18 @@ impl WakeRouter {
         self
     }
 
+    /// Expire due approvals from the live routing loop. Returns the number of
+    /// approvals expired. The resulting decision wakes are claimed by `run`.
+    pub async fn expire_approvals(&self, now: chrono::DateTime<chrono::Utc>) -> Result<u64, TaskError> {
+        let Some(approvals) = &self.approvals else {
+            return Ok(0);
+        };
+        approvals
+            .expire_due_at(now)
+            .await
+            .map_err(|error| TaskStoreError::Unavailable(error.to_string()).into())
+    }
+
     pub async fn run(&self, limit: i64) -> Result<usize, TaskError> {
         let wakes = self.store.claim_pending_wakes(limit).await?;
         let count = wakes.len();

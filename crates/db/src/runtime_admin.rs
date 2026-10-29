@@ -146,7 +146,9 @@ impl Db {
                (SELECT COUNT(*) FROM device_jobs j
                  WHERE (? IS NULL OR j.workspace_id = ?) AND j.state IN ('accepted', 'running')),
                (SELECT COUNT(*) FROM watch_rules w
-                 WHERE (? IS NULL OR w.workspace_id = ?) AND w.owner_task_id IS NOT NULL),
+                 JOIN agent_tasks t ON t.id = w.owner_task_id
+                 WHERE (? IS NULL OR w.workspace_id = ?) AND w.owner_task_id IS NOT NULL
+                   AND t.status NOT IN ('completed', 'failed', 'cancelled')),
                (SELECT COUNT(*) FROM task_approvals a
                  WHERE (? IS NULL OR a.workspace_id = ?) AND a.state = 'pending'),
                (SELECT COUNT(*) FROM task_wake_outbox o
@@ -346,46 +348,154 @@ impl Db {
         disposition: &str,
         recorded_by: &str,
     ) -> Result<UnknownDispositionOutcome, DeviceJobError> {
-        let row: Option<(String, Option<String>, String)> =
-            sqlx::query_as("SELECT state, task_id, device_id FROM device_jobs WHERE workspace_id = ? AND id = ?")
-                .bind(workspace_id)
-                .bind(job_id)
-                .fetch_optional(self.pool())
-                .await
-                .map_err(storage)?;
-        let Some((state, task_id, device_id)) = row else {
-            return Ok(UnknownDispositionOutcome::NotFound);
-        };
-        if state != "cancelled_unknown" && state != "interrupted" {
-            return Ok(UnknownDispositionOutcome::NotUnknown);
-        }
+        // Write-first: the INSERT ... SELECT atomically validates the Job state
+        // and records the disposition without holding a read snapshot first.
         let affected = sqlx::query(
             "INSERT OR IGNORE INTO runtime_unknown_dispositions
                  (job_id, workspace_id, task_id, device_id, disposition, recorded_by, recorded_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?)",
+             SELECT id, workspace_id, task_id, device_id, ?, ?, ?
+             FROM device_jobs
+             WHERE workspace_id = ? AND id = ? AND state IN ('cancelled_unknown', 'interrupted')",
         )
-        .bind(job_id)
-        .bind(workspace_id)
-        .bind(task_id)
-        .bind(&device_id)
         .bind(disposition)
         .bind(recorded_by)
         .bind(chrono::Utc::now())
+        .bind(workspace_id)
+        .bind(job_id)
         .execute(self.pool())
         .await
         .map_err(storage)?
         .rows_affected();
         if affected == 1 {
+            let device_id: Option<String> =
+                sqlx::query_scalar("SELECT device_id FROM runtime_unknown_dispositions WHERE job_id = ?")
+                    .bind(job_id)
+                    .fetch_optional(self.pool())
+                    .await
+                    .map_err(storage)?;
             tracing::info!(
                 metric = "runtime_unknown_disposition",
                 %workspace_id,
                 %job_id,
-                %device_id,
+                device_id = ?device_id,
                 "unknown Job disposition recorded"
             );
-            Ok(UnknownDispositionOutcome::Recorded)
-        } else {
-            Ok(UnknownDispositionOutcome::AlreadyRecorded)
+            return Ok(UnknownDispositionOutcome::Recorded);
         }
+        let row: Option<(String,)> = sqlx::query_as("SELECT state FROM device_jobs WHERE workspace_id = ? AND id = ?")
+            .bind(workspace_id)
+            .bind(job_id)
+            .fetch_optional(self.pool())
+            .await
+            .map_err(storage)?;
+        let Some((state,)) = row else {
+            return Ok(UnknownDispositionOutcome::NotFound);
+        };
+        if state != "cancelled_unknown" && state != "interrupted" {
+            return Ok(UnknownDispositionOutcome::NotUnknown);
+        }
+        Ok(UnknownDispositionOutcome::AlreadyRecorded)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use sqlx::SqlitePool;
+
+    use crate::Db;
+
+    async fn seed_workspace(pool: &SqlitePool, workspace_id: &str) {
+        sqlx::query(
+            "INSERT OR IGNORE INTO subscription_plans (id, name, display_name) VALUES ('plan_free','free','Free')",
+        )
+        .execute(pool)
+        .await
+        .expect("seed plan");
+        sqlx::query("INSERT OR IGNORE INTO tenants (id, name, slug) VALUES ('t1','tenant','t1')")
+            .execute(pool)
+            .await
+            .expect("seed tenant");
+        sqlx::query(
+            "INSERT INTO workspaces (id, name, tenant_id, created_at, updated_at)
+             VALUES (?, 'workspace', 't1', 'now', 'now')",
+        )
+        .bind(workspace_id)
+        .execute(pool)
+        .await
+        .expect("seed workspace");
+    }
+
+    async fn seed_task(pool: &SqlitePool, workspace_id: &str, id: &str, status: &str) {
+        sqlx::query(
+            "INSERT INTO agent_tasks
+                 (id, workspace_id, idempotency_key, objective, created_by, status,
+                  state_version, created_at, updated_at)
+             VALUES (?, ?, ?, 'objective', 'user_1', ?, 1, 'now', 'now')",
+        )
+        .bind(id)
+        .bind(workspace_id)
+        .bind(format!("key_{id}"))
+        .bind(status)
+        .execute(pool)
+        .await
+        .expect("task");
+    }
+
+    async fn seed_watch(pool: &SqlitePool, workspace_id: &str, id: &str, owner_task_id: &str) {
+        sqlx::query(
+            "INSERT INTO watch_rules
+                 (id, workspace_id, kind, condition, persistent, timeout_secs, created_at, owner_task_id)
+             VALUES (?, ?, 'availability', '{\"thing_id\":\"dev_1\",\"online\":true}', 0, 60, 'now', ?)",
+        )
+        .bind(id)
+        .bind(workspace_id)
+        .bind(owner_task_id)
+        .execute(pool)
+        .await
+        .expect("watch");
+    }
+
+    #[tokio::test]
+    async fn drain_counts_include_live_work_and_exclude_terminal_owner_watches() {
+        let pool = crate::test_helpers::test_pool().await;
+        seed_workspace(&pool, "ws_1").await;
+        seed_task(&pool, "ws_1", "task_live", "active").await;
+        seed_task(&pool, "ws_1", "task_done", "completed").await;
+        seed_watch(&pool, "ws_1", "watch_live", "task_live").await;
+        seed_watch(&pool, "ws_1", "watch_done", "task_done").await;
+        sqlx::query(
+            "INSERT INTO task_approvals
+                 (id, workspace_id, task_id, run_id, tool_call_id, device_id, tool, args_json, reason,
+                  state, decision, decider_id, requested_at, decided_at, expires_at, decision_event_id, updated_at)
+             VALUES ('approval_1', 'ws_1', 'task_live', 'run_1', 'call_1', 'dev_1', 'set_speed', '{}',
+                     'confirm', 'pending', NULL, NULL, '2026-10-29T00:00:00Z', NULL,
+                     '2026-10-30T00:00:00Z', 'decision_1', '2026-10-29T00:00:00Z')",
+        )
+        .execute(&pool)
+        .await
+        .expect("approval");
+        for (event_id, resolved_at) in [("event_live", None), ("event_resolved", Some("2026-10-29T00:00:00Z"))] {
+            sqlx::query(
+                "INSERT INTO task_wake_outbox
+                     (task_id, event_id, signal_json, dispatch_state, created_at, dispatched_at, resolved_at)
+                 VALUES ('task_live', ?, '{\"workspace_id\":\"ws_1\"}', 'pending',
+                         '2026-10-29T00:00:00Z', NULL, ?)",
+            )
+            .bind(event_id)
+            .bind(resolved_at)
+            .execute(&pool)
+            .await
+            .expect("wake");
+        }
+
+        let counts = Db::new(pool).runtime_drain_counts(Some("ws_1")).await.expect("drain");
+        assert_eq!(counts.nonterminal_tasks, 1);
+        assert_eq!(
+            counts.active_watches, 1,
+            "a watch owned by a terminal Task must not keep the drain open"
+        );
+        assert_eq!(counts.pending_approvals, 1);
+        assert_eq!(counts.pending_outbox, 1);
+        assert_eq!(counts.unresolved_unknown, 0);
     }
 }

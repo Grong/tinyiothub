@@ -82,8 +82,15 @@ impl ApprovalExecutor {
     }
 
     pub async fn recover(&self, workspace_id: Option<&str>) -> Result<usize, ApprovalError> {
-        self.store.expire_due(Utc::now()).await?;
+        self.expire_due_at(Utc::now()).await?;
         Ok(self.store.list_recoverable(workspace_id).await?.len())
+    }
+
+    /// Expire approvals whose deadline has passed. Called at startup and from
+    /// the task-runtime loop, so a live process does not need a restart to
+    /// produce the `expired` decision event.
+    pub async fn expire_due_at(&self, now: chrono::DateTime<Utc>) -> Result<u64, ApprovalError> {
+        self.store.expire_due(now).await
     }
 }
 
@@ -106,6 +113,7 @@ mod tests {
 
     struct Store {
         approval: TaskApproval,
+        expiry_seen: Mutex<Option<chrono::DateTime<Utc>>>,
     }
 
     #[async_trait]
@@ -137,8 +145,9 @@ mod tests {
         async fn list_recoverable(&self, _: Option<&str>) -> Result<Vec<TaskApproval>, ApprovalError> {
             Ok(vec![self.approval.clone()])
         }
-        async fn expire_due(&self, _: chrono::DateTime<Utc>) -> Result<u64, ApprovalError> {
-            Ok(0)
+        async fn expire_due(&self, now: chrono::DateTime<Utc>) -> Result<u64, ApprovalError> {
+            *self.expiry_seen.lock().expect("expiry") = Some(now);
+            Ok(1)
         }
         async fn cancel(&self, _: &str, _: &str, _: i64, _: chrono::DateTime<Utc>) -> Result<AgentTask, ApprovalError> {
             Err(ApprovalError::Storage("not used".into()))
@@ -227,6 +236,7 @@ mod tests {
     async fn approved_execution_uses_only_frozen_persisted_fields() {
         let store = Arc::new(Store {
             approval: approval(ApprovalState::Approved),
+            expiry_seen: Mutex::new(None),
         });
         let jobs = Arc::new(Jobs::default());
         let executor = ApprovalExecutor::new(store, jobs.clone(), Arc::new(Tasks::default()));
@@ -242,6 +252,7 @@ mod tests {
     async fn recovery_preserves_decision_identity_for_router_dispatch() {
         let store = Arc::new(Store {
             approval: approval(ApprovalState::Approved),
+            expiry_seen: Mutex::new(None),
         });
         let jobs = Arc::new(Jobs::default());
         let executor = ApprovalExecutor::new(store.clone(), jobs.clone(), Arc::new(Tasks::default()));
@@ -261,6 +272,7 @@ mod tests {
     async fn recovery_leaves_decision_dispatch_to_the_wake_router() {
         let store = Arc::new(Store {
             approval: approval(ApprovalState::Approved),
+            expiry_seen: Mutex::new(None),
         });
         let jobs = Arc::new(Jobs::default());
         let executor = ApprovalExecutor::new(store, jobs.clone(), Arc::new(Tasks::default()));
@@ -272,6 +284,22 @@ mod tests {
             ExecutionOutcome::Job(_)
         ));
         assert_eq!(jobs.calls.lock().expect("calls").len(), 1);
+    }
+
+    #[tokio::test]
+    async fn live_expiry_sweep_uses_a_clock_value_without_restart() {
+        let store = Arc::new(Store {
+            approval: approval(ApprovalState::Pending),
+            expiry_seen: Mutex::new(None),
+        });
+        let executor = ApprovalExecutor::new(store.clone(), Arc::new(Jobs::default()), Arc::new(Tasks::default()));
+        let advanced = Utc::now() + chrono::Duration::hours(2);
+        assert_eq!(executor.expire_due_at(advanced).await.expect("sweep"), 1);
+        assert_eq!(
+            *store.expiry_seen.lock().expect("expiry"),
+            Some(advanced),
+            "the periodic sweep must pass its clock, not reuse startup time"
+        );
     }
 
     #[tokio::test]
@@ -288,6 +316,7 @@ mod tests {
             let executor = ApprovalExecutor::new(
                 Arc::new(Store {
                     approval: approval(state),
+                    expiry_seen: Mutex::new(None),
                 }),
                 Arc::new(Jobs::default()),
                 tasks.clone(),

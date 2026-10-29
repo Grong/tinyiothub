@@ -713,7 +713,11 @@ mod tests {
                 }
                 _ => unreachable!(),
             }
-            assert_eq!(runtime.router.run(64).await.expect("paused dispatch"), 1);
+            assert_eq!(
+                runtime.router.run(64).await.expect("paused dispatch"),
+                0,
+                "paused owners must not be claimed by the router"
+            );
             let wake = runtime
                 .store
                 .wake_by_id(&pending.task_id, &pending.decision_event_id)

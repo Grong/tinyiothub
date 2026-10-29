@@ -587,8 +587,9 @@ impl Db {
             let existing = sqlx::query_as::<_, crate::device_job::DeviceJobRow>(
                 "SELECT id, workspace_id, device_id, tool, args_json, state, stop_requested_at,
                         progress_json, result_json, task_id, run_id, tool_call_id, driver_call_id, timeout_ms, started_at, ended_at
-                 FROM device_jobs WHERE tool_call_id = ?",
+                 FROM device_jobs WHERE workspace_id = ? AND tool_call_id = ?",
             )
+            .bind(&job.workspace_id)
             .bind(tool_call_id)
             .fetch_optional(&mut connection)
             .await
@@ -608,8 +609,9 @@ impl Db {
                 return Ok((Some(existing), false, Vec::new()));
             }
             let approval = sqlx::query_as::<_, TaskApprovalRow>(sqlx::AssertSqlSafe(format!(
-                "SELECT {APPROVAL_COLUMNS} FROM task_approvals WHERE tool_call_id = ?"
+                "SELECT {APPROVAL_COLUMNS} FROM task_approvals WHERE workspace_id = ? AND tool_call_id = ?"
             )))
+            .bind(&job.workspace_id)
             .bind(tool_call_id)
             .fetch_optional(&mut connection)
             .await
@@ -1236,6 +1238,168 @@ mod tests {
             .await
             .expect("job count");
         assert_eq!(jobs, 1);
+    }
+
+    #[tokio::test]
+    async fn continuation_run_approval_creates_exactly_one_job() {
+        let fixture = Fixture::new().await;
+        let now = Utc::now();
+        let task = AgentTask {
+            id: "task_cont".into(),
+            workspace_id: "ws_1".into(),
+            idempotency_key: "key_cont".into(),
+            objective: "continue after the first job".into(),
+            session_key: None,
+            created_by: "user_1".into(),
+            status: TaskStatus::Active,
+            current_run_id: None,
+            state_version: 0,
+            created_at: now,
+            updated_at: now,
+            ended_at: None,
+        };
+        let create_wake = TaskWake {
+            task_id: task.id.clone(),
+            event_id: "create_task_cont".into(),
+            signal_json: json!({"workspace_id": "ws_1"}).to_string(),
+            dispatch_state: WakeDispatchState::Pending,
+            created_at: now,
+            dispatched_at: None,
+            resolved_at: None,
+        };
+        fixture
+            .db
+            .create_task_with_wake(&task, &create_wake)
+            .await
+            .expect("task");
+
+        // The Task is waiting on a previous Job when the continuation wake arrives.
+        let waiting = fixture
+            .db
+            .transition_task("ws_1", &task.id, 0, TaskStatus::WaitingJob, None)
+            .await
+            .expect("waiting job");
+        assert_eq!(waiting.state_version, 1);
+        let continuation = TaskWake {
+            task_id: task.id.clone(),
+            event_id: "event_continue".into(),
+            signal_json: json!({"workspace_id": "ws_1"}).to_string(),
+            dispatch_state: WakeDispatchState::Pending,
+            created_at: now,
+            dispatched_at: None,
+            resolved_at: None,
+        };
+        fixture.db.record_task_wake(&continuation).await.expect("record wake");
+        assert!(
+            fixture
+                .db
+                .begin_run(&waiting, &continuation.event_id, "run_cont")
+                .await
+                .expect("continuation run")
+        );
+        let running = fixture
+            .db
+            .get_task("ws_1", &task.id)
+            .await
+            .expect("task")
+            .expect("present");
+        assert_eq!(
+            running.status,
+            TaskStatus::Active,
+            "a continuation Run must be observable as active"
+        );
+        assert_eq!(running.current_run_id.as_deref(), Some("run_cont"));
+        let dispatched = fixture
+            .db
+            .wake_by_id(&task.id, &continuation.event_id)
+            .await
+            .expect("wake")
+            .expect("wake present");
+        assert_eq!(dispatched.dispatch_state, WakeDispatchState::Dispatched);
+        assert!(
+            !fixture
+                .db
+                .begin_run(&running, &continuation.event_id, "run_replay")
+                .await
+                .expect("replay")
+        );
+
+        let approval = TaskApproval {
+            id: "approval_cont".into(),
+            workspace_id: "ws_1".into(),
+            task_id: task.id.clone(),
+            run_id: "run_cont".into(),
+            tool_call_id: "call_cont".into(),
+            device_id: "device_1".into(),
+            tool: "set_speed".into(),
+            args_json: json!({"speed": 7}),
+            reason: "confirm".into(),
+            state: ApprovalState::Pending,
+            decision: None,
+            decider_id: None,
+            requested_at: now,
+            decided_at: None,
+            expires_at: now + Duration::hours(1),
+            decision_event_id: "decision_cont".into(),
+            updated_at: now,
+        };
+        let (needs_approval, _) = fixture
+            .db
+            .create_task_approval_and_events(&approval, running.state_version)
+            .await
+            .expect("approval requested by continuation run");
+        assert_eq!(needs_approval.status, TaskStatus::NeedsApproval);
+
+        fixture
+            .decide(&approval, ApprovalDecision::Approve)
+            .await
+            .expect("approve");
+        let job = tinyiothub_core::device_job::DeviceJob {
+            id: "job_cont".into(),
+            workspace_id: "ws_1".into(),
+            device_id: approval.device_id.clone(),
+            tool: approval.tool.clone(),
+            args_json: approval.args_json.clone(),
+            state: tinyiothub_core::device_job::DeviceJobState::Accepted,
+            stop_requested_at: None,
+            progress_json: None,
+            result_json: None,
+            task_id: Some(task.id.clone()),
+            run_id: Some("run_cont".into()),
+            tool_call_id: Some(approval.tool_call_id.clone()),
+            driver_call_id: None,
+            timeout_ms: 5_000,
+            started_at: now,
+            ended_at: None,
+        };
+        let (created, inserted, _) = fixture
+            .db
+            .submit_approved_job_and_events(&job)
+            .await
+            .expect("approved job");
+        assert!(inserted);
+        assert_eq!(created.expect("job").tool_call_id.as_deref(), Some("call_cont"));
+        let (existing, inserted_again, _) = fixture
+            .db
+            .submit_approved_job_and_events(&job)
+            .await
+            .expect("idempotent replay");
+        assert!(!inserted_again);
+        assert!(existing.is_some());
+        let jobs: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM device_jobs WHERE workspace_id = 'ws_1' AND tool_call_id = 'call_cont'",
+        )
+        .fetch_one(fixture.db.pool())
+        .await
+        .expect("job count");
+        assert_eq!(jobs, 1, "one approval decision must yield exactly one Job");
+        let settled = fixture
+            .db
+            .get_task("ws_1", &task.id)
+            .await
+            .expect("task")
+            .expect("present");
+        assert_eq!(settled.status, TaskStatus::WaitingJob);
     }
 
     #[tokio::test]

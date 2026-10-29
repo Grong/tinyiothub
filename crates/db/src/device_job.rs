@@ -202,12 +202,17 @@ impl Db {
         find_job_by_id(&mut connection, job_id).await
     }
 
-    pub async fn get_job_by_tool_call(&self, tool_call_id: &str) -> Result<Option<DeviceJob>, DeviceJobError> {
+    pub async fn get_job_by_tool_call(
+        &self,
+        workspace_id: &str,
+        tool_call_id: &str,
+    ) -> Result<Option<DeviceJob>, DeviceJobError> {
         sqlx::query_as::<_, DeviceJobRow>(
             "SELECT id, workspace_id, device_id, tool, args_json, state, stop_requested_at,
                     progress_json, result_json, task_id, run_id, tool_call_id, driver_call_id, timeout_ms, started_at, ended_at
-             FROM device_jobs WHERE tool_call_id = ?",
+             FROM device_jobs WHERE workspace_id = ? AND tool_call_id = ?",
         )
+        .bind(workspace_id)
         .bind(tool_call_id)
         .fetch_optional(self.pool())
         .await
@@ -305,32 +310,39 @@ impl Db {
             ));
         }
         let mut tx = self.pool().begin().await.map_err(storage)?;
-        let current = find_job_by_id(&mut tx, job_id).await?.ok_or(DeviceJobError::NotFound)?;
-        if current.state.is_terminal() {
-            return Ok((false, None));
-        }
-        if let Some(wake) = wake {
-            validate_job_wake(&current, wake)?;
-        }
-        let updated = sqlx::query(
+        // Write first: the UPDATE acquires RESERVED before any read, avoiding
+        // the deferred SHARED -> RESERVED upgrade that fails immediately.
+        let updated_job = sqlx::query_as::<_, DeviceJobRow>(
             "UPDATE device_jobs SET state = ?, result_json = ?, ended_at = ?
-             WHERE id = ? AND state IN ('accepted', 'running')",
+             WHERE id = ? AND state IN ('accepted', 'running')
+             RETURNING id, workspace_id, device_id, tool, args_json, state, stop_requested_at,
+                       progress_json, result_json, task_id, run_id, tool_call_id, driver_call_id,
+                       timeout_ms, started_at, ended_at",
         )
         .bind(state.as_str())
         .bind(serde_json::to_string(result).map_err(storage)?)
         .bind(Utc::now())
         .bind(job_id)
-        .execute(&mut *tx)
+        .fetch_optional(&mut *tx)
         .await
         .map_err(storage)?
-        .rows_affected();
-        if updated == 0 {
-            return Ok((false, None));
-        }
+        .map(DeviceJob::try_from)
+        .transpose()?;
+        let Some(updated_job) = updated_job else {
+            let current = find_job_by_id(&mut tx, job_id).await?.ok_or(DeviceJobError::NotFound)?;
+            if current.state.is_terminal() {
+                return Ok((false, None));
+            }
+            return Err(DeviceJobError::Conflict(format!(
+                "job '{}' is {} rather than terminalizable",
+                current.id,
+                current.state.as_str()
+            )));
+        };
         if let Some(wake) = wake {
+            validate_job_wake(&updated_job, wake)?;
             insert_job_wake(&mut tx, wake).await?;
         }
-        let updated_job = find_job_by_id(&mut tx, job_id).await?.ok_or(DeviceJobError::NotFound)?;
         let event = append_runtime_event_tx(
             &mut tx,
             job_event(
@@ -599,6 +611,47 @@ mod tests {
         seed_task(&db, "task_1", "ws_1").await;
         seed_task(&db, "task_2", "ws_1").await;
         db
+    }
+
+    #[tokio::test]
+    async fn tool_call_identity_is_unique_within_a_workspace_only() {
+        let pool = crate::test_helpers::test_pool().await;
+        seed_workspace(&pool, "ws_1").await;
+        seed_workspace(&pool, "ws_other").await;
+        let db = Db::new(pool);
+        seed_task(&db, "task_1", "ws_1").await;
+        seed_task(&db, "task_other", "ws_other").await;
+
+        let mut first = sample_job("job_a", "task_1");
+        first.tool_call_id = Some("call_shared".into());
+        let mut second = first.clone();
+        second.id = "job_b".into();
+        second.workspace_id = "ws_other".into();
+        second.task_id = Some("task_other".into());
+        db.create_job(&first).await.expect("first workspace job");
+        db.create_job(&second)
+            .await
+            .expect("same tool call in another workspace");
+
+        let scoped = db
+            .get_job_by_tool_call("ws_1", "call_shared")
+            .await
+            .expect("scoped lookup")
+            .expect("job");
+        assert_eq!(scoped.id, "job_a");
+        let scoped = db
+            .get_job_by_tool_call("ws_other", "call_shared")
+            .await
+            .expect("scoped lookup")
+            .expect("job");
+        assert_eq!(scoped.id, "job_b");
+
+        let mut duplicate = first.clone();
+        duplicate.id = "job_dupe".into();
+        assert!(
+            db.create_job(&duplicate).await.is_err(),
+            "duplicate tool call in one workspace must fail"
+        );
     }
 
     #[tokio::test]

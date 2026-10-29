@@ -196,6 +196,32 @@ impl EvidenceService {
         }))
     }
 
+    /// One cleanup pass using the current wall clock. Exposed so the
+    /// production scheduler and tests share the exact same path.
+    pub async fn run_cleanup_once(&self, grace: Duration) -> Result<(), MediaError> {
+        self.cleanup_expired(Utc::now(), grace).await
+    }
+
+    /// Startup + periodic retention sweep. The first pass runs immediately,
+    /// then once per `interval` until the shutdown channel closes. This is the
+    /// production caller for the 7-day retention contract.
+    pub async fn cleanup_loop(
+        self: Arc<Self>,
+        grace: Duration,
+        interval: Duration,
+        mut shutdown: tokio::sync::broadcast::Receiver<()>,
+    ) {
+        loop {
+            if let Err(error) = self.run_cleanup_once(grace).await {
+                tracing::warn!(%error, "media evidence cleanup failed");
+            }
+            tokio::select! {
+                _ = tokio::time::sleep(interval) => {}
+                _ = shutdown.recv() => break,
+            }
+        }
+    }
+
     pub async fn cleanup_expired(&self, now: DateTime<Utc>, grace: Duration) -> Result<(), MediaError> {
         let _guard = MEDIA_IO_LOCK.lock().await;
         for row in self.evidence.delete_expired(now).await? {
@@ -507,6 +533,28 @@ mod tests {
                 .expect("gone")
                 .is_none()
         );
+    }
+
+    #[tokio::test]
+    async fn production_cleanup_pass_deletes_expired_row_and_bytes() {
+        let fixture = EvidenceFixture::new().await;
+        fixture
+            .service
+            .put_image(image_input("image/png", 1024))
+            .await
+            .expect("stored");
+        for row in fixture.evidence.rows.lock().await.values_mut() {
+            row.expires_at = Utc::now() - chrono::Duration::seconds(1);
+        }
+        assert_eq!(fixture.evidence_row_count().await, 1);
+        assert_eq!(fixture.stored_object_count().await, 1);
+        fixture
+            .service
+            .run_cleanup_once(Duration::ZERO)
+            .await
+            .expect("scheduled cleanup");
+        assert_eq!(fixture.evidence_row_count().await, 0);
+        assert_eq!(fixture.stored_object_count().await, 0);
     }
 
     #[tokio::test]

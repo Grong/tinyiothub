@@ -17,9 +17,13 @@ pub async fn get_evidence(
     if let Err(response) = authorize_workspace(&state, &claims, &workspace_id).await {
         return response;
     }
-    let row = match state.db.get_media_evidence(&evidence_id).await {
-        Ok(Some(row)) if row.workspace_id == workspace_id => row,
-        Ok(_) => return error_response(StatusCode::NOT_FOUND, "证据不存在"),
+    let row = match state
+        .db
+        .get_media_evidence_in_workspace(&workspace_id, &evidence_id)
+        .await
+    {
+        Ok(Some(row)) => row,
+        Ok(None) => return error_response(StatusCode::NOT_FOUND, "证据不存在"),
         Err(_) => {
             tracing::error!(%workspace_id, %evidence_id, "evidence metadata lookup failed");
             return error_response(StatusCode::INTERNAL_SERVER_ERROR, "证据读取失败");

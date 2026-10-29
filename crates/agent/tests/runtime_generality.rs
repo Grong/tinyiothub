@@ -430,13 +430,27 @@ impl TaskStore for MemoryTasks {
         Ok(task.clone())
     }
 
-    async fn begin_run(&self, task: &AgentTask, wake_event_id: &str, _run_id: &str) -> Result<bool, TaskStoreError> {
-        Ok(self
-            .state
-            .lock()
-            .expect("tasks")
-            .runs
-            .insert((task.id.clone(), wake_event_id.into())))
+    async fn begin_run(&self, task: &AgentTask, wake_event_id: &str, run_id: &str) -> Result<bool, TaskStoreError> {
+        if !task.status.can_transition_to(TaskStatus::Active) {
+            return Err(TaskStoreError::ConcurrentUpdate);
+        }
+        let mut state = self.state.lock().expect("tasks");
+        if !state.runs.insert((task.id.clone(), wake_event_id.into())) {
+            return Ok(false);
+        }
+        let stored = state.tasks.get_mut(&task.id).ok_or(TaskStoreError::ConcurrentUpdate)?;
+        if stored.state_version != task.state_version {
+            return Err(TaskStoreError::ConcurrentUpdate);
+        }
+        stored.status = TaskStatus::Active;
+        stored.current_run_id = Some(run_id.to_string());
+        stored.state_version += 1;
+        stored.updated_at = Utc::now();
+        if let Some(wake) = state.wakes.get_mut(&(task.id.clone(), wake_event_id.to_string())) {
+            wake.dispatch_state = WakeDispatchState::Dispatched;
+            wake.dispatched_at = Some(Utc::now());
+        }
+        Ok(true)
     }
 
     async fn finish_run(&self, report: &RunReport) -> Result<(), TaskStoreError> {
@@ -548,6 +562,10 @@ impl DeviceJobStore for MemoryJobs {
             .cloned())
     }
 
+    async fn get_job_by_id(&self, job_id: &str) -> Result<Option<DeviceJob>, DeviceJobError> {
+        Ok(self.jobs.lock().expect("jobs").get(job_id).cloned())
+    }
+
     async fn get_task_job(
         &self,
         workspace_id: &str,
@@ -563,13 +581,17 @@ impl DeviceJobStore for MemoryJobs {
             .cloned())
     }
 
-    async fn get_job_by_tool_call(&self, tool_call_id: &str) -> Result<Option<DeviceJob>, DeviceJobError> {
+    async fn get_job_by_tool_call(
+        &self,
+        workspace_id: &str,
+        tool_call_id: &str,
+    ) -> Result<Option<DeviceJob>, DeviceJobError> {
         Ok(self
             .jobs
             .lock()
             .expect("jobs")
             .values()
-            .find(|job| job.tool_call_id.as_deref() == Some(tool_call_id))
+            .find(|job| job.workspace_id == workspace_id && job.tool_call_id.as_deref() == Some(tool_call_id))
             .cloned())
     }
 
@@ -910,6 +932,12 @@ async fn two_fixtures_complete_without_scenario_branches() {
     for fixture in [RuntimeFixture::load("runtime_a"), RuntimeFixture::load("runtime_b")] {
         let outcome = fixture.run_to_terminal().await;
         assert_eq!(outcome.task.status, TaskStatus::Completed);
+        assert!(!outcome.jobs.is_empty(), "autonomous run must persist Jobs");
+        assert_eq!(
+            outcome.jobs.len(),
+            outcome.used_tools.len(),
+            "every autonomous tool call must submit exactly one Job"
+        );
         assert!(outcome.jobs.iter().all(|job| job.state == DeviceJobState::Done));
         assert!(outcome.wake_ids.windows(2).all(|pair| pair[0] != pair[1]));
         assert_eq!(outcome.used_tools, fixture.expected_tools());

@@ -123,16 +123,24 @@ impl Db {
             .map(MediaEvidenceRecord::try_from).transpose()
     }
 
+    pub async fn get_media_evidence_in_workspace(
+        &self,
+        workspace_id: &str,
+        evidence_id: &str,
+    ) -> Result<Option<MediaEvidenceRecord>, MediaError> {
+        sqlx::query_as::<_, EvidenceRow>("SELECT id, workspace_id, task_id, run_id, tool_call_id, job_id, device_id, source_id, source_seq, media_time, mime, size_bytes, sha256, storage_path, dedup_key, created_at, expires_at FROM media_evidence WHERE workspace_id = ? AND id = ?")
+            .bind(workspace_id).bind(evidence_id).fetch_optional(self.pool()).await.map_err(storage)?
+            .map(MediaEvidenceRecord::try_from).transpose()
+    }
+
     pub async fn delete_expired_media(&self, now: DateTime<Utc>) -> Result<Vec<MediaEvidenceRecord>, MediaError> {
-        let mut tx = self.pool().begin().await.map_err(storage)?;
-        let rows = sqlx::query_as::<_, EvidenceRow>("SELECT id, workspace_id, task_id, run_id, tool_call_id, job_id, device_id, source_id, source_seq, media_time, mime, size_bytes, sha256, storage_path, dedup_key, created_at, expires_at FROM media_evidence WHERE expires_at <= ?")
-            .bind(now).fetch_all(&mut *tx).await.map_err(storage)?;
-        sqlx::query("DELETE FROM media_evidence WHERE expires_at <= ?")
+        // DELETE ... RETURNING is write-first, so this path never upgrades a
+        // deferred SHARED lock into RESERVED while another writer is active.
+        let rows = sqlx::query_as::<_, EvidenceRow>("DELETE FROM media_evidence WHERE expires_at <= ? RETURNING id, workspace_id, task_id, run_id, tool_call_id, job_id, device_id, source_id, source_seq, media_time, mime, size_bytes, sha256, storage_path, dedup_key, created_at, expires_at")
             .bind(now)
-            .execute(&mut *tx)
+            .fetch_all(self.pool())
             .await
             .map_err(storage)?;
-        tx.commit().await.map_err(storage)?;
         rows.into_iter().map(MediaEvidenceRecord::try_from).collect()
     }
 
@@ -193,6 +201,19 @@ mod tests {
         let original = row();
         let first = db.put_media_evidence(&original).await.expect("insert");
         assert_eq!(first.id, original.id);
+        assert!(
+            db.get_media_evidence_in_workspace("workspace-1", "evidence-1")
+                .await
+                .expect("scoped lookup")
+                .is_some()
+        );
+        assert!(
+            db.get_media_evidence_in_workspace("workspace-2", "evidence-1")
+                .await
+                .expect("foreign lookup")
+                .is_none(),
+            "evidence metadata must not leak across workspaces"
+        );
         let mut retry = original.clone();
         retry.id = "evidence-retry".into();
         assert_eq!(db.put_media_evidence(&retry).await.expect("dedupe").id, original.id);

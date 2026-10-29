@@ -53,6 +53,10 @@ use tinyiothub_core::agent_runs::format_summary;
 use tinyiothub_core::heartbeat::{HeartbeatTask, TrustConfig};
 use tinyiothub_policy::autonomy::AutonomyMode;
 
+/// How often the live Task runtime expires due approvals. Startup already
+/// sweeps once; this keeps a running process honest without a restart.
+const APPROVAL_EXPIRY_INTERVAL: Duration = Duration::from_secs(30);
+
 /// Capacity of the per-workspace trigger→scheduler channel. Backpressure
 /// beyond this parks the thing-event trigger, which then lags the broadcast
 /// and recovers through cursor replay (O27).
@@ -310,10 +314,22 @@ impl ThingAgentManager {
         let router_task = tokio::spawn(async move {
             let mut interval = tokio::time::interval(Duration::from_millis(25));
             interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+            let mut approval_expiry = tokio::time::interval(APPROVAL_EXPIRY_INTERVAL);
+            approval_expiry.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
             loop {
-                interval.tick().await;
-                if let Err(error) = router.run(64).await {
-                    tracing::warn!(%error, "Task wake routing failed");
+                tokio::select! {
+                    _ = interval.tick() => {
+                        if let Err(error) = router.run(64).await {
+                            tracing::warn!(%error, "Task wake routing failed");
+                        }
+                    }
+                    _ = approval_expiry.tick() => {
+                        match router.expire_approvals(chrono::Utc::now()).await {
+                            Ok(0) => {}
+                            Ok(count) => tracing::info!(metric = "runtime_approval_expired", count, "approval expiry"),
+                            Err(error) => tracing::warn!(%error, "Approval expiry sweep failed"),
+                        }
+                    }
                 }
             }
         });

@@ -430,33 +430,76 @@ async fn load_device_facts(
         .unwrap_or_default();
     let mut current_values = std::collections::HashMap::new();
     if let Some(task_id) = task_id {
-        let state_rows = sqlx::query_as::<_, RuntimeLedgerRow>(
-            "SELECT id, workspace_id, ts, payload FROM hub_ledger
-             WHERE workspace_id = ? AND kind = ? AND id <= ?
-               AND json_extract(payload, '$.taskId') = ?
-               AND json_extract(payload, '$.deviceId') = ?
-               AND json_extract(payload, '$.data.state') IS NOT NULL
-             ORDER BY id",
+        // Incremental projection first: the append transaction applies only the
+        // new event's state delta, so this read is a single row instead of a
+        // full replay of the Task's ledger history. The replay remains as a
+        // one-time migration fallback and seeds the projection afterwards.
+        let projected: Option<String> = sqlx::query_scalar(
+            "SELECT state_json FROM runtime_device_state
+             WHERE workspace_id = ? AND task_id = ? AND device_id = ?",
         )
         .bind(workspace_id)
-        .bind(RUNTIME_EVENT_KIND)
-        .bind(cursor)
         .bind(task_id)
         .bind(device_id)
-        .fetch_all(&mut *connection)
+        .fetch_optional(&mut *connection)
         .await?;
-        for row in state_rows {
-            let event = decode_event(row)?;
-            if let Some(state) = event.data.get("state").and_then(Value::as_object) {
-                for (name, value) in state {
-                    let value = match value {
-                        Value::String(value) => Some(value.clone()),
-                        Value::Null => None,
-                        value => Some(value.to_string()),
-                    };
-                    if let Some(value) = value {
-                        current_values.insert((device_id.to_string(), name.clone()), value);
+        let state = match projected {
+            Some(raw) => serde_json::from_str::<Value>(&raw).ok(),
+            None => {
+                let state_rows = sqlx::query_as::<_, RuntimeLedgerRow>(
+                    "SELECT id, workspace_id, ts, payload FROM hub_ledger
+                     WHERE workspace_id = ? AND kind = ? AND id <= ?
+                       AND json_extract(payload, '$.taskId') = ?
+                       AND json_extract(payload, '$.deviceId') = ?
+                       AND json_extract(payload, '$.data.state') IS NOT NULL
+                     ORDER BY id",
+                )
+                .bind(workspace_id)
+                .bind(RUNTIME_EVENT_KIND)
+                .bind(cursor)
+                .bind(task_id)
+                .bind(device_id)
+                .fetch_all(&mut *connection)
+                .await?;
+                let mut merged = serde_json::Map::new();
+                for row in state_rows {
+                    let event = decode_event(row)?;
+                    if let Some(state) = event.data.get("state").and_then(Value::as_object) {
+                        for (name, value) in state {
+                            let value = match value {
+                                Value::String(value) => Some(value.clone()),
+                                Value::Null => None,
+                                value => Some(value.to_string()),
+                            };
+                            if let Some(value) = value {
+                                merged.insert(name.clone(), Value::String(value));
+                            }
+                        }
                     }
+                }
+                if !merged.is_empty() {
+                    sqlx::query(
+                        "INSERT INTO runtime_device_state
+                             (workspace_id, task_id, device_id, state_json, updated_at)
+                         VALUES (?, ?, ?, ?, ?)
+                         ON CONFLICT(workspace_id, task_id, device_id)
+                         DO UPDATE SET state_json = excluded.state_json, updated_at = excluded.updated_at",
+                    )
+                    .bind(workspace_id)
+                    .bind(task_id)
+                    .bind(device_id)
+                    .bind(Value::Object(merged.clone()).to_string())
+                    .bind(Utc::now().to_rfc3339())
+                    .execute(&mut *connection)
+                    .await?;
+                }
+                Some(Value::Object(merged))
+            }
+        };
+        if let Some(state) = state.as_ref().and_then(Value::as_object) {
+            for (name, value) in state {
+                if let Some(value) = value.as_str() {
+                    current_values.insert((device_id.to_string(), name.clone()), value.to_string());
                 }
             }
         }
@@ -499,6 +542,60 @@ async fn load_device_facts(
         sources,
         fields,
     })
+}
+
+/// Apply the new event's `data.state` delta to the incremental projection.
+/// A missing projection is left to `load_device_facts`, which replays the
+/// historical ledger once and seeds the row.
+async fn merge_device_state_delta(connection: &mut sqlx::SqliteConnection, event: &RuntimeEvent) -> Result<()> {
+    let (Some(task_id), Some(device_id)) = (event.task_id.as_deref(), event.device_id.as_deref()) else {
+        return Ok(());
+    };
+    let Some(state) = event.data.get("state").and_then(Value::as_object) else {
+        return Ok(());
+    };
+    let projected: Option<String> = sqlx::query_scalar(
+        "SELECT state_json FROM runtime_device_state
+         WHERE workspace_id = ? AND task_id = ? AND device_id = ?",
+    )
+    .bind(&event.workspace_id)
+    .bind(task_id)
+    .bind(device_id)
+    .fetch_optional(&mut *connection)
+    .await?;
+    let Some(projected) = projected else {
+        return Ok(());
+    };
+    let mut merged = serde_json::from_str::<Value>(&projected)
+        .ok()
+        .and_then(|value| value.as_object().cloned())
+        .unwrap_or_default();
+    for (name, value) in state {
+        match value {
+            Value::String(value) => {
+                merged.insert(name.clone(), Value::String(value.clone()));
+            }
+            Value::Null => {}
+            value => {
+                merged.insert(name.clone(), Value::String(value.to_string()));
+            }
+        }
+    }
+    sqlx::query(
+        "INSERT INTO runtime_device_state
+             (workspace_id, task_id, device_id, state_json, updated_at)
+         VALUES (?, ?, ?, ?, ?)
+         ON CONFLICT(workspace_id, task_id, device_id)
+         DO UPDATE SET state_json = excluded.state_json, updated_at = excluded.updated_at",
+    )
+    .bind(&event.workspace_id)
+    .bind(task_id)
+    .bind(device_id)
+    .bind(Value::Object(merged).to_string())
+    .bind(Utc::now().to_rfc3339())
+    .execute(&mut *connection)
+    .await?;
+    Ok(())
 }
 
 pub(crate) async fn append_runtime_event_tx(
@@ -566,6 +663,7 @@ pub(crate) async fn append_runtime_event_tx(
     };
     let mut event = decode_event(row)?;
     if inserted_new && let Some(device_id) = event.device_id.clone() {
+        merge_device_state_delta(&mut *connection, &event).await?;
         let facts = load_device_facts(
             &mut *connection,
             &event.workspace_id,
@@ -859,7 +957,7 @@ impl Db {
             .map(|row| (row.id.clone(), row))
             .collect::<std::collections::HashMap<_, _>>();
         let declaration_rows = sqlx::query_as::<_, (String, String)>(
-            "SELECT thing_id, declaration_json FROM device_declarations WHERE workspace_id = ? AND status = 'active' ORDER BY thing_id, updated_at DESC",
+            "SELECT thing_id, declaration_json FROM device_declarations WHERE workspace_id = ? AND status = 'active' ORDER BY thing_id, updated_at DESC, id DESC",
         )
         .bind(workspace_id)
         .fetch_all(&mut *tx)
@@ -1580,6 +1678,87 @@ mod tests {
         )
         .expect("projected facts");
         assert_eq!(second.data["deviceFacts"], projected);
+
+        // Incremental projection: a later state-only event merges into the
+        // stored projection rather than replaying (and trusting) all history.
+        // Corrupting the older ledger payload makes the two paths observably
+        // different: replay would report "poisoned", the projection keeps 21.5.
+        sqlx::query(
+            "UPDATE hub_ledger SET payload = json_set(payload, '$.data.state.temperature', 'poisoned')
+             WHERE workspace_id = 'ws-1' AND kind = 'runtime.v1'
+               AND json_extract(payload, '$.eventId') = 'live-read'",
+        )
+        .execute(db.pool())
+        .await
+        .expect("mutate historical payload");
+        let mut delta = event("live-humidity-only", "task-1");
+        delta.event_type = "read_device".into();
+        delta.device_id = Some("dev-live".into());
+        delta.source_id = Some("telemetry".into());
+        delta.data = json!({"state":{"humidity":"40"}});
+        let third = db.append_runtime_event(delta).await.expect("incremental delta");
+        let fields = third.data["deviceFacts"]["fields"].as_array().expect("fields");
+        assert_eq!(fields[0]["name"], "temperature");
+        assert_eq!(
+            fields[0]["value"], "21.5",
+            "device facts must merge into the incremental projection, not replay history"
+        );
+    }
+
+    #[tokio::test]
+    async fn live_facts_and_snapshot_apply_the_same_declaration_tie_break() {
+        let pool = crate::test_helpers::test_pool().await;
+        seed_workspace(&pool, "ws-1").await;
+        let db = Db::new(pool);
+        seed_task(&db, "ws-1", "task-1").await;
+        for (driver, field) in [("camera_a", "temperature"), ("camera_b", "humidity")] {
+            let declaration = json!({
+                "manifestVersion":"1.0",
+                "driver":driver,
+                "driverVersion":"1.0.0",
+                "stateFields":[{"name":field,"type":"number","key":"primary"}],
+                "tools":[],
+            });
+            sqlx::query(
+                "INSERT INTO device_declarations
+                     (workspace_id, thing_id, driver_name, driver_version, declaration_json,
+                      declaration_hash, status, updated_at)
+                 VALUES ('ws-1', 'dev-tie', ?, '1.0.0', ?, 'hash', 'active', '2026-10-29T00:00:00Z')",
+            )
+            .bind(driver)
+            .bind(declaration.to_string())
+            .execute(db.pool())
+            .await
+            .expect("declaration");
+        }
+        let mut read = event("tie-read", "task-1");
+        read.event_type = "read_device".into();
+        read.device_id = Some("dev-tie".into());
+        read.source_id = Some("telemetry".into());
+        read.data = json!({"state":{"temperature":"21","humidity":"40"}});
+        let live = db.append_runtime_event(read).await.expect("live read");
+        let live_fields = live.data["deviceFacts"]["fields"].as_array().expect("fields");
+        assert_eq!(
+            live_fields[0]["name"], "humidity",
+            "the newest declaration id wins the tie-break"
+        );
+        assert_eq!(live_fields[0]["value"], "40");
+
+        let projection = db
+            .runtime_projection("ws-1", "task-1")
+            .await
+            .expect("projection")
+            .expect("task");
+        let projected = projection
+            .devices
+            .iter()
+            .find(|device| device.device_id == "dev-tie")
+            .expect("projected device");
+        let projected = serde_json::to_value(projected).expect("serialize");
+        assert_eq!(
+            projected["fields"], live.data["deviceFacts"]["fields"],
+            "the snapshot must apply the same declaration tie-break as live facts"
+        );
     }
 
     #[tokio::test]

@@ -14,6 +14,14 @@ pub struct WatchRuleRow {
     pub owner_task_id: Option<String>,
 }
 
+fn watch_device_id(condition: &serde_json::Value) -> Option<String> {
+    condition
+        .get("thing_id")
+        .or_else(|| condition.get("thingId"))
+        .and_then(serde_json::Value::as_str)
+        .map(str::to_string)
+}
+
 pub async fn insert_rule(pool: &SqlitePool, row: &WatchRuleRow) -> Result<(), sqlx::Error> {
     insert_rule_and_event(pool, row).await.map(|_| ())
 }
@@ -37,10 +45,7 @@ pub async fn insert_rule_and_event(
             tool_call_id: None,
             job_id: None,
             approval_id: None,
-            device_id: condition
-                .get("thing_id")
-                .and_then(serde_json::Value::as_str)
-                .map(str::to_string),
+            device_id: watch_device_id(&condition),
             source_id: None,
             source_seq: None,
             evidence_id: None,
@@ -73,9 +78,16 @@ pub async fn insert_rule_tx(tx: &mut Transaction<'_, Sqlite>, row: &WatchRuleRow
 }
 
 pub async fn list_rules(pool: &SqlitePool) -> Result<Vec<WatchRuleRow>, sqlx::Error> {
+    // Startup rebuild must not rehydrate watches whose owner Task is already
+    // terminal: the coordinator deletes them on the terminal transition, so
+    // any survivor is stale and must never fire into a finished Task.
     sqlx::query_as(
-        "SELECT id, workspace_id, kind, condition, persistent, timeout_secs, created_at, owner_task_id
-         FROM watch_rules",
+        "SELECT w.id, w.workspace_id, w.kind, w.condition, w.persistent, w.timeout_secs,
+                w.created_at, w.owner_task_id
+         FROM watch_rules w
+         LEFT JOIN agent_tasks t ON t.id = w.owner_task_id
+         WHERE w.owner_task_id IS NULL
+            OR t.status NOT IN ('completed', 'failed', 'cancelled')",
     )
     .fetch_all(pool)
     .await
@@ -168,10 +180,7 @@ async fn append_watch_deleted_events(
                 tool_call_id: None,
                 job_id: None,
                 approval_id: None,
-                device_id: condition
-                    .get("thing_id")
-                    .and_then(serde_json::Value::as_str)
-                    .map(str::to_string),
+                device_id: watch_device_id(&condition),
                 source_id: None,
                 source_seq: None,
                 evidence_id: None,
@@ -228,18 +237,13 @@ pub async fn delete_rule_and_event(
 ) -> Result<Option<crate::runtime_event::RuntimeEvent>, sqlx::Error> {
     let mut tx = pool.begin().await?;
     let row = sqlx::query_as::<_, WatchRuleRow>(
-        "SELECT id, workspace_id, kind, condition, persistent, timeout_secs, created_at, owner_task_id
-         FROM watch_rules WHERE workspace_id = ? AND id = ?",
+        "DELETE FROM watch_rules WHERE workspace_id = ? AND id = ?
+         RETURNING id, workspace_id, kind, condition, persistent, timeout_secs, created_at, owner_task_id",
     )
     .bind(workspace_id)
     .bind(id)
     .fetch_optional(&mut *tx)
     .await?;
-    sqlx::query("DELETE FROM watch_rules WHERE workspace_id = ? AND id = ?")
-        .bind(workspace_id)
-        .bind(id)
-        .execute(&mut *tx)
-        .await?;
     let events = append_watch_deleted_events(&mut tx, row.as_slice()).await?;
     tx.commit().await?;
     Ok(events.into_iter().next())
@@ -392,6 +396,50 @@ mod tests {
             created_at: "2026-10-20T00:00:00Z".into(),
             owner_task_id: Some("task1".into()),
         }
+    }
+
+    #[tokio::test]
+    async fn list_rules_excludes_watches_owned_by_terminal_tasks() {
+        let pool = owned_watch_fixture().await;
+        sqlx::query(
+            "INSERT INTO agent_tasks
+                 (id, workspace_id, idempotency_key, objective, created_by, status,
+                  state_version, created_at, updated_at, ended_at)
+             VALUES ('task_done','ws1','idem2','finished','user1','completed',1,'now','now','now')",
+        )
+        .execute(&pool)
+        .await
+        .expect("terminal task");
+        insert_rule(&pool, &owned_watch("r_live")).await.expect("live watch");
+        let mut terminal = owned_watch("r_terminal");
+        terminal.owner_task_id = Some("task_done".into());
+        insert_rule(&pool, &terminal).await.expect("terminal watch");
+        let mut unowned = owned_watch("r_unowned");
+        unowned.owner_task_id = None;
+        insert_rule(&pool, &unowned).await.expect("unowned watch");
+
+        let listed = list_rules(&pool).await.expect("list");
+        let ids = listed.iter().map(|rule| rule.id.as_str()).collect::<Vec<_>>();
+        assert_eq!(ids, ["r_live", "r_unowned"]);
+    }
+
+    #[tokio::test]
+    async fn watch_events_extract_snake_and_camel_case_device_ids() {
+        let pool = owned_watch_fixture().await;
+        let mut snake = owned_watch("r_snake");
+        snake.condition = r#"{"thing_id":"device-snake","v":1}"#.into();
+        let created = insert_rule_and_event(&pool, &snake).await.expect("snake watch");
+        assert_eq!(created.device_id.as_deref(), Some("device-snake"));
+
+        let mut camel = owned_watch("r_camel");
+        camel.condition = r#"{"thingId":"device-camel","v":1}"#.into();
+        let created = insert_rule_and_event(&pool, &camel).await.expect("camel watch");
+        assert_eq!(created.device_id.as_deref(), Some("device-camel"));
+        let deleted = delete_rule_and_event(&pool, "ws1", "r_camel")
+            .await
+            .expect("delete")
+            .expect("deleted event");
+        assert_eq!(deleted.device_id.as_deref(), Some("device-camel"));
     }
 
     #[tokio::test]

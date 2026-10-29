@@ -341,6 +341,25 @@ impl ServiceManager {
                 ),
             ));
             app_state.evidence = Some(evidence.clone());
+            // Startup + periodic 7-day media retention. The first pass runs
+            // immediately; the shutdown broadcast ends the loop.
+            {
+                let cleanup = evidence.clone();
+                let shutdown = self.shutdown_tx.subscribe();
+                let handle = tokio::spawn(async move {
+                    cleanup
+                        .cleanup_loop(
+                            // grace: leave freshly orphaned bytes alone for an hour
+                            tokio::time::Duration::from_secs(3600),
+                            // interval: sweep every five minutes
+                            tokio::time::Duration::from_secs(300),
+                            shutdown,
+                        )
+                        .await;
+                    Ok(())
+                });
+                self.service_handles.write().await.push(handle);
+            }
             tool_registry.register_provider(crate::domains::agent::host::tools::chat_builtin_tools_provider(
                 app_state.db.pool().clone(),
                 Some(app_state.device_cache.clone()),

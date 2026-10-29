@@ -1,6 +1,6 @@
 use chrono::{DateTime, Utc};
 use sqlx::{Sqlite, Transaction};
-use tinyiothub_core::agent_task::{AgentTask, CreateTaskOutcome, TaskStoreError, TaskWake};
+use tinyiothub_core::agent_task::{AgentTask, CreateTaskOutcome, TaskStatus, TaskStoreError, TaskWake};
 
 use crate::Db;
 use crate::runtime_event::{RuntimeEventInput, append_runtime_event_tx, task_event};
@@ -46,6 +46,27 @@ impl TryFrom<AgentTaskRow> for AgentTask {
 
 fn unavailable(error: impl std::fmt::Display) -> TaskStoreError {
     TaskStoreError::Unavailable(error.to_string())
+}
+
+/// Statuses that may legally transition to `next`. The first write of a
+/// transition transaction carries this list so SQLite acquires the write lock
+/// before any read (avoiding a deferred SHARED -> RESERVED upgrade failure).
+fn status_predecessors(next: TaskStatus) -> Vec<&'static str> {
+    [
+        TaskStatus::Active,
+        TaskStatus::WaitingJob,
+        TaskStatus::WaitingWatch,
+        TaskStatus::NeedsApproval,
+        TaskStatus::Paused,
+        TaskStatus::Cancelling,
+        TaskStatus::Completed,
+        TaskStatus::Failed,
+        TaskStatus::Cancelled,
+    ]
+    .into_iter()
+    .filter(|status| status.can_transition_to(next))
+    .map(TaskStatus::as_str)
+    .collect()
 }
 
 pub(crate) async fn find_task(
@@ -260,18 +281,13 @@ impl Db {
             .get("workspace_id")
             .and_then(serde_json::Value::as_str)
             .ok_or_else(|| TaskStoreError::Validation("wake signal has no workspace_id".to_string()))?;
-        let mut tx = self.pool().begin().await.map_err(unavailable)?;
-        let task = find_task(&mut tx, workspace_id, &wake.task_id)
-            .await?
-            .ok_or_else(|| TaskStoreError::Validation("wake task or workspace does not match".to_string()))?;
-        if task.workspace_id != workspace_id {
-            return Err(TaskStoreError::Validation("wake task workspace differs".to_string()));
-        }
         let inserted = sqlx::query(
-            "INSERT INTO task_wake_outbox
+            "INSERT OR IGNORE INTO task_wake_outbox
                  (task_id, event_id, signal_json, dispatch_state, created_at, dispatched_at, resolved_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?)
-             ON CONFLICT(task_id, event_id) DO NOTHING",
+             SELECT ?, ?, ?, ?, ?, ?, ?
+             WHERE EXISTS (
+                 SELECT 1 FROM agent_tasks WHERE id = ? AND workspace_id = ?
+             )",
         )
         .bind(&wake.task_id)
         .bind(&wake.event_id)
@@ -280,12 +296,29 @@ impl Db {
         .bind(wake.created_at)
         .bind(wake.dispatched_at)
         .bind(wake.resolved_at)
-        .execute(&mut *tx)
+        .bind(&wake.task_id)
+        .bind(workspace_id)
+        .execute(self.pool())
         .await
         .map_err(unavailable)?
         .rows_affected();
-        tx.commit().await.map_err(unavailable)?;
-        Ok(inserted == 1)
+        if inserted == 1 {
+            return Ok(true);
+        }
+        let exists =
+            sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM task_wake_outbox WHERE task_id = ? AND event_id = ?")
+                .bind(&wake.task_id)
+                .bind(&wake.event_id)
+                .fetch_one(self.pool())
+                .await
+                .map_err(unavailable)?;
+        if exists > 0 {
+            Ok(false)
+        } else {
+            Err(TaskStoreError::Validation(
+                "wake task or workspace does not match".to_string(),
+            ))
+        }
     }
 
     pub async fn resolve_task_wakes(&self, task_id: &str) -> Result<usize, TaskStoreError> {
@@ -326,44 +359,50 @@ impl Db {
         }
         let now = Utc::now();
         let ended_at = next.is_terminal().then_some(now);
-        let mut tx = self.pool().begin().await.map_err(unavailable)?;
-        let current = find_task(&mut tx, workspace_id, task_id)
-            .await?
-            .ok_or(TaskStoreError::ConcurrentUpdate)?;
-        if current.state_version != expected_version {
-            return Err(TaskStoreError::ConcurrentUpdate);
-        }
-        if !current.status.can_transition_to(next) {
+        let predecessors = status_predecessors(next);
+        if predecessors.is_empty() {
             return Err(TaskStoreError::Validation(format!(
-                "task state transition {} -> {} is forbidden",
-                current.status.as_str(),
+                "task state {} has no legal predecessor",
                 next.as_str()
             )));
         }
-        let affected = sqlx::query(
+        let placeholders = vec!["?"; predecessors.len()].join(", ");
+        let statement = format!(
             "UPDATE agent_tasks
              SET status = ?, state_version = state_version + 1, updated_at = ?, ended_at = ?
-             WHERE workspace_id = ? AND id = ? AND state_version = ?",
-        )
-        .bind(next.as_str())
-        .bind(now)
-        .bind(ended_at)
-        .bind(workspace_id)
-        .bind(task_id)
-        .bind(expected_version)
-        .execute(&mut *tx)
-        .await
-        .map_err(unavailable)?
-        .rows_affected();
-        if affected == 0 {
-            return Err(TaskStoreError::ConcurrentUpdate);
+             WHERE workspace_id = ? AND id = ? AND state_version = ?
+               AND status IN ({placeholders})
+             RETURNING id, workspace_id, idempotency_key, objective, session_key, created_by,
+                       status, current_run_id, state_version, created_at, updated_at, ended_at"
+        );
+        let mut query = sqlx::query_as::<_, AgentTaskRow>(sqlx::AssertSqlSafe(statement))
+            .bind(next.as_str())
+            .bind(now)
+            .bind(ended_at)
+            .bind(workspace_id)
+            .bind(task_id)
+            .bind(expected_version);
+        for predecessor in &predecessors {
+            query = query.bind(*predecessor);
         }
+        let mut tx = self.pool().begin().await.map_err(unavailable)?;
+        let updated = query.fetch_optional(&mut *tx).await.map_err(unavailable)?;
+        let Some(updated) = updated else {
+            let current = find_task(&mut tx, workspace_id, task_id).await?;
+            return match current {
+                None => Err(TaskStoreError::ConcurrentUpdate),
+                Some(current) if current.state_version != expected_version => Err(TaskStoreError::ConcurrentUpdate),
+                Some(current) => Err(TaskStoreError::Validation(format!(
+                    "task state transition {} -> {} is forbidden",
+                    current.status.as_str(),
+                    next.as_str()
+                ))),
+            };
+        };
         if let Some(wake) = wake {
             insert_wake(&mut tx, wake).await?;
         }
-        let task = find_task(&mut tx, workspace_id, task_id)
-            .await?
-            .ok_or_else(|| TaskStoreError::Unavailable("updated task disappeared".to_string()))?;
+        let task = AgentTask::try_from(updated)?;
         let event = append_runtime_event_tx(
             &mut tx,
             task_event(
@@ -441,7 +480,19 @@ impl Db {
         wake_event_id: &str,
         run_id: &str,
     ) -> Result<(bool, Option<crate::runtime_event::RuntimeEvent>), TaskStoreError> {
+        if !task.status.can_transition_to(TaskStatus::Active) {
+            return Err(TaskStoreError::Validation(format!(
+                "task state transition {} -> active is forbidden",
+                task.status.as_str()
+            )));
+        }
+        let predecessors = status_predecessors(TaskStatus::Active);
+        let placeholders = vec!["?"; predecessors.len()].join(", ");
         let mut tx = self.pool().begin().await.map_err(unavailable)?;
+        // The run row insert is deliberately first: it acquires the write lock
+        // before any read, and the unique (task, wake) index is the duplicate
+        // guard. Task status + current run + wake dispatch then move in the
+        // same transaction, so a continuation Run is observable as active.
         let inserted = sqlx::query(
             "INSERT INTO agent_runs
                  (id, workspace_id, trigger_type, trigger_context, outcome, summary, report,
@@ -458,46 +509,79 @@ impl Db {
         .await
         .map_err(unavailable)?
         .rows_affected();
-        if inserted == 1 {
-            let event = append_runtime_event_tx(
-                &mut tx,
-                RuntimeEventInput {
-                    event_id: format!("run:{run_id}:started"),
-                    event_type: "run.started".into(),
-                    occurred_at: Utc::now(),
-                    workspace_id: task.workspace_id.clone(),
-                    task_id: Some(task.id.clone()),
-                    run_id: Some(run_id.to_string()),
-                    tool_call_id: None,
-                    job_id: None,
-                    approval_id: None,
-                    device_id: None,
-                    source_id: None,
-                    source_seq: None,
-                    evidence_id: None,
-                    data: serde_json::json!({}),
-                },
-            )
-            .await
-            .map_err(unavailable)?;
-            tx.commit().await.map_err(unavailable)?;
-            return Ok((true, Some(event)));
+        if inserted == 0 {
+            let duplicate: Option<(String,)> =
+                sqlx::query_as("SELECT id FROM agent_runs WHERE task_id = ? AND wake_event_id = ?")
+                    .bind(&task.id)
+                    .bind(wake_event_id)
+                    .fetch_optional(&mut *tx)
+                    .await
+                    .map_err(unavailable)?;
+            return if duplicate.is_some() {
+                tx.commit().await.map_err(unavailable)?;
+                Ok((false, None))
+            } else {
+                Err(TaskStoreError::Unavailable(
+                    "agent run conflict was not a task/wake replay".to_string(),
+                ))
+            };
         }
-        let duplicate: Option<(String,)> =
-            sqlx::query_as("SELECT id FROM agent_runs WHERE task_id = ? AND wake_event_id = ?")
-                .bind(&task.id)
-                .bind(wake_event_id)
-                .fetch_optional(&mut *tx)
-                .await
-                .map_err(unavailable)?;
-        if duplicate.is_some() {
-            tx.commit().await.map_err(unavailable)?;
-            Ok((false, None))
-        } else {
-            Err(TaskStoreError::Unavailable(
-                "agent run conflict was not a task/wake replay".to_string(),
-            ))
+        let now = Utc::now();
+        let statement = format!(
+            "UPDATE agent_tasks
+             SET status = 'active', current_run_id = ?, state_version = state_version + 1, updated_at = ?
+             WHERE workspace_id = ? AND id = ? AND state_version = ? AND status IN ({placeholders})
+             RETURNING id, workspace_id, idempotency_key, objective, session_key, created_by,
+                       status, current_run_id, state_version, created_at, updated_at, ended_at"
+        );
+        let mut query = sqlx::query_as::<_, AgentTaskRow>(sqlx::AssertSqlSafe(statement))
+            .bind(run_id)
+            .bind(now)
+            .bind(&task.workspace_id)
+            .bind(&task.id)
+            .bind(task.state_version);
+        for predecessor in &predecessors {
+            query = query.bind(*predecessor);
         }
+        let updated = query.fetch_optional(&mut *tx).await.map_err(unavailable)?;
+        let Some(updated) = updated else {
+            return Err(TaskStoreError::ConcurrentUpdate);
+        };
+        sqlx::query(
+            "UPDATE task_wake_outbox
+             SET dispatch_state = 'dispatched', dispatched_at = COALESCE(dispatched_at, ?)
+             WHERE task_id = ? AND event_id = ? AND resolved_at IS NULL",
+        )
+        .bind(now)
+        .bind(&task.id)
+        .bind(wake_event_id)
+        .execute(&mut *tx)
+        .await
+        .map_err(unavailable)?;
+        let updated_task = AgentTask::try_from(updated)?;
+        let event = append_runtime_event_tx(
+            &mut tx,
+            RuntimeEventInput {
+                event_id: format!("run:{run_id}:started"),
+                event_type: "run.started".into(),
+                occurred_at: now,
+                workspace_id: updated_task.workspace_id.clone(),
+                task_id: Some(updated_task.id.clone()),
+                run_id: Some(run_id.to_string()),
+                tool_call_id: None,
+                job_id: None,
+                approval_id: None,
+                device_id: None,
+                source_id: None,
+                source_seq: None,
+                evidence_id: None,
+                data: serde_json::json!({"taskStatus": updated_task.status.as_str()}),
+            },
+        )
+        .await
+        .map_err(unavailable)?;
+        tx.commit().await.map_err(unavailable)?;
+        Ok((true, Some(event)))
     }
 
     pub async fn finish_run(&self, report: &tinyiothub_core::agent_runs::RunReport) -> Result<(), TaskStoreError> {
@@ -515,7 +599,7 @@ impl Db {
             "UPDATE agent_runs
              SET outcome = ?, summary = ?, report = ?, verified = ?, tool_calls = ?,
                  tokens = ?, duration_ms = ?, status = 'completed'
-             WHERE id = ? AND workspace_id = ?",
+             WHERE id = ? AND workspace_id = ? AND status = 'running'",
         )
         .bind(report.outcome.as_str())
         .bind(&report.summary)
@@ -582,9 +666,11 @@ impl Db {
             "UPDATE task_wake_outbox
              SET dispatched_at = ?
              WHERE (task_id, event_id) IN (
-                 SELECT task_id, event_id FROM task_wake_outbox
-                 WHERE dispatch_state = 'pending' AND dispatched_at IS NULL AND resolved_at IS NULL
-                 ORDER BY created_at, task_id, event_id LIMIT ?
+                 SELECT o.task_id, o.event_id FROM task_wake_outbox o
+                 JOIN agent_tasks t ON t.id = o.task_id
+                 WHERE o.dispatch_state = 'pending' AND o.dispatched_at IS NULL AND o.resolved_at IS NULL
+                   AND t.status != 'paused'
+                 ORDER BY o.created_at, o.task_id, o.event_id LIMIT ?
              )
              RETURNING task_id, event_id, signal_json, dispatch_state, created_at, dispatched_at, resolved_at",
         )
@@ -922,6 +1008,63 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn write_first_transition_waits_for_an_interleaved_writer_instead_of_failing_storage() {
+        let path = std::env::temp_dir().join(format!("tinyiothub-interleave-{}.db", uuid::Uuid::new_v4()));
+        let options = sqlx::sqlite::SqliteConnectOptions::new()
+            .filename(&path)
+            .create_if_missing(true)
+            .journal_mode(sqlx::sqlite::SqliteJournalMode::Wal)
+            .busy_timeout(std::time::Duration::from_secs(5));
+        let pool = sqlx::sqlite::SqlitePoolOptions::new()
+            .max_connections(4)
+            .connect_with(options)
+            .await
+            .expect("file-backed pool");
+        crate::test_helpers::run_all_migrations(&pool)
+            .await
+            .expect("migrations");
+        seed_workspace(&pool, "ws_1").await;
+        let db = Db::new(pool.clone());
+        let task = sample_task("task_1", "ws_1", "key_1", "inspect");
+        db.create_task_with_wake(&task, &sample_wake("task_1", "event_1", "ws_1"))
+            .await
+            .expect("create");
+
+        // A deferred transaction takes a read snapshot and then a write lock.
+        // A read-first writer would see SQLITE_BUSY_SNAPSHOT (code 517, not
+        // covered by busy_timeout) as soon as this holder commits.
+        let mut holder = pool.begin().await.expect("holder transaction");
+        let _snapshot: (String,) = sqlx::query_as("SELECT status FROM agent_tasks WHERE id = 'task_1'")
+            .fetch_one(&mut *holder)
+            .await
+            .expect("snapshot read");
+        sqlx::query("UPDATE agent_tasks SET updated_at = updated_at WHERE id = 'task_1'")
+            .execute(&mut *holder)
+            .await
+            .expect("hold write lock");
+
+        let writer = db.clone();
+        let pending = tokio::spawn(async move {
+            writer
+                .transition_task("ws_1", "task_1", 0, TaskStatus::Paused, None)
+                .await
+        });
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        holder.commit().await.expect("release holder");
+        let stored = tokio::time::timeout(std::time::Duration::from_secs(5), pending)
+            .await
+            .expect("transition completes")
+            .expect("join")
+            .expect("write-first transition must wait instead of returning Storage");
+        assert_eq!(stored.status, TaskStatus::Paused);
+
+        pool.close().await;
+        let _ = std::fs::remove_file(&path);
+        let _ = std::fs::remove_file(path.with_extension("db-shm"));
+        let _ = std::fs::remove_file(path.with_extension("db-wal"));
+    }
+
+    #[tokio::test]
     async fn transition_and_bind_are_versioned_and_terminal_sets_ended_at() {
         let pool = crate::test_helpers::test_pool().await;
         seed_workspace(&pool, "ws_1").await;
@@ -1115,9 +1258,63 @@ mod tests {
         let stored: tinyiothub_core::agent_runs::RunReport = serde_json::from_str(&report_json).expect("report parses");
         assert_eq!(stored.summary, "inspection complete");
 
-        assert!(db.begin_run(&task, "event_2", "run_2").await.expect("next run"));
+        let current = db
+            .get_task("ws_1", "task_1")
+            .await
+            .expect("get")
+            .expect("task after first run");
+        assert!(db.begin_run(&current, "event_2", "run_2").await.expect("next run"));
         let latest = db.latest_task_run("task_1").await.expect("latest completed report");
         assert_eq!(latest.expect("completed report").run_id, "run_1");
+    }
+
+    #[tokio::test]
+    async fn finish_run_rejects_a_terminal_run_instead_of_overwriting_it() {
+        let pool = crate::test_helpers::test_pool().await;
+        seed_workspace(&pool, "ws_1").await;
+        let db = Db::new(pool);
+        let task = sample_task("task_1", "ws_1", "key_1", "inspect");
+        db.create_task_with_wake(&task, &sample_wake("task_1", "event_1", "ws_1"))
+            .await
+            .expect("create");
+        assert!(db.begin_run(&task, "event_1", "run_1").await.expect("run"));
+        let mut report = tinyiothub_core::agent_runs::RunReport {
+            run_id: "run_1".to_string(),
+            workspace_id: "ws_1".to_string(),
+            trigger: "task:event_1".to_string(),
+            outcome: tinyiothub_core::agent_runs::Outcome::NoActionNeeded,
+            summary: "first finish".to_string(),
+            actions: vec![],
+            verified: true,
+            duration_ms: 1,
+            tool_calls: 0,
+            tokens: 0,
+            end_reason: None,
+            thing_id: None,
+            trace: vec![],
+            task_count: None,
+            snapshot: None,
+            task_id: Some("task_1".into()),
+            wake_event_id: Some("event_1".into()),
+        };
+        db.finish_run(&report).await.expect("first finish");
+        report.summary = "stale duplicate finish".to_string();
+        assert!(matches!(
+            db.finish_run(&report).await,
+            Err(TaskStoreError::ConcurrentUpdate)
+        ));
+        let stored: String = sqlx::query_scalar("SELECT summary FROM agent_runs WHERE id = 'run_1'")
+            .fetch_one(db.pool())
+            .await
+            .expect("summary");
+        assert_eq!(stored, "first finish");
+        let events: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM hub_ledger WHERE json_extract(payload, '$.eventId') = 'run:run_1:finished'",
+        )
+        .fetch_one(db.pool())
+        .await
+        .expect("event count");
+        assert_eq!(events, 1);
     }
 
     #[tokio::test]

@@ -62,10 +62,28 @@ async fn fresh_db_migrates_with_thing_model_tables() {
         .unwrap();
     assert_eq!(env01_props, 5, "env01 must have its 5 seed properties");
 
+    // The whole file-backed chain must leave referential integrity intact.
+    let violations: Vec<(String, i64, String, i64)> = sqlx::query_as("PRAGMA foreign_key_check")
+        .fetch_all(&pool)
+        .await
+        .expect("foreign_key_check");
+    assert!(
+        violations.is_empty(),
+        "migration chain broke foreign keys: {violations:?}"
+    );
+
     // Idempotency: re-running migrations on the migrated DB is a no-op.
     tinyiothub_storage::migrations::run_migrations(&pool)
         .await
         .expect("run_migrations (second run must be idempotent)");
+    let violations: Vec<(String, i64, String, i64)> = sqlx::query_as("PRAGMA foreign_key_check")
+        .fetch_all(&pool)
+        .await
+        .expect("foreign_key_check after replay");
+    assert!(
+        violations.is_empty(),
+        "migration replay broke foreign keys: {violations:?}"
+    );
 
     let _ = std::fs::remove_file(&path);
 }

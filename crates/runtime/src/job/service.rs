@@ -122,6 +122,13 @@ impl JobService {
         }
     }
 
+    fn prune_terminal(&self, job_id: &str) {
+        self.inner.deadlines.remove(job_id);
+        self.inner.workspaces.remove(job_id);
+        self.inner.notifications.remove(job_id);
+        self.inner.terminal_locks.lock().remove(job_id);
+    }
+
     fn restore_deadline(&self, job: &DeviceJob) {
         let timeout = Duration::from_millis(job.timeout_ms);
         let elapsed = Utc::now()
@@ -239,7 +246,12 @@ impl JobService {
                 && job.tool == call.tool
                 && job.args_json == call.args_json
         };
-        if let Some(existing) = self.inner.store.get_job_by_tool_call(&call.tool_call_id).await? {
+        if let Some(existing) = self
+            .inner
+            .store
+            .get_job_by_tool_call(&call.workspace_id, &call.tool_call_id)
+            .await?
+        {
             if !matches(&existing) {
                 return Err(DeviceJobError::ExecutionConflict);
             }
@@ -358,18 +370,11 @@ impl JobService {
     pub async fn finish(&self, job_id: &str, final_result: JobFinal) -> Result<FinishOutcome, DeviceJobError> {
         let terminal_lock = self.terminal_lock(job_id);
         let _guard = terminal_lock.lock().await;
-        let workspace_id = self
-            .inner
-            .workspaces
-            .get(job_id)
-            .map(|value| value.clone())
-            .ok_or(DeviceJobError::NotFound)?;
-        let job = self
-            .inner
-            .store
-            .get_job(&workspace_id, job_id)
-            .await?
-            .ok_or(DeviceJobError::NotFound)?;
+        let job = match self.inner.workspaces.get(job_id).map(|value| value.clone()) {
+            Some(workspace_id) => self.inner.store.get_job(&workspace_id, job_id).await?,
+            None => self.inner.store.get_job_by_id(job_id).await?,
+        }
+        .ok_or(DeviceJobError::NotFound)?;
         self.finish_known(&job, final_result).await
     }
 
@@ -401,10 +406,11 @@ impl JobService {
             self.notify(&job.id);
             tracing::info!(metric="runtime_job_final", workspace_id=%job.workspace_id,
                 task_id=?job.task_id, run_id=?job.run_id, job_id=%job.id,
-                device_id=%job.device_id, state=?job.state, "runtime job final");
+                device_id=%job.device_id, state=?terminal.state, "runtime job final");
             tracing::info!(metric="runtime_job_duration", job_id=%job.id,
-                state=?job.state, duration_ms=(chrono::Utc::now() - job.started_at).num_milliseconds().max(0),
+                state=?terminal.state, duration_ms=(chrono::Utc::now() - job.started_at).num_milliseconds().max(0),
                 "runtime job duration");
+            self.prune_terminal(&job.id);
         }
         Ok(FinishOutcome {
             wake_created: transitioned && wake_created,
@@ -434,16 +440,21 @@ impl JobService {
     }
 
     pub async fn wait(&self, job_id: &str, run_remaining: Duration) -> JobWait {
-        let Some(workspace_id) = self.inner.workspaces.get(job_id).map(|value| value.clone()) else {
+        // The in-memory maps are pruned once a Job is terminal; a store read by
+        // id keeps `wait` authoritative for a completed Job.
+        let initial = match self.inner.workspaces.get(job_id).map(|value| value.clone()) {
+            Some(workspace_id) => self.inner.store.get_job(&workspace_id, job_id).await,
+            None => self.inner.store.get_job_by_id(job_id).await,
+        };
+        let Ok(Some(initial)) = initial else {
             return JobWait::Running {
                 job_id: job_id.to_string(),
             };
         };
-        if let Ok(Some(job)) = self.inner.store.get_job(&workspace_id, job_id).await
-            && job.state.is_terminal()
-        {
-            return JobWait::Final(job);
+        if initial.state.is_terminal() {
+            return JobWait::Final(initial);
         }
+        let workspace_id = initial.workspace_id;
         let deadline = self
             .inner
             .deadlines
@@ -456,13 +467,23 @@ impl JobService {
         let mut notification = self.notification(job_id);
         let notified = async {
             loop {
-                if notification.changed().await.is_err() {
-                    std::future::pending::<()>().await;
-                }
+                // Read before waiting: the terminal path prunes the notification
+                // sender, so a waiter that subscribed after that point would
+                // otherwise wait for a signal that can never arrive.
                 if let Ok(Some(job)) = self.inner.store.get_job(&workspace_id, job_id).await
                     && job.state.is_terminal()
                 {
                     return job;
+                }
+                if notification.changed().await.is_err() {
+                    // The sender is pruned on the terminal path. Give the
+                    // durable Job one last read before parking forever.
+                    if let Ok(Some(job)) = self.inner.store.get_job(&workspace_id, job_id).await
+                        && job.state.is_terminal()
+                    {
+                        return job;
+                    }
+                    std::future::pending::<()>().await;
                 }
             }
         };
@@ -653,6 +674,10 @@ mod tests {
                 .cloned())
         }
 
+        async fn get_job_by_id(&self, job_id: &str) -> Result<Option<DeviceJob>, DeviceJobError> {
+            Ok(self.jobs.lock().expect("jobs lock").get(job_id).cloned())
+        }
+
         async fn get_task_job(
             &self,
             workspace_id: &str,
@@ -668,13 +693,17 @@ mod tests {
                 .cloned())
         }
 
-        async fn get_job_by_tool_call(&self, tool_call_id: &str) -> Result<Option<DeviceJob>, DeviceJobError> {
+        async fn get_job_by_tool_call(
+            &self,
+            workspace_id: &str,
+            tool_call_id: &str,
+        ) -> Result<Option<DeviceJob>, DeviceJobError> {
             Ok(self
                 .jobs
                 .lock()
                 .expect("jobs lock")
                 .values()
-                .find(|job| job.tool_call_id.as_deref() == Some(tool_call_id))
+                .find(|job| job.workspace_id == workspace_id && job.tool_call_id.as_deref() == Some(tool_call_id))
                 .cloned())
         }
 
@@ -1008,6 +1037,27 @@ mod tests {
                 .wake_created
         );
         assert_eq!(fixture.wake_count("task_1").await, 1);
+    }
+
+    #[tokio::test]
+    async fn terminal_jobs_are_pruned_from_service_maps_and_wait_falls_back_to_the_store() {
+        let fixture = JobFixture::new().await;
+        let job = fixture.accepted_job("job_pruned", "task_pruned").await;
+        assert!(fixture.service.inner.workspaces.contains_key(&job.id));
+        fixture
+            .service
+            .finish(&job.id, JobFinal::Done(json!({"ok":true})))
+            .await
+            .expect("finish");
+        assert!(!fixture.service.inner.workspaces.contains_key(&job.id));
+        assert!(!fixture.service.inner.deadlines.contains_key(&job.id));
+        assert!(!fixture.service.inner.notifications.contains_key(&job.id));
+        assert!(!fixture.service.inner.terminal_locks.lock().contains_key(&job.id));
+        let waited = fixture.service.wait(&job.id, Duration::from_secs(1)).await;
+        assert!(
+            matches!(waited, JobWait::Final(ref final_job) if final_job.state == DeviceJobState::Done),
+            "wait must read the durable Job after in-memory pruning"
+        );
     }
 
     #[tokio::test]
