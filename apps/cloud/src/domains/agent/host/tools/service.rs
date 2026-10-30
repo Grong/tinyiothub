@@ -41,7 +41,6 @@ pub fn chat_builtin_tools_provider(
     resources: Option<Arc<dyn tinyiothub_runtime::access::resources::ResourceResolver>>,
     demand: Option<Arc<dyn tinyiothub_runtime::access::DemandRecorder>>,
     evidence: Option<Arc<tinyiothub_runtime::media::evidence::EvidenceService>>,
-    media: Option<Arc<dyn super::thing::RuntimeMediaGate>>,
     jobs: Option<tinyiothub_runtime::job::service::JobService>,
     runtime_recorder: crate::domains::agent::runtime::stream::RuntimeRecorder,
 ) -> ToolProvider {
@@ -68,7 +67,6 @@ pub fn chat_builtin_tools_provider(
                 demand: demand.clone(),
                 run_ctx: None,
                 evidence: evidence.clone(),
-                media: media.clone(),
                 jobs: jobs.clone(),
                 runtime_recorder: Some(runtime_recorder.clone()),
             },

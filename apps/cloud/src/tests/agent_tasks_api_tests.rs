@@ -1,8 +1,8 @@
 //! Agent tasks API integration tests (T14)
 //!
-//! 用户指令入口四端点：POST /agent/tasks、GET /agent/runs、
-//! POST /agent/runs/{id}/ack、GET/PUT /agent/policy。
-//! 全部 workspace 隔离 + admin 角色；队列满 → 429；ack 幂等。
+//! 用户指令入口四端点：POST /agent/tasks（持久 Task，需 Idempotency-Key）、
+//! GET /agent/runs、POST /agent/runs/{id}/ack、GET/PUT /agent/policy。
+//! 全部 workspace 隔离 + admin 角色；ack 幂等。
 
 use std::sync::Arc;
 
@@ -13,7 +13,6 @@ use axum::{
     http::{Request, StatusCode},
 };
 use serde_json::{Value, json};
-use tinyiothub_agent::runtime::thing_agent::{EnqueueError, TriggerSource};
 use tower::ServiceExt;
 
 use crate::test_utils::{
@@ -68,6 +67,18 @@ async fn app_without_sink() -> (Router, sqlx::SqlitePool) {
     (Router::new().nest("/api", api_router).with_state(app_state), pool)
 }
 
+fn create_task_request(token: &str, body: Value, key: Option<&str>) -> Request<Body> {
+    let mut builder = Request::builder()
+        .method("POST")
+        .uri(format!("/api/v1/workspaces/{WS}/agent/tasks"))
+        .header("Authorization", auth_header(token))
+        .header("Content-Type", "application/json");
+    if let Some(key) = key {
+        builder = builder.header("Idempotency-Key", key);
+    }
+    builder.body(Body::from(body.to_string())).unwrap()
+}
+
 async fn insert_run(pool: &sqlx::SqlitePool, id: &str, workspace_id: &str, summary: &str) {
     sqlx::query(
         "INSERT INTO agent_runs (id, workspace_id, trigger_type, outcome, summary, report) \
@@ -84,39 +95,58 @@ async fn insert_run(pool: &sqlx::SqlitePool, id: &str, workspace_id: &str, summa
 // ── POST /agent/tasks ──────────────────────────────
 
 #[tokio::test]
-async fn create_task_dispatches_user_directive() {
+async fn create_task_creates_persistent_task_without_directive() {
     let stub = Arc::new(StubDirectiveSink::default());
-    let (app, _pool) = app_with_sink(stub.clone()).await;
+    let (app, pool) = app_with_sink(stub.clone()).await;
     let token = create_test_token("user-1", "tenant-1");
 
     let (status, json) = response_parts(
-        app.oneshot(auth_request(
-            "POST",
-            &format!("/api/v1/workspaces/{WS}/agent/tasks"),
+        app.oneshot(create_task_request(
             &token,
-            Some(json!({"text": "  把 3 号产线温度调到 25 度 "})),
+            json!({"text": "  把 3 号产线温度调到 25 度 "}),
+            Some("t14-key"),
         ))
         .await
         .unwrap(),
     )
     .await;
     assert_eq!(status, StatusCode::OK);
-    assert_eq!(json["code"], 0, "dispatch must succeed: {json}");
-    assert!(json["result"]["taskId"].as_str().is_some_and(|t| !t.is_empty()));
+    assert_eq!(json["code"], 0, "persistent create must succeed: {json}");
+    let task_id = json["result"]["taskId"].as_str().expect("task id");
+    assert!(!task_id.is_empty());
+    assert!(
+        stub.signals().is_empty(),
+        "persistent create must not dispatch a UserDirective"
+    );
 
-    let signals = stub.signals();
-    assert_eq!(signals.len(), 1);
-    assert_eq!(signals[0].workspace_id, WS);
-    match &signals[0].source {
-        TriggerSource::UserDirective {
-            user_id, text, source, ..
-        } => {
-            assert_eq!(user_id, "user-1");
-            assert_eq!(text, "把 3 号产线温度调到 25 度", "text trimmed before dispatch");
-            assert!(source.is_none());
-        }
-        other => panic!("expected UserDirective, got {other:?}"),
-    }
+    let objective: String = sqlx::query_scalar("SELECT objective FROM agent_tasks WHERE id = ?")
+        .bind(task_id)
+        .fetch_one(&pool)
+        .await
+        .expect("persisted task");
+    assert_eq!(
+        objective, "把 3 号产线温度调到 25 度",
+        "text trimmed before persistence"
+    );
+}
+
+#[tokio::test]
+async fn create_task_requires_idempotency_key() {
+    let (app, pool) = app_with_sink(Arc::new(StubDirectiveSink::default())).await;
+    let token = create_test_token("user-1", "tenant-1");
+
+    let (_status, json) = response_parts(
+        app.oneshot(create_task_request(&token, json!({"text": "重启网关"}), None))
+            .await
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(json["code"], 400, "missing Idempotency-Key must be 400: {json}");
+    let tasks: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM agent_tasks")
+        .fetch_one(&pool)
+        .await
+        .expect("task count");
+    assert_eq!(tasks, 0);
 }
 
 #[tokio::test]
@@ -125,11 +155,10 @@ async fn create_task_empty_text_400() {
     let token = create_test_token("user-1", "tenant-1");
 
     let (_status, json) = response_parts(
-        app.oneshot(auth_request(
-            "POST",
-            &format!("/api/v1/workspaces/{WS}/agent/tasks"),
+        app.oneshot(create_task_request(
             &token,
-            Some(json!({"text": "   "})),
+            json!({"text": "   "}),
+            Some("blank-text-key"),
         ))
         .await
         .unwrap(),
@@ -139,42 +168,24 @@ async fn create_task_empty_text_400() {
 }
 
 #[tokio::test]
-async fn create_task_queue_full_429() {
-    let stub = Arc::new(StubDirectiveSink::failing(EnqueueError::Rejected));
-    let (app, _pool) = app_with_sink(stub).await;
-    let token = create_test_token("user-1", "tenant-1");
-
-    let (_status, json) = response_parts(
-        app.oneshot(auth_request(
-            "POST",
-            &format!("/api/v1/workspaces/{WS}/agent/tasks"),
-            &token,
-            Some(json!({"text": "重启网关"})),
-        ))
-        .await
-        .unwrap(),
-    )
-    .await;
-    assert_eq!(json["code"], 429, "queue full must map to 429: {json}");
-}
-
-#[tokio::test]
-async fn create_task_without_sink_503() {
+async fn create_task_works_without_directive_sink() {
     let (app, _pool) = app_without_sink().await;
     let token = create_test_token("user-1", "tenant-1");
 
     let (_status, json) = response_parts(
-        app.oneshot(auth_request(
-            "POST",
-            &format!("/api/v1/workspaces/{WS}/agent/tasks"),
+        app.oneshot(create_task_request(
             &token,
-            Some(json!({"text": "重启网关"})),
+            json!({"text": "重启网关"}),
+            Some("no-sink-key"),
         ))
         .await
         .unwrap(),
     )
     .await;
-    assert_eq!(json["code"], 503, "sink 未接线（T15 前）必须 503: {json}");
+    assert_eq!(
+        json["code"], 0,
+        "persistent create must not depend on the directive sink: {json}"
+    );
 }
 
 #[tokio::test]

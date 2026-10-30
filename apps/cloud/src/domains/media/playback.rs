@@ -108,22 +108,6 @@ pub async fn get_playback(
         return error_response(StatusCode::NOT_FOUND, "数据源不存在");
     }
 
-    let heartbeat_json = match state.db.load_heartbeat_config_json(&workspace_id).await {
-        Ok(json) => json,
-        Err(_) => {
-            tracing::error!(%workspace_id, %device_id, %source_id, "runtime media flag lookup failed");
-            return unavailable(&workspace_id, &device_id, &source_id);
-        }
-    };
-    let media_enabled = heartbeat_json
-        .as_deref()
-        .and_then(|json| serde_json::from_str::<serde_json::Value>(json).ok())
-        .map(|json| crate::domains::agent::runtime::types::RuntimeFlags::from_heartbeat_json(&json).media)
-        .unwrap_or(false);
-    if !media_enabled {
-        return unavailable(&workspace_id, &device_id, &source_id);
-    }
-
     let upstream = match state
         .playback_provider
         .descriptor(&workspace_id, &device_id, &source_id)

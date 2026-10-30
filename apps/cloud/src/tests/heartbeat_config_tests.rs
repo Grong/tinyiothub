@@ -145,33 +145,6 @@ async fn update_config_partial_update_merges_and_writes_through() {
     assert_eq!(cfg["enabled"], false);
 }
 
-#[tokio::test]
-async fn get_config_exposes_persisted_runtime_workbench_flag_and_defaults_false() {
-    let (app, pool, _manager) = app_with_manager().await;
-    let token = create_test_token("user-1", "tenant-1");
-
-    let cfg = call(&app, get(&format!("/api/v1/workspaces/{WS}/heartbeat/config"), &token)).await;
-    assert_eq!(cfg["runtimeWorkbenchEnabled"], false, "missing flag must default false");
-
-    sqlx::query("UPDATE workspaces SET heartbeat_config = ? WHERE id = ?")
-        .bind(json!({"runtime_workbench_enabled": true}).to_string())
-        .bind(WS)
-        .execute(&pool)
-        .await
-        .expect("persist runtime workbench flag");
-    let cfg = call(&app, get(&format!("/api/v1/workspaces/{WS}/heartbeat/config"), &token)).await;
-    assert_eq!(cfg["runtimeWorkbenchEnabled"], true);
-
-    sqlx::query("UPDATE workspaces SET heartbeat_config = ? WHERE id = ?")
-        .bind(json!({"enabled": true}).to_string())
-        .bind(WS)
-        .execute(&pool)
-        .await
-        .expect("persist config without runtime flag");
-    let cfg = call(&app, get(&format!("/api/v1/workspaces/{WS}/heartbeat/config"), &token)).await;
-    assert_eq!(cfg["runtimeWorkbenchEnabled"], false, "absent flag must remain off");
-}
-
 // Value card
 // - 覆盖路径：PUT /heartbeat/tasks 的 D11-⑤ 写序（replace DB → 回读 →
 //   set_heartbeat_tasks 写穿统一循环任务表 → notify）+ get_config 的

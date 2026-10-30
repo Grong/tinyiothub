@@ -10,7 +10,6 @@ use tinyiothub_core::agent_task::TaskStatus;
 use tinyiothub_storage::Db;
 use tower::ServiceExt;
 
-use crate::domains::agent::host::trigger::directive_sink::StubDirectiveSink;
 use crate::test_utils::{
     auth_header, create_test_token, response_parts, seed_test_workspace, setup_test_app_with_pool,
 };
@@ -20,14 +19,11 @@ const WS: &str = "ws-runtime-t1";
 struct RuntimeFixture {
     app: Router,
     db: Arc<Db>,
-    legacy_sink: Arc<StubDirectiveSink>,
     token: String,
 }
 
-async fn runtime_test_app(tasks_enabled: bool) -> RuntimeFixture {
-    let (mut app_state, pool) = setup_test_app_with_pool().await;
-    let legacy_sink = Arc::new(StubDirectiveSink::default());
-    app_state.set_directive_sink(legacy_sink.clone());
+async fn runtime_test_app() -> RuntimeFixture {
+    let (app_state, pool) = setup_test_app_with_pool().await;
     seed_test_workspace(&pool, "tenant-1", WS).await;
     sqlx::query(
         "INSERT OR IGNORE INTO roles (id, name, description, is_administrator) VALUES ('role-admin', 'admin', 'admin', 1)",
@@ -41,25 +37,14 @@ async fn runtime_test_app(tasks_enabled: bool) -> RuntimeFixture {
     .execute(&pool)
     .await
     .expect("grant admin");
-    set_task_flag(&pool, tasks_enabled).await;
     let api_router = crate::api::create_router(&app_state);
     let app = Router::new().nest("/api", api_router).with_state(app_state);
     let db = Arc::new(Db::new(pool));
     RuntimeFixture {
         app,
         db,
-        legacy_sink,
         token: create_test_token("user-1", "tenant-1"),
     }
-}
-
-async fn set_task_flag(pool: &sqlx::SqlitePool, enabled: bool) {
-    sqlx::query("UPDATE workspaces SET heartbeat_config = ? WHERE id = ?")
-        .bind(json!({"runtime_tasks_enabled": enabled}).to_string())
-        .bind(WS)
-        .execute(pool)
-        .await
-        .expect("set runtime task flag");
 }
 
 async fn post_task(app: &Router, token: &str, text: &str, key: Option<&str>) -> (StatusCode, Value) {
@@ -115,29 +100,27 @@ fn db_task_store_implements_task_store_port() {
 
 #[tokio::test]
 async fn persistent_create_requires_idempotency_key() {
-    let fixture = runtime_test_app(true).await;
+    let fixture = runtime_test_app().await;
     let (status, body) = post_task(&fixture.app, &fixture.token, "inspect pump", None).await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
     assert_eq!(body["code"], 400);
     assert_eq!(count_rows(fixture.db.pool(), "agent_tasks").await, 0);
-    assert!(fixture.legacy_sink.signals().is_empty());
 }
 
 #[tokio::test]
 async fn persistent_create_rejects_blank_key_and_objective_without_writes() {
-    let fixture = runtime_test_app(true).await;
+    let fixture = runtime_test_app().await;
     for (text, key) in [("inspect", Some("  ")), ("  ", Some("key"))] {
         let (status, body) = post_task(&fixture.app, &fixture.token, text, key).await;
         assert_eq!(status, StatusCode::BAD_REQUEST, "text={text:?}, key={key:?}: {body}");
         assert_eq!(body["code"], 400, "text={text:?}, key={key:?}: {body}");
     }
     assert_eq!(count_rows(fixture.db.pool(), "agent_tasks").await, 0);
-    assert!(fixture.legacy_sink.signals().is_empty());
 }
 
 #[tokio::test]
 async fn persistent_create_replays_task_and_wake_without_provider_call() {
-    let fixture = runtime_test_app(true).await;
+    let fixture = runtime_test_app().await;
     let first = create_persistent(&fixture, "  inspect both pumps  ", "key-1").await;
     let second = create_persistent(&fixture, "inspect both pumps", "key-1").await;
     assert_eq!(first["result"]["deduplicated"], false);
@@ -146,7 +129,6 @@ async fn persistent_create_replays_task_and_wake_without_provider_call() {
     assert_eq!(second["result"]["status"], "accepted");
     assert_eq!(count_rows(fixture.db.pool(), "agent_tasks").await, 1);
     assert_eq!(count_rows(fixture.db.pool(), "task_wake_outbox").await, 1);
-    assert!(fixture.legacy_sink.signals().is_empty());
 
     let task_id = first["result"]["taskId"].as_str().expect("task id");
     let stored = fixture.db.get_task(WS, task_id).await.expect("get task").expect("task");
@@ -157,7 +139,7 @@ async fn persistent_create_replays_task_and_wake_without_provider_call() {
 
 #[tokio::test]
 async fn persistent_create_records_one_stable_task_runtime_event() {
-    let fixture = runtime_test_app(true).await;
+    let fixture = runtime_test_app().await;
     let first = create_persistent(&fixture, "inspect", "event-key").await;
     let second = create_persistent(&fixture, "inspect", "event-key").await;
     assert_eq!(second["result"]["deduplicated"], true);
@@ -175,7 +157,7 @@ async fn persistent_create_records_one_stable_task_runtime_event() {
 
 #[tokio::test]
 async fn task_store_records_versioned_transition_events() {
-    let fixture = runtime_test_app(true).await;
+    let fixture = runtime_test_app().await;
     let created = create_persistent(&fixture, "inspect", "transition-event").await;
     let task_id = created["result"]["taskId"].as_str().expect("task id");
     let recorder = crate::domains::agent::runtime::stream::RuntimeRecorder::new(
@@ -201,7 +183,7 @@ async fn task_store_records_versioned_transition_events() {
 
 #[tokio::test]
 async fn task_store_records_current_run_binding() {
-    let fixture = runtime_test_app(true).await;
+    let fixture = runtime_test_app().await;
     let created = create_persistent(&fixture, "inspect", "bind-event").await;
     let task_id = created["result"]["taskId"].as_str().expect("task id");
     let recorder = crate::domains::agent::runtime::stream::RuntimeRecorder::new(
@@ -227,7 +209,7 @@ async fn task_store_records_current_run_binding() {
 
 #[tokio::test]
 async fn task_store_records_run_start_and_finish_events() {
-    let fixture = runtime_test_app(true).await;
+    let fixture = runtime_test_app().await;
     let created = create_persistent(&fixture, "inspect", "run-event").await;
     let task_id = created["result"]["taskId"].as_str().expect("task id");
     let task = fixture.db.get_task(WS, task_id).await.expect("task").expect("present");
@@ -284,19 +266,18 @@ async fn task_store_records_run_start_and_finish_events() {
 
 #[tokio::test]
 async fn persistent_create_same_key_different_objective_returns_409_without_new_wake() {
-    let fixture = runtime_test_app(true).await;
+    let fixture = runtime_test_app().await;
     create_persistent(&fixture, "inspect A", "key-1").await;
     let (status, body) = post_task(&fixture.app, &fixture.token, "inspect B", Some("key-1")).await;
     assert_eq!(status, StatusCode::CONFLICT);
     assert_eq!(body["code"], 409);
     assert_eq!(count_rows(fixture.db.pool(), "agent_tasks").await, 1);
     assert_eq!(count_rows(fixture.db.pool(), "task_wake_outbox").await, 1);
-    assert!(fixture.legacy_sink.signals().is_empty());
 }
 
 #[tokio::test]
-async fn task_flag_off_preserves_legacy_directive_and_existing_task() {
-    let fixture = runtime_test_app(true).await;
+async fn persistent_create_leaves_existing_task_state_untouched() {
+    let fixture = runtime_test_app().await;
     let created = create_persistent(&fixture, "inspect", "existing-key").await;
     let task_id = created["result"]["taskId"].as_str().expect("task id");
     fixture
@@ -357,17 +338,15 @@ async fn task_flag_off_preserves_legacy_directive_and_existing_task() {
     .execute(fixture.db.pool())
     .await
     .expect("existing approval");
-    set_task_flag(fixture.db.pool(), false).await;
 
-    let (_, body) = post_task(&fixture.app, &fixture.token, "legacy", None).await;
-    assert_eq!(body["code"], 0);
-    assert_eq!(fixture.legacy_sink.signals().len(), 1);
+    let created = create_persistent(&fixture, "created-after", "later-key").await;
+    assert_eq!(created["result"]["status"], "accepted");
     let stored = fixture.db.get_task(WS, task_id).await.expect("get").expect("task");
     assert_eq!(stored.status, TaskStatus::WaitingJob);
     assert_eq!(stored.state_version, 2);
     assert_eq!(stored.current_run_id.as_deref(), Some("run-existing"));
-    assert_eq!(count_rows(fixture.db.pool(), "agent_tasks").await, 1);
-    assert_eq!(count_rows(fixture.db.pool(), "task_wake_outbox").await, 1);
+    assert_eq!(count_rows(fixture.db.pool(), "agent_tasks").await, 2);
+    assert_eq!(count_rows(fixture.db.pool(), "task_wake_outbox").await, 2);
     assert_eq!(count_rows(fixture.db.pool(), "device_jobs").await, 1);
     assert_eq!(count_rows(fixture.db.pool(), "watch_rules").await, 1);
     assert_eq!(count_rows(fixture.db.pool(), "task_approvals").await, 1);
@@ -394,7 +373,7 @@ async fn task_flag_off_preserves_legacy_directive_and_existing_task() {
 
 #[tokio::test]
 async fn task_list_and_detail_return_persisted_projections_with_read_access() {
-    let fixture = runtime_test_app(true).await;
+    let fixture = runtime_test_app().await;
     let created = create_persistent(&fixture, "inspect", "key-1").await;
     let task_id = created["result"]["taskId"].as_str().expect("task id");
     let reader = create_test_token("user-2", "tenant-1");
@@ -416,7 +395,7 @@ async fn task_list_and_detail_return_persisted_projections_with_read_access() {
 
 #[tokio::test]
 async fn persistent_task_control_routes_reach_the_runtime() {
-    let fixture = runtime_test_app(true).await;
+    let fixture = runtime_test_app().await;
     let created = create_persistent(&fixture, "inspect", "control-key").await;
     let task_id = created["result"]["taskId"].as_str().expect("task id");
     for action in ["pause", "resume", "cancel"] {
@@ -434,7 +413,7 @@ async fn persistent_task_control_routes_reach_the_runtime() {
 
 #[tokio::test]
 async fn runtime_controls_use_http_auth_statuses_and_expose_scoped_job_stop() {
-    let fixture = runtime_test_app(true).await;
+    let fixture = runtime_test_app().await;
     let created = create_persistent(&fixture, "inspect", "control-auth").await;
     let task_id = created["result"]["taskId"].as_str().expect("task id");
     let reader = create_test_token("user-2", "tenant-1");
@@ -469,7 +448,7 @@ async fn runtime_controls_use_http_auth_statuses_and_expose_scoped_job_stop() {
 
 #[tokio::test]
 async fn task_detail_uses_the_single_runtime_projection_surface() {
-    let fixture = runtime_test_app(true).await;
+    let fixture = runtime_test_app().await;
     let created = create_persistent(&fixture, "inspect", "projection").await;
     let task_id = created["result"]["taskId"].as_str().expect("task id");
     let detail = get_json(
@@ -491,7 +470,7 @@ async fn task_detail_uses_the_single_runtime_projection_surface() {
 
 #[tokio::test]
 async fn persistent_create_storage_failure_returns_503() {
-    let fixture = runtime_test_app(true).await;
+    let fixture = runtime_test_app().await;
     sqlx::query("ALTER TABLE agent_tasks RENAME TO agent_tasks_hidden")
         .execute(fixture.db.pool())
         .await
@@ -499,19 +478,4 @@ async fn persistent_create_storage_failure_returns_503() {
     let (status, body) = post_task(&fixture.app, &fixture.token, "inspect", Some("key-1")).await;
     assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
     assert_eq!(body["code"], 503);
-    assert!(fixture.legacy_sink.signals().is_empty());
-}
-
-#[tokio::test]
-async fn persistent_create_flag_load_failure_returns_503() {
-    let fixture = runtime_test_app(true).await;
-    sqlx::query("ALTER TABLE workspaces DROP COLUMN heartbeat_config")
-        .execute(fixture.db.pool())
-        .await
-        .expect("remove heartbeat config column");
-    let (status, body) = post_task(&fixture.app, &fixture.token, "inspect", Some("key-1")).await;
-    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
-    assert_eq!(body["code"], 503);
-    assert!(fixture.legacy_sink.signals().is_empty());
-    assert_eq!(count_rows(fixture.db.pool(), "agent_tasks").await, 0);
 }

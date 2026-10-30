@@ -228,22 +228,6 @@ mod tests {
             }
         }
 
-        async fn enable_media(&self) {
-            sqlx::query("UPDATE workspaces SET heartbeat_config = ? WHERE id = ?")
-                .bind(
-                    serde_json::json!({
-                        "enabled": false,
-                        "interval_minutes": 5,
-                        "runtime_media_enabled": true
-                    })
-                    .to_string(),
-                )
-                .bind(WORKSPACE)
-                .execute(self.state.db.pool())
-                .await
-                .expect("enable media");
-        }
-
         async fn put_evidence(&self, id: &str, workspace: &str, mime: &str, bytes: &[u8]) {
             let sha256 = hex::encode(sha2::Sha256::digest(bytes));
             let storage_path = self.store.put(workspace, &sha256, bytes).await.expect("media bytes");
@@ -383,14 +367,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn playback_requires_device_source_ownership_and_media_flag() {
+    async fn playback_requires_device_source_ownership() {
         let fixture = MediaApiFixture::new().await;
-        let disabled = fixture.get_playback(WORKSPACE, DEVICE, SOURCE).await;
-        assert_eq!(disabled.status(), StatusCode::SERVICE_UNAVAILABLE);
-        assert_eq!(json(disabled).await["msg"], "playback_unavailable");
-        assert!(fixture.provider.calls.lock().await.is_empty());
-
-        fixture.enable_media().await;
         for (workspace, device, source) in [
             (OTHER_WORKSPACE, DEVICE, SOURCE),
             (WORKSPACE, "absent-device", SOURCE),
@@ -405,10 +383,9 @@ mod tests {
     #[tokio::test]
     async fn playback_production_composition_fails_closed_without_upstream_provider() {
         let mut fixture = MediaApiFixture::new().await;
-        fixture.enable_media().await;
         // The production composition wires `UnavailablePlaybackProvider`
-        // (no upstream vendor exists); enabling the media flag and declaring
-        // the source must still never authorize playback.
+        // (no upstream vendor exists); declaring the source must still never
+        // authorize playback.
         fixture.state.playback_provider = Arc::new(super::playback::UnavailablePlaybackProvider);
         fixture.app = Router::new()
             .nest("/api", crate::api::create_router(&fixture.state))
@@ -422,7 +399,6 @@ mod tests {
     #[tokio::test]
     async fn playback_returns_direct_url_and_caps_expiry_at_five_minutes() {
         let fixture = MediaApiFixture::new().await;
-        fixture.enable_media().await;
         let before = Utc::now();
         let response = fixture.get_playback(WORKSPACE, DEVICE, SOURCE).await;
         assert_eq!(response.status(), StatusCode::OK);
@@ -455,7 +431,6 @@ mod tests {
     #[tokio::test]
     async fn playback_rejects_missing_url_and_unsupported_protocol() {
         let fixture = MediaApiFixture::new().await;
-        fixture.enable_media().await;
         let mut missing = upstream("hls", Utc::now() + chrono::Duration::minutes(1));
         missing.url = None;
         fixture.provider.set(Ok(missing)).await;
@@ -475,7 +450,6 @@ mod tests {
     #[tokio::test]
     async fn playback_rejects_every_unsafe_upstream_url() {
         let fixture = MediaApiFixture::new().await;
-        fixture.enable_media().await;
         for unsafe_url in [
             "file:///tmp/a.m3u8",
             "javascript:alert(1)",

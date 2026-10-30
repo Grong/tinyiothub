@@ -1,6 +1,6 @@
 import { LitElement, html, nothing } from 'lit';
 import { customElement, state } from 'lit/decorators.js';
-import { ApiClient, getAuthToken, getWorkspaceId } from '../api/client.js';
+import { ApiClient, getAuthToken } from '../api/client.js';
 import { loadSettings, saveSettings, type UiSettings } from './storage.js';
 import { startThemeTransition, type ThemeTransitionContext } from './theme-transition.js';
 import { resolveTheme, type ThemeMode, type ResolvedTheme } from './theme.js';
@@ -49,6 +49,8 @@ interface NavItem {
   label: string;
   icon: string;
   adminOnly?: boolean;
+  /** Runtime pages live on `#/runtime` hash routes, not pathname routes. */
+  hashRoute?: boolean;
 }
 
 interface NavGroup {
@@ -141,6 +143,12 @@ const NAV_GROUPS: NavGroup[] = [
         label: 'AI 运维',
         icon: 'M12 2a10 10 0 1 0 10 10A10 10 0 0 0 12 2zm0 18a8 8 0 1 1 8-8 8 8 0 0 1-8 8zm1-13v5.59l4.29 4.3-1.42 1.42-5-5V7h2z',
       },
+      {
+        route: 'runtime',
+        label: 'Runtime tasks',
+        icon: 'M9 11l3 3L22 4M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11',
+        hashRoute: true,
+      },
     ],
   },
   {
@@ -177,14 +185,11 @@ export class TinyIoTHubApp extends LitElement {
   @state() loadError: string | null = null;
   /** T13：run 详情页 hash 路由参数（#/ai-ops/runs/{id}；id 容忍冒号如 patrol:p1） */
   @state() runDetailId = '';
-  /** Persisted per-workspace flag; missing, false, and failed loads remain off. */
-  @state() runtimeWorkbenchEnabled = false;
   @state() runtimeRoute: RuntimeRoute | null = null;
   /** E4：处置中心未读角标（needsYou 计数；「例外响亮」的前提是例外能到人） */
   @state() dispositionNeedsYou = 0;
 
   private loadSeq = 0;
-  private runtimeConfigGeneration = 0;
   private themeMediaQuery: MediaQueryList | null = null;
   private themeChangeHandler = () => {
     if (this.theme === 'system') {
@@ -194,10 +199,6 @@ export class TinyIoTHubApp extends LitElement {
   };
   private boundHandleRoute = () => this.handleRoute();
   private handleAuthError = () => this.logout();
-  private handleWorkspaceChange = () => void this.loadRuntimeWorkbenchFlag();
-  private handleStorage = (event: StorageEvent) => {
-    if (event.key === 'workspace-id') this.handleWorkspaceChange();
-  };
 
   createRenderRoot() {
     return this;
@@ -209,11 +210,8 @@ export class TinyIoTHubApp extends LitElement {
     this.checkAuth();
     this.setupRouter();
     window.addEventListener('auth-error', this.handleAuthError);
-    window.addEventListener('workspace-changed', this.handleWorkspaceChange);
-    window.addEventListener('storage', this.handleStorage);
     if (this.isAuthenticated) {
       this.loadUserInfo();
-      void this.loadRuntimeWorkbenchFlag();
     }
     // Notify skeleton screen that app has bootstrapped
     requestAnimationFrame(() => {
@@ -243,9 +241,6 @@ export class TinyIoTHubApp extends LitElement {
     window.removeEventListener('popstate', this.boundHandleRoute);
     window.removeEventListener('hashchange', this.boundHandleRoute);
     window.removeEventListener('auth-error', this.handleAuthError);
-    window.removeEventListener('workspace-changed', this.handleWorkspaceChange);
-    window.removeEventListener('storage', this.handleStorage);
-    this.runtimeConfigGeneration += 1;
     if (this.themeMediaQuery) {
       this.themeMediaQuery.removeEventListener('change', this.themeChangeHandler);
     }
@@ -304,26 +299,6 @@ export class TinyIoTHubApp extends LitElement {
     this.isAuthenticated = !!token;
   }
 
-  private async loadRuntimeWorkbenchFlag(): Promise<void> {
-    const generation = ++this.runtimeConfigGeneration;
-    const workspaceId = getWorkspaceId();
-    this.runtimeWorkbenchEnabled = false;
-    this.handleRoute();
-    if (!this.isAuthenticated || !workspaceId) return;
-
-    try {
-      const response = await ApiClient.get<{ runtimeWorkbenchEnabled?: boolean }>(
-        `/workspaces/${encodeURIComponent(workspaceId)}/heartbeat/config`,
-      );
-      if (generation !== this.runtimeConfigGeneration || workspaceId !== getWorkspaceId()) return;
-      this.runtimeWorkbenchEnabled = response.result?.runtimeWorkbenchEnabled === true;
-    } catch {
-      if (generation !== this.runtimeConfigGeneration || workspaceId !== getWorkspaceId()) return;
-      this.runtimeWorkbenchEnabled = false;
-    }
-    this.handleRoute();
-  }
-
   async loadUserInfo() {
     try {
       const res = await ApiClient.get<any>('/users/me');
@@ -342,8 +317,6 @@ export class TinyIoTHubApp extends LitElement {
     sessionStorage.removeItem('auth-token');
     localStorage.removeItem('auth-token');
     thingCache.clearCache();
-    this.runtimeConfigGeneration += 1;
-    this.runtimeWorkbenchEnabled = false;
     this.isAuthenticated = false;
     toastError('登录已过期，请重新登录');
     this.navigate('login');
@@ -360,7 +333,7 @@ export class TinyIoTHubApp extends LitElement {
   handleRoute() {
     // Runtime uses explicit hash routes so query-only history state never enters pathname routing.
     const runtimeRoute = parseRuntimeHash(window.location.hash);
-    if (runtimeRoute && this.runtimeWorkbenchEnabled) {
+    if (runtimeRoute) {
       if (!this.isAuthenticated) {
         this.navigate('login');
         return;
@@ -452,6 +425,11 @@ export class TinyIoTHubApp extends LitElement {
 
   navigate(route: string) {
     window.history.pushState({}, '', `/${route}`);
+    this.handleRoute();
+  }
+
+  navigateHash(route: string) {
+    window.location.hash = `#/${route}`;
     this.handleRoute();
   }
 
@@ -654,9 +632,7 @@ export class TinyIoTHubApp extends LitElement {
   renderNav() {
     return html`
       ${NAV_GROUPS.map((group) => {
-        const visibleItems = group.items.filter(
-          (item) => !item.adminOnly || this.userRole === 'admin',
-        );
+        const visibleItems = group.items.filter((item) => !item.adminOnly || this.userRole === 'admin');
         if (visibleItems.length === 0) return '';
         return html`
           <div class="nav-group">
@@ -671,14 +647,16 @@ export class TinyIoTHubApp extends LitElement {
               ${visibleItems.map(
                 (item) => html`
                   <a
-                    href="/${item.route}"
+                    href=${item.hashRoute ? `#/${item.route}` : `/${item.route}`}
                     class="nav-item ${this.currentRoute === item.route ||
-                    (item.route === 'things' && (this.currentRoute === 'things' || this.currentRoute.startsWith('things/')))
+                    (item.route === 'things' && (this.currentRoute === 'things' || this.currentRoute.startsWith('things/'))) ||
+                    (item.hashRoute && this.currentRoute.startsWith(item.route))
                       ? 'active'
                       : ''}"
                     @click=${(e: Event) => {
                       e.preventDefault();
-                      this.navigate(item.route);
+                      if (item.hashRoute) this.navigateHash(item.route);
+                      else this.navigate(item.route);
                     }}
                   >
                     <span class="nav-item__icon">
@@ -733,7 +711,7 @@ export class TinyIoTHubApp extends LitElement {
     if (base === 'driver-health') return html`<view-driver-health></view-driver-health>`;
     if (base === 'memory-dashboard') return html`<view-memory-dashboard></view-memory-dashboard>`;
     if (base === 'workspace') return html`<view-workspace></view-workspace>`;
-    if (base === 'ai-ops') return html`<view-ai-ops .runtimeWorkbenchEnabled=${this.runtimeWorkbenchEnabled}></view-ai-ops>`;
+    if (base === 'ai-ops') return html`<view-ai-ops></view-ai-ops>`;
     if (base === 'run-detail')
       return html`<view-run-detail .runId=${this.runDetailId}></view-run-detail>`;
     if (base === 'runtime') return html`<view-runtime-list></view-runtime-list>`;

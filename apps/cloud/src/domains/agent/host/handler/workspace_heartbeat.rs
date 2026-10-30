@@ -8,7 +8,6 @@
 //   PUT  /tasks — replace heartbeat tasks (DB)
 
 use crate::domains::agent::host::heartbeat;
-use crate::domains::agent::runtime::types::RuntimeFlags;
 use crate::verify_workspace_access_port;
 use axum::{
     Json,
@@ -74,7 +73,6 @@ pub struct HeartbeatConfigResponse {
     /// E1 同键限速覆盖（spec §3）：统一循环共享表优先，回退 DB 持久值；
     /// 未配置为 null（缺省 3 由 scheduler 侧兜底）。
     rate_limit_per_key_per_min: Option<u32>,
-    runtime_workbench_enabled: bool,
 }
 
 #[derive(Debug, Deserialize)]
@@ -185,16 +183,6 @@ pub async fn get_config(
             .and_then(|c| c.rate_limit_per_key_per_min),
     };
 
-    let runtime_workbench_enabled = state
-        .db
-        .load_heartbeat_config_json(&workspace_id)
-        .await
-        .ok()
-        .flatten()
-        .and_then(|json| serde_json::from_str(&json).ok())
-        .map(|value| RuntimeFlags::from_heartbeat_json(&value).workbench)
-        .unwrap_or(false);
-
     ApiResponseBuilder::success(HeartbeatConfigResponse {
         enabled,
         interval_minutes,
@@ -203,7 +191,6 @@ pub async fn get_config(
         tasks,
         last_tick,
         rate_limit_per_key_per_min,
-        runtime_workbench_enabled,
     })
 }
 

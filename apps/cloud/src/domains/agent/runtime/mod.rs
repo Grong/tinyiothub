@@ -14,7 +14,6 @@ pub mod controls;
 pub mod projection;
 pub mod stream;
 pub mod tasks;
-pub mod types;
 
 #[derive(Clone)]
 pub struct DbTaskStore {

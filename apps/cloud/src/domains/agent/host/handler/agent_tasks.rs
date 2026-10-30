@@ -1,7 +1,7 @@
 // Thing Agent 用户指令端点（T14）
 //
 // Routes (nested under /workspaces by the composition layer — api/mod.rs):
-//   POST /tasks                  {text} → {taskId}（队列满 → 429）
+//   POST /tasks                  {text} + Idempotency-Key → {taskId}（持久 Task）
 //   GET  /runs?limit=&offset=    分页（limit 默认 50 最大 200）
 //   POST /runs/{run_id}/ack      幂等
 //   GET/PUT /policy              三态策略读写（PUT 记 updated_by）
@@ -19,7 +19,6 @@ use axum::{
     routing::{get, post},
 };
 use serde::{Deserialize, Serialize};
-use tinyiothub_agent::runtime::thing_agent::{EnqueueError, Priority, TriggerSource, WakeSignal};
 use tinyiothub_policy::autonomy::{AutonomyMode, AutonomyPolicy};
 use tinyiothub_web::api_response::ApiResponse;
 use tinyiothub_web::response::ApiResponseBuilder;
@@ -152,73 +151,7 @@ pub async fn create_task(
     }
 
     let text = req.text.trim();
-    let heartbeat_json = match state.db.load_heartbeat_config_json(&workspace_id).await {
-        Ok(json) => json,
-        Err(error) => {
-            tracing::error!(%workspace_id, %error, "load runtime task flag failed");
-            return crate::domains::agent::runtime::tasks::error_response(
-                StatusCode::SERVICE_UNAVAILABLE,
-                "Task 配置不可用",
-            );
-        }
-    };
-    let flags = heartbeat_json
-        .as_deref()
-        .and_then(|json| serde_json::from_str::<serde_json::Value>(json).ok())
-        .map(|json| crate::domains::agent::runtime::types::RuntimeFlags::from_heartbeat_json(&json))
-        .unwrap_or_default();
-    if flags.tasks {
-        return crate::domains::agent::runtime::tasks::create_persistent(
-            &state,
-            &claims,
-            &workspace_id,
-            &headers,
-            text,
-        )
-        .await;
-    }
-
-    if text.is_empty() {
-        return ApiResponseBuilder::error_with_code::<serde_json::Value>(400, "指令内容不能为空").into_response();
-    }
-    let Some(ref sink) = state.directive_sink else {
-        return ApiResponseBuilder::error_with_code::<serde_json::Value>(503, "Agent 任务服务未启动").into_response();
-    };
-
-    let signal = WakeSignal {
-        workspace_id: workspace_id.clone(),
-        priority: Priority::High,
-        source: TriggerSource::UserDirective {
-            user_id: claims.user_id.clone(),
-            text: text.to_string(),
-            session_key: None,
-            source: None, // None = chat/API 用户指令（O5：不节流，队列满拒绝）
-            problem_key: None,
-        },
-        dedup_key: None,
-    };
-
-    match sink.enqueue(signal) {
-        // task_id 为受理凭据；与 agent_runs.run_id 的关联由 T15/T19 落地
-        Ok(()) => ApiResponseBuilder::success(serde_json::json!({
-            "taskId": uuid::Uuid::new_v4().to_string(),
-            "status": "accepted",
-        }))
-        .into_response(),
-        Err(EnqueueError::Rejected) => {
-            ApiResponseBuilder::error_with_code::<serde_json::Value>(429, "任务队列已满，请稍后重试").into_response()
-        }
-        Err(EnqueueError::Duplicate) => {
-            ApiResponseBuilder::error_with_code::<serde_json::Value>(409, "相同指令已在队列中，请稍候").into_response()
-        }
-        Err(EnqueueError::Closed) => {
-            ApiResponseBuilder::error_with_code::<serde_json::Value>(503, "Agent 任务服务已停止").into_response()
-        }
-        Err(other) => {
-            tracing::error!(%workspace_id, "directive enqueue failed: {}", other);
-            ApiResponseBuilder::error::<serde_json::Value>("指令投递失败").into_response()
-        }
-    }
+    crate::domains::agent::runtime::tasks::create_persistent(&state, &claims, &workspace_id, &headers, text).await
 }
 
 // ── GET /{id}/agent/runs ──

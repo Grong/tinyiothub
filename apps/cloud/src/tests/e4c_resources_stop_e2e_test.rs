@@ -185,7 +185,6 @@ fn thing_tools(
             run_ctx: None,
             evidence: None,
             jobs: None,
-            media: None,
             runtime_recorder: None,
         },
     )

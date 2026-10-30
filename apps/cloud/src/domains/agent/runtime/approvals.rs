@@ -298,12 +298,6 @@ mod tests {
             .execute(&pool).await.expect("role");
         sqlx::query("INSERT OR IGNORE INTO user_roles (id, user_id, role_id) VALUES ('ur-approval-admin', 'user-1', 'role-admin')")
             .execute(&pool).await.expect("admin");
-        sqlx::query("UPDATE workspaces SET heartbeat_config = ? WHERE id = ?")
-            .bind(json!({"runtime_tasks_enabled":true}).to_string())
-            .bind(WS)
-            .execute(&pool)
-            .await
-            .expect("flag");
         let app = Router::new()
             .nest("/api", crate::api::create_router(&app_state))
             .with_state(app_state);
