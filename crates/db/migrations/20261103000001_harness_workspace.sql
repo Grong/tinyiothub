@@ -1,0 +1,2 @@
+-- Establishes the independent Harness workspace migration chain.
+-- Event, Effect, and Workflow schemas are introduced by their owning tasks.

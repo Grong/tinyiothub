@@ -6,6 +6,9 @@ use crate::config::DatabaseConfig;
 #[derive(Debug, Clone)]
 pub struct Db {
     pool: SqlitePool,
+    pub(crate) workspace_stores: crate::harness_workspace::WorkspaceStores,
+    pub(crate) workspace_store_config: DatabaseConfig,
+    pub(crate) workspace_store_root: std::path::PathBuf,
     #[cfg(any(test, feature = "testing"))]
     pub(crate) runtime_projection_probe: Option<std::sync::Arc<crate::runtime_event::RuntimeProjectionProbe>>,
 }
@@ -14,6 +17,9 @@ impl Db {
     pub fn new(pool: SqlitePool) -> Self {
         Self {
             pool,
+            workspace_stores: Default::default(),
+            workspace_store_config: DatabaseConfig::default(),
+            workspace_store_root: crate::harness_workspace::default_workspace_store_root(),
             #[cfg(any(test, feature = "testing"))]
             runtime_projection_probe: None,
         }
@@ -43,7 +49,10 @@ impl Db {
         crate::migrations::run_migrations(&pool).await?;
         tracing::info!("Database migrations completed successfully");
 
-        Ok(Self::new(pool))
+        Ok(Self {
+            workspace_store_config: config.clone(),
+            ..Self::new(pool)
+        })
     }
 
     pub fn pool(&self) -> &SqlitePool {

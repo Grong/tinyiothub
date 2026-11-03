@@ -50,6 +50,7 @@ pub mod edge;
 pub mod error;
 /// Event + real-time status persistence and query types.
 pub mod event;
+mod harness_workspace;
 /// Heartbeat task/result/trust persistence and row types.
 pub mod heartbeat;
 pub mod judgment;

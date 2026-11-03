@@ -1,6 +1,6 @@
 //! Migrating SQLite pool creation (foreign keys on, runs embedded migrations).
 
-use std::{str::FromStr, time::Duration};
+use std::{path::Path, str::FromStr, time::Duration};
 
 use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePool, SqlitePoolOptions};
 
@@ -29,6 +29,22 @@ pub(crate) fn pool_options(config: &DatabaseConfig) -> SqlitePoolOptions {
         .min_connections(config.min_connections)
         .acquire_timeout(Duration::from_secs(config.acquire_timeout_secs))
         .idle_timeout(Duration::from_secs(config.idle_timeout_secs))
+}
+
+pub(crate) fn workspace_connect_options(path: &Path) -> SqliteConnectOptions {
+    SqliteConnectOptions::new()
+        .filename(path)
+        .create_if_missing(true)
+        .foreign_keys(true)
+        .journal_mode(SqliteJournalMode::Wal)
+        .busy_timeout(Duration::from_millis(5000))
+}
+
+pub(crate) fn workspace_pool_options(config: &DatabaseConfig) -> SqlitePoolOptions {
+    pool_options(&DatabaseConfig {
+        min_connections: 0,
+        ..config.clone()
+    })
 }
 
 /// Cloud pool entry — thin delegate over `Db::connect` (pool + migrations +
