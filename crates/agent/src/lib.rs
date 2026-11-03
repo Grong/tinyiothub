@@ -19,6 +19,7 @@
 pub mod adapters;
 pub mod config;
 pub mod error;
+pub mod harness;
 pub mod memory;
 pub mod port;
 pub mod provider;

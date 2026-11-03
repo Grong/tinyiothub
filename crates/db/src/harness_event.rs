@@ -97,7 +97,7 @@ impl SessionEventRow {
     }
 }
 
-fn validate_schema(schema_v: i64) -> Result<()> {
+pub(crate) fn validate_schema(schema_v: i64) -> Result<()> {
     if schema_v != CURRENT_EVENT_SCHEMA {
         return Err(DbError::Validation {
             message: format!("unknown harness event schema: {schema_v}"),
@@ -106,7 +106,7 @@ fn validate_schema(schema_v: i64) -> Result<()> {
     Ok(())
 }
 
-fn validate_payload(event_type: &str, payload: &Value) -> Result<()> {
+pub(crate) fn validate_payload(event_type: &str, payload: &Value) -> Result<()> {
     let segment = match event_type {
         "step.thinking" => Some("thinking"),
         "step.text" => Some("text"),

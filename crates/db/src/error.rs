@@ -29,6 +29,29 @@ pub enum DbError {
         message: String,
     },
 
+    /// The authoritative state changed after it was loaded.
+    #[error("CAS conflict: {message}")]
+    CasConflict {
+        /// The expected and actual precondition.
+        message: String,
+    },
+
+    /// A transaction remained locked after bounded whole-transaction retries.
+    #[error("storage locked: {message}")]
+    StorageLocked {
+        /// The last SQLite lock error.
+        message: String,
+    },
+
+    /// COMMIT failed without proving whether the stable transition was stored.
+    #[error("commit result unknown for {transition_id}: {message}")]
+    CommitUnknown {
+        /// The stable transition used for reconciliation.
+        transition_id: String,
+        /// The commit error.
+        message: String,
+    },
+
     /// The requested row does not exist.
     #[error("not found: {id}")]
     NotFound {
