@@ -1,5 +1,5 @@
 pub mod reducer;
 mod types;
 
-pub use reducer::reduce;
-pub use types::HarnessError;
+pub use reducer::{RecoveryFact, reduce, reduce_recovery};
+pub use types::{EffectReconciler, EffectResult, HarnessError, ReconcileOutcome};

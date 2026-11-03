@@ -71,3 +71,44 @@ CREATE TABLE harness_transitions (
 
 CREATE INDEX idx_harness_transitions_effect
     ON harness_transitions (effect_id, state_version);
+
+CREATE TABLE IF NOT EXISTS decisions (
+    decision_id         TEXT PRIMARY KEY,
+    kind                TEXT NOT NULL,
+    state               TEXT NOT NULL,
+    session_id          TEXT NOT NULL,
+    run_id              TEXT NOT NULL,
+    task_id             TEXT NOT NULL,
+    effect_id           TEXT,
+    subject_json        TEXT NOT NULL,
+    options_json        TEXT NOT NULL,
+    created_at          TEXT NOT NULL,
+    updated_at          TEXT NOT NULL,
+    expires_at          TEXT,
+    answer              TEXT,
+    answer_actor        TEXT,
+    answer_event_id     TEXT,
+    answer_evidence_json TEXT,
+    consumed_at         TEXT,
+    consumed_by         TEXT,
+    CHECK (kind != 'effect_reconciliation' OR expires_at IS NULL)
+);
+
+CREATE INDEX idx_decisions_effect
+    ON decisions (effect_id, kind, state);
+CREATE INDEX idx_decisions_expiry
+    ON decisions (expires_at, state)
+    WHERE kind = 'tool_approval' AND state = 'requested';
+
+CREATE TABLE IF NOT EXISTS agent_tasks (
+    id            TEXT PRIMARY KEY,
+    run_id        TEXT,
+    state         TEXT NOT NULL,
+    state_version INTEGER NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS agent_runs (
+    id      TEXT PRIMARY KEY,
+    task_id TEXT NOT NULL,
+    state   TEXT NOT NULL
+);

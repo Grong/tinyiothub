@@ -129,6 +129,10 @@ where
             "/{id}/agent/tasks/{task_id}/approvals/{approval_id}/reject",
             post(crate::domains::agent::runtime::approvals::reject),
         )
+        .route(
+            "/{id}/agent/effects/{effect_id}/reconcile",
+            post(crate::domains::agent::runtime::approvals::reconcile_effect),
+        )
         .route("/{id}/agent/runs", get(list_runs))
         .route("/{id}/agent/runs/{run_id}/ack", post(ack_run))
         .route("/{id}/agent/policy", get(get_policy).put(update_policy))

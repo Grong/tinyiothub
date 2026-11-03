@@ -136,6 +136,149 @@ impl EffectState {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DecisionKind {
+    ToolApproval,
+    EffectReconciliation,
+    Other,
+}
+
+impl DecisionKind {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::ToolApproval => "tool_approval",
+            Self::EffectReconciliation => "effect_reconciliation",
+            Self::Other => "other",
+        }
+    }
+
+    pub fn from_db(value: &str) -> Option<Self> {
+        match value {
+            "tool_approval" => Some(Self::ToolApproval),
+            "effect_reconciliation" => Some(Self::EffectReconciliation),
+            "other" => Some(Self::Other),
+            _ => None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DecisionState {
+    Requested,
+    Answered,
+    Consumed,
+    Expired,
+    Withdrawn,
+}
+
+impl DecisionState {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Requested => "requested",
+            Self::Answered => "answered",
+            Self::Consumed => "consumed",
+            Self::Expired => "expired",
+            Self::Withdrawn => "withdrawn",
+        }
+    }
+
+    pub fn from_db(value: &str) -> Option<Self> {
+        match value {
+            "requested" => Some(Self::Requested),
+            "answered" => Some(Self::Answered),
+            "consumed" => Some(Self::Consumed),
+            "expired" => Some(Self::Expired),
+            "withdrawn" => Some(Self::Withdrawn),
+            _ => None,
+        }
+    }
+}
+
+#[derive(Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EffectIntent {
+    pub effect_id: String,
+    pub session_id: String,
+    pub task_id: String,
+    pub run_id: String,
+    pub tool_call_id: String,
+    pub tool_name: String,
+    #[serde(skip_serializing)]
+    pub request_json: Value,
+    pub request_digest: String,
+    pub idempotency_key: String,
+    pub external_ref: Option<String>,
+    pub state: EffectState,
+    pub state_version: i64,
+    pub result_json: Option<Value>,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
+impl std::fmt::Debug for EffectIntent {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("EffectIntent")
+            .field("effect_id", &self.effect_id)
+            .field("session_id", &self.session_id)
+            .field("task_id", &self.task_id)
+            .field("run_id", &self.run_id)
+            .field("tool_call_id", &self.tool_call_id)
+            .field("tool_name", &self.tool_name)
+            .field("request_digest", &self.request_digest)
+            .field("idempotency_key", &self.idempotency_key)
+            .field("external_ref", &self.external_ref)
+            .field("state", &self.state)
+            .field("state_version", &self.state_version)
+            .field("result_json", &self.result_json)
+            .field("created_at", &self.created_at)
+            .field("updated_at", &self.updated_at)
+            .finish_non_exhaustive()
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Decision {
+    pub decision_id: String,
+    pub kind: DecisionKind,
+    pub state: DecisionState,
+    pub session_id: String,
+    pub run_id: String,
+    pub task_id: String,
+    pub effect_id: Option<String>,
+    pub subject: Value,
+    pub options: Value,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+    pub expires_at: Option<DateTime<Utc>>,
+    pub answer: Option<String>,
+    pub answer_actor: Option<String>,
+    pub answer_event_id: Option<String>,
+    pub answer_evidence: Option<Value>,
+    pub consumed_at: Option<DateTime<Utc>>,
+    pub consumed_by: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DecisionMutation {
+    pub decision: Decision,
+    pub expected_state: Option<DecisionState>,
+    pub insert_if_missing: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RunTaskProjection {
+    pub run_id: String,
+    pub run_state: String,
+    pub task_id: String,
+    pub task_state: String,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct HarnessState {
@@ -209,6 +352,9 @@ pub struct Transition {
     pub precondition: TransitionPrecondition,
     pub effect: Option<EffectMutation>,
     pub event: Option<HarnessEventInput>,
+    pub additional_events: Vec<HarnessEventInput>,
+    pub decision: Option<DecisionMutation>,
+    pub run_task: Option<RunTaskProjection>,
     pub job: Option<JobProjection>,
     pub wake: Option<WakeProjection>,
 }

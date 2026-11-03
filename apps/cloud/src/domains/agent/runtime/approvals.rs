@@ -3,7 +3,7 @@ use std::sync::Arc;
 use crate::domains::agent::thing_agent::approval_port::{ApprovalError, TaskApprovalStore};
 use async_trait::async_trait;
 use axum::{
-    extract::{Extension, Path, State},
+    extract::{Extension, Json, Path, State},
     http::StatusCode,
     response::{IntoResponse, Response},
 };
@@ -238,6 +238,37 @@ pub async fn reject(
         ApprovalDecision::Reject,
     )
     .await
+}
+
+#[derive(serde::Deserialize)]
+pub struct ReconcileEffectRequest {
+    answer: String,
+    evidence: Option<serde_json::Value>,
+}
+
+pub async fn reconcile_effect(
+    State(state): State<AgentState>,
+    Extension(claims): Extension<Claims>,
+    Path((workspace_id, effect_id)): Path<(String, String)>,
+    Json(request): Json<ReconcileEffectRequest>,
+) -> Response {
+    if let Err(response) = check_agent_admin_response(&state, &claims, &workspace_id).await {
+        return response;
+    }
+    let recovery = super::EffectRecovery::new(state.db.clone());
+    match recovery
+        .answer_reconciliation(
+            &workspace_id,
+            &effect_id,
+            &request.answer,
+            &claims.user_id,
+            request.evidence,
+        )
+        .await
+    {
+        Ok(()) => ApiResponseBuilder::success(json!({"accepted": true})).into_response(),
+        Err(error) => error_response(StatusCode::CONFLICT, error),
+    }
 }
 
 #[cfg(test)]
@@ -633,6 +664,21 @@ mod tests {
         )
         .await
         .expect("decision")
+    }
+
+    #[tokio::test]
+    async fn effect_recovery_reconciliation_requires_agent_admin_before_workspace_open() {
+        let fixture = fixture().await;
+        let reader = create_test_token("reader-1", "tenant-1");
+        let request = Request::builder()
+            .method("POST")
+            .uri(format!("/api/v1/workspaces/{WS}/agent/effects/effect-1/reconcile"))
+            .header("Authorization", auth_header(&reader))
+            .header("Content-Type", "application/json")
+            .body(Body::from(json!({"answer":"applied"}).to_string()))
+            .expect("request");
+        let (status, body) = response_parts(fixture.app.clone().oneshot(request).await.expect("response")).await;
+        assert_eq!(status, StatusCode::FORBIDDEN, "unexpected response: {body}");
     }
 
     #[tokio::test]

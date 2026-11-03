@@ -182,6 +182,11 @@ impl Db {
         self.open_workspace_store_entry(workspace_id, &mut state).await
     }
 
+    #[cfg(any(test, feature = "testing"))]
+    pub async fn workspace_pool_for_testing(&self, workspace_id: &str) -> Result<SqlitePool> {
+        self.workspace_pool(workspace_id).await
+    }
+
     pub async fn close_workspace_store(&self, workspace_id: &str) -> Result<()> {
         self.ensure_registered_workspace(workspace_id).await?;
         let entry = self.workspace_store_entry(workspace_id).await;

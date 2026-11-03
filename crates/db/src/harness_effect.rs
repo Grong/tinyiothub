@@ -1,6 +1,12 @@
+use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
+use sha2::Digest;
 use sqlx::{SqlSafeStr, SqliteConnection, SqlitePool};
-use tinyiothub_core::harness::{EffectState, Transition, TransitionPrecondition};
+use tinyiothub_core::harness::{
+    Decision, DecisionKind, DecisionMutation, DecisionState, EffectIntent, EffectState, Transition,
+    TransitionPrecondition,
+};
 
 use crate::{
     Db,
@@ -15,6 +21,114 @@ pub struct ApplyOutcome {
     pub transition_id: String,
     pub deduplicated: bool,
     pub state_version: i64,
+}
+
+#[derive(Debug, Clone)]
+pub struct EffectRecoveryItem {
+    pub intent: EffectIntent,
+    pub decision: Option<Decision>,
+    pub job_id: Option<String>,
+    pub task_active: bool,
+    pub task_state: String,
+}
+
+#[derive(Debug, sqlx::FromRow)]
+struct EffectIntentRow {
+    effect_id: String,
+    session_id: String,
+    task_id: String,
+    run_id: String,
+    tool_call_id: String,
+    tool_name: String,
+    request_json: String,
+    request_digest: String,
+    idempotency_key: String,
+    external_ref: Option<String>,
+    state: String,
+    state_version: i64,
+    result_json: Option<String>,
+    created_at: DateTime<Utc>,
+    updated_at: DateTime<Utc>,
+}
+
+impl TryFrom<EffectIntentRow> for EffectIntent {
+    type Error = DbError;
+
+    fn try_from(row: EffectIntentRow) -> Result<Self> {
+        Ok(Self {
+            effect_id: row.effect_id,
+            session_id: row.session_id,
+            task_id: row.task_id,
+            run_id: row.run_id,
+            tool_call_id: row.tool_call_id,
+            tool_name: row.tool_name,
+            request_json: serde_json::from_str(&row.request_json)?,
+            request_digest: row.request_digest,
+            idempotency_key: row.idempotency_key,
+            external_ref: row.external_ref,
+            state: EffectState::from_db(&row.state)
+                .ok_or_else(|| DbError::Internal(format!("unknown effect state: {}", row.state)))?,
+            state_version: row.state_version,
+            result_json: row.result_json.as_deref().map(serde_json::from_str).transpose()?,
+            created_at: row.created_at,
+            updated_at: row.updated_at,
+        })
+    }
+}
+
+#[derive(Debug, sqlx::FromRow)]
+struct DecisionRow {
+    decision_id: String,
+    kind: String,
+    state: String,
+    session_id: String,
+    run_id: String,
+    task_id: String,
+    effect_id: Option<String>,
+    subject_json: String,
+    options_json: String,
+    created_at: DateTime<Utc>,
+    updated_at: DateTime<Utc>,
+    expires_at: Option<DateTime<Utc>>,
+    answer: Option<String>,
+    answer_actor: Option<String>,
+    answer_event_id: Option<String>,
+    answer_evidence_json: Option<String>,
+    consumed_at: Option<DateTime<Utc>>,
+    consumed_by: Option<String>,
+}
+
+impl TryFrom<DecisionRow> for Decision {
+    type Error = DbError;
+
+    fn try_from(row: DecisionRow) -> Result<Self> {
+        Ok(Self {
+            decision_id: row.decision_id,
+            kind: DecisionKind::from_db(&row.kind)
+                .ok_or_else(|| DbError::Internal(format!("unknown decision kind: {}", row.kind)))?,
+            state: DecisionState::from_db(&row.state)
+                .ok_or_else(|| DbError::Internal(format!("unknown decision state: {}", row.state)))?,
+            session_id: row.session_id,
+            run_id: row.run_id,
+            task_id: row.task_id,
+            effect_id: row.effect_id,
+            subject: serde_json::from_str(&row.subject_json)?,
+            options: serde_json::from_str(&row.options_json)?,
+            created_at: row.created_at,
+            updated_at: row.updated_at,
+            expires_at: row.expires_at,
+            answer: row.answer,
+            answer_actor: row.answer_actor,
+            answer_event_id: row.answer_event_id,
+            answer_evidence: row
+                .answer_evidence_json
+                .as_deref()
+                .map(serde_json::from_str)
+                .transpose()?,
+            consumed_at: row.consumed_at,
+            consumed_by: row.consumed_by,
+        })
+    }
 }
 
 enum AttemptError {
@@ -52,7 +166,15 @@ fn validate_transition(workspace_id: &str, expected: &TransitionPrecondition, tr
         });
     }
     match (&transition.effect, &transition.event) {
-        (None, None) if transition.job.is_none() && transition.wake.is_none() => Ok(()),
+        (None, None)
+            if transition.job.is_none()
+                && transition.wake.is_none()
+                && transition.additional_events.is_empty()
+                && transition.decision.is_none()
+                && transition.run_task.is_none() =>
+        {
+            Ok(())
+        }
         (Some(effect), Some(event)) => {
             if effect.effect_id != expected.effect_id
                 || effect.state_version != expected.expected_version + 1
@@ -165,6 +287,136 @@ async fn deduplicated_outcome(
     }))
 }
 
+async fn insert_event(
+    connection: &mut SqliteConnection,
+    event: &tinyiothub_core::harness::HarnessEventInput,
+) -> Result<()> {
+    let inserted = sqlx::query(
+        "INSERT INTO session_events
+            (event_id, session_id, execution_mode, run_id, task_id, type, occurred_at,
+             cause_id, schema_v, payload_digest, payload_json)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT(event_id) DO NOTHING",
+    )
+    .bind(&event.event_id)
+    .bind(&event.session_id)
+    .bind(event.execution_mode.as_str())
+    .bind(&event.run_id)
+    .bind(&event.task_id)
+    .bind(&event.event_type)
+    .bind(event.occurred_at.to_rfc3339())
+    .bind(event.cause_id)
+    .bind(event.schema_v)
+    .bind(&event.payload_digest)
+    .bind(serde_json::to_string(&event.payload_json)?)
+    .execute(&mut *connection)
+    .await?
+    .rows_affected();
+    if inserted == 0 {
+        let digest = sqlx::query_scalar::<_, String>("SELECT payload_digest FROM session_events WHERE event_id = ?")
+            .bind(&event.event_id)
+            .fetch_one(&mut *connection)
+            .await?;
+        if digest != event.payload_digest {
+            return Err(DbError::Conflict {
+                message: format!("event {} already exists with another digest", event.event_id),
+            });
+        }
+    }
+    Ok(())
+}
+
+async fn apply_decision(connection: &mut SqliteConnection, mutation: &DecisionMutation) -> Result<()> {
+    let decision = &mutation.decision;
+    if decision.kind == DecisionKind::EffectReconciliation && decision.expires_at.is_some() {
+        return Err(DbError::Validation {
+            message: "effect reconciliation decisions never expire".to_string(),
+        });
+    }
+    if mutation.insert_if_missing {
+        let inserted = sqlx::query(
+            "INSERT INTO decisions
+                (decision_id, kind, state, session_id, run_id, task_id, effect_id, subject_json,
+                 options_json, created_at, updated_at, expires_at, answer, answer_actor,
+                 answer_event_id, answer_evidence_json, consumed_at, consumed_by)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             ON CONFLICT(decision_id) DO NOTHING",
+        )
+        .bind(&decision.decision_id)
+        .bind(decision.kind.as_str())
+        .bind(decision.state.as_str())
+        .bind(&decision.session_id)
+        .bind(&decision.run_id)
+        .bind(&decision.task_id)
+        .bind(&decision.effect_id)
+        .bind(serde_json::to_string(&decision.subject)?)
+        .bind(serde_json::to_string(&decision.options)?)
+        .bind(decision.created_at.to_rfc3339())
+        .bind(decision.updated_at.to_rfc3339())
+        .bind(decision.expires_at.map(|value| value.to_rfc3339()))
+        .bind(&decision.answer)
+        .bind(&decision.answer_actor)
+        .bind(&decision.answer_event_id)
+        .bind(
+            decision
+                .answer_evidence
+                .as_ref()
+                .map(serde_json::to_string)
+                .transpose()?,
+        )
+        .bind(decision.consumed_at.map(|value| value.to_rfc3339()))
+        .bind(&decision.consumed_by)
+        .execute(&mut *connection)
+        .await?
+        .rows_affected();
+        if inserted == 0 {
+            let existing: (String, String) = sqlx::query_as("SELECT kind, state FROM decisions WHERE decision_id = ?")
+                .bind(&decision.decision_id)
+                .fetch_one(&mut *connection)
+                .await?;
+            if existing != (decision.kind.as_str().to_string(), decision.state.as_str().to_string()) {
+                return Err(DbError::Conflict {
+                    message: format!("decision {} changed during recovery", decision.decision_id),
+                });
+            }
+        }
+        return Ok(());
+    }
+    let expected = mutation.expected_state.ok_or_else(|| DbError::Validation {
+        message: "decision update requires an expected state".to_string(),
+    })?;
+    let updated = sqlx::query(
+        "UPDATE decisions SET state = ?, updated_at = ?, answer = ?, answer_actor = ?,
+             answer_event_id = ?, answer_evidence_json = ?, consumed_at = ?, consumed_by = ?
+         WHERE decision_id = ? AND state = ?",
+    )
+    .bind(decision.state.as_str())
+    .bind(decision.updated_at.to_rfc3339())
+    .bind(&decision.answer)
+    .bind(&decision.answer_actor)
+    .bind(&decision.answer_event_id)
+    .bind(
+        decision
+            .answer_evidence
+            .as_ref()
+            .map(serde_json::to_string)
+            .transpose()?,
+    )
+    .bind(decision.consumed_at.map(|value| value.to_rfc3339()))
+    .bind(&decision.consumed_by)
+    .bind(&decision.decision_id)
+    .bind(expected.as_str())
+    .execute(&mut *connection)
+    .await?
+    .rows_affected();
+    if updated != 1 {
+        return Err(DbError::CasConflict {
+            message: format!("decision {} is no longer {}", decision.decision_id, expected.as_str()),
+        });
+    }
+    Ok(())
+}
+
 async fn apply_writes(
     connection: &mut SqliteConnection,
     transition: &Transition,
@@ -226,35 +478,31 @@ async fn apply_writes(
         });
     }
 
-    let inserted = sqlx::query(
-        "INSERT INTO session_events
-            (event_id, session_id, execution_mode, run_id, task_id, type, occurred_at,
-             cause_id, schema_v, payload_digest, payload_json)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-         ON CONFLICT(event_id) DO NOTHING",
-    )
-    .bind(&event.event_id)
-    .bind(&event.session_id)
-    .bind(event.execution_mode.as_str())
-    .bind(&event.run_id)
-    .bind(&event.task_id)
-    .bind(&event.event_type)
-    .bind(event.occurred_at.to_rfc3339())
-    .bind(event.cause_id)
-    .bind(event.schema_v)
-    .bind(&event.payload_digest)
-    .bind(serde_json::to_string(&event.payload_json)?)
-    .execute(&mut *connection)
-    .await?
-    .rows_affected();
-    if inserted == 0 {
-        let digest = sqlx::query_scalar::<_, String>("SELECT payload_digest FROM session_events WHERE event_id = ?")
-            .bind(&event.event_id)
-            .fetch_one(&mut *connection)
-            .await?;
-        if digest != event.payload_digest {
+    insert_event(connection, event).await?;
+    for additional in &transition.additional_events {
+        insert_event(connection, additional).await?;
+    }
+    if let Some(decision) = &transition.decision {
+        apply_decision(connection, decision).await?;
+    }
+    if let Some(projection) = &transition.run_task {
+        let run_updated = sqlx::query("UPDATE agent_runs SET state = ? WHERE id = ? AND task_id = ?")
+            .bind(&projection.run_state)
+            .bind(&projection.run_id)
+            .bind(&projection.task_id)
+            .execute(&mut *connection)
+            .await?
+            .rows_affected();
+        let task_updated =
+            sqlx::query("UPDATE agent_tasks SET state = ?, state_version = state_version + 1 WHERE id = ?")
+                .bind(&projection.task_state)
+                .bind(&projection.task_id)
+                .execute(&mut *connection)
+                .await?
+                .rows_affected();
+        if run_updated != 1 || task_updated != 1 {
             return Err(DbError::Conflict {
-                message: format!("event {} already exists with another digest", event.event_id),
+                message: format!("run/task projection is missing for {}", projection.task_id),
             });
         }
     }
@@ -339,6 +587,351 @@ async fn apply_writes(
 }
 
 impl Db {
+    pub async fn effect_intent(&self, workspace_id: &str, effect_id: &str) -> Result<Option<EffectIntent>> {
+        let pool = self.workspace_pool(workspace_id).await?;
+        sqlx::query_as::<_, EffectIntentRow>("SELECT effect_id, session_id, task_id, run_id, tool_call_id, tool_name, request_json, request_digest, idempotency_key, external_ref, state, state_version, result_json, created_at, updated_at FROM effect_intents WHERE effect_id = ?")
+            .bind(effect_id)
+            .fetch_optional(&pool)
+            .await?
+            .map(EffectIntent::try_from)
+            .transpose()
+    }
+
+    pub async fn effect_decision(&self, workspace_id: &str, effect_id: &str) -> Result<Option<Decision>> {
+        let pool = self.workspace_pool(workspace_id).await?;
+        sqlx::query_as::<_, DecisionRow>("SELECT decision_id, kind, state, session_id, run_id, task_id, effect_id, subject_json, options_json, created_at, updated_at, expires_at, answer, answer_actor, answer_event_id, answer_evidence_json, consumed_at, consumed_by FROM decisions WHERE effect_id = ?
+             ORDER BY CASE kind WHEN 'effect_reconciliation' THEN 0 ELSE 1 END, created_at DESC LIMIT 1")
+        .bind(effect_id)
+        .fetch_optional(&pool)
+        .await?
+        .map(Decision::try_from)
+        .transpose()
+    }
+
+    pub async fn list_effect_recovery(&self, workspace_id: &str) -> Result<Vec<EffectRecoveryItem>> {
+        let pool = self.workspace_pool(workspace_id).await?;
+        let intents = sqlx::query_as::<_, EffectIntentRow>("SELECT effect_id, session_id, task_id, run_id, tool_call_id, tool_name, request_json, request_digest, idempotency_key, external_ref, state, state_version, result_json, created_at, updated_at FROM effect_intents
+             WHERE state IN ('prepared', 'dispatching', 'cancelling', 'unknown') ORDER BY created_at, effect_id")
+        .fetch_all(&pool)
+        .await?
+        .into_iter()
+        .map(EffectIntent::try_from)
+        .collect::<Result<Vec<_>>>()?;
+        let mut items = Vec::with_capacity(intents.len());
+        for intent in intents {
+            let decision = sqlx::query_as::<_, DecisionRow>("SELECT decision_id, kind, state, session_id, run_id, task_id, effect_id, subject_json, options_json, created_at, updated_at, expires_at, answer, answer_actor, answer_event_id, answer_evidence_json, consumed_at, consumed_by FROM decisions WHERE effect_id = ?
+                 ORDER BY CASE kind WHEN 'effect_reconciliation' THEN 0 ELSE 1 END, created_at DESC LIMIT 1")
+            .bind(&intent.effect_id)
+            .fetch_optional(&pool)
+            .await?
+            .map(Decision::try_from)
+            .transpose()?;
+            let job_id = sqlx::query_scalar::<_, String>("SELECT id FROM device_jobs WHERE tool_call_id = ?")
+                .bind(&intent.tool_call_id)
+                .fetch_optional(&pool)
+                .await?;
+            let task_state = sqlx::query_scalar::<_, String>("SELECT state FROM agent_tasks WHERE id = ?")
+                .bind(&intent.task_id)
+                .fetch_one(&pool)
+                .await?;
+            let task_active = task_state == "running";
+            items.push(EffectRecoveryItem {
+                intent,
+                decision,
+                job_id,
+                task_active,
+                task_state,
+            });
+        }
+        Ok(items)
+    }
+
+    pub async fn answer_effect_reconciliation(
+        &self,
+        workspace_id: &str,
+        effect_id: &str,
+        answer: &str,
+        actor: &str,
+        evidence: Option<Value>,
+    ) -> Result<Decision> {
+        if !matches!(answer, "applied" | "not_applied") || actor.is_empty() {
+            return Err(DbError::Validation {
+                message: "reconciliation answer or actor is invalid".to_string(),
+            });
+        }
+        let pool = self.workspace_pool(workspace_id).await?;
+        let mut tx = pool.begin().await?;
+        let effect = sqlx::query_as::<_, EffectIntentRow>("SELECT effect_id, session_id, task_id, run_id, tool_call_id, tool_name, request_json, request_digest, idempotency_key, external_ref, state, state_version, result_json, created_at, updated_at FROM effect_intents WHERE effect_id = ?")
+        .bind(effect_id)
+        .fetch_optional(&mut *tx)
+        .await?
+        .map(EffectIntent::try_from)
+        .transpose()?
+        .ok_or_else(|| DbError::NotFound {
+            id: effect_id.to_string(),
+        })?;
+        if effect.state != EffectState::Unknown {
+            return Err(DbError::Conflict {
+                message: format!("effect {effect_id} is already {}", effect.state.as_str()),
+            });
+        }
+        let current = sqlx::query_as::<_, DecisionRow>("SELECT decision_id, kind, state, session_id, run_id, task_id, effect_id, subject_json, options_json, created_at, updated_at, expires_at, answer, answer_actor, answer_event_id, answer_evidence_json, consumed_at, consumed_by FROM decisions
+             WHERE effect_id = ? AND kind = 'effect_reconciliation'")
+        .bind(effect_id)
+        .fetch_optional(&mut *tx)
+        .await?
+        .map(Decision::try_from)
+        .transpose()?
+        .ok_or_else(|| DbError::NotFound {
+            id: format!("reconciliation:{effect_id}"),
+        })?;
+        if current.state == DecisionState::Answered {
+            if current.answer.as_deref() == Some(answer) {
+                tx.commit().await?;
+                return Ok(current);
+            }
+            return Err(DbError::Conflict {
+                message: "reconciliation already has a different answer".to_string(),
+            });
+        }
+        if current.state != DecisionState::Requested {
+            return Err(DbError::Conflict {
+                message: format!("reconciliation is {}", current.state.as_str()),
+            });
+        }
+        let now = Utc::now();
+        let event_id = format!("decision-answer:{}", uuid::Uuid::new_v4());
+        let payload = serde_json::json!({
+            "decisionId": current.decision_id,
+            "kind": "effect_reconciliation",
+            "answer": answer,
+            "answerActor": actor,
+            "evidence": evidence,
+        });
+        let payload_json = serde_json::to_string(&payload)?;
+        let updated = sqlx::query(
+            "UPDATE decisions SET state = 'answered', answer = ?, answer_actor = ?,
+                 answer_event_id = ?, answer_evidence_json = ?, updated_at = ?
+             WHERE decision_id = ? AND state = 'requested'",
+        )
+        .bind(answer)
+        .bind(actor)
+        .bind(&event_id)
+        .bind(evidence.as_ref().map(serde_json::to_string).transpose()?)
+        .bind(now.to_rfc3339())
+        .bind(&current.decision_id)
+        .execute(&mut *tx)
+        .await?
+        .rows_affected();
+        if updated != 1 {
+            return Err(DbError::CasConflict {
+                message: "reconciliation answer lost the CAS race".to_string(),
+            });
+        }
+        insert_event(
+            &mut tx,
+            &tinyiothub_core::harness::HarnessEventInput {
+                event_id: event_id.clone(),
+                workspace_id: workspace_id.to_string(),
+                session_id: current.session_id.clone(),
+                execution_mode: tinyiothub_core::harness::ExecutionMode::Production,
+                run_id: Some(current.run_id.clone()),
+                task_id: Some(current.task_id.clone()),
+                event_type: "decision.answered".to_string(),
+                occurred_at: now,
+                cause_id: None,
+                schema_v: 1,
+                payload_digest: format!("{:x}", sha2::Sha256::digest(payload_json.as_bytes())),
+                payload_json: payload,
+            },
+        )
+        .await?;
+        sqlx::query(
+            "INSERT INTO task_wake_outbox
+                (task_id, event_id, signal_json, dispatch_state, created_at, dispatched_at, resolved_at)
+             VALUES (?, ?, ?, 'pending', ?, NULL, NULL)
+             ON CONFLICT(task_id, event_id) DO NOTHING",
+        )
+        .bind(&current.task_id)
+        .bind(&event_id)
+        .bind(serde_json::json!({"effectId":effect_id,"kind":"reconciliation_answered"}).to_string())
+        .bind(now.to_rfc3339())
+        .execute(&mut *tx)
+        .await?;
+        tx.commit().await?;
+        self.effect_decision(workspace_id, effect_id)
+            .await?
+            .ok_or_else(|| DbError::Internal("committed reconciliation answer disappeared".to_string()))
+    }
+
+    pub async fn record_effect_reconcile_attempt(
+        &self,
+        workspace_id: &str,
+        intent: &EffectIntent,
+        reason: &str,
+    ) -> Result<()> {
+        let pool = self.workspace_pool(workspace_id).await?;
+        let event_id = format!("reconcile-attempt:{}", uuid::Uuid::new_v4());
+        let payload = serde_json::json!({"effectId":intent.effect_id,"reason":reason});
+        let event = tinyiothub_core::harness::HarnessEventInput {
+            event_id,
+            workspace_id: workspace_id.to_string(),
+            session_id: intent.session_id.clone(),
+            execution_mode: tinyiothub_core::harness::ExecutionMode::Production,
+            run_id: Some(intent.run_id.clone()),
+            task_id: Some(intent.task_id.clone()),
+            event_type: "effect.reconcile_attempted".to_string(),
+            occurred_at: Utc::now(),
+            cause_id: None,
+            schema_v: 1,
+            payload_digest: format!("{:x}", sha2::Sha256::digest(payload.to_string().as_bytes())),
+            payload_json: payload,
+        };
+        let mut connection = pool.acquire().await?.detach();
+        insert_event(&mut connection, &event).await
+    }
+
+    pub async fn expire_harness_decisions(&self, workspace_id: &str, now: DateTime<Utc>) -> Result<u64> {
+        let pool = self.workspace_pool(workspace_id).await?;
+        let due = sqlx::query_as::<_, DecisionRow>(
+            "SELECT decision_id, kind, state, session_id, run_id, task_id, effect_id, subject_json,
+                    options_json, created_at, updated_at, expires_at, answer, answer_actor,
+                    answer_event_id, answer_evidence_json, consumed_at, consumed_by
+             FROM decisions
+             WHERE kind = 'tool_approval' AND state = 'requested' AND expires_at IS NOT NULL AND expires_at <= ?
+             ORDER BY expires_at, decision_id",
+        )
+        .bind(now.to_rfc3339())
+        .fetch_all(&pool)
+        .await?
+        .into_iter()
+        .map(Decision::try_from)
+        .collect::<Result<Vec<_>>>()?;
+        let mut expired = 0;
+        for decision in due {
+            let Some(effect_id) = decision.effect_id.clone() else {
+                continue;
+            };
+            let mut tx = pool.begin().await?;
+            let intent = sqlx::query_as::<_, EffectIntentRow>(
+                "SELECT effect_id, session_id, task_id, run_id, tool_call_id, tool_name, request_json,
+                        request_digest, idempotency_key, external_ref, state, state_version, result_json,
+                        created_at, updated_at FROM effect_intents WHERE effect_id = ?",
+            )
+            .bind(&effect_id)
+            .fetch_optional(&mut *tx)
+            .await?
+            .map(EffectIntent::try_from)
+            .transpose()?
+            .ok_or_else(|| DbError::NotFound { id: effect_id.clone() })?;
+            if intent.state != EffectState::Prepared {
+                return Err(DbError::Conflict {
+                    message: format!("only a prepared effect can expire with its approval: {effect_id}"),
+                });
+            }
+            let decision_updated = sqlx::query(
+                "UPDATE decisions SET state = 'expired', updated_at = ?
+                 WHERE decision_id = ? AND state = 'requested'",
+            )
+            .bind(now.to_rfc3339())
+            .bind(&decision.decision_id)
+            .execute(&mut *tx)
+            .await?
+            .rows_affected();
+            if decision_updated == 0 {
+                tx.rollback().await?;
+                continue;
+            }
+            let next_version = intent.state_version + 1;
+            let effect_updated = sqlx::query(
+                "UPDATE effect_intents SET state = 'not_applied', state_version = ?,
+                     result_json = '{\"reason\":\"approval_expired\"}', updated_at = ?
+                 WHERE effect_id = ? AND state = 'prepared' AND state_version = ?",
+            )
+            .bind(next_version)
+            .bind(now.to_rfc3339())
+            .bind(&effect_id)
+            .bind(intent.state_version)
+            .execute(&mut *tx)
+            .await?
+            .rows_affected();
+            if effect_updated != 1 {
+                return Err(DbError::CasConflict {
+                    message: format!("effect {effect_id} changed during approval expiry"),
+                });
+            }
+            let event = |suffix: &str, event_type: &str, payload: Value| tinyiothub_core::harness::HarnessEventInput {
+                event_id: format!("approval-expired:{effect_id}:{suffix}"),
+                workspace_id: workspace_id.to_string(),
+                session_id: intent.session_id.clone(),
+                execution_mode: tinyiothub_core::harness::ExecutionMode::Production,
+                run_id: Some(intent.run_id.clone()),
+                task_id: Some(intent.task_id.clone()),
+                event_type: event_type.to_string(),
+                occurred_at: now,
+                cause_id: None,
+                schema_v: 1,
+                payload_digest: format!("{:x}", sha2::Sha256::digest(payload.to_string().as_bytes())),
+                payload_json: payload,
+            };
+            insert_event(
+                &mut tx,
+                &event(
+                    "decision",
+                    "decision.expired",
+                    serde_json::json!({"decisionId":decision.decision_id,"kind":"tool_approval"}),
+                ),
+            )
+            .await?;
+            let effect_event = event(
+                "effect",
+                "effect.not_applied",
+                serde_json::json!({"effectId":effect_id,"state":"not_applied","reason":"approval_expired"}),
+            );
+            insert_event(&mut tx, &effect_event).await?;
+            insert_event(
+                &mut tx,
+                &event(
+                    "tool-result",
+                    "step.tool_result",
+                    serde_json::json!({"effectId":effect_id,"state":"not_applied","result":{"reason":"approval_expired"}}),
+                ),
+            )
+            .await?;
+            sqlx::query(
+                "UPDATE device_jobs SET state = 'rejected', result_json = '{\"reason\":\"approval_expired\"}', ended_at = ?
+                 WHERE tool_call_id = ?",
+            )
+            .bind(now.to_rfc3339())
+            .bind(&intent.tool_call_id)
+            .execute(&mut *tx)
+            .await?;
+            sqlx::query("UPDATE agent_runs SET state = 'running' WHERE id = ?")
+                .bind(&intent.run_id)
+                .execute(&mut *tx)
+                .await?;
+            sqlx::query("UPDATE agent_tasks SET state = 'running', state_version = state_version + 1 WHERE id = ?")
+                .bind(&intent.task_id)
+                .execute(&mut *tx)
+                .await?;
+            sqlx::query(
+                "INSERT INTO task_wake_outbox
+                    (task_id, event_id, signal_json, dispatch_state, created_at, dispatched_at, resolved_at)
+                 VALUES (?, ?, ?, 'pending', ?, NULL, NULL)
+                 ON CONFLICT(task_id, event_id) DO NOTHING",
+            )
+            .bind(&intent.task_id)
+            .bind(&effect_event.event_id)
+            .bind(serde_json::json!({"effectId":effect_id,"state":"not_applied"}).to_string())
+            .bind(now.to_rfc3339())
+            .execute(&mut *tx)
+            .await?;
+            tx.commit().await?;
+            expired += 1;
+        }
+        Ok(expired)
+    }
+
     pub async fn apply_workspace_transition(
         &self,
         workspace_id: &str,
@@ -652,6 +1245,9 @@ pub(crate) mod tests {
                 payload_digest: format!("{id}:digest"),
                 payload_json: json!({"effectId": "effect-1", "state": "completed"}),
             }),
+            additional_events: Vec::new(),
+            decision: None,
+            run_task: None,
             job: Some(JobProjection {
                 job_id: "job-1".to_string(),
                 task_id: "task-1".to_string(),
@@ -680,6 +1276,9 @@ pub(crate) mod tests {
             },
             effect: None,
             event: None,
+            additional_events: Vec::new(),
+            decision: None,
+            run_task: None,
             job: None,
             wake: None,
         }

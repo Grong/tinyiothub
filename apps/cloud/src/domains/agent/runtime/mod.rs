@@ -1,12 +1,16 @@
 use std::sync::Arc;
 
 use async_trait::async_trait;
+use chrono::Utc;
+use tinyiothub_agent::harness::{EffectReconciler, ReconcileOutcome, RecoveryFact, reduce_recovery};
 use tinyiothub_agent::port::task::TaskStore;
 use tinyiothub_core::agent_runs::RunReport;
 use tinyiothub_core::agent_task::{
     AgentTask, CreateTaskOutcome, TaskFinalizeIntent, TaskStatus, TaskStoreError, TaskWake, WakeDispatchState,
 };
+use tinyiothub_core::harness::{DecisionKind, DecisionState, EffectIntent, EffectState, Transition};
 use tinyiothub_storage::Db;
+use tinyiothub_storage::harness_effect::EffectRecoveryItem;
 
 pub mod admin;
 pub mod approvals;
@@ -14,6 +18,220 @@ pub mod controls;
 pub mod projection;
 pub mod stream;
 pub mod tasks;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RecoveryMode {
+    Restart,
+    Restore,
+}
+
+#[derive(Debug, Default)]
+pub struct RecoveryReport {
+    pub dispatch_permits: Vec<EffectIntent>,
+    pub blocked: usize,
+}
+
+#[derive(Clone)]
+pub struct EffectRecovery {
+    db: Arc<Db>,
+}
+
+impl EffectRecovery {
+    pub fn new(db: Arc<Db>) -> Self {
+        Self { db }
+    }
+
+    async fn item(&self, workspace_id: &str, effect_id: &str) -> Result<EffectRecoveryItem, String> {
+        self.db
+            .list_effect_recovery(workspace_id)
+            .await
+            .map_err(|error| error.to_string())?
+            .into_iter()
+            .find(|item| item.intent.effect_id == effect_id)
+            .ok_or_else(|| format!("active effect {effect_id} not found"))
+    }
+
+    async fn apply(&self, workspace_id: &str, mut transition: Transition) -> Result<(), String> {
+        if let Some(event) = &mut transition.event {
+            event.workspace_id = workspace_id.to_string();
+        }
+        for event in &mut transition.additional_events {
+            event.workspace_id = workspace_id.to_string();
+        }
+        let precondition = transition.precondition.clone();
+        self.db
+            .apply_workspace_transition(workspace_id, &precondition, &transition)
+            .await
+            .map_err(|error| error.to_string())?;
+        Ok(())
+    }
+
+    async fn transition(
+        &self,
+        workspace_id: &str,
+        item: &EffectRecoveryItem,
+        fact: RecoveryFact,
+    ) -> Result<(), String> {
+        let transition = reduce_recovery(
+            &item.intent,
+            item.decision.as_ref(),
+            item.job_id.as_deref(),
+            &format!("recovery:{}", uuid::Uuid::new_v4()),
+            Utc::now(),
+            fact,
+        )
+        .map_err(|error| error.to_string())?;
+        self.apply(workspace_id, transition).await
+    }
+
+    async fn recover_unknown(
+        &self,
+        workspace_id: &str,
+        item: &EffectRecoveryItem,
+        reconciler: &dyn EffectReconciler,
+        report: &mut RecoveryReport,
+    ) -> Result<(), String> {
+        match item.decision.as_ref() {
+            Some(decision)
+                if decision.kind == DecisionKind::EffectReconciliation && decision.state == DecisionState::Answered =>
+            {
+                if item.task_active {
+                    self.transition(workspace_id, item, RecoveryFact::ConsumeAnswer).await?;
+                } else {
+                    report.blocked += 1;
+                }
+                return Ok(());
+            }
+            Some(decision)
+                if decision.kind == DecisionKind::EffectReconciliation
+                    && decision.state == DecisionState::Requested => {}
+            None => {
+                self.transition(workspace_id, item, RecoveryFact::EnsureReconciliation)
+                    .await?;
+                let item = self.item(workspace_id, &item.intent.effect_id).await?;
+                return Box::pin(self.recover_unknown(workspace_id, &item, reconciler, report)).await;
+            }
+            _ => return Err("unknown effect has an invalid reconciliation decision".to_string()),
+        }
+        match reconciler.settle(&item.intent).await {
+            ReconcileOutcome::Unknown { reason } => {
+                self.db
+                    .record_effect_reconcile_attempt(workspace_id, &item.intent, &reason)
+                    .await
+                    .map_err(|error| error.to_string())?;
+                report.blocked += 1;
+                Ok(())
+            }
+            outcome => {
+                self.transition(workspace_id, item, RecoveryFact::Reconcile(outcome))
+                    .await
+            }
+        }
+    }
+
+    pub async fn recover_workspace(
+        &self,
+        workspace_id: &str,
+        mode: RecoveryMode,
+        reconciler: &dyn EffectReconciler,
+    ) -> Result<RecoveryReport, String> {
+        let items = self
+            .db
+            .list_effect_recovery(workspace_id)
+            .await
+            .map_err(|error| error.to_string())?;
+        let mut report = RecoveryReport::default();
+        if mode == RecoveryMode::Restore {
+            for item in &items {
+                self.transition(workspace_id, item, RecoveryFact::Fence).await?;
+            }
+            return Box::pin(self.recover_workspace(workspace_id, RecoveryMode::Restart, reconciler)).await;
+        }
+        for item in items {
+            match item.intent.state {
+                EffectState::Prepared => {
+                    if item.task_state == "cancelling" {
+                        self.transition(workspace_id, &item, RecoveryFact::Cancel).await?;
+                    } else if item.task_active
+                        && item.decision.as_ref().is_some_and(|decision| {
+                            decision.kind == DecisionKind::ToolApproval
+                                && matches!(
+                                    decision.state,
+                                    DecisionState::Answered | DecisionState::Expired | DecisionState::Withdrawn
+                                )
+                        })
+                    {
+                        let approved = item
+                            .decision
+                            .as_ref()
+                            .is_some_and(|decision| decision.answer.as_deref() == Some("approved"));
+                        self.transition(workspace_id, &item, RecoveryFact::ConsumeApproval)
+                            .await?;
+                        if approved {
+                            let dispatched = self.item(workspace_id, &item.intent.effect_id).await?;
+                            report.dispatch_permits.push(dispatched.intent);
+                        }
+                    }
+                }
+                EffectState::Dispatching => {
+                    self.transition(workspace_id, &item, RecoveryFact::Fence).await?;
+                    let fenced = self.item(workspace_id, &item.intent.effect_id).await?;
+                    self.recover_unknown(workspace_id, &fenced, reconciler, &mut report)
+                        .await?;
+                }
+                EffectState::Unknown => {
+                    self.recover_unknown(workspace_id, &item, reconciler, &mut report)
+                        .await?;
+                }
+                EffectState::Cancelling => match reconciler.settle(&item.intent).await {
+                    ReconcileOutcome::Unknown { .. } => {
+                        self.transition(
+                            workspace_id,
+                            &item,
+                            RecoveryFact::Reconcile(ReconcileOutcome::Unknown {
+                                reason: "stop result unknown".to_string(),
+                            }),
+                        )
+                        .await?;
+                    }
+                    outcome => {
+                        self.transition(workspace_id, &item, RecoveryFact::Reconcile(outcome))
+                            .await?;
+                    }
+                },
+                EffectState::Completed
+                | EffectState::Failed
+                | EffectState::NotApplied
+                | EffectState::Cancelled
+                | EffectState::CancelledUnknown => {}
+            }
+        }
+        Ok(report)
+    }
+
+    pub async fn answer_reconciliation(
+        &self,
+        workspace_id: &str,
+        effect_id: &str,
+        answer: &str,
+        actor: &str,
+        evidence: Option<serde_json::Value>,
+    ) -> Result<(), String> {
+        self.db
+            .answer_effect_reconciliation(workspace_id, effect_id, answer, actor, evidence)
+            .await
+            .map(|_| ())
+            .map_err(|error| error.to_string())
+    }
+
+    pub async fn request_cancellation(&self, workspace_id: &str, effect_id: &str) -> Result<(), String> {
+        let item = self.item(workspace_id, effect_id).await?;
+        if matches!(item.intent.state, EffectState::Unknown | EffectState::Cancelling) {
+            return Ok(());
+        }
+        self.transition(workspace_id, &item, RecoveryFact::Cancel).await
+    }
+}
 
 #[derive(Clone)]
 pub struct DbTaskStore {

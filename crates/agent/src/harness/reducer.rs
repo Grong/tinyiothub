@@ -1,10 +1,23 @@
-use serde_json::json;
+use chrono::{DateTime, Utc};
+use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use tinyiothub_core::harness::{
-    EffectMutation, EffectState, HarnessEventInput, HarnessFact, HarnessState, Transition, TransitionPrecondition,
+    Decision, DecisionKind, DecisionMutation, DecisionState, EffectIntent, EffectMutation, EffectState,
+    HarnessEventInput, HarnessFact, HarnessState, JobProjection, RunTaskProjection, Transition, TransitionPrecondition,
+    WakeProjection,
 };
 
-use super::types::{HarnessError, can_transition};
+use super::types::{HarnessError, ReconcileOutcome, can_transition};
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum RecoveryFact {
+    Fence,
+    EnsureReconciliation,
+    Reconcile(ReconcileOutcome),
+    ConsumeAnswer,
+    Cancel,
+    ConsumeApproval,
+}
 
 pub fn reduce(state: &HarnessState, fact: &HarnessFact) -> Result<Transition, HarnessError> {
     let precondition = TransitionPrecondition {
@@ -21,6 +34,9 @@ pub fn reduce(state: &HarnessState, fact: &HarnessFact) -> Result<Transition, Ha
             precondition,
             effect: None,
             event: None,
+            additional_events: Vec::new(),
+            decision: None,
+            run_task: None,
             job: None,
             wake: None,
         });
@@ -68,8 +84,337 @@ pub fn reduce(state: &HarnessState, fact: &HarnessFact) -> Result<Transition, Ha
             updated_at: fact.occurred_at,
         }),
         event: Some(event),
+        additional_events: Vec::new(),
+        decision: None,
+        run_task: None,
         job: fact.job.clone(),
         wake: fact.wake.clone(),
+    })
+}
+
+fn recovery_event(
+    intent: &EffectIntent,
+    transition_id: &str,
+    suffix: &str,
+    event_type: &str,
+    payload: Value,
+    occurred_at: DateTime<Utc>,
+) -> HarnessEventInput {
+    HarnessEventInput {
+        event_id: format!("{transition_id}:{suffix}"),
+        workspace_id: String::new(),
+        session_id: intent.session_id.clone(),
+        execution_mode: tinyiothub_core::harness::ExecutionMode::Production,
+        run_id: Some(intent.run_id.clone()),
+        task_id: Some(intent.task_id.clone()),
+        event_type: event_type.to_string(),
+        occurred_at,
+        cause_id: None,
+        schema_v: 1,
+        payload_digest: format!("{:x}", Sha256::digest(payload.to_string().as_bytes())),
+        payload_json: payload,
+    }
+}
+
+fn reconciliation_decision(intent: &EffectIntent, now: DateTime<Utc>) -> Decision {
+    Decision {
+        decision_id: format!("reconciliation:{}", intent.effect_id),
+        kind: DecisionKind::EffectReconciliation,
+        state: DecisionState::Requested,
+        session_id: intent.session_id.clone(),
+        run_id: intent.run_id.clone(),
+        task_id: intent.task_id.clone(),
+        effect_id: Some(intent.effect_id.clone()),
+        subject: json!({"toolName": intent.tool_name, "requestDigest": intent.request_digest}),
+        options: json!(["applied", "not_applied"]),
+        created_at: now,
+        updated_at: now,
+        expires_at: None,
+        answer: None,
+        answer_actor: None,
+        answer_event_id: None,
+        answer_evidence: None,
+        consumed_at: None,
+        consumed_by: None,
+    }
+}
+
+fn job_state(state: EffectState) -> &'static str {
+    match state {
+        EffectState::Prepared => "accepted",
+        EffectState::Dispatching | EffectState::Cancelling => "running",
+        EffectState::Completed => "done",
+        EffectState::Failed => "failed",
+        EffectState::NotApplied => "rejected",
+        EffectState::Unknown => "interrupted",
+        EffectState::Cancelled => "cancelled",
+        EffectState::CancelledUnknown => "cancelled_unknown",
+    }
+}
+
+pub fn reduce_recovery(
+    intent: &EffectIntent,
+    decision: Option<&Decision>,
+    job_id: Option<&str>,
+    transition_id: &str,
+    occurred_at: DateTime<Utc>,
+    fact: RecoveryFact,
+) -> Result<Transition, HarnessError> {
+    if intent.state.is_terminal() {
+        return Err(HarnessError::InvalidRecovery {
+            state: intent.state.as_str(),
+            outcome: "terminal",
+        });
+    }
+    let (next, result, outcome_name) = match &fact {
+        RecoveryFact::Fence => (EffectState::Unknown, None, "fence"),
+        RecoveryFact::EnsureReconciliation => (EffectState::Unknown, None, "ensure_reconciliation"),
+        RecoveryFact::Cancel if intent.state == EffectState::Prepared => (
+            EffectState::NotApplied,
+            Some(json!({"reason":"cancel_before_send"})),
+            "cancel",
+        ),
+        RecoveryFact::Cancel => (EffectState::Cancelling, None, "cancel"),
+        RecoveryFact::ConsumeApproval => match decision.map(|value| (value.state, value.answer.as_deref())) {
+            Some((DecisionState::Answered, Some("approved"))) => (EffectState::Dispatching, None, "approved"),
+            Some((DecisionState::Answered, Some("denied"))) => {
+                (EffectState::NotApplied, Some(json!({"reason":"denied"})), "denied")
+            }
+            Some((DecisionState::Expired | DecisionState::Withdrawn, _)) => (
+                EffectState::NotApplied,
+                Some(json!({"reason":"approval_closed"})),
+                "closed",
+            ),
+            _ => return Err(HarnessError::DecisionConflict),
+        },
+        RecoveryFact::ConsumeAnswer => match decision.map(|value| (value.state, value.answer.as_deref())) {
+            Some((DecisionState::Answered, Some("applied"))) => (
+                EffectState::Completed,
+                Some(json!({
+                    "actor": decision.and_then(|value| value.answer_actor.as_deref()),
+                    "evidence": decision.and_then(|value| value.answer_evidence.clone()),
+                })),
+                "applied",
+            ),
+            Some((DecisionState::Answered, Some("not_applied"))) => (
+                EffectState::NotApplied,
+                Some(json!({
+                    "actor": decision.and_then(|value| value.answer_actor.as_deref()),
+                    "evidence": decision.and_then(|value| value.answer_evidence.clone()),
+                })),
+                "not_applied",
+            ),
+            _ => return Err(HarnessError::DecisionConflict),
+        },
+        RecoveryFact::Reconcile(outcome) => match outcome {
+            ReconcileOutcome::Settled(_) | ReconcileOutcome::DefinitelyNotApplied
+                if intent.state == EffectState::Cancelling =>
+            {
+                return Err(HarnessError::InvalidRecovery {
+                    state: intent.state.as_str(),
+                    outcome: "execution_result_during_cancellation",
+                });
+            }
+            ReconcileOutcome::Settled(result) => (EffectState::Completed, Some(result.clone()), "settled"),
+            ReconcileOutcome::Failed(result) => (EffectState::Failed, Some(result.clone()), "failed"),
+            ReconcileOutcome::Cancelled(result) if intent.state == EffectState::Cancelling => {
+                (EffectState::Cancelled, Some(result.clone()), "cancelled")
+            }
+            ReconcileOutcome::DefinitelyNotApplied => (
+                EffectState::NotApplied,
+                Some(json!({"confirmedNotApplied":true})),
+                "not_applied",
+            ),
+            ReconcileOutcome::Unknown { .. } if intent.state == EffectState::Cancelling => (
+                EffectState::CancelledUnknown,
+                Some(json!({"reason":"cancel_unknown"})),
+                "cancel_unknown",
+            ),
+            ReconcileOutcome::Unknown { .. } => (EffectState::Unknown, None, "unknown"),
+            ReconcileOutcome::Cancelled(_) => {
+                return Err(HarnessError::InvalidRecovery {
+                    state: intent.state.as_str(),
+                    outcome: "cancelled",
+                });
+            }
+        },
+    };
+    if next == EffectState::Unknown && matches!(fact, RecoveryFact::Reconcile(_)) {
+        return Err(HarnessError::InvalidRecovery {
+            state: intent.state.as_str(),
+            outcome: outcome_name,
+        });
+    }
+    if next == EffectState::Completed && result.is_none() {
+        return Err(HarnessError::MissingResult);
+    }
+
+    let payload = json!({
+        "effectId": intent.effect_id,
+        "toolName": intent.tool_name,
+        "requestDigest": intent.request_digest,
+        "state": next.as_str(),
+        "result": result,
+    });
+    let event = recovery_event(intent, transition_id, "event", next.event_type(), payload, occurred_at);
+    let precondition = TransitionPrecondition {
+        effect_id: intent.effect_id.clone(),
+        expected_state: intent.state,
+        expected_version: intent.state_version,
+    };
+    let mut additional_events = Vec::new();
+    let decision_mutation = match &fact {
+        RecoveryFact::Fence | RecoveryFact::EnsureReconciliation => {
+            let existing = decision.filter(|value| value.kind == DecisionKind::EffectReconciliation);
+            let requested = existing
+                .cloned()
+                .unwrap_or_else(|| reconciliation_decision(intent, occurred_at));
+            if existing.is_none() {
+                additional_events.push(recovery_event(
+                    intent,
+                    transition_id,
+                    "decision",
+                    "decision.requested",
+                    json!({"decisionId":requested.decision_id,"kind":requested.kind.as_str()}),
+                    occurred_at,
+                ));
+            }
+            Some(DecisionMutation {
+                decision: requested,
+                expected_state: None,
+                insert_if_missing: true,
+            })
+        }
+        RecoveryFact::Reconcile(_) if intent.state == EffectState::Unknown => {
+            let mut closed = decision.ok_or(HarnessError::DecisionConflict)?.clone();
+            if closed.kind != DecisionKind::EffectReconciliation || closed.state != DecisionState::Requested {
+                return Err(HarnessError::DecisionConflict);
+            }
+            closed.state = DecisionState::Withdrawn;
+            closed.updated_at = occurred_at;
+            additional_events.push(recovery_event(
+                intent,
+                transition_id,
+                "decision",
+                "decision.withdrawn",
+                json!({"decisionId":closed.decision_id,"kind":closed.kind.as_str(),"reason":"auto_reconciled"}),
+                occurred_at,
+            ));
+            Some(DecisionMutation {
+                decision: closed,
+                expected_state: Some(DecisionState::Requested),
+                insert_if_missing: false,
+            })
+        }
+        RecoveryFact::ConsumeAnswer | RecoveryFact::ConsumeApproval
+            if decision.is_some_and(|value| value.state == DecisionState::Answered) =>
+        {
+            let mut consumed = decision.ok_or(HarnessError::DecisionConflict)?.clone();
+            let expected = consumed.state;
+            consumed.state = DecisionState::Consumed;
+            consumed.updated_at = occurred_at;
+            consumed.consumed_at = Some(occurred_at);
+            consumed.consumed_by = Some("harness_recovery".to_string());
+            additional_events.push(recovery_event(
+                intent,
+                transition_id,
+                "decision",
+                "decision.consumed",
+                json!({"decisionId":consumed.decision_id,"kind":consumed.kind.as_str(),"answer":consumed.answer}),
+                occurred_at,
+            ));
+            Some(DecisionMutation {
+                decision: consumed,
+                expected_state: Some(expected),
+                insert_if_missing: false,
+            })
+        }
+        RecoveryFact::ConsumeApproval => None,
+        RecoveryFact::Cancel if intent.state == EffectState::Prepared => match decision {
+            None => None,
+            Some(existing)
+                if existing.kind == DecisionKind::ToolApproval
+                    && matches!(existing.state, DecisionState::Expired | DecisionState::Withdrawn) =>
+            {
+                None
+            }
+            Some(existing)
+                if existing.kind == DecisionKind::ToolApproval && existing.state == DecisionState::Requested =>
+            {
+                let mut withdrawn = existing.clone();
+                withdrawn.state = DecisionState::Withdrawn;
+                withdrawn.updated_at = occurred_at;
+                additional_events.push(recovery_event(
+                    intent,
+                    transition_id,
+                    "decision",
+                    "decision.withdrawn",
+                    json!({"decisionId":withdrawn.decision_id,"kind":withdrawn.kind.as_str(),"reason":"cancelled"}),
+                    occurred_at,
+                ));
+                Some(DecisionMutation {
+                    decision: withdrawn,
+                    expected_state: Some(DecisionState::Requested),
+                    insert_if_missing: false,
+                })
+            }
+            _ => return Err(HarnessError::DecisionConflict),
+        },
+        _ => None,
+    };
+    if next.is_terminal() {
+        additional_events.push(recovery_event(
+            intent,
+            transition_id,
+            "tool-result",
+            "step.tool_result",
+            json!({"effectId":intent.effect_id,"state":next.as_str(),"result":result}),
+            occurred_at,
+        ));
+    }
+    let task_state = match next {
+        EffectState::Cancelled => "cancelled",
+        EffectState::CancelledUnknown => "failed",
+        EffectState::NotApplied if matches!(&fact, RecoveryFact::Cancel) => "cancelled",
+        EffectState::Unknown => "paused",
+        _ => "running",
+    };
+    let wake = (next.is_terminal() && !matches!(fact, RecoveryFact::ConsumeAnswer)).then(|| WakeProjection {
+        task_id: intent.task_id.clone(),
+        wake_id: format!("{transition_id}:wake"),
+        signal_json: json!({"effectId":intent.effect_id,"state":next.as_str()}).to_string(),
+        created_at: occurred_at,
+    });
+    Ok(Transition {
+        transition_id: transition_id.to_string(),
+        precondition,
+        effect: Some(EffectMutation {
+            effect_id: intent.effect_id.clone(),
+            state: next,
+            state_version: intent.state_version + 1,
+            external_ref: intent.external_ref.clone(),
+            result: result.clone(),
+            updated_at: occurred_at,
+        }),
+        event: Some(event),
+        additional_events,
+        decision: decision_mutation,
+        run_task: Some(RunTaskProjection {
+            run_id: intent.run_id.clone(),
+            run_state: task_state.to_string(),
+            task_id: intent.task_id.clone(),
+            task_state: task_state.to_string(),
+        }),
+        job: job_id.map(|job_id| JobProjection {
+            job_id: job_id.to_string(),
+            task_id: intent.task_id.clone(),
+            run_id: intent.run_id.clone(),
+            state: job_state(next).to_string(),
+            result_json: result.clone(),
+            external_ref: intent.external_ref.clone(),
+            ended_at: next.is_terminal().then_some(occurred_at),
+        }),
+        wake,
     })
 }
 

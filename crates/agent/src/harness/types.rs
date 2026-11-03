@@ -1,4 +1,21 @@
-use tinyiothub_core::harness::EffectState;
+use serde_json::Value;
+use tinyiothub_core::harness::{EffectIntent, EffectState};
+
+pub type EffectResult = Value;
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum ReconcileOutcome {
+    Settled(EffectResult),
+    Failed(EffectResult),
+    Cancelled(EffectResult),
+    DefinitelyNotApplied,
+    Unknown { reason: String },
+}
+
+#[async_trait::async_trait]
+pub trait EffectReconciler: Send + Sync {
+    async fn settle(&self, intent: &EffectIntent) -> ReconcileOutcome;
+}
 
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]
 pub enum HarnessError {
@@ -8,6 +25,10 @@ pub enum HarnessError {
     InvalidTransition { from: &'static str, to: &'static str },
     #[error("completed effect requires a result")]
     MissingResult,
+    #[error("decision state does not permit this recovery action")]
+    DecisionConflict,
+    #[error("reconciliation outcome {outcome} is invalid for effect state {state}")]
+    InvalidRecovery { state: &'static str, outcome: &'static str },
 }
 
 pub(crate) fn can_transition(from: EffectState, to: EffectState) -> bool {
