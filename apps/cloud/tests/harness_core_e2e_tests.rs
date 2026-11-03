@@ -976,6 +976,7 @@ async fn command_recovery_interrupt_aborts_only_current_model_call_and_never_rep
         .expect("request interrupt");
     let host = CommandRecovery::new(Arc::new(fixture.db.clone()));
     let control = RecordingCommandControl::default();
+    let wakes_before = wake_count(&fixture, "effect-command-interrupt").await;
 
     let consumed = host
         .consume_next(WS, "effect-command-interrupt", at(), &control)
@@ -993,12 +994,14 @@ async fn command_recovery_interrupt_aborts_only_current_model_call_and_never_rep
         run_task_states(&fixture, "effect-command-interrupt").await,
         ("interrupted".to_string(), "running".to_string())
     );
+    assert_eq!(wake_count(&fixture, "effect-command-interrupt").await, wakes_before);
 
     host.recover_workspace(WS, RecoveryMode::Restart, &control)
         .await
         .expect("restart recovery");
     assert_eq!(control.interrupts.lock().expect("interrupts").len(), 1);
     assert_eq!(event_count(&fixture, "run.interrupted").await, 1);
+    assert_eq!(wake_count(&fixture, "effect-command-interrupt").await, wakes_before);
     fixture.close().await;
 }
 

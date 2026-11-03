@@ -391,7 +391,9 @@ async fn consume_once(
                 }
                 CommandKind::Steer | CommandKind::Queue => {}
             }
-            insert_wake(&mut connection, &selected, now).await?;
+            if selected.kind != CommandKind::Interrupt {
+                insert_wake(&mut connection, &selected, now).await?;
+            }
             selected.state = CommandState::Consumed;
             return Ok(Some(selected));
         }
