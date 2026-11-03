@@ -29,7 +29,7 @@ pub async fn test_pool() -> sqlx::SqlitePool {
         .await
         .expect("baseline schema applies cleanly");
     // 借 Migrator 的编译期内嵌枚举递增迁移——migrations/ 里的新文件自动覆盖。
-    let migrator = sqlx::migrate!("./migrations");
+    let migrator = crate::migrations::platform_migrator();
     let baseline_version = migrator.iter().map(|m| m.version).min().unwrap_or(0);
     let mut conn = pool.acquire().await.expect("acquire migration connection");
     sqlx::query("PRAGMA foreign_keys = OFF")

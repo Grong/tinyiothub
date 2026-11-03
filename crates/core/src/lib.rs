@@ -15,6 +15,7 @@ pub mod device_job;
 pub mod driver;
 pub mod error;
 pub mod event;
+pub mod harness;
 pub mod heartbeat;
 pub mod media;
 pub mod memory;

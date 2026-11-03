@@ -22,6 +22,13 @@ pub enum DbError {
         message: String,
     },
 
+    /// A stable identity was reused with different content.
+    #[error("conflict: {message}")]
+    Conflict {
+        /// The conflicting identity.
+        message: String,
+    },
+
     /// The requested row does not exist.
     #[error("not found: {id}")]
     NotFound {

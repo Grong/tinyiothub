@@ -47,13 +47,16 @@ pub(crate) fn default_workspace_store_root() -> PathBuf {
 }
 
 fn harness_migrator() -> Migrator {
-    Migrator::with_migrations(vec![Migration::new(
-        20261103000001,
-        "harness_workspace".into(),
-        MigrationType::Simple,
-        include_str!("../migrations/20261103000001_harness_workspace.sql").into_sql_str(),
-        false,
-    )])
+    Migrator::with_migrations(vec![
+        Migration::new(
+            20261103000001,
+            "harness_workspace".into(),
+            MigrationType::Simple,
+            include_str!("../migrations/20261103000001_harness_workspace.sql").into_sql_str(),
+            false,
+        ),
+        crate::harness_event::migration(),
+    ])
 }
 
 fn validate_workspace_id(workspace_id: &str) -> Result<()> {
