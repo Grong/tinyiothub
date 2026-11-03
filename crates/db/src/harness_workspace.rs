@@ -8,22 +8,36 @@ use sqlx::{
     SqlSafeStr, SqlitePool,
     migrate::{Migration, MigrationType, Migrator},
 };
+#[cfg(test)]
+use std::sync::atomic::{AtomicBool, Ordering};
 use tokio::sync::Mutex;
+#[cfg(test)]
+use tokio::sync::Notify;
 
 use crate::{
-    config::DatabaseConfig,
     database::Db,
     error::{DbError, Result},
 };
 
 #[derive(Debug)]
 pub(crate) enum WorkspaceStoreState {
+    Empty,
     Available(SqlitePool),
     Unavailable,
     Closed,
 }
 
-pub(crate) type WorkspaceStores = Arc<Mutex<HashMap<String, WorkspaceStoreState>>>;
+pub(crate) type WorkspaceStoreEntry = Arc<Mutex<WorkspaceStoreState>>;
+pub(crate) type WorkspaceStores = Arc<Mutex<HashMap<String, WorkspaceStoreEntry>>>;
+
+#[cfg(test)]
+#[derive(Debug, Default)]
+pub(crate) struct WorkspaceStoreTestHooks {
+    pub gated_workspace_id: String,
+    pub open_started: Notify,
+    pub open_release: Notify,
+    pub fail_open: AtomicBool,
+}
 
 pub(crate) fn default_workspace_store_root() -> PathBuf {
     std::env::var_os("TINYIOTHUB__PROJECT_ROOT")
@@ -56,14 +70,25 @@ fn validate_workspace_id(workspace_id: &str) -> Result<()> {
     Ok(())
 }
 
-async fn open_workspace_store(config: &DatabaseConfig, path: &Path) -> Result<SqlitePool> {
+async fn open_workspace_store(db: &Db, _workspace_id: &str, path: &Path) -> Result<SqlitePool> {
+    #[cfg(test)]
+    if let Some(hooks) = &db.workspace_store_test_hooks {
+        if hooks.gated_workspace_id == _workspace_id {
+            hooks.open_started.notify_one();
+            hooks.open_release.notified().await;
+        }
+        if hooks.fail_open.swap(false, Ordering::SeqCst) {
+            return Err(DbError::Internal("injected workspace open failure".to_string()));
+        }
+    }
+
     let parent = path
         .parent()
         .ok_or_else(|| DbError::Internal("workspace store path has no parent".to_string()))?;
     tokio::fs::create_dir_all(parent)
         .await
         .map_err(|error| DbError::Internal(format!("failed to create workspace store directory: {error}")))?;
-    let pool = crate::pool::workspace_pool_options(config)
+    let pool = crate::pool::workspace_pool_options(&db.workspace_store_config)
         .connect_with(crate::pool::workspace_connect_options(path))
         .await?;
     if let Err(error) = harness_migrator().run(&pool).await {
@@ -85,54 +110,80 @@ impl Db {
         }
     }
 
-    pub async fn create_workspace_store(&self, workspace_id: &str) -> Result<()> {
-        self.ensure_registered_workspace(workspace_id).await?;
+    async fn workspace_store_entry(&self, workspace_id: &str) -> WorkspaceStoreEntry {
         let mut stores = self.workspace_stores.lock().await;
-        if matches!(stores.get(workspace_id), Some(WorkspaceStoreState::Available(_))) {
-            return Ok(());
-        }
-        stores.remove(workspace_id);
-        drop(stores);
-        self.workspace_pool(workspace_id).await.map(|_| ())
+        stores
+            .entry(workspace_id.to_string())
+            .or_insert_with(|| Arc::new(Mutex::new(WorkspaceStoreState::Empty)))
+            .clone()
     }
 
-    pub(crate) async fn workspace_pool(&self, workspace_id: &str) -> Result<SqlitePool> {
-        self.ensure_registered_workspace(workspace_id).await?;
-        let mut stores = self.workspace_stores.lock().await;
-        match stores.get(workspace_id) {
-            Some(WorkspaceStoreState::Available(pool)) => return Ok(pool.clone()),
-            Some(WorkspaceStoreState::Unavailable) => {
-                return Err(DbError::Internal(format!(
-                    "workspace harness store is unavailable: {workspace_id}"
-                )));
-            }
-            Some(WorkspaceStoreState::Closed) => {
-                return Err(DbError::Internal(format!(
-                    "workspace harness store is closed: {workspace_id}"
-                )));
-            }
-            None => {}
-        }
-
+    async fn open_workspace_store_entry(
+        &self,
+        workspace_id: &str,
+        state: &mut WorkspaceStoreState,
+    ) -> Result<SqlitePool> {
         let path = self.workspace_store_root.join(workspace_id).join("harness/harness.db");
-        match open_workspace_store(&self.workspace_store_config, &path).await {
+        match open_workspace_store(self, workspace_id, &path).await {
             Ok(pool) => {
-                stores.insert(workspace_id.to_string(), WorkspaceStoreState::Available(pool.clone()));
+                *state = WorkspaceStoreState::Available(pool.clone());
                 Ok(pool)
             }
             Err(error) => {
-                stores.insert(workspace_id.to_string(), WorkspaceStoreState::Unavailable);
-                tracing::error!(workspace_id, error = %error, "workspace harness store is unavailable");
+                if matches!(state, WorkspaceStoreState::Empty) {
+                    *state = WorkspaceStoreState::Unavailable;
+                }
+                tracing::error!(workspace_id, error = %error, "workspace harness store open failed");
                 Err(error)
             }
         }
     }
 
+    pub async fn create_workspace_store(&self, workspace_id: &str) -> Result<()> {
+        let entry = self.workspace_store_entry(workspace_id).await;
+        let mut state = entry.lock().await;
+        match &*state {
+            WorkspaceStoreState::Empty => {
+                drop(state);
+                self.workspace_pool(workspace_id).await.map(|_| ())
+            }
+            WorkspaceStoreState::Available(_) => self.ensure_registered_workspace(workspace_id).await,
+            WorkspaceStoreState::Closed | WorkspaceStoreState::Unavailable => {
+                self.ensure_registered_workspace(workspace_id).await?;
+                self.open_workspace_store_entry(workspace_id, &mut state)
+                    .await
+                    .map(|_| ())
+            }
+        }
+    }
+
+    pub(crate) async fn workspace_pool(&self, workspace_id: &str) -> Result<SqlitePool> {
+        self.ensure_registered_workspace(workspace_id).await?;
+        let entry = self.workspace_store_entry(workspace_id).await;
+        let mut state = entry.lock().await;
+        match &*state {
+            WorkspaceStoreState::Available(pool) => return Ok(pool.clone()),
+            WorkspaceStoreState::Unavailable => {
+                return Err(DbError::Internal(format!(
+                    "workspace harness store is unavailable: {workspace_id}"
+                )));
+            }
+            WorkspaceStoreState::Closed => {
+                return Err(DbError::Internal(format!(
+                    "workspace harness store is closed: {workspace_id}"
+                )));
+            }
+            WorkspaceStoreState::Empty => {}
+        }
+        self.open_workspace_store_entry(workspace_id, &mut state).await
+    }
+
     pub async fn close_workspace_store(&self, workspace_id: &str) -> Result<()> {
         self.ensure_registered_workspace(workspace_id).await?;
-        let mut stores = self.workspace_stores.lock().await;
-        let previous = stores.insert(workspace_id.to_string(), WorkspaceStoreState::Closed);
-        if let Some(WorkspaceStoreState::Available(pool)) = previous {
+        let entry = self.workspace_store_entry(workspace_id).await;
+        let mut state = entry.lock().await;
+        let previous = std::mem::replace(&mut *state, WorkspaceStoreState::Closed);
+        if let WorkspaceStoreState::Available(pool) = previous {
             pool.close().await;
         }
         Ok(())
@@ -141,10 +192,16 @@ impl Db {
 
 #[cfg(test)]
 mod tests {
-    use std::path::{Path, PathBuf};
+    use std::{
+        path::{Path, PathBuf},
+        sync::{Arc, atomic::Ordering},
+        time::Duration,
+    };
 
     use sqlx::SqlitePool;
+    use tokio::time::timeout;
 
+    use super::WorkspaceStoreTestHooks;
     use crate::Db;
 
     struct HarnessWorkspaceFixture {
@@ -347,5 +404,92 @@ mod tests {
             .await
             .expect("close good store");
         fixture.close().await;
+    }
+
+    #[tokio::test]
+    async fn harness_workspace_slow_open_does_not_block_another_workspace() {
+        let mut fixture = HarnessWorkspaceFixture::new(&["ws-slow", "ws-fast"]).await;
+        let hooks = Arc::new(WorkspaceStoreTestHooks {
+            gated_workspace_id: "ws-slow".to_string(),
+            ..Default::default()
+        });
+        fixture.db.workspace_store_test_hooks = Some(hooks.clone());
+
+        let slow_db = fixture.db.clone();
+        let slow = tokio::spawn(async move { slow_db.create_workspace_store("ws-slow").await });
+        hooks.open_started.notified().await;
+
+        let fast_db = fixture.db.clone();
+        let fast_result = timeout(Duration::from_secs(2), async move {
+            fast_db.create_workspace_store("ws-fast").await?;
+            let pool = fast_db.workspace_pool("ws-fast").await?;
+            create_probe_table(&pool).await;
+            sqlx::query("INSERT INTO harness_workspace (id) VALUES (1)")
+                .execute(&pool)
+                .await
+                .expect("write fast workspace");
+            let id: i64 = sqlx::query_scalar("SELECT id FROM harness_workspace")
+                .fetch_one(&pool)
+                .await
+                .expect("read fast workspace");
+            assert_eq!(id, 1);
+            Ok::<(), crate::DbError>(())
+        })
+        .await;
+
+        hooks.open_release.notify_one();
+        slow.await.expect("slow task").expect("slow workspace open");
+        fixture
+            .db
+            .close_workspace_store("ws-slow")
+            .await
+            .expect("close slow store");
+        if matches!(fast_result, Ok(Ok(()))) {
+            fixture
+                .db
+                .close_workspace_store("ws-fast")
+                .await
+                .expect("close fast store");
+        }
+        fixture.close().await;
+
+        fast_result
+            .expect("fast workspace was blocked by slow workspace open")
+            .expect("fast workspace lifecycle");
+    }
+
+    #[tokio::test]
+    async fn harness_workspace_failed_reopen_preserves_closed_state() {
+        let mut fixture = HarnessWorkspaceFixture::new(&["ws-reopen"]).await;
+        let hooks = Arc::new(WorkspaceStoreTestHooks::default());
+        fixture.db.workspace_store_test_hooks = Some(hooks.clone());
+        fixture
+            .db
+            .create_workspace_store("ws-reopen")
+            .await
+            .expect("create store");
+        fixture
+            .db
+            .close_workspace_store("ws-reopen")
+            .await
+            .expect("close store");
+
+        hooks.fail_open.store(true, Ordering::SeqCst);
+        fixture
+            .db
+            .create_workspace_store("ws-reopen")
+            .await
+            .expect_err("injected reopen failure");
+        let error = fixture
+            .db
+            .workspace_pool("ws-reopen")
+            .await
+            .expect_err("failed reopen must not permit implicit access");
+        fixture.close().await;
+
+        assert!(
+            error.to_string().contains("closed"),
+            "closed tombstone was lost: {error}"
+        );
     }
 }

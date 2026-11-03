@@ -9,6 +9,8 @@ pub struct Db {
     pub(crate) workspace_stores: crate::harness_workspace::WorkspaceStores,
     pub(crate) workspace_store_config: DatabaseConfig,
     pub(crate) workspace_store_root: std::path::PathBuf,
+    #[cfg(test)]
+    pub(crate) workspace_store_test_hooks: Option<std::sync::Arc<crate::harness_workspace::WorkspaceStoreTestHooks>>,
     #[cfg(any(test, feature = "testing"))]
     pub(crate) runtime_projection_probe: Option<std::sync::Arc<crate::runtime_event::RuntimeProjectionProbe>>,
 }
@@ -20,6 +22,8 @@ impl Db {
             workspace_stores: Default::default(),
             workspace_store_config: DatabaseConfig::default(),
             workspace_store_root: crate::harness_workspace::default_workspace_store_root(),
+            #[cfg(test)]
+            workspace_store_test_hooks: None,
             #[cfg(any(test, feature = "testing"))]
             runtime_projection_probe: None,
         }
