@@ -148,9 +148,10 @@ fn validate_media_value_inner(value: &Value, in_media: bool) -> Result<()> {
                         | "mediabase64"
                 ) || (in_media && matches!(normalized.as_str(), "data" | "content"))
                     || (matches!(normalized.as_str(), "url" | "uri")
-                        && value
-                            .as_str()
-                            .is_some_and(|url| is_signed_url(url) || (in_media && url.starts_with("data:"))))
+                        && value.as_str().is_some_and(|url| {
+                            is_signed_url(url)
+                                || (in_media && url.get(..5).is_some_and(|scheme| scheme.eq_ignore_ascii_case("data:")))
+                        }))
                 {
                     return Err(DbError::Validation {
                         message: "event media may contain only metadata, hashes, and evidence references".to_string(),
@@ -580,6 +581,16 @@ mod tests {
                 "event-media-data-url",
                 "step.tool_result",
                 json!({"media": {"url": "data:image/png;base64,AAEC"}}),
+            ),
+            (
+                "event-media-uppercase-data-url",
+                "step.tool_result",
+                json!({"media": {"url": "DATA:image/png;base64,AAEC"}}),
+            ),
+            (
+                "event-media-mixed-case-data-url",
+                "step.tool_result",
+                json!({"evidence": {"uri": "DaTa:video/mp4;base64,AAEC"}}),
             ),
             (
                 "event-signed-url",
