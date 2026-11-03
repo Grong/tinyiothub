@@ -11,8 +11,8 @@
 pub const CONSTITUTION: &str = "\
 行动纪律：
 1. 全部输出（分析、结论、理由、动作建议）必须使用中文，禁止英文。
-2. 行动前先用 get_thing_profile 了解现状。
-3. invoke_action 后必须用 read_property 或 query_events 回读验证，未验证不得宣称完成。
+2. 行动前先用 read_device 了解现状（结构关系用 get_thing_tree / list_devices）。
+3. 执行动作（call_device / set_device）后必须用 read_device 或 query_events 回读验证，未验证不得宣称完成。
 4. 做不到就如实报告，禁止虚报成功。
 5. 工具调用预算有限——优先汇总/批量查询，异常项才逐个查详情，禁止无目的逐设备全量读取。
 6. 工具名必须来自本次可用工具；禁止编排类工具（如 dispatch_thing_task）或编造工具名——编造的提案批准即失败并自动拒绝。";
@@ -31,5 +31,20 @@ mod tests {
         assert!(super::CONSTITUTION.contains("预算有限"));
         assert!(super::CONSTITUTION.contains("dispatch_thing_task"));
         assert!(super::CONSTITUTION.contains("禁止编排类工具"));
+    }
+
+    /// E2 工具改名后，宪法只能点名当前暴露的工具；旧名会诱导模型调用
+    /// 未暴露的隐藏别名，rig 直接以 UnknownToolCall 终结整轮（2026-11-02 实测）。
+    #[test]
+    fn constitution_names_only_exposed_tools() {
+        assert!(super::CONSTITUTION.contains("read_device"));
+        assert!(super::CONSTITUTION.contains("call_device"));
+        assert!(super::CONSTITUTION.contains("set_device"));
+        for stale in ["get_thing_profile", "read_property", "invoke_action"] {
+            assert!(
+                !super::CONSTITUTION.contains(stale),
+                "constitution must not name hidden legacy tool `{stale}`"
+            );
+        }
     }
 }

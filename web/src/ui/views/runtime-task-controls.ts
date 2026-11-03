@@ -286,7 +286,7 @@ export class RuntimeTaskControls extends LitElement {
       ${
         this.readOnly
           ? nothing
-          : html`<button type="button" data-action="refresh-status" @click=${this.requestRefresh}>
+          : html`<button class="unstyled" type="button" data-action="refresh-status" @click=${this.requestRefresh}>
               Refresh status
             </button>`
       }
@@ -300,29 +300,55 @@ export class RuntimeTaskControls extends LitElement {
     const unknown = this.unknownJobs;
     const style = html`<style>
       runtime-task-controls {
-        display: inline-flex;
+        display: flex;
         flex-direction: column;
-        gap: var(--space-2, 8px);
+        align-items: flex-end;
+        gap: 4px;
+        max-width: 300px;
+      }
+      .runtime-task-controls {
+        display: flex;
+        flex-direction: column;
+        align-items: flex-end;
+        gap: 4px;
+        max-width: 100%;
       }
       .runtime-task-controls__actions {
         display: flex;
         flex-wrap: wrap;
         align-items: center;
+        justify-content: flex-end;
         gap: var(--space-2, 8px);
       }
       .runtime-task-controls__note {
+        flex-basis: 100%;
+        margin: 0;
         color: var(--muted-foreground, #94a3b8);
-        font-size: 12px;
+        font-size: 11px;
+        line-height: 1.4;
+        text-align: right;
       }
       .runtime-task-controls button {
-        min-height: 44px;
+        min-height: 36px;
         min-width: 44px;
-        padding: 0 12px;
-        border: 1px solid var(--glass-border, rgba(148, 163, 184, 0.3));
+        padding: 0 14px;
+        border: 1px solid var(--border, rgba(148, 163, 184, 0.3));
         border-radius: var(--radius-md, 10px);
-        background: var(--bg-subtle, rgba(255, 255, 255, 0.06));
-        color: inherit;
+        background: transparent;
+        color: var(--text, inherit);
+        font: inherit;
+        font-size: 13px;
+        font-weight: 500;
         cursor: pointer;
+      }
+      .runtime-task-controls button:hover:not(:disabled) {
+        border-color: var(--border-strong, rgba(148, 163, 184, 0.55));
+        background: var(--bg-elevated, rgba(255, 255, 255, 0.04));
+      }
+      .runtime-task-controls button:focus-visible,
+      .runtime-task-controls [role='menuitem']:focus-visible {
+        outline: 2px solid var(--accent, #0098ff);
+        outline-offset: 2px;
       }
       .runtime-task-controls button:disabled {
         opacity: 0.55;
@@ -331,6 +357,18 @@ export class RuntimeTaskControls extends LitElement {
       .runtime-task-controls__overflow {
         position: relative;
       }
+      .runtime-task-controls__overflow > button:not([role='menuitem']) {
+        min-width: 36px;
+        padding: 0 10px;
+        border-color: transparent;
+        color: var(--muted-foreground, #94a3b8);
+        font-size: 18px;
+        line-height: 1;
+      }
+      .runtime-task-controls__overflow > button[aria-expanded='true'] {
+        border-color: var(--border, rgba(148, 163, 184, 0.3));
+        background: var(--bg-elevated, rgba(255, 255, 255, 0.04));
+      }
       .runtime-task-controls__overflow [role='menu'] {
         position: absolute;
         right: 0;
@@ -338,28 +376,73 @@ export class RuntimeTaskControls extends LitElement {
         margin-top: 4px;
         min-width: 160px;
         padding: 4px;
-        border: 1px solid var(--glass-border, rgba(148, 163, 184, 0.3));
+        border: 1px solid var(--border-strong, rgba(148, 163, 184, 0.55));
         border-radius: var(--radius-md, 10px);
-        background: var(--surface, #111827);
+        background: var(--card, #111827);
+        box-shadow: var(--shadow-lg, 0 12px 32px rgba(0, 0, 0, 0.35));
       }
       .runtime-task-controls__overflow [role='menuitem'] {
         width: 100%;
-        text-align: left;
-        border-color: var(--danger, #ef4444);
+        min-height: 40px;
+        padding: 0 10px;
+        border: 0;
+        border-radius: var(--radius-sm, 6px);
+        background: transparent;
         color: var(--danger, #ef4444);
+        text-align: left;
+      }
+      .runtime-task-controls__overflow [role='menuitem']:hover {
+        background: var(--danger-subtle, rgba(239, 68, 68, 0.12));
       }
       .runtime-task-controls__attention {
-        padding: var(--space-2, 8px);
+        width: 100%;
+        padding: var(--space-2, 8px) var(--space-3, 12px);
         border: 1px solid var(--warning, #f59e0b);
         border-radius: var(--radius-md, 10px);
+        background: var(--warn-subtle, rgba(245, 158, 11, 0.12));
+        color: var(--text, inherit);
+        font-size: 12px;
+        text-align: left;
+      }
+      .runtime-task-controls__attention strong {
         color: var(--warning, #f59e0b);
       }
       .runtime-task-controls__attention p {
-        margin: 4px 0;
+        margin: 4px 0 8px;
+        line-height: 1.5;
+      }
+      .runtime-task-controls__attention button {
+        min-height: 32px;
+        background: transparent;
+      }
+      .runtime-task-controls__error {
+        margin: 0;
+        color: var(--danger, #ef4444);
+        font-size: 12px;
+        text-align: right;
       }
       [data-pending='cancel'] {
         color: var(--warning, #f59e0b);
+        font-size: 12px;
         font-weight: 600;
+      }
+      @media (max-width: 979px) {
+        runtime-task-controls {
+          align-items: flex-start;
+          max-width: 100%;
+        }
+        .runtime-task-controls {
+          align-items: flex-start;
+        }
+        .runtime-task-controls__actions {
+          justify-content: flex-start;
+        }
+        .runtime-task-controls__note {
+          text-align: left;
+        }
+        .runtime-task-controls__error {
+          text-align: left;
+        }
       }
     </style>`;
 
@@ -387,6 +470,7 @@ export class RuntimeTaskControls extends LitElement {
                         >Stops new runs; active jobs and watches continue</span
                       >
                       <button
+                        class="unstyled"
                         type="button"
                         data-action=${this.canResume ? 'resume' : 'pause'}
                         data-executable
@@ -401,6 +485,7 @@ export class RuntimeTaskControls extends LitElement {
                 this.canCancel
                   ? html`<div class="runtime-task-controls__overflow">
                       <button
+                        class="unstyled"
                         type="button"
                         data-action="overflow"
                         aria-haspopup="menu"
@@ -415,6 +500,7 @@ export class RuntimeTaskControls extends LitElement {
                       this.menuOpen
                         ? html`<div role="menu">
                             <button
+                              class="unstyled"
                               type="button"
                               role="menuitem"
                               data-action="menu-cancel"

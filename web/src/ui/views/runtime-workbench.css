@@ -1,4 +1,4 @@
-/* Runtime workbench: responsive layout, theme tokens, focus and motion. */
+/* Runtime workbench: execution spine on the left, device navigator on the right. */
 
 .runtime-workbench {
   display: grid;
@@ -6,11 +6,11 @@
   align-items: start;
   gap: var(--space-3);
   min-width: 0;
-  margin-top: var(--space-4);
+  margin-top: var(--space-2);
   color: var(--text);
   background: var(--bg);
   font-family: var(--font-body);
-  font-size: 16px;
+  font-size: 14px;
 }
 
 .runtime-workbench__main,
@@ -19,39 +19,48 @@
   min-width: 0;
 }
 
+/* ── View switch ─────────────────────────────────────────────────────── */
+
 .runtime-view-tabs-row {
   display: flex;
   flex-wrap: wrap;
-  align-items: center;
+  align-items: flex-end;
   justify-content: space-between;
   gap: var(--space-2) var(--space-3);
   margin-bottom: var(--space-3);
+  border-bottom: 1px solid var(--border);
 }
 
 .runtime-view-tabs {
   display: inline-flex;
-  gap: var(--space-1);
-  margin-bottom: 0;
-  padding: 3px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-full);
-  background: var(--bg-elevated);
+  align-items: flex-end;
+  gap: var(--space-4);
+  margin-bottom: -1px;
 }
 
 .runtime-view-tabs [role='tab'] {
+  position: relative;
   min-block-size: 44px;
-  padding: 0 var(--space-4);
+  padding: 0;
   border: 0;
-  border-radius: var(--radius-full);
+  border-bottom: 2px solid transparent;
+  border-radius: 0;
   background: transparent;
   color: var(--runtime-muted);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 500;
   cursor: pointer;
 }
 
+.runtime-view-tabs [role='tab']:hover {
+  color: var(--text);
+}
+
 .runtime-view-tabs [role='tab'][aria-selected='true'] {
-  background: var(--accent-subtle);
+  border-bottom-color: var(--accent);
   color: var(--text-strong);
-  box-shadow: inset 0 0 0 1px var(--accent);
+  font-weight: 600;
 }
 
 .runtime-view-tabs [data-view='devices'] {
@@ -60,35 +69,48 @@
 
 .runtime-task__devices-anchor {
   display: none;
-  padding: 0 var(--space-3);
-  border: 1px solid var(--border-strong);
-  border-radius: var(--radius-full);
+  min-block-size: 44px;
+  padding: 0 var(--space-2);
+  border: 0;
   background: transparent;
   color: var(--runtime-link);
+  font: inherit;
+  font-size: 13px;
   cursor: pointer;
 }
 
-/* Runtime-local touch targets. Global button sizes are untouched. */
-.runtime-workbench button,
-.runtime-workbench [role='button'],
-.runtime-task button,
-.runtime-task [role='button'] {
+/* Runtime-local touch targets. Chips stay compact; controls get full targets. */
+.runtime-workbench .btn,
+.runtime-workbench [role='tab'],
+.runtime-workbench [data-action],
+.runtime-task .btn,
+.runtime-task [role='button'],
+.runtime-task__switch,
+.runtime-task__timeline [data-action],
+.runtime-task__history [data-action],
+.runtime-task__switch-dialog button {
   min-block-size: 44px;
   min-inline-size: 44px;
+}
+
+.runtime-loop__device,
+.runtime-loop__evidence {
+  min-block-size: 28px;
+  min-inline-size: 0;
 }
 
 .runtime-workbench pre,
 .runtime-device-card__facts,
 .flow-lane__events small {
-  font-size: 14px;
   font-variant-numeric: tabular-nums;
 }
 
 .runtime-workbench :focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: 3px;
+  outline: none;
   box-shadow: var(--focus-ring);
 }
+
+/* ── Resizable seam ──────────────────────────────────────────────────── */
 
 .runtime-seam {
   display: none;
@@ -116,95 +138,8 @@
   writing-mode: vertical-rl;
 }
 
-/* Timeline seeding, paging and honest loading/error states. */
-.runtime-task__timeline {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: var(--space-2);
-  margin: var(--space-2) 0;
-  min-width: 0;
-}
+/* ── Confirmation dialog ─────────────────────────────────────────────── */
 
-.runtime-task__timeline-state,
-.runtime-task__timeline-error p {
-  margin: 0;
-  color: var(--runtime-muted);
-}
-
-.runtime-task__timeline-error {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: var(--space-2);
-  padding: var(--space-2) var(--space-3);
-  border: 1px solid var(--danger);
-  border-radius: var(--radius-md);
-  background: var(--danger-subtle);
-}
-
-.runtime-task__timeline-more,
-.runtime-task__timeline-error button {
-  padding: 0 var(--space-3);
-  border: 1px solid var(--border-strong);
-  border-radius: var(--radius-md);
-  background: var(--bg-elevated);
-  color: var(--text);
-  cursor: pointer;
-}
-
-.runtime-task__timeline-more:disabled {
-  opacity: 0.55;
-  cursor: default;
-}
-
-/* History / connection banners (moved out of inline render styles). */
-.runtime-task__history {
-  margin: var(--space-3) 0;
-  padding: var(--space-3);
-  border: 1px solid var(--warn);
-  border-radius: var(--radius-md);
-  background: var(--warn-subtle);
-  color: var(--text);
-}
-
-.runtime-task__history strong {
-  color: var(--runtime-warn);
-}
-
-.runtime-task__history [data-action='back-to-live'] {
-  margin-left: var(--space-3);
-  padding: 0 var(--space-3);
-  border: 1px solid var(--border-strong);
-  border-radius: var(--radius-md);
-  background: var(--bg-elevated);
-  color: var(--text);
-  cursor: pointer;
-}
-
-.runtime-task__history-notice {
-  margin: var(--space-3) 0;
-  padding: var(--space-3);
-  border: 1px solid var(--border-strong);
-  border-radius: var(--radius-md);
-  background: var(--bg-elevated);
-  color: var(--text);
-}
-
-.runtime-task__connection {
-  margin: var(--space-2) 0;
-  padding: var(--space-2) var(--space-3);
-  border: 1px solid var(--danger);
-  border-radius: var(--radius-md);
-  background: var(--danger-subtle);
-  color: var(--text);
-}
-
-.runtime-task__connection strong {
-  color: var(--runtime-danger);
-}
-
-/* Safe-default confirmation dialog. */
 .runtime-confirm-dialog__overlay {
   position: fixed;
   inset: 0;
@@ -269,12 +204,12 @@
 }
 
 .runtime-confirm-dialog button:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: 3px;
+  outline: none;
   box-shadow: var(--focus-ring);
 }
 
-/* Screen-reader-only announcements and loading skeleton. */
+/* ── Screen-reader-only announcements and loading skeleton ───────────── */
+
 .runtime-announcer,
 .runtime-sr-only {
   position: absolute;
@@ -315,7 +250,7 @@
     display: flex;
     align-self: stretch;
     justify-content: center;
-    min-width: 44px;
+    min-width: 28px;
     min-height: 180px;
   }
 
@@ -329,23 +264,58 @@
   .runtime-seam__handle::after {
     content: '';
     display: block;
-    width: 2px;
+    width: 1px;
     height: 100%;
     margin: auto;
-    background: var(--border-strong);
+    background: var(--border);
+  }
+
+  .runtime-seam__handle:hover::after,
+  .runtime-seam__handle:focus-visible::after {
+    width: 2px;
+    background: var(--accent);
   }
 
   .runtime-seam__toggle {
     position: absolute;
-    top: 50%;
-    width: 44px;
+    top: 48px;
+    width: 28px;
     height: 44px;
     padding: 0;
     border: 1px solid var(--border);
     border-radius: var(--radius-md);
     background: var(--bg-elevated);
-    color: var(--text);
+    color: var(--runtime-muted);
+    font-size: 15px;
     cursor: pointer;
+  }
+
+  .runtime-seam__toggle:hover {
+    border-color: var(--border-strong);
+    color: var(--text);
+  }
+
+  /* Device navigator travels with the viewport. */
+  .runtime-devices-panel {
+    position: sticky;
+    top: var(--space-3);
+    display: flex;
+    flex-direction: column;
+    max-height: calc(100vh - var(--space-6));
+    overflow: hidden;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    background: var(--card);
+  }
+
+  .runtime-devices-panel > runtime-devices {
+    min-height: 0;
+    overflow: auto;
+  }
+
+  .runtime-devices-panel.is-collapsed {
+    background: transparent;
+    border-color: transparent;
   }
 }
 
@@ -375,6 +345,12 @@
     order: 3;
     width: 100% !important;
   }
+
+  .runtime-devices-panel {
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    background: var(--card);
+  }
 }
 
 @media (max-width: 599px) {
@@ -398,17 +374,6 @@
 }
 
 @media (max-width: 399px) {
-  .runtime-task-header {
-    display: flex;
-    flex-direction: column;
-    align-items: stretch;
-    gap: var(--space-2);
-  }
-
-  .runtime-objective {
-    overflow-wrap: anywhere;
-  }
-
   .runtime-task__navigation {
     flex-wrap: wrap;
   }

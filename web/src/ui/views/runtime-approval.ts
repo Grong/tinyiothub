@@ -130,6 +130,7 @@ export class RuntimeApprovalView extends LitElement {
       }
       return html`<div class="runtime-approval__actions">
         <button
+          class="unstyled"
           type="button"
           data-action="approve"
           data-executable
@@ -139,6 +140,7 @@ export class RuntimeApprovalView extends LitElement {
           ${this.pendingDecision === 'approve' ? 'Approving…' : 'Approve once'}
         </button>
         <button
+          class="unstyled"
           type="button"
           data-action="reject"
           data-executable
@@ -178,63 +180,133 @@ export class RuntimeApprovalView extends LitElement {
     const risk = readOnlyTools.has(approval.tool ?? '')
       ? 'Read-only device access'
       : 'Device state change';
+    const stateLabel = state === 'pending' ? 'Approval required'
+      : state === 'approved' ? 'Approval approved'
+        : state === 'rejected' ? 'Approval rejected'
+          : state === 'expired' ? 'Approval expired'
+            : 'Approval unavailable';
     const style = html`<style>
       runtime-approval {
         display: block;
+        min-width: 0;
       }
       .runtime-approval {
-        margin: var(--space-2, 8px) 0;
-        padding: var(--space-3, 12px);
-        border: 1px solid var(--warning, #f59e0b);
+        margin: var(--space-2, 8px) 0 0;
+        padding: var(--space-2, 8px) var(--space-3, 12px) var(--space-3, 12px);
+        border: 1px solid color-mix(in srgb, var(--warning, #f59e0b) 45%, transparent);
         border-radius: var(--radius-md, 10px);
-        background: var(--warning-subtle, rgba(245, 158, 11, 0.08));
+        background: var(--warn-subtle, rgba(245, 158, 11, 0.12));
+        font-size: 13px;
+      }
+      .runtime-approval[data-approval-state='approved'] {
+        border-color: color-mix(in srgb, var(--ok, #22c55e) 35%, transparent);
+        background: var(--ok-subtle, rgba(34, 197, 94, 0.12));
+      }
+      .runtime-approval[data-approval-state='rejected'] {
+        border-color: var(--danger-line-15, rgba(239, 68, 68, 0.15));
+        background: var(--danger-subtle, rgba(239, 68, 68, 0.12));
+      }
+      .runtime-approval__eyebrow {
+        margin: 0 0 4px;
+        color: var(--warning, #f59e0b);
+        font-size: 10px;
+        font-weight: 600;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+      }
+      .runtime-approval[data-approval-state='approved'] .runtime-approval__eyebrow {
+        color: var(--ok, #22c55e);
+      }
+      .runtime-approval[data-approval-state='rejected'] .runtime-approval__eyebrow {
+        color: var(--danger, #ef4444);
       }
       .runtime-approval__header {
         display: flex;
         flex-wrap: wrap;
-        gap: var(--space-2, 8px);
+        gap: 2px var(--space-2, 8px);
         align-items: baseline;
+      }
+      .runtime-approval__header strong {
+        color: var(--text-strong, inherit);
+        font-family: var(--mono, monospace);
+        font-size: 13px;
+      }
+      .runtime-approval__header > span:not(.runtime-approval__meta) {
+        color: var(--text, inherit);
       }
       .runtime-approval__reason {
         margin: var(--space-2, 8px) 0;
+        line-height: 1.5;
       }
       .runtime-approval__meta {
         color: var(--muted-foreground, #94a3b8);
-        font-size: 12px;
+        font-size: 11px;
       }
       .runtime-approval pre {
-        max-height: 220px;
+        max-height: 200px;
         overflow: auto;
         margin: var(--space-2, 8px) 0;
         padding: var(--space-2, 8px);
+        border: 1px solid var(--border, rgba(148, 163, 184, 0.3));
         border-radius: var(--radius-sm, 6px);
-        background: var(--bg-subtle, rgba(255, 255, 255, 0.06));
+        background: var(--bg, transparent);
+        font-family: var(--mono, monospace);
+        font-size: 11px;
+        white-space: pre-wrap;
+        overflow-wrap: anywhere;
       }
       .runtime-approval__actions {
         display: flex;
         flex-wrap: wrap;
         gap: var(--space-2, 8px);
+        margin-top: var(--space-2, 8px);
       }
       .runtime-approval button {
-        min-height: 44px;
+        min-height: 36px;
         min-width: 44px;
-        padding: 0 12px;
-        border: 1px solid var(--glass-border, rgba(148, 163, 184, 0.3));
+        padding: 0 14px;
+        border: 1px solid var(--border, rgba(148, 163, 184, 0.3));
         border-radius: var(--radius-md, 10px);
-        background: var(--bg-subtle, rgba(255, 255, 255, 0.06));
-        color: inherit;
+        background: transparent;
+        color: var(--text, inherit);
+        font: inherit;
+        font-size: 13px;
+        font-weight: 500;
         cursor: pointer;
       }
       .runtime-approval button[data-action='approve'] {
-        border-color: var(--accent, #38bdf8);
+        border-color: var(--accent, #0098ff);
+        background: var(--accent, #0098ff);
+        color: var(--accent-foreground, #fff);
         font-weight: 600;
+      }
+      .runtime-approval button[data-action='reject']:hover:not(:disabled) {
+        border-color: var(--danger, #ef4444);
+        color: var(--danger, #ef4444);
+      }
+      .runtime-approval button:hover:not(:disabled) {
+        border-color: var(--border-strong, rgba(148, 163, 184, 0.55));
+      }
+      .runtime-approval button:focus-visible {
+        outline: 2px solid var(--accent, #0098ff);
+        outline-offset: 2px;
       }
       .runtime-approval button:disabled {
         opacity: 0.55;
         cursor: default;
       }
-      .runtime-approval__error {
+      .runtime-approval__state {
+        margin: 0;
+        color: var(--muted-foreground, #94a3b8);
+        font-size: 12px;
+      }
+      .runtime-approval__state[data-approval-state='rejected'] {
         color: var(--danger, #ef4444);
+      }
+      .runtime-approval__error {
+        margin: var(--space-2, 8px) 0 0;
+        color: var(--danger, #ef4444);
+        font-size: 12px;
       }
     </style>`;
     return html`${style}
@@ -244,6 +316,7 @@ export class RuntimeApprovalView extends LitElement {
         data-approval-state=${state}
         aria-label="Approval request"
       >
+        <p class="runtime-approval__eyebrow">${stateLabel}</p>
         <header class="runtime-approval__header">
           <strong>${approval.tool}</strong>
           <span>${approval.deviceId ?? 'Unknown device'}</span>

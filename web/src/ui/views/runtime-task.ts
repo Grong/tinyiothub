@@ -50,6 +50,60 @@ function statusLabel(status: string): string {
   return status.replaceAll('_', ' ');
 }
 
+const taskStatusLabels: Record<TaskStatus, string> = {
+  active: 'Active',
+  waiting_job: 'Waiting for device',
+  waiting_watch: 'Waiting for watch',
+  needs_approval: 'Needs approval',
+  paused: 'Paused',
+  cancelling: 'Cancelling',
+  completed: 'Completed',
+  failed: 'Failed',
+  cancelled: 'Cancelled',
+};
+
+type StatusTone = 'ok' | 'warn' | 'danger' | 'accent' | 'muted';
+
+const taskStatusTones: Record<TaskStatus, StatusTone> = {
+  active: 'accent',
+  waiting_job: 'accent',
+  waiting_watch: 'accent',
+  needs_approval: 'warn',
+  paused: 'muted',
+  cancelling: 'warn',
+  completed: 'ok',
+  failed: 'danger',
+  cancelled: 'muted',
+};
+
+function statusDisplay(status: TaskStatus): string {
+  return taskStatusLabels[status] ?? statusLabel(status);
+}
+
+function statusTone(status: TaskStatus): StatusTone {
+  return taskStatusTones[status] ?? 'muted';
+}
+
+/** The stored summary can include the model's internal <think> block.
+ *  Operators need the final answer, not the chain of thought. */
+function summaryBody(raw: string): string {
+  const text = raw.replace(/<think>[\s\S]*?<\/think>/gi, '').trim();
+  return text || raw.trim();
+}
+
+function durationLabel(createdAt: string, endedAt: string | null): string {
+  const start = Date.parse(createdAt);
+  const end = endedAt ? Date.parse(endedAt) : Date.now();
+  if (!Number.isFinite(start) || !Number.isFinite(end) || end < start) return '';
+  const seconds = Math.round((end - start) / 1000);
+  if (seconds < 60) return `${seconds}s`;
+  const minutes = Math.floor(seconds / 60);
+  const rest = seconds % 60;
+  if (minutes < 60) return rest ? `${minutes}m ${rest}s` : `${minutes}m`;
+  const hours = Math.floor(minutes / 60);
+  return `${hours}h ${minutes % 60}m`;
+}
+
 type RuntimePanel = RuntimeView | 'devices';
 
 const runtimePanels: RuntimePanel[] = ['loop', 'flow', 'devices'];
@@ -85,6 +139,7 @@ export class RuntimeTaskView extends LitElement {
   @state() private timelineOldest: number | null = null;
   @state() private historyRejected = false;
   @state() private historyNotice = '';
+  @state() private summaryExpanded = false;
 
   private generation = 0;
   private coldHistoryStripped = false;
@@ -194,6 +249,7 @@ export class RuntimeTaskView extends LitElement {
       this.historyNotice = '';
       this.mobilePanel = null;
       this.announcement = '';
+      this.summaryExpanded = false;
       this.lastTaskStatus = null;
       this.lastJobStates = new Map();
     }
@@ -622,6 +678,10 @@ export class RuntimeTaskView extends LitElement {
     window.dispatchEvent(new HashChangeEvent('hashchange'));
   }
 
+  private toggleSummary(): void {
+    this.summaryExpanded = !this.summaryExpanded;
+  }
+
   private focusStatus(): void {
     void this.updateComplete.then(() => {
       this.querySelector<HTMLElement>('.runtime-task__status')?.focus({ preventScroll: true });
@@ -1033,7 +1093,7 @@ export class RuntimeTaskView extends LitElement {
           this.timelineError
             ? html`<div class="runtime-task__timeline-error" data-timeline-error>
                 <p role="alert">${this.timelineError}</p>
-                <button type="button" data-action="retry-timeline" @click=${this.retryTimeline}>
+                <button class="unstyled" type="button" data-action="retry-timeline" @click=${this.retryTimeline}>
                   Retry
                 </button>
               </div>`
@@ -1043,7 +1103,7 @@ export class RuntimeTaskView extends LitElement {
           this.timelineHasMore
             ? html`<button
                 type="button"
-                class="runtime-task__timeline-more"
+                class="unstyled runtime-task__timeline-more"
                 data-action="load-earlier"
                 ?disabled=${this.timelineLoading}
                 @click=${this.loadEarlier}
@@ -1077,6 +1137,7 @@ export class RuntimeTaskView extends LitElement {
               @keydown=${this.onTabKey}
             >
               <button
+                class="unstyled"
                 type="button"
                 role="tab"
                 data-view="loop"
@@ -1089,6 +1150,7 @@ export class RuntimeTaskView extends LitElement {
                 Agent Loop
               </button>
               <button
+                class="unstyled"
                 type="button"
                 role="tab"
                 data-view="flow"
@@ -1103,6 +1165,7 @@ export class RuntimeTaskView extends LitElement {
               ${
                 this.mobile
                   ? html`<button
+                      class="unstyled"
                       type="button"
                       role="tab"
                       data-view="devices"
@@ -1117,7 +1180,7 @@ export class RuntimeTaskView extends LitElement {
                   : nothing
               }
             </div>
-            <button type="button" class="runtime-task__devices-anchor" @click=${this.jumpToDevices}>
+            <button type="button" class="unstyled runtime-task__devices-anchor" @click=${this.jumpToDevices}>
               Devices
             </button>
           </div>
@@ -1167,7 +1230,7 @@ export class RuntimeTaskView extends LitElement {
           ></div>
           <button
             type="button"
-            class="runtime-seam__toggle"
+            class="unstyled runtime-seam__toggle"
             aria-controls="runtime-devices-panel"
             aria-expanded=${this.devicesExpanded}
             aria-label=${this.devicesExpanded ? 'Collapse devices' : 'Expand devices'}
@@ -1195,7 +1258,7 @@ export class RuntimeTaskView extends LitElement {
               ? nothing
               : html`<button
                   type="button"
-                  class="runtime-devices-rail"
+                  class="unstyled runtime-devices-rail"
                   aria-controls="runtime-devices-panel"
                   aria-expanded="false"
                   aria-label="Expand devices"
@@ -1219,7 +1282,7 @@ export class RuntimeTaskView extends LitElement {
     >
       <strong id="runtime-history-title">History · read-only</strong>
       ${time ? html`<span> · ${time}</span>` : nothing}
-      <button type="button" data-action="back-to-live" @click=${this.backToLive}>
+      <button class="unstyled" type="button" data-action="back-to-live" @click=${this.backToLive}>
         Back to live
       </button>
     </section>`;
@@ -1242,15 +1305,27 @@ export class RuntimeTaskView extends LitElement {
 
   render() {
     const projection = this.projection;
+    const task = projection?.task;
+    const status = task?.status;
+    const tone: StatusTone = status ? statusTone(status) : 'muted';
+    const summary = summaryBody(projection?.snapshot.summary ?? '');
+    const longSummary = summary.length > 280 || summary.split('\n').length > 4;
     const pendingApprovals =
       projection?.approvals.filter((approval) => approval.state === 'pending').length ?? 0;
+    const duration = task ? durationLabel(task.createdAt, task.endedAt) : '';
     return html`
       <article class="runtime-task" aria-busy=${projection ? 'false' : 'true'}>
         <nav class="runtime-task__navigation" aria-label="Runtime task navigation">
-          <a href="#/runtime">← Runtime</a>
+          <span class="runtime-task__crumb">
+            <a href="#/runtime">← Runtime</a>
+            <span class="runtime-task__crumb-sep" aria-hidden="true">/</span>
+            <span class="runtime-task__task-id" title=${this.taskId}
+              >#${this.taskId.slice(0, 8)}</span
+            >
+          </span>
           <button
             type="button"
-            class="runtime-task__switch"
+            class="unstyled runtime-task__switch"
             data-action="switch-task"
             @click=${this.openSwitchTask}
           >
@@ -1261,42 +1336,98 @@ export class RuntimeTaskView extends LitElement {
           ${this.announcement}
         </div>
         <header class="runtime-task-header">
-          <h1 class="runtime-objective" tabindex="-1">${this.objectiveLabel}</h1>
-          <div class="runtime-task__status" tabindex="-1">
-            ${projection?.task.status ?? this.connection}
-          </div>
-          <p class="runtime-task__intervention ${pendingApprovals ? 'has-approval' : ''}">
-            ${pendingApprovals ? `Approval required (${pendingApprovals})` : 'No intervention required'}
-          </p>
-          ${
-            projection
-              ? html`<runtime-task-controls
-                  .workspaceId=${this.workspaceId}
-                  .taskId=${this.taskId}
-                  .projection=${projection}
-                  .revision=${this.revision}
-                  .readOnly=${this.historyMode}
-                  @projection-change=${this.onProjectionChange}
-                  @focus-status-request=${this.focusStatus}
-                  @refresh-request=${this.refreshProjection}
-                ></runtime-task-controls>`
-              : nothing
-          }
-          ${
-            projection && this.playbackTarget && !this.historyMode
-              ? html`<div class="runtime-task__playback-actions">
-                  <button
-                    type="button"
-                    data-action="play-evidence"
-                    ?disabled=${this.playbackLoading}
-                    @click=${this.playEvidence}
+          <div class="runtime-task-header__lead">
+            <div class="runtime-task__title-row">
+              <h1 class="runtime-objective" tabindex="-1">${this.objectiveLabel}</h1>
+              <span
+                class="runtime-task__status runtime-status runtime-status--${tone}"
+                tabindex="-1"
+              >
+                <span class="runtime-status__dot" aria-hidden="true"></span>
+                <span class="runtime-status__label"
+                  >${status ? statusDisplay(status) : this.connection}</span
+                >
+              </span>
+            </div>
+            <div class="runtime-task__meta">
+              ${pendingApprovals
+                ? html`<span class="runtime-task__intervention has-approval"
+                      >Approval required (${pendingApprovals})</span
+                    >
+                    <span class="runtime-task__meta-sep" aria-hidden="true">·</span>`
+                : nothing}
+              <span>${projection?.devices.length ?? 0} devices</span>
+              <span class="runtime-task__meta-sep" aria-hidden="true">·</span>
+              <span>${projection?.steps.length ?? 0} events</span>
+              ${
+                duration
+                  ? html`<span class="runtime-task__meta-sep" aria-hidden="true">·</span>
+                      <span>${duration}</span>`
+                  : nothing
+              }
+            </div>
+            ${
+              summary
+                ? html`<section
+                    class="runtime-task__verdict runtime-task__verdict--${tone} ${this
+                      .summaryExpanded
+                      ? 'is-expanded'
+                      : ''}"
+                    aria-label="Run summary"
                   >
-                    ${this.playbackLoading ? 'Loading evidence…' : 'Play evidence'}
-                  </button>
-                </div>`
-              : nothing
-          }
-          <slot name="task-actions"></slot>
+                    <p class="runtime-task__verdict-label">Run summary</p>
+                    <p
+                      class="runtime-task__verdict-text ${longSummary && !this.summaryExpanded
+                        ? 'is-clamped'
+                        : ''}"
+                    >${summary}</p>
+                    ${longSummary
+                      ? html`<button
+                          type="button"
+                          class="unstyled runtime-task__verdict-toggle"
+                          data-action="toggle-summary"
+                          aria-expanded=${this.summaryExpanded ? 'true' : 'false'}
+                          @click=${this.toggleSummary}
+                        >
+                          ${this.summaryExpanded ? 'Show less' : 'Show full summary'}
+                        </button>`
+                      : nothing}
+                  </section>`
+                : nothing
+            }
+          </div>
+          <div class="runtime-task-header__actions">
+            ${
+              projection
+                ? html`<runtime-task-controls
+                    .workspaceId=${this.workspaceId}
+                    .taskId=${this.taskId}
+                    .projection=${projection}
+                    .revision=${this.revision}
+                    .readOnly=${this.historyMode}
+                    @projection-change=${this.onProjectionChange}
+                    @focus-status-request=${this.focusStatus}
+                    @refresh-request=${this.refreshProjection}
+                  ></runtime-task-controls>`
+                : nothing
+            }
+            ${
+              projection && this.playbackTarget && !this.historyMode
+                ? html`<div class="runtime-task__playback-actions">
+                    <button
+                      class="unstyled"
+                      type="button"
+                      data-action="play-evidence"
+                      ?disabled=${this.playbackLoading}
+                      @click=${this.playEvidence}
+                    >
+                      ${this.playbackLoading ? 'Loading evidence…' : 'Play evidence'}
+                    </button>
+                  </div>`
+                : nothing
+            }
+            <slot name="task-actions"></slot>
+          </div>
         </header>
         ${this.renderHistoryNotice()} ${this.renderHistoryBanner()} ${this.renderConnectionBanner()}
         ${this.error ? html`<p role="alert" class="runtime-task__error">${this.error}</p>` : ''}
@@ -1304,11 +1435,11 @@ export class RuntimeTaskView extends LitElement {
           <summary>Details and IDs</summary>
           <dl>
             <dt>Task ID</dt>
-            <dd>${this.taskId}</dd>
+            <dd class="runtime-task__mono">${this.taskId}</dd>
             <dt>Run ID</dt>
-            <dd>${projection?.task.currentRunId ?? 'None'}</dd>
+            <dd class="runtime-task__mono">${task?.currentRunId ?? 'None'}</dd>
             <dt>Session key</dt>
-            <dd>${projection?.task.sessionKey ?? 'None'}</dd>
+            <dd class="runtime-task__mono">${task?.sessionKey ?? 'None'}</dd>
           </dl>
         </details>
         ${
@@ -1334,6 +1465,7 @@ export class RuntimeTaskView extends LitElement {
                     ${this.switchTasks.map(
                       (task) =>
                         html` <button
+                          class="unstyled"
                           type="button"
                           role="option"
                           aria-label=${task.id}
@@ -1350,7 +1482,7 @@ export class RuntimeTaskView extends LitElement {
                       ? html`<p>No other Runtime tasks</p>`
                       : nothing
                   }
-                  <button type="button" data-action="keep-task" @click=${this.closeSwitchTask}>
+                  <button class="unstyled" type="button" data-action="keep-task" @click=${this.closeSwitchTask}>
                     Keep current task
                   </button>
                 </section>

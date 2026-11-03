@@ -56,6 +56,37 @@
 - **Context:** E4d spec/执行记录；E3 World TODO (4)。
 - **Effort:** L (UI) + M (backend) | **Depends on:** E4 合入
 
+## Multi-device Agent Runtime — Deferred (from /plan-design-review 2026-10-27)
+
+### P3 — Runtime 主字体的有意图选型
+- **What:** 评估并引入自托管的 UI 主字体候选（如 IBM Plex Sans），保留合适的中文系统回退；验证正文、设备数值、中英文混排与双主题，而非只做全局字体替换。
+- **Why:** 首版沿用系统字体保证交付范围，但默认字体的通用感仍是已接受的视觉缺口。
+- **Pros:** Runtime 能形成更明确的排版声音，同时改善长时间监控中的数字与正文辨识度。
+- **Cons:** 增加字体资产、加载策略、授权与中英文布局回归；收益需要真实页面验证。
+- **Context:** `docs/superpowers/specs/2026-10-26-multi-device-agent-runtime-design.md` §11.3；设计评审 D13/D24 选择本期保留系统栈并记录后续探索。
+- **Depends on / blocked by:** Runtime Workbench 首版落地；真实中英文内容与双主题走查。
+- **Effort:** M (human: ~2d / CC: ~2h，含验证)
+
+### P2 — 含语音视频证据的 WebVTT captions
+- **What:** 为确有语音的证据提供可选 WebVTT 轨及播放器加载/失败状态；字幕来源、语言与有效期必须可读，不假装自动转录。
+- **Why:** 首版只有画面和原声时，听障用户无法获得语音中的等价证据内容。
+- **Pros:** 含语音证据获得等价文本访问，字幕状态也可键盘与读屏理解。
+- **Cons:** 需要字幕来源工作流、媒体元数据与访问控制扩展，以及真实浏览器播放测试。
+- **Context:** 同 spec §5.4/§7.8；设计评审 D22/D25 选择首版显示 `Captions unavailable` 并持久跟踪缺口，不新增固定媒体配额。
+- **Depends on / blocked by:** Runtime 视频播放首版落地；实际含语音证据与可信字幕来源。
+- **Effort:** M (human: ~2d / CC: ~2h，不含字幕内容生产)
+
+## Harness Core — Deferred (from /plan-ceo-review 2026-11-03)
+
+### P3 — Workflow 配置版本 diff、导出/导入与回滚
+- **What:** 为 WorkflowDefinition 提供 canonical JSON diff、脱敏导出、同 workspace 导入（默认 disabled）和从历史内容创建新版本的回滚；只影响未来调度。
+- **Why:** 配置演进需要可审查、可分享和可恢复手段；当前 enabled/version 只能固定 active Run，缺少完整配置生命周期。
+- **Pros:** 导入重新校验且不会自动调度，回滚不改写历史、不取消在途 Task/Effect，复用统一 schema 和版本固定契约。
+- **Cons:** 需要维护 canonical diff、敏感字段处理与失效引用校验；本期不支持跨 workspace 分享，避免设备选择与策略被错误复用。
+- **Context:** 用户 XD6=B 在 Harness Core CEO 评审选择延期。设计见 `docs/superpowers/specs/2026-11-02-agent-harness-core-design.md` X5；先让统一 schema 和持续 Workflow 垂直切片稳定，避免过早固化导入导出格式。
+- **Depends on / blocked by:** Harness T1 持续 Workflow 与 T5 原子事务合同落地，配置 schema 与脱敏策略稳定。
+- **Effort:** M (human: ~2d / CC: ~2h)
+
 ## Thing Rename Follow-ups — Deferred (PR-3, from /superpowers plan 2026-08-31)
 
 ### P2 — examples/* 不在 workspace members，未受编译门禁保护

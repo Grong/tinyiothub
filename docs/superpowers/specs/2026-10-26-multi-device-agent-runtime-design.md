@@ -5,7 +5,7 @@
 - 分支：`e4-p2-declaration-closeout`
 
 - 状态：架构、Task/Job/Watch、媒体、两栏工作台、错误恢复、验收六节已与作者逐节确认；
-CEO HOLD SCOPE 评审已完成，待编写实施计划
+CEO HOLD SCOPE 评审与实施计划已完成；R2 follow-up A 已批准，待聚焦工程复审
 
 - 上位文档：`docs/superpowers/specs/2026-10-20-hub-runtime-architecture-design.md`
 
@@ -187,11 +187,24 @@ pending job/watch/approval → Task `completed`；Run 失败、无效输出或�
 回到 `waiting_job`、`waiting_watch`、`needs_approval` 或启动恢复 Run。
 
 - 审批请求 → `needs_approval`；批准、拒绝、过期、不可用分别处理，批准后沿原 Task 继续并使用批准时权限。
+  2026-10-27 R2 后续决策选择 A：审批必须持久化，展示与执行共享同一份冻结的
+  `tool/args_json`；`approve` 的 pending decision CAS 与唯一决策/执行 outbox 在同一
+  SQLite 事务提交，`reject` 只写决策事实，不创建设备执行。恢复器按 `approval_id`、
+  `tool_call_id`、`decision_event_id` 和既有 Job/outbox 唯一约束续跑，不调用旧 DashMap
+  或直接同步执行。详细事务与崩溃矩阵见 R2 的“Follow-up resolution”。
 
 - 用户暂停 Task 与取消 Task 不同：暂停只停止后续推进；取消先进入 `cancelling`，
-取消所属 watch、将 pending outbox 标 dead，并停止全部所属活跃 job。
+先 abort 当前 Run 的 CancellationToken 并阻止任何新工具派发，再取消所属 watch、
+将 pending outbox 标 dead，并停止全部所属活跃 job。
 所有相关 job 都有明确终态后才迁移到 `cancelled`；任一 `cancelled_unknown`
 则迁移到 `failed` 并记录 `cancel_unknown`，不得显示已全部停止。
+
+取消接线必须落到现有 Run seam：`Runner::execute` 接收调用方持有的同一个
+`CancellationToken`，不再只在内部创建私有 token；`ActiveRunRegistry` 将该 token 与
+RunContext 一起登记，`manager` 在绑定 `agent_tasks.current_run_id` 后可按 Task 找到并 abort。
+token 继续传入 rig tool loop，工具派发前再检查 Task cancelling/token，关闭“模型已返回
+下一工具、取消尚未来得及落库”的竞态窗口。Run 结束后清理登记，迟到完成只能经
+`state_version` CAS 更新投影。Pause 不取消该 token，也不调用此 abort 路径。
 
 - 重复取消幂等，不重复发出 stop；terminal Task 的迟到事件只更新投影，不再唤醒。
 `Stop all` 仍是独立的设备级操作，不与 Task 取消混用。
@@ -221,13 +234,24 @@ cancelled_unknown | interrupted`。`accepted/running` 为活跃态，
 6. job deadline 先于等待窗口到达时，返回真实 timeout/cancelled 结果，而不是 `running`。
 7. 最终结果唤醒原 Task；重复终态只落一次事实、最多唤醒一次。
 
-`stop` 必须覆盖在途与已排队 Execute；stop 前入队的命令不得继续绕过闸门执行。
+单 Job Stop 先在 DB 校验 workspace、Task 与 job 归属；仅对 `accepted/running` CAS 写入
+`stop_requested_at`，非所属 job 返回 404，终态或重复 stop 返回当前投影，不重复发取消。
+`WorkerCommand::Execute`、worker 的 CancelSlot 与 `WorkerResult::Cancelled` 全程携带同一
+`job_id`：queued 在领取时若已请求停止则直接形成 `cancelled` 终态且不调用驱动；in-flight
+只在当前 job_id 匹配时取消对应 token，结果按该 job_id 回写。终态竞态只允许一个终态，
+同设备其他 Task 的 job 与后续 claim 不受影响，禁止用 `cancel_calls(thing_id)` 或设备级
+`set_stop` 冒充单 Job Stop。重启按持久 stop 请求重断言可恢复的 job 取消；没有可恢复
+driver 调用时沿用 4.6 的 `interrupted` 恢复，不静默重新派发或假称 `cancelled`。
+
 迟到结果保留账本但按 `job_id` 去重。`cancelled_unknown` 表示物理结果未知，
 Agent 重试前必须先读设备状态，禁止盲目重复副作用。
 
 ### 4.5 Task-owned Watch
 
 - Agent 可为 Task 注册 watch，包含 `owner_task_id`。
+- upsert 与启动重织必须校验 `rule.workspace_id == owner_task.workspace_id`，
+  `outbox.signal.workspace_id == task.workspace_id`；跨区不加载、不派发并记录拒绝。
+- Task 的 `session_key` 对应会话也必须属于同一 workspace，禁止把其他工作区会话或审批关联进来。
 
 - `persistent` 继续表示“是否免超时”，不表示是否可重启恢复。
 
@@ -248,6 +272,8 @@ terminal Task 的 watch 不重建。
 崩溃重试。
 
 - job 最终 result、watch 命中/超时/失效、明确设备错误可唤醒 Task。
+- `RunStarted` 与 `RunReport` 必须携带同一 `wake_event_id` 并写入 `agent_runs`；
+  只在 outbox 有 ID 而未进入 RunReport 时，唯一约束不得视为已生效。
 
 - job progress、普通遥测和视频帧只更新投影。
 
@@ -343,13 +369,18 @@ Hub 只返回脱敏 playback descriptor（protocol/url/expiresAt），不代理�
 不重写 HLS 清单，也不转发驱动凭证。
 
 - 签名 URL 必须有短有效期并按 `workspace/device/source` 限定；Hub 日志只记录
-origin 和过期时间，query/signature 一律脱敏。descriptor 端点本身使用 5 分钟票据，
+origin 和过期时间，签名 URL 仅允许 `https`（本机开发允许 `http://localhost`），拒绝 `file/javascript/data`
+与 userinfo（`user:pass@host`）；query/signature 一律脱敏。descriptor 端点本身使用 5 分钟票据，
 到期前由主会话刷新。
 
 - CORS、混合内容、网络不可达、上游不支持签名 URL 或协议不支持时，显式返回
 `playback_unavailable`；不得回退 Hub 代理、显示静态图冒充实时视频。
 
 - 视频只在用户观看时启用，离开设备、切换 Task 或超时后停止并 `destroy()` 播放器。
+
+- 首版 playback descriptor 不新增 captions 轨；保留原声与原生音量控制，播放器
+  区域明确 `Captions unavailable`，不根据视频猜测有无语音，也不宣称自动转录。
+  含语音证据的字幕可达性作为 deferred 缺口保留。
 
 - 视频不默认录像，历史回放展示保存的图片证据与设备状态。
 
@@ -421,7 +452,7 @@ dispatcher 扫描 pending，崩溃后重试；连续失败按现有 DLQ 模式�
 #### `device_jobs`（活跃与查询投影，生命周期事实仍在 ledger）
 
 ```text
-id, workspace_id, device_id, tool, args_json, state,
+id, workspace_id, device_id, tool, args_json, state, stop_requested_at,
 progress_json, result_json, task_id, run_id, tool_call_id,
 driver_call_id, started_at, ended_at
 ```
@@ -429,6 +460,30 @@ driver_call_id, started_at, ended_at
 约束：`tool_call_id` 唯一；索引 `(task_id, state)`、
 `(workspace_id, device_id, state)`。人工 UI 直接调用产生的 job 允许
 `task_id/run_id/tool_call_id` 为 NULL；SQLite 的 UNIQUE 不限制多个 NULL。
+
+#### `task_approvals`（持久决策与唯一执行信箱）
+
+```text
+id, workspace_id, task_id, run_id, tool_call_id, device_id, tool, args_json,
+reason, state, decision, decider_id, requested_at, decided_at, expires_at,
+decision_event_id, updated_at
+```
+
+`state = pending | approved | rejected | expired | unavailable`；`decision` 仅在实际
+approve/reject 时写入。`tool_call_id` 与 `decision_event_id` 分别唯一，审批请求创建时
+即分配后者；索引 `(workspace_id,task_id,state)`、`(expires_at,state)`。`args_json` 是
+展示与执行共同使用的冻结参数，批准后禁止重新生成或由客户端提交替换。`decider_id`
+记录批准时通过 Agent 管理权限校验的用户；执行恢复只引用该持久决策，不继承模型权限。
+
+pending 请求与 Task `needs_approval` 同事务创建。approve/reject 使用条件 decision CAS，
+并以预分配 `decision_event_id` 写原 Task 的决策 outbox；approve 的该 outbox 同时是唯一
+执行 intent，reject 的 outbox 只传决策事实，不创建 Job。重复同 decision 返回当前投影，
+不同 decision 409；过期、不可用、暂停、取消或终态 Task 不得新建设备执行。取消优先于
+尚未 dispatch 的批准；已产生 Job 后仍走 Task cancel/Job Stop 与 `cancelled_unknown`。
+批准后的 Job 插入与 Task `needs_approval → waiting_job` 必须在同一 DB 事务内完成，
+该事务重新检查 Task/approval 状态；paused/cancelling/terminal 不得绕过此门插入 Job。
+同 `tool_call_id` 只有在全部冻结执行字段一致时才能返回既有 Job，否则是执行冲突。
+暂停导致 defer 时保留原 decision outbox pending，resume 重用原 event，不新建决策事件。
 
 #### `media_evidence`
 
@@ -440,7 +495,8 @@ mime, size_bytes, sha256, storage_path, dedup_key, created_at, expires_at
 
 关联字段 `task_id/run_id/tool_call_id/job_id` 可空，便于设备独立图片复用同一存储；
 Task 证据至少包含 `task_id`，Run 证据至少同时包含 `task_id/run_id`。
-`dedup_key` 由 workspace/task/run/tool_call/job/device/source/seq/sha256 组成并唯一；
+`dedup_key` 由规范化 JSON 元组 `[workspace,task,run,tool_call,job,device,source,seq,sha256]`
+做 SHA-256；禁止用可能含分隔符的裸字符串拼接，避免 ID 碰撞。
 重试只能复用已有证据，不能重复写行或重复附件。
 
 所有新持久化都经 ports；capability crate 不得直接写 SQL。
@@ -449,7 +505,13 @@ Task 证据至少包含 `task_id`，Run 证据至少同时包含 `task_id/run_id
 
 - `TaskStore`：创建、读取、列表、CAS 状态迁移、当前 Run 绑定，以及“状态迁移 + outbox”事务和 pending 唤醒领取/标记。
 
-- `DeviceJobStore`：accepted/progress/result 投影、活跃列表、按 tool_call/job 查询。
+- `DeviceJobStore`：accepted/progress/result 投影、活跃列表、按 tool_call/job 查询；
+  校验 Task/job 归属并 CAS 写 `stop_requested_at`，提供重启时需重断言取消的活跃 job；
+  批准执行时在同事务检查 Task/approval、插入原 `tool_call_id` Job 并迁移 Task 等待关系。
+
+- `TaskApprovalStore`：创建 pending 与 Task 状态同事务、按 workspace/Task/approval 读取、
+  条件 decision CAS 与决策 outbox 同事务、到期/不可用处置，以及恢复所需的 pending/approved
+  记录查询；所有 SQL 留在 `crates/db`。
 
 - `MediaStore`：写入受限二进制、读取、删除过期内容。
 
@@ -473,6 +535,21 @@ Task 证据至少包含 `task_id`，Run 证据至少同时包含 `task_id/run_id
 
 - `POST /workspaces/{id}/agent/tasks/{task_id}/cancel`：幂等取消。
 
+- `POST /workspaces/{id}/agent/tasks/{task_id}/pause` 与 `/resume`：幂等暂停/恢复；
+  pause 只阻止后续新 Run，不 abort 当前 Run，不停止所属 job/watch。
+
+- `POST /workspaces/{id}/agent/tasks/{task_id}/jobs/{job_id}/stop`：只停止该 Task
+  所属的 accepted/running job，按 Task/job 幂等；queued/in-flight 都按 job_id 隔离，
+  重复或已有终态返回当前投影，不取消整个 Task，不影响同设备其他 Task，不自动重放设备命令。
+
+- `POST /workspaces/{id}/agent/tasks/{task_id}/approvals/{approval_id}/approve` 与
+  `/reject`：按 Task/approval/decision 幂等，冲突决定返回 409；expired、unavailable
+  或已有终态时返回当前投影，不重新授权或创建重复 Run。请求体为空，服务端从持久记录
+  读取冻结参数；decider 来自已鉴权 Claims，客户端不能提交参数、decider 或执行 ID。
+  **Implementation gate（2026-10-27 R2 follow-up，resolved）：** 采用持久 decision＋
+  唯一执行信箱方案；实现与验收必须覆盖 decision CAS、事务回滚、双击、崩溃后续跑和
+  不盲重放，不得复用旧 DashMap/heartbeat 的翻转后直接执行路径。
+
 - `GET /workspaces/{id}/runtime/stream?taskId=...&after=...`：
 snapshot/event/resync。
 
@@ -488,14 +565,57 @@ snapshot/event/resync。
 
 - `GET /admin/runtime/jobs?state=active|unknown`：管理员读取活跃/未知 job 及设备状态。
 
-Task 创建、取消、设备调用和停止沿用 Agent 管理权限；读取 Task/Devices/证据
-沿用 workspace 权限，所有路径做 workspace 隔离。
+Task 创建、暂停/恢复、取消、审批、设备调用和停止沿用 Agent 管理权限；读取
+Task/Devices/证据沿用 workspace 权限，所有路径做 workspace 隔离。
 
 ## 7. 两栏 Agent Runtime Workbench
 
 ### 7.1 页面结构
 
-新增 `#/runtime`（当前/最近 Task）与 `#/runtime/tasks/{id}`，现有 AI 中心链接到该视图；不新增 Goal 页面。
+新增 `#/runtime`（当前/最近 Task）、`#/runtime/new` 与 `#/runtime/tasks/{id}`，现有 AI 中心链接到该视图；不新增 Goal 页面。
+
+`#/runtime` 是 Task 列表而非统计仪表盘：
+
+- 顶栏只有 `Runtime` 标题、当前连接状态与 `New task` 主行动；不堆 KPI 卡片。
+- `Current` 展示非终态 Task，`Recent` 展示终态 Task，两组均按最近活动倒序；
+  每行显示 objective、Task 状态、等待/失败原因摘要、最近活动时间和关联设备数。
+- 点击整行进入 `#/runtime/tasks/{id}`；空列表保留新建入口，分页沿用 Task API。
+- 详情页提供返回列表的 `Runtime` 链接，并在标题旁提供紧凑的 `Switch task`
+  菜单；菜单复用 Current/Recent 投影，标记当前 Task，选择后切换路由。
+- 切换 Task 后重建详情投影并释放旧 Task 的 SSE、媒体与播放器；不得把旧 Task
+  的关联设备或实时事件带入新页面。
+
+```text
+#/runtime
+├─ Runtime / New task
+├─ Current → objective · status · waiting reason · last activity · device count
+└─ Recent  → objective · terminal state · result summary · last activity
+       ↓ select
+#/runtime/tasks/{id}
+├─ Runtime back link / Switch task / objective / Task status / task actions
+└─ Agent Loop ↔ Devices
+```
+
+#### New Task 创建页
+
+- `New task` 进入 `#/runtime/new`。页面为单列创建表单，H1 为 `New runtime task`，
+  只有可见标签的 Objective 多行输入、持续 Task 说明、`Create task` 主按钮与
+  `Cancel` 次按钮；不以 placeholder 充当标签，不增加场景或设备型号选择。
+- 表单复用 `POST /workspaces/{id}/agent/tasks`，客户端为每个新 objective 生成
+  Idempotency-Key；同一未修改输入的网络重试保留原 key，输入改变后使用新 key。
+- 提交时显示 `Creating task` 并禁止重复提交；错误保留 objective 与可理解原因，
+  400/409 不做静默重试。accepted 后以 replace 导航到 `#/runtime/tasks/{taskId}`，
+  避免返回键再次提交；Cancel 在未提交时返回 `#/runtime`。
+
+详情首屏只优先回答三件事：**任务要做什么、现在处于什么状态、需要用户做什么**。
+
+- 第一层是 objective（页面 H1）、Task 状态和当前需要的干预；审批请求留在 Loop
+  对应步骤，不在头部重复一个竞争主按钮。
+- 第二层是当前 Run/等待原因、关联设备与证据；第三层才是统计和实现 ID。
+- 头部提供 `Pause task`/`Resume task` 次按钮；`Cancel task` 放入溢出菜单并以
+  危险操作样式呈现。历史或终态详情不显示可用的推进/取消操作。
+- Task ID、Run ID、wake/event ID 与关联 ID 收入 `Details` 折叠区，不以 mono ID
+  替代 objective 作为标题，也不占首屏主视觉。
 
 ```text
 ┌──────────────────────────────────┬─ seam ─┬──────────────────┐
@@ -504,7 +624,8 @@ Task 创建、取消、设备调用和停止沿用 Agent 管理权限；读取 T
 └──────────────────────────────────┴─────────┴──────────────────┘
 ```
 
-- 使用浅色、紧凑的 ToolCard 信息流，不使用深色大仪表盘或 Goal 卡片。
+- 使用紧凑、主题感知的 ToolCard 信息流；默认深空暗色并完整支持 light 主题，
+  不使用深色大仪表盘、Goal 卡片或固定浅色卡片孤岛。
 
 - Loop 直接展示设备状态、工具结果、accepted/running 状态、图片和 `Done/Details`。
 
@@ -535,17 +656,25 @@ Task 创建、取消、设备调用和停止沿用 Agent 管理权限；读取 T
 
 ### 7.4 Seam 与 Flow
 
+- 主栏顶部使用 `Agent Loop` / `Flow` 两个同级标签，默认 Agent Loop；Flow 使用
+  `?view=flow` 进入，浏览器前进/后退可恢复标签。右侧 Devices 在两种视图中保留。
+- 切换标签保留 Task、历史游标和关联设备选择；复用同一 runtime 投影，不复制
+  一套 Flow 专用事件顺序。Flow 默认不挤占 Agent Loop 的纵向空间。
+
 - seam 支持拖拽调宽，最小 360px，最大视口 75%；折叠后为 36px 竖向 Devices rail。
 
 - 中央按钮折叠/展开；键盘左右键每次调整 24px；宽度与展开状态本地保存。
 
-- 小屏（<980px）隐藏 seam，Loop 优先，Devices 移到下方。
+- ≥980px 使用两栏与 seam；<980px 的单栏/标签导航及缩放重排见 7.6，不能只写
+  “Devices 移到下方”而不定义发现路径。
 
 - Flow 采用双通道视觉：`CONTROL`（对应参考截图 MHS）与 `DATA`（对应 MOS），不代表协议兼容。
 
 - CONTROL 展示 call/result 方向，DATA 展示数据源粒子；设备端口与卡片位置一致。
 
-- `prefers-reduced-motion` 下停用粒子动画，保留静态总线与状态文本。
+- `prefers-reduced-motion` 下停用 DATA 粒子、live pulse、spinner、平滑滚动与
+  非必要过渡，以静态总线、图标和状态文本替代；不是把动画放慢。Following latest
+  改为即时定位，用户主动播放的视频仍保留原生控制，不自动播放。
 
 ### 7.5 状态与可访问性
 
@@ -553,6 +682,109 @@ Task 创建、取消、设备调用和停止沿用 Agent 管理权限；读取 T
 unsupported media、waiting、approval、cancelled。
 
 设备链接、详情、折叠、停止均可键盘操作；seam 有 separator 语义和宽度说明；视频有暂停与断线状态；图片有可理解的替代文本。
+
+#### Live 与历史模式
+
+- 复用 `at`/`event` 时间游标；在 Flow 选择历史事件进入历史模式，仅选择 device
+  不进入历史。Agent Loop 与 Flow 通过同一 URL 游标保持一致。
+- 历史模式在头部下方持续显示 amber `History · read-only` 横幅、事实时间和
+  `Back to live`；不使用仅有小 chip 或颜色变化表达模式，也不与 stale/offline
+  混为同一提示。
+- 历史投影不合并新事件；移除 Pause/Cancel/Approve/Reject/Stop 等可执行操作，
+  但保留有效的详情与证据查看。过期媒体仍按证据状态说明，不伪装成实时可用。
+- `Back to live` 清除 at/event、保留当前 Task 和 view 标签，经 snapshot/resync
+  回到最新状态；切换 Task 清除旧 Task 的历史游标。
+
+#### Task 暂停与恢复
+
+- `Pause task`/`Resume task` 是可逆操作，点击后直接提交，不使用危险确认框；
+  本地 pending 显示 `Pausing…`/`Resuming…` 并禁止重复提交，不新增 Task 状态。
+- Pause 旁持续说明 `Stops new runs; active jobs and watches continue`；不得暗示
+  当前 Run 被 abort 或设备动作已停止。需要停止副作用时使用独立 Job Stop/Task Cancel。
+- 以服务器投影显示 paused 及恢复后的 waiting/active 状态；请求失败保留原状态和
+  可见错误。历史或终态详情不提供暂停/恢复操作。
+
+#### Task 取消交互
+
+- 从溢出菜单选择 `Cancel task` 后打开确认对话框：显示 objective、当前活跃
+  job/watch 数量与设备名，并说明取消会停止所属副作用、未知结果仍需核查。
+- 主按钮为 `Keep running`，危险按钮为 `Cancel task`；确认前不调用取消 API。
+- 确认后禁用重复提交并显示 `Cancelling`；允许关闭对话框，但头部保留持续
+  取消状态，关闭不代表撤销取消。
+- 全部所属副作用得到确定终态后才显示 `Cancelled`；任一 `cancelled_unknown`
+  显示 `Cancellation needs attention`、未知设备与 `Refresh status`，不得显示
+  `All stopped` 或自动承诺重试成功。
+
+#### Device Job 停止交互
+
+- 只有当前投影中的 accepted/running job 在所属 ToolCard 显示 `Stop job`；
+  历史、终态或非所属 job 不显示可执行停止操作。
+- 点击后在卡内展开确认区，显示目标设备与动作，提供 `Keep job` 和危险操作
+  `Confirm stop`；文案明确只停止该 job，不取消整个 Task。
+- 确认后显示 `Stopping` 并禁止重复提交，以设备侧事实更新为 done/cancelled/
+  failed；`cancelled_unknown` 显示 `Stop result unknown` 与 `Refresh status`，
+  不显示安全成功，也不自动重试。
+
+#### 审批交互
+
+- 审批请求内联在发起它的 Run 步骤，显示具体动作、目标设备、参数摘要、原因
+  与有效时间；`Review details` 展开完整参数和相关证据，不弹离当前上下文。
+- `Approve once` 是唯一主按钮，`Reject` 为次级操作；默认不预批准、不自动提交。
+- 任一提交后两个按钮进入 pending 并禁止重复提交，以服务器投影为准显示
+  approved/rejected；本地不得先改写为已批准。
+- expired/unavailable/rejected 保留原请求与结果说明，移除可用授权按钮；
+  切换 Task 不得把 pending 提交状态或审批上下文带到另一 Task。
+
+### 7.6 响应式与缩放
+
+- **≥980px 桌面：** 保持 Agent Loop/Flow 主栏 + Devices 两栏、seam 与 36px
+  折叠 rail；Task 列表使用整行投影。
+- **600–979px 平板：** 隐藏 seam，页面按头部 → Agent Loop/Flow 主标签 →
+  Associated devices 顺序单栏排列；Devices 标题保持可见锚点，不做悬浮小窗。
+- **<600px 手机：** 详情顶部使用 `Loop`、`Flow`、`Devices` 三个同级标签，一次
+  展示一个视图；Devices 显示关联数量，Loop 中定位设备时切到 Devices 并聚焦目标。
+  头部操作换行或进入溢出菜单，objective 不截断成不可理解的一行。
+- **<400px 与 Task 列表：** 不新增另一套组件；列表行改为 objective/status 优先的
+  两行布局，次要元数据换行，禁止横向表格滚动。所有触摸目标至少 44px。
+- **200%/400% zoom 与文字放大：** 按实际可用 CSS 宽度落入相同断点；正文、审批和
+  操作不得要求双向页面滚动。Flow 图形可局部平移，但必须同时提供等价列表视图，
+  关键事实不能只存在宽画布中。
+
+### 7.7 键盘、焦点与滚动
+
+- 页面使用唯一 H1、`main` 与有名称的导航 landmarks。Loop/Flow/Devices 标签采用
+  `tablist`/`tab`/`tabpanel`、roving tabindex、左右键与 Home/End；选中态同时
+  反映在 `aria-selected` 和 URL，不只改变颜色。
+- Switch task 与溢出菜单支持方向键、Esc 和焦点归还。危险对话框默认聚焦
+  `Keep running`/`Keep job`，具有 role、aria-modal、名称、focus trap；关闭后
+  归还触发控件，若触发控件已不存在则聚焦头部 Task 状态。
+- 直接进入或切换 Task 后聚焦详情 H1（`tabindex=-1`）并从页面顶部开始；返回
+  `#/runtime` 恢复原触发行与滚动位置。旧异步响应不得再次移动新页面的焦点。
+- 从 Loop 定位设备时先展开 rail/切换手机标签，再滚动并聚焦目标设备卡；
+  目标有可见焦点样式，不只短暂高亮背景。
+- seam 使用可聚焦 `role=separator`、`aria-orientation=vertical`、
+  aria-valuemin/max/now 与可读宽度；左右键 24px，Home/End 到最小/最大，
+  折叠按钮有随状态变化的名称。Flow 保留现有时间键盘操作。
+- 实时事件、审批状态和媒体重连不得抢焦点。只有用户原本处于 `Following latest`
+  且停在末尾时才跟随滚动；阅读历史步骤时保持位置并显示 `N new events` 按钮，
+  由用户主动跳到最新。 keyed 更新不得因重建节点而丢失当前焦点。
+
+### 7.8 读屏与动态播报
+
+- Run 时间线使用有序列表与步骤标题；状态有可见文本，装饰图标 `aria-hidden`，
+  参数/结果使用可识别的 disclosure 名称。加载区域用 `aria-busy`，不靠 spinner
+  文本反复播报。
+- 全页一个 `aria-live=polite` 状态区，只播报新步骤、Task/Job 关键状态迁移、
+  审批请求、连接状态变化和终态；按关联 event/wake ID 去重。cancel_unknown
+  等需要立即核查的危险结果只 alert 一次。
+- 不播报逐 token 输出、隐藏推理、每次遥测刷新、媒体 buffered 百分比或重复 SSE
+  事件；历史浏览和 resync 重放不得把旧步骤当新事件再次播报。
+- 信息图片 alt 包含设备、来源、采集时间和可见内容摘要；相同信息已在相邻文本
+  出现时缩略图使用空 alt，避免重复。视频有可理解名称、键盘原生控制和暂停，
+  不自动播放声音；首版无字幕轨时显示 `Captions unavailable`，错误与播放器通过
+  `aria-describedby` 关联。
+- Flow 列表回退逐项提供 from/to、CONTROL/DATA、状态和时间，与图形共享游标；
+  关键关系不能只存在 SVG/canvas。时间 slider 保留 aria-valuetext 与事件时间。
 
 ## 8. 错误、安全与背压
 
@@ -587,8 +819,9 @@ unsupported media、waiting、approval、cancelled。
 1. **持续推进**：数值感知 → 图片 → 调用 → job accepted/running 状态上面板
 → result 唤醒原 Task → 验证 → completed；完整断言关联 ID。
 2. **Watch**：注册后等待；命中唤醒原 Task；重复事件不重复推进；重启重织。
-3. **审批与停止**：pending/approve/reject/unavailable；stop 覆盖在途与排队；
-`cancelled_unknown` 后先读状态再决定重试。
+3. **单 Job Stop**：stop 覆盖在途与排队；同设备两个 Task 互不误停，重复 stop 幂等，
+`cancelled_unknown` 后先读状态再决定重试。审批 pending/approve/reject/unavailable 及其
+崩溃恢复验收因 R2/D2=C 暂列 blocked，不进入当前可执行测试任务。
 4. **重启恢复**：accepted 后、result 前重启，不重复执行设备动作；Task 恢复，
 迟到结果最多唤醒一次。
 5. **媒体**：大小/类型/新鲜度、非 vision、视频需求生命周期、断流重连、证据过期
@@ -1181,8 +1414,41 @@ accepted ──worker 接收──▶ running ──done/failed/cancelled/cancel
 新增表、outbox 和事件都有直接消费者：任务推进、重启恢复、实时 UI 与审计回放；
 不是仅供展示的治理报表。Section 7 的容量指标是产品可观测性，服务于背压和告警。
 
-**Decision gate：** D1-media-adapter、D2-job-progress、D3-job-pause 已按实际回答应用；
-当前没有未解决的架构替代项。D0-pr 仅影响交付拆分，留待 Deployment/Next Steps。
+**Decision gate：** D1-media-adapter、D2-job-progress、D3-job-pause 已按实际回答应用。
+第二轮新增 R1 drain 与 R3 job 级停止已批准并写回；R2 审批持久决策/恢复经 D2=C 保持
+pending，是未解决的架构阻断项。D0-pr 仅影响交付拆分，留待 Deployment/Next Steps。
+
+### 1.7 工程复核
+
+- [INFORMATIONAL] (confidence: 9/10) `manager.rs:723-760` — cancel 只改 Task 状态不足以阻止
+  当前 Run 继续调用工具。新增约束：先 abort 当前 Run 的 CancellationToken 并阻断新工具派发，
+  再停止所属 job/watch；`paused` 仍按 Run 边界暂停，不强制中断模型。
+- [INFORMATIONAL] (confidence: 9/10) spec:185-205 — `owner_task_id`、`session_key` 和
+  `WakeSignal.workspace_id` 必须与 Task workspace 一致，upsert/重织/outbox dispatch 都要拒绝
+  跨区关联，防止误唤醒其他工作区任务。
+- [INFORMATIONAL] (confidence: 9/10) spec:203-205,333-334 — `wake_event_id` 必须同时进入
+  RunStarted/RunReport/agent_runs；只有 outbox ID 没有 RunReport ID 时，唯一去重不能成立。
+- [INFORMATIONAL] (confidence: 9/10) `manager.rs:742-833` — 当前已有近期记录、resolution、
+  快照和 principles 多段 prompt，新增 pending Task/job/watch 后可能超过 6KB。D10 必须决定
+  上下文预算与裁减顺序，而不是无界拼接。
+- [INFORMATIONAL] (confidence: 9/10) spec:281-286 — 播放 URL 需限制协议与 userinfo，
+  避免把 `file/javascript/data` 或 `user:pass@host` 直接交给浏览器。
+- [INFORMATIONAL] (confidence: 9/10) spec:368-371 — `dedup_key` 改为规范化 JSON 元组哈希，
+  防止裸分隔符拼接导致 ID 冲突。
+- [INFORMATIONAL] (confidence: 9/10) rig `completion/message.rs:314-324,1042-1071` — 已验证
+  `ToolResultContent::Image` 与 Base64/Raw 字节源存在，统一附件不需要 provider 专用旁路。
+
+第二轮工程复审（设计评审新增控制契约后）：
+
+- [CRITICAL] (confidence: 9/10) R1/flags/rollback — 禁用与先关 UI 未定义存量 Task 行为；
+  D1=A 已批准显式 drain 后关闭，旗标不隐式批量暂停/取消，回滚顺序与 smoke 已写回 §9。
+- [CRITICAL] (confidence: 9/10) R2/6.2-6.4 — 缺少持久 approval decision、冻结参数和
+  崩溃执行关联；D2=C 选择保持待补，未批准任何实现，审批路由/执行/UI 任务保持 blocked。
+- [CRITICAL] (confidence: 10/10) R3/4.4 — worker 缺 job 身份，设备级取消会误伤其他 Task；
+  D3=A 已批准 job_id 贯穿 queued/in-flight/result/restart，并持久 stop_requested。
+
+**Decision gate：** D1-media-adapter 的实现路径已证实可行；D10 的 Task 上下文预算已按
+既有决定保留。第二轮 R1/R3 已解决，R2 未解决；未把 pending remedy 计入已批准实现。
 
 ## Section 2: Error & Rescue Map
 
@@ -1714,12 +1980,13 @@ Job result 仍需满足：先持久终态再响应；worker 的物理结果与 D
 回归：控制 result/cancel 两向 pause-release，检查 state_version、stop 次数和唤醒次数。
 ```
 
-#### C. stop 与新调用
+#### C. 设备级 stop 与新调用（不是单 Job Stop）
 
 ```text
-stop 先到：stop gate+claim 释放 → 后续 call 拒绝；stop 前 queued Execute 不执行。
+设备级 stop 先到：stop gate+claim 释放 → 后续 call 拒绝；stop 前 queued Execute 不执行。
 call 先到：已进入 worker 的调用按取消协议终态；之后的新调用仍被拒绝。
 回归：两个顺序都检查没有 stop 后副作用，队列中的命令不绕过已释放 claim。
+单 Job Stop 不走此 gate，另按 job_id 验证同设备其他 Task 与新调用不受影响。
 ```
 
 #### D. outbox 投递与标记
@@ -1742,7 +2009,9 @@ dispatch 成功 → 进程在 mark dispatched 前崩溃 → pending 重试
 | INTERACTION | EDGE CASE | HANDLED? / HOW |
 | --- | --- | --- |
 | Task create 双击/刷新/重试 | 重复 Task/Run | Y：强制 key + unique + 同事务 outbox |
-| 审批双击/导航离开 | 重复执行或丢失审批上下文 | Y：按 Task/approval 幂等，返回原 needs_approval |
+| 审批双击/导航离开 | 重复执行或丢失审批上下文 | 产品契约：按 Task/approval 幂等并返回原投影；持久恢复与执行实现因 R2 blocked |
+| Task pause/resume 与 wake 竞态 | 重复 Run/误停设备 | Y：paused 不启动或 steer，恢复按等待关系；不 abort Run、不停 job/watch |
+| 同设备跨 Task Job Stop | 误停其他 Task/重复停止 | Y：Task/job 归属、job_id 队列与在途隔离、持久 stop_requested、重复返回投影 |
 | 空设备/空关联集合 | 空白或假卡片 | Y：Loop 空态说明，Devices 不展示未关联设备 |
 | 大型关联集合 | DOM/视频实例过多 | Y：无固定配额，采用增量渲染与按需媒体，监控实例和内存增长 |
 | 设备删除/离线 | 卡片陈旧、watch 悬挂 | Y：失效事件+卡片状态；历史保留 tombstone |
@@ -1754,8 +2023,8 @@ dispatch 成功 → 进程在 mark dispatched 前崩溃 → pending 重试
 | MediaStore 满/证据过期 | 加载错误或错误替代 | Y：容量告警/410，不加载其他证据替代 |
 | outbox 积压/重复投递 | 推进停滞或重复 Run | Y：pending 指标、dead 告警、wake_event_id 去重 |
 
-**Decision gate：** D5-task-create 与 D6-task-cancel 已按实际回答应用。
-当前数据流与交互没有未选择的新分支；容量与背压转到 Section 7。
+**Decision gate：** D5-task-create 与 D6-task-cancel 已按实际回答应用；第二轮 R3 单 Job
+隔离已补齐。R2 审批持久恢复仍 pending，容量与背压转到 Section 7。
 
 ## Section 5: Code Quality Review
 
@@ -1818,6 +2087,27 @@ Rig 适配器把附件映射为 provider 图片，trace 仅保留 evidence 引�
 **Decision gate：** 当前模块与契约组织满足现有 relay/ports 约束。
 未发现需要改变用户已批准范围的质量替代项；实现计划必须按上述小模块落点，而非继续扩大巨型文件。
 
+### 5.5 工程复核
+
+- `TaskStore`/`WakeOutbox` 归 `agent/src/port/task.rs`；`DeviceJobStore`/`MediaStore`
+  归 `runtime/src/ports.rs`，保持 crate 依赖方向，不让 Task 直接依赖 db。
+- `ChatMessage`/`ToolResult`/`TurnEvent` 用默认空 attachments 扩展，旧 JSON/构造器保持兼容；
+  `ToolResultContent::Image` 用 `DocumentSourceKind::Base64/Raw` 传字节，不复制进 prompt 文本。
+- `dedup_key` 用规范化 JSON 元组哈希，避免字符串拼接碰撞；相同重试复用证据与附件，
+  相同内容跨 Task 可共享 hash 文件但关联行独立。
+- `manager.rs`、`DataServer`、`AccessService` 不再吸收 Task/Job/Media 新服务，按
+  `agent/task`、runtime/job、runtime/media 小模块实现，避免继续扩大巨型文件。
+- 所有 workspace 校验在组合根与 DB 适配层共用，禁止 handler 和 runtime 各写一份
+  导致跨区语义漂移。
+- 第二轮 [INFORMATIONAL] (confidence: 10/10)：Task cancel 已批准的“abort 当前 Run、
+  阻断新工具”原先未映射到代码。现按 D6-task-cancel 的必要实现补入 `Runner::execute`、
+  `ActiveRunRegistry`、`manager` 与 rig loop 的同一 token 接线及 T3 测试；不是新架构选择，
+  不改变 pause 语义，也无需另开用户决定。
+
+**Decision gate：** 当前模块归属、附件扩展和去重实现方式满足 relay/ports 与兼容约束。
+第二轮新增 1 个 cancel 接线缺口，已作为既有批准契约的必要代码与测试写回；没有改变
+已批准结构的实现替代项。
+
 ## Section 6: Test Review
 
 ### 6.1 覆盖图
@@ -1831,10 +2121,14 @@ Task create/idempotency           双击/异 key/异 objective/崩溃重试
 Task state/wake                   正常/等待/暂停/取消/重启
   ├─ Unit: 状态机+优先级          → 非法迁移拒绝
   ├─ Integration: CAS+outbox      → 旧版本零写入、重复唤醒零新增 Run
+  ├─ Race: pause/resume+wake      → paused 不启动/steer；resume 只按等待关系恢复一次
+  ├─ Cancel: Runner/rig token     → abort 当前 Run，取消后不再派发工具；pause 不 abort
   └─ E2E: result→原 Task          → completed/failed 均符合事实
 Device Job                        accepted/running/final
   ├─ Unit: 终态去重/超时          → 无 paused/百分比
-  ├─ Integration: worker+DB       → 结果先落账再响应；stop 队列不执行
+  ├─ Integration: worker+DB       → 结果先落账再响应；job_id queued stop 不执行
+  ├─ Isolation: 同设备两 Task     → 只停目标 job；另一 job 与后续 claim 不受影响
+  ├─ Restart: stop_requested      → 重断言目标取消或 interrupted，不盲重放、不假 cancelled
   └─ E2E: >50s running→wake       → 同 Task 继续，不重复 job
 Watch                             hit/timeout/invalid/restart
   ├─ Unit: 比较器/unknown         → unknown 不命中
@@ -1849,6 +2143,9 @@ Workbench                         关联卡片/seam/Flow/历史
   ├─ Vitest: ToolCard/device card → 无场景组件、无伪造进度
   ├─ Component: 关联/定位/折叠     → 首次引用才出现，点击定位
   └─ Browser: 键盘/resync/媒体     → 无重复步骤、无后台播放、历史只读
+Rollout/drain                    flags/存量 Task/unknown
+  ├─ Integration: flag transition → off 只挡新建，不隐式 pause/cancel 存量 Task
+  └─ Runbook: drain gate          → 未清零/unknown 未处置不得关 Workbench；完成后才关 UI/Media
 Security/recovery                 跨区/崩溃/锁/迟到
   ├─ Integration: tenant+replay   → 跨区 404，崩溃不重复执行
   └─ Chaos: outbox/DB/Media 故障   → 可恢复或响亮失败，无静默成功
@@ -1867,9 +2164,21 @@ objective 409
 - no_claim: DB 集成，不证明 provider 调用次数
 
 - Requirement: stop/timeout
-- Observable assertion / rejected wrong result: stop 后 queued 命令不执行；声明
-deadline 真触发
+- Observable assertion / rejected wrong result: 目标 job 的 queued 命令不执行；in-flight
+只取消匹配 job_id；同设备另一 Task 与后续 claim 不受影响；声明 deadline 真触发；
+stop 请求后崩溃按持久身份恢复，重复 stop 不重复取消
 - no_claim: fake worker，不证明真实设备物理停止
+
+- Requirement: Task pause/cancel 边界
+- Observable assertion / rejected wrong result: pause 与 wake 竞态时不启动或 steer 新 Run，
+当前 Run、job、watch 继续；resume 按等待关系至多恢复一次；cancel abort Runner/rig 的同一
+token 且之后无新工具调用
+- no_claim: 并发集成测试，不证明所有模型提供商能及时响应取消
+
+- Requirement: rollout drain
+- Observable assertion / rejected wrong result: Task flag off 不改写存量 Task；非终态或
+unknown 未处置时 Workbench 仍可用，drain 检查通过后才允许关闭 UI/Media
+- no_claim: runbook 演练，不把配置检查当作物理急停
 
 - Requirement: 重启恢复
 - Observable assertion / rejected wrong result: accepted 后崩溃不重复派发；重复终态最多一次唤醒
@@ -1908,7 +2217,9 @@ stop 前 queued 命令、取消出现 `cancelled_unknown`。
 HLS 不支持签名 URL、跨 workspace 请求 evidence、播放器加载中连续切换。
 
 - **Chaos**：accepted 后崩溃、outbox 已投递未标记、DB locked、媒体目录只读、
-同一 evidence 并发写入、HLS 分片加载中切 Task。
+同一 evidence 并发写入、HLS 分片加载中切 Task；stop 与 queued 领取/in-flight 完成/
+进程重启竞态，同设备跨 Task 停止隔离，pause/resume 与 wake 同时到达，drain 中途出现
+`cancelled_unknown` 时不得关闭 Workbench。
 
 ### 6.4 LLM/eval 与基线
 
@@ -1931,7 +2242,8 @@ MINIMAX_API_KEY=... cargo test -p tinyiothub-cloud runtime_eval -- --ignored
 ```
 
 基线对比：`origin/main` 当前 prompt vs Task-aware prompt，比较正确工具选择、非法动作率、
-假图片声明、Task 完成率、重复 job 数和 token 上限。没有可用 vision provider/key 时结果为
+假图片声明、Task 完成率、重复 job 数、prompt 字节/token 用量和模型上下文错误。没有可用
+vision provider/key 时结果为
 **unavailable**，不得记 PASS。现有 `judgment_eval` 仅作为既有回归哨兵，不替代 runtime eval。
 
 ### 6.5 金字塔、负载与可重复性
@@ -1948,6 +2260,48 @@ MINIMAX_API_KEY=... cargo test -p tinyiothub-cloud runtime_eval -- --ignored
 
 **Decision gate：** 当前测试范围与已批准行为一一对应，没有需要额外裁定的测试方法选择。
 所有新功能测试均标为 required/planned，未把现有测试绿灯计作新能力证据。
+
+### 6.6 工程复核
+
+测试框架：Rust `cargo test` + web `vitest`（`RUNTIME:rust`，TESTFILES:141）。
+当前没有新实现测试，以下全部为 required/planned；不得把历史全绿计作验收。
+
+关键 value cards：
+
+- `Task create`：protects=同 key 只创建一次；fails_when=并发双击产生两行或 outbox 重复；
+  why_new=现有 POST 每次新 UUID；seam=none；no_claim=provider 调用次数（mock only）。
+- `cancel`：protects=当前 Run 不再发新工具；fails_when=cancel 后仍调用 invoke_action；
+  why_new=仅改 Task 状态会产生后续副作用；seam=CancellationToken；
+  no_claim=不证明真实设备已停（fake worker）。
+- `wake_event_id`：protects=重复终态只产生一个 Run；fails_when=只写 outbox 未写 RunReport，
+  或 RunStarted 没带 wake_event_id；seam=RunStarted/RunReport；no_claim=不证明 exactly-once
+  外部副作用。
+- `owner/workspace`：protects=跨区 watch/session/outbox 不加载；fails_when=owner_task_id
+  或 session_key 属于其他 workspace；seam=workspace guard；no_claim=仅 DB/handler 集成。
+- `stop/timeout`：protects=目标 queued 不执行、in-flight 只停匹配 job_id、同设备跨 Task
+  隔离、重启不遗忘 stop，声明 deadline 真触发；fails_when=按 thing 取消当前 token、误停
+  另一 Task、FIFO 绕过 stop 或重启后丢失请求；seam=worker job_id/CancelSlot/result；
+  no_claim=不证明真实物理停止。
+- `image attachment`：protects=图片字节到 provider 且 trace 只有引用；fails_when=rig 静默丢图、
+  非 vision 未显式失败；seam=rig provider；no_claim=provider acceptance（mocked provider; unit only）。
+- `playback`：protects=只返回脱敏短时 URL；fails_when=接受 file/javascript/data、userinfo、
+  过期 URL 或 CORS 失败仍显示实时画面；seam=playback handler/player；no_claim=真实摄像头兼容性
+  需本地上游与 staging，不在单测证明。
+- `Task context`：protects=pending job/watch、关联 ID、快照和阶段结果完整且顺序稳定；
+  fails_when=新增 Task 段被隐藏截断、遗漏 pending 或拼接顺序随 HashMap 变化；
+  why_new=现有快照测试不覆盖 Task 段；seam=prompt assembler；
+  no_claim=不证明模型上下文永不超限，字节/token 与成本需 eval 和指标观测。
+
+新增/更新测试必须放对应 owning module，而不是只测 helper。`runtime_eval` 是 `[planned]` 新套件，
+现有 `judgment_eval` 仅作回归哨兵。所有失败、边界和跨区用例均标 required/planned。
+
+第二轮 [INFORMATIONAL] (confidence: 10/10)：控制测试原先缺少同设备跨 Task stop、
+stop/restart、pause/resume+wake 与 flag drain 竞态。上述测试是 R1、R3、既有 pause/cancel
+批准契约的必要证明，已写入 6.1-6.3、T2/T3/T6/T8，不另开测试方法选择。R2 未批准，
+因此没有新增可执行审批崩溃测试，相关验收明确 blocked。
+
+**Decision gate：** 当前测试价值卡均对应真实回归风险，没有无意义的新测试。
+D10 已选择无 Task prompt 总硬顶；测试固定完整拼接与确定顺序，eval 和指标负责暴露模型上下文与成本风险。
 
 ## Section 7: Performance Review
 
@@ -1994,7 +2348,7 @@ retention 每批最多 100 个证据，过期删除与容量指标分开记录�
 Commitment comparison:
 
 - Commitment: active Tasks/workspace
-- Source/approval or pending: 现有 watch 上限 20
+- Source/approval or pending: 现有 `HOURLY_WAKE_LIMIT=20`（不是 watch 数上限）
 - Current: 未定义
 - A（保守配额）: 20
 - B（较大配额）: 100
@@ -2054,12 +2408,12 @@ Project/branch/task: e4-p2-declaration-closeout，Task、outbox、视频会话�
 ELI10: 没有容量上限时，多建几个 Task 或同时读几张图片，就可能让
 DB、内存和视频连接一起失控。容量需要在开发前变成明确拒绝与告警，而不是等事故发生再补。
 Stakes if we pick wrong: 可能让单个 workspace 拖垮整个 Hub，或者让正常多设备任务被意外限死。
-Recommendation: 采用保守配额（20 Task/50 设备/1000 pending/3 视频/64 MiB），因为它与现有 watch=20
+Recommendation: 采用保守配额（20 Task/50 设备/1000 pending/3 视频/64 MiB），因为它与现有 `HOURLY_WAKE_LIMIT=20`
 和快照=50 基线一致，且把图片峰值从 512 MiB 降到 64 MiB。
 Note: options differ in kind, not coverage — no completeness score.
 Pros / cons:
 A) 保守配额 (recommended)
-✅ 与现有 watch=20、快照=50 对齐，首版容量和 UI 行为容易预测。
+✅ 与现有 `HOURLY_WAKE_LIMIT=20`、快照=50 对齐，首版容量和 UI 行为容易预测。
 ✅ 图片峰值有界，outbox/视频拒绝可观测，适合先验证真实负载。
 ❌ 大工作区可能更快触顶，需要后续按实测扩容。
 B) 较大配额
@@ -2090,6 +2444,69 @@ Scope: 不为 active Task、linked devices、pending outbox、视频会话或进
 **Decision gate：** D8 已按实际回答取消固定配额。批大小、流式写盘、播放器销毁、
 增量渲染和背压指标仍为实现义务；OOM/DB 膨胀风险保留，不得宣称已关闭。
 
+### 7.4 Task 上下文预算
+
+`SNAPSHOT_MAX_BYTES=6144`（`prompt/snapshot.rs:11`）只覆盖现有设备快照。
+新增 pending Task/job/watch 与阶段结果需要确定拼接顺序和可观测性；D10 已选择不设置
+Task prompt 总硬顶，不能用新增隐藏截断控制成本。
+
+| D10-context-budget / performance | `snapshot.rs:11` 已有 6144 bytes 上限 | 新 Task 元数据增加 prompt 成本与上下文超限风险 | 无总硬顶，完整拼接并观测 | approved | 用户 D10 选择 C |
+
+## currentDecision (D10-context-budget)
+
+Commitment comparison:
+
+| Commitment | Source/approval or pending | Current | A（总 6KB，优先 pending） | B（总 8KB） | C（无硬顶） |
+|---|---|---|---|---|---|
+| 总 prompt 预算 | 现有 6144 bytes | 不含 pending Task | 全部 ≤6144 | 全部 ≤8192 | 无硬顶 |
+| pending job/watch | 恢复所需事实 | 不可丢失 | 优先保留并压缩摘要/引用 | 同左但额度更宽 | 不做裁减 |
+| 设备快照 | E2 已有摘要 | 可能挤压 | pending 后剩余额度，超限省略并计数 | 同左但额度更宽 | 不做裁减 |
+| 阶段结果/证据 | 辅助推理 | 可能膨胀 | 最后截断并标注省略，不删除 pending | 同左但额度更宽 | 不做裁减 |
+| token/成本 | E1/E2 预算约束 | 新增上下文不可控 | 保持现有预算，约不增加 | 增加约 33% | 不可预测 |
+| 测试 | 必须具备 | 快照测试不含 Task | 总量/pending 保留/截断/省略顺序/中文 | 同左 | 只测拼接 |
+
+Question: D10 — D10-context-budget: Task 上下文采用哪种预算与裁减顺序
+Project/branch/task: 通用 Task Runtime，现有设备快照上限 6144 bytes，新增 pending Task/job/watch 与阶段结果。
+ELI10: 如果所有内容都塞进 prompt，成本和截断顺序会失控。等待中的 job/watch 是恢复任务的关键事实，必须先保留；设备列表和历史结果可以摘要、计数或省略。
+Stakes if we pick wrong: 可能丢失任务恢复所需状态，或者让 token 成本随设备数和历史无限增长。
+Recommendation: 总 6KB 且优先 pending，因为现有预算已被验证，而且 pending 是恢复主链；设备快照与历史证据应被压缩或省略，而不是反过来挤掉等待关系。
+Note: options differ in kind, not coverage — no completeness score.
+Pros / cons:
+A) 总 6KB，优先 pending (recommended)
+  ✅ 保持现有预算，先保留恢复所需的 job/watch 与关联 ID，设备快照和历史按剩余空间摘要。
+  ✅ 中文截断与省略计数可测，避免无限 token 增长。
+  ❌ 大工作区会省略更多设备细节，需要让 Agent 通过 read_device 按需补读。
+B) 总 8KB
+  ✅ 为 pending 保留更多设备上下文，减少按需补读。
+  ✅ 仍能保留确定截断与省略规则。
+  ❌ 比现有预算增加约 33% token 与 prompt 成本。
+C) 无硬顶
+  ✅ 不需要做预算或裁减逻辑。
+  ✅ 不会因额度不足遗漏 pending 或设备事实。
+  ❌ token 成本不可预测，大工作区下提示词会无限膨胀。
+Net: 决定 pending 优先级的预算方式，不决定设备类型或功能范围。
+Header: 上下文预算
+A) 总 6KB，优先 pending (recommended)
+M（human ~2–4 天 / CC ~0.5–1 天 [estimated]），中风险，复用现有 6144 上限。✅ 保留恢复事实并限制 token 成本。✅ 中文截断/省略计数可测，Agent 可按需补读。❌ 大工作区省略更多设备细节。
+B) 总 8KB
+M（human ~2–4 天 / CC ~0.5–1 天 [estimated]），中风险，增加 Task 专项额度。✅ 保留更多设备上下文，减少补读。✅ 仍有确定截断与省略规则。❌ token 成本增加约 33%。
+C) 无硬顶
+S（human ~0.5 天 / CC ~15 分钟 [estimated]），高成本风险，只做拼接。✅ 无需预算裁减。✅ 不遗漏 pending 或设备事实。❌ token 成本不可预测，大工作区 prompt 会膨胀。
+
+Answer: 用户 D10 选择 C（无硬顶），2026-10-26。
+Scope: 不设置 Task prompt 总字节硬顶，不按总额度截断 pending job/watch、设备快照或阶段结果。
+保留现有 `render_snapshot` 自身的 6144 bytes 设备快照边界，新增 Task 段完整拼接并采用确定顺序；
+不得新增隐藏截断。测试验证 pending/关联 ID、快照与阶段结果均完整保留及输入顺序稳定；
+以 prompt 字节/token 估算、模型上下文错误率和成本指标观测风险，不宣称已有容量保护。
+
+State: approved
+Actual answer: C（无硬顶），用户 D10，2026-10-26。
+Accepted scope: 无 Task prompt 总硬顶；保留既有设备快照边界；完整拼接、确定顺序与成本观测。
+
+第二轮工程复审：Performance 新增 0 个 issue。R3 只增加 job 身份与 stop 请求关联，沿用
+`(task_id,state)`、`(workspace_id,device_id,state)` 活跃查询；R1 drain 是有界管理操作，
+不引入固定 Task/device/outbox/video/process-image 配额，也不改变 D8/D10 的保留风险。
+
 ## Section 8: Observability & Debuggability Review
 
 ### 8.1 结构化日志与 trace
@@ -2102,8 +2519,8 @@ Scope: 不为 active Task、linked devices、pending outbox、视频会话或进
 ### 8.2 指标
 
 - 范围: Task
-- 工作信号: created/completed/failed/cancelled、active、Run 数、等待时长
-- 故障信号: wake_lag、waiting 超期、非法迁移、重复唤醒
+- 工作信号: created/completed/failed/cancelled、active、Run 数、等待时长、prompt 字节/token 估算
+- 故障信号: wake_lag、waiting 超期、非法迁移、重复唤醒、模型上下文错误与成本异常增长
 
 - 范围: Outbox
 - 工作信号: pending、 dispatched、 oldest、 dispatch latency
@@ -2162,6 +2579,12 @@ pending/dead 行。
 - `GET /admin/runtime/jobs?state=active|unknown`：先读设备真实状态，再人工裁定；
 `cancelled_unknown` 禁止盲目重试，必要时先 stop 其他相关 job。
 
+- Runtime drain（R1/D1=A）：先关闭新持久 Task 创建，保留 Workbench；从 Task 列表固定
+  非终态 ID 批次并逐个调用既有 cancel，不做批量隐式状态改写。用 Task 详情、admin jobs
+  和只读 DB/投影查询核对非终态 Task、活跃 Run/job/watch/pending outbox 均归零；
+  每个 `cancel_unknown` 以 task/job/device ID 记录人工核查与处置。清单未完成时不得关闭
+  Workbench，完成后才关 UI/Media；该流程不是物理急停。
+
 - 图片/证据失败：检查 `data/media` 权限与磁盘、孤儿清理任务和证据元数据；
 不用旧图替代，不手工改 hash。
 
@@ -2181,7 +2604,10 @@ pending/dead 行。
 
 ### 9.1 迁移与兼容
 
-- 先合入 PR #101，作为后续 Runtime 的代码基线，避免把 E4 P2 未交付状态混入新主链。
+- 原方案为先合入 PR #101 再开发 Runtime；2026-10-27 D6 用户改为在当前
+  `e4-p2-declaration-closeout` 分支继续实现，声明收口与完整 Runtime 最终全部并入现有
+  PR #101，不另开 Runtime PR。以该 PR 的声明提交 `6876707f` 为代码基线，保留分阶段提交、
+  三个默认关闭 flags 和完整验收；push/merge 仍需单独授权。
 
 - 新表/列均为 additive DDL：`agent_tasks`、`task_wake_outbox`、`device_jobs`、
 `media_evidence`，以及
@@ -2201,7 +2627,9 @@ pending/dead 行。
 
 在既有 `workspaces.heartbeat_config` JSON 增加三个默认关闭的 rollout 开关：
 
-- `runtime_tasks_enabled`：关闭时 `POST agent/tasks` 走旧 UserDirective 路径。
+- `runtime_tasks_enabled`：关闭时 `POST agent/tasks` 走旧 UserDirective 路径，只阻止新持久
+  Task 创建；不隐式暂停、取消或改写既有 Task，既有 Run/job/watch/outbox 仍按原契约推进。
+  该开关不是紧急 kill switch；停止副作用必须显式使用 Task Cancel 或 Job Stop。
 
 - `runtime_media_enabled`：关闭时 read_device 不返回图片附件或 playback descriptor。
 
@@ -2215,8 +2643,12 @@ pending/dead 行。
 - Linux 文件库跑完整迁移链，不只内存 baseline；HLS 用本地源分别覆盖 CORS 成功/失败，
 验证浏览器直连而非 Hub 代理；hls.js 使用 Node 24 构建与测试。
 
-- 自动 smoke：Task create 重放、job 长调用唤醒、stop queued、非 vision、脱敏播放描述、
-跨区拒绝、outbox 重试去重。
+- 自动 smoke：Task create 重放、job 长调用唤醒、stop queued、同设备跨 Task 停止隔离、
+非 vision、脱敏播放描述、跨区拒绝、outbox 重试去重。
+
+- Flag/rollback smoke：关闭 Task flag 后新持久 Task 走旧路径而既有 Task 不被隐式改写；
+drain 未完成时禁止关闭 Workbench，完成后核对非终态 Task 与活跃 Run/job/watch/outbox
+均为 0，且每个 unknown 都有管理员处置记录。
 
 - 前 5 分钟：迁移/FK 检查通过；旧 API 健康；同 key 同 id；首个 job 有真实终态；
 UI 无 paused/百分比；runtime stream 可连接。
@@ -2227,14 +2659,17 @@ UI 无 paused/百分比；runtime stream 可连接。
 ### 9.4 回滚流程
 
 ```text
-关闭 runtime_workbench_enabled
-  → 关闭 runtime_media_enabled
-  → 关闭 runtime_tasks_enabled（恢复旧 UserDirective 路径）
+保持 Workbench/Media 可用，关闭 runtime_tasks_enabled（只阻止新持久 Task）
+  → 列出并逐个显式取消非终态存量 Task，不批量隐式改状态
+  → 等待 Task 到达确定终态；任一 cancel_unknown 必须由管理员核查设备并留处置记录
+  → 确认非终态 Task=0、活跃 Run/job/watch/outbox=0，且 unknown 均有处置记录
+  → 关闭 runtime_workbench_enabled，再关闭 runtime_media_enabled
   → 旧 binary/旧 UI 继续运行，保留 additive 表列与证据
   → 修复后按 Task → Media → Workbench 顺序重新启用
 ```
 
-预计维护窗口约 15 分钟 `[estimated]`，不 drop 新表、不删除证据、不做 destructive 数据回滚。
+预计维护窗口约 15 分钟 `[estimated]`，实际以 drain 与 unknown 核查完成为准，不能为赶窗口
+跳过检查或先隐藏 Workbench。不 drop 新表、不删除证据、不做 destructive 数据回滚。
 
 ### 9.5 交付批次选择
 
@@ -2335,13 +2770,13 @@ Scope: 一次完整评审与合并，无跨 PR 兼容成本；Task+Job、Source/
 场景包与 E5；OpState 可替换 Run 恢复实现而不重写 Workbench。
 
 - **明确债务：** 单 PR 很大；rig 附件契约跨 provider；签名播放 URL 依赖上游实现；
-D8 无固定配额；outbox/ledger/Task 历史持续增长。
+D8 无固定配额；D10 无 Task prompt 总硬顶；outbox/ledger/Task 历史持续增长。
 
 - **清理纪律：** `task_wake_outbox` 的 dispatched 行保留 30 天，dead 行只在人工处置后
 再按处置时间保留 7 天；清理只删过期审计，不删 pending。Task/job/ledger 本版不做
 破坏性 retention，先以体积指标决定是否另立保留策略。
 
-- **未来显式重开：** 真实百分比进度、Job pause/resume、OpState、固定配额和 Hub 视频代理
+- **未来显式重开：** 真实百分比进度、Job pause/resume、OpState、固定配额、Task prompt 总硬顶和 Hub 视频代理
 都被本次裁定排除；只有出现真实需求与新证据才重新评审，不能留下隐式入口。
 
 - **生态与可读性：** relay/ports、DB 单一 SQL 住所、Lit 组件和现有 Run/Watch 先例一致。
@@ -2362,98 +2797,339 @@ D8 无固定配额；outbox/ledger/Task 历史持续增长。
 任何一步都可点设备 → 右侧定位该设备卡；任何历史状态都不允许再执行。
 ```
 
+| STEP | USER DOES | USER FEELS | PLAN SPECIFIES? |
+| --- | --- | --- | --- |
+| 1. 进入 Runtime | 扫 Current/Recent，判断哪些 Task 需要关注 | 有方向感，而非面对指标墙 | 是：按状态分组、objective/等待原因/最近活动优先，New task 唯一主行动 |
+| 2. 提交 objective | 创建持续 Task 并等待 accepted | 期待但不怀疑是否重复创建 | 是：持久 Task、幂等结果、accepted 后进入同一 Task；不伪造即时完成 |
+| 3. 首次打开详情 | 在 5 秒内读标题、状态和当前推进 | “我知道它在做什么” | 是：objective H1、Task 状态、当前 Run/等待原因三层优先级 |
+| 4. 核查依据 | 从 Loop 定位设备、图片和遥测证据 | 从好奇转为有据可信 | 是：关联设备规则、证据来源/时间、stale 与模型感知边界 |
+| 5. 等待 job/watch | 查看等待对象和已等待时间，继续只读检查 | 平静，不因无百分比而猜测 | 是：真实 accepted/running/waiting 状态，无假进度，其他证据仍可读 |
+| 6. 收到审批 | 就地审查设备、参数与原因后决定 | 紧张但保有控制权 | 是：内联 Review details、Approve once/Reject、服务器结果为准 |
+| 7. 调查历史 | 在 Loop/Flow 对照过去事实，再回到实时 | 不迷路，不混淆过去与现在 | 是：共享 at/event、持续 History 横幅、Back to live |
+| 8. 遇到断线/失败 | 保留最后有效上下文，理解缺口与恢复状态 | 担忧但不被突然白屏抛弃 | 是：stale/最后更新时间、局部错误、resync 与列表回退 |
+| 9. 取消或停止 | 先确认影响，再跟踪真实副作用终态 | 能干预，也知道何时仍不确定 | 是：Task/Job 分离确认、cancelling/stopping、cancel_unknown 明确警示 |
+| 10. 完成与复盘 | 阅读最终结论和证据，之后返回列表 | 完成感与可审计的长期信任 | 是：completed/failed/cancelled 不混用，历史证据与 Recent 保留 |
+
+时间尺度验收：
+
+- **5 秒：** objective、当前状态、需要的干预先于实现 ID 和统计被看见。
+- **5 分钟：** 用户能不靠刷新完成核查证据 → 审批/停止 → 历史对照 → 返回实时。
+- **5 年 / 长期：** 重复使用后仍相信状态与设备事实；任何 unknown、stale 和失败都
+  保留诚实的不确定性，不用动效、假进度或成功文案掩盖。
+
 首要信息是 Agent 的推进，其次是关联设备事实，最后才是统计与实现 ID。
 没有 Goal 管理页、独立 World 栏或深色大仪表盘。
 
 ### 11.2 状态覆盖
 
-- FEATURE: Agent Loop
-- LOADING: 注入与首帧
-- EMPTY: 无 Task/无步骤
-- ERROR: Run 失败原因
-- SUCCESS: 连续 ToolCard
-- PARTIAL: waiting job/watch，非假完成
+矩阵描述用户看到的界面，不把后端状态名当作完整 UX。首次加载使用结构 skeleton；
+后续刷新保留已读内容并显示局部 updating。错误不清空最后一次有效数据；保留时
+必须标 `Stale` 与最后更新时间。终态、等待与降级均使用文字说明，不互相冒充。
 
-- FEATURE: 关联设备
-- LOADING: 读取声明
-- EMPTY: 尚未引用设备
-- ERROR: 设备离线/删除
-- SUCCESS: 按引用出现卡片
-- PARTIAL: 旧状态标 stale，历史 tombstone
-
-- FEATURE: Job
-- LOADING: accepted/running
-- EMPTY: 无 job
-- ERROR: rejected/failed/unknown
-- SUCCESS: done/cancelled
-- PARTIAL: cancelled_unknown 明示，无百分比
-
-- FEATURE: 图片
-- LOADING: 加载/校验
-- EMPTY: 无图片
-- ERROR: 非 vision/超限/过期
-- SUCCESS: 图片+证据关联
-- PARTIAL: unsupported/expired 明示
-
-- FEATURE: 视频
-- LOADING: 获取 descriptor
-- EMPTY: 无声明视频
-- ERROR: CORS/签名/协议/断流
-- SUCCESS: 浏览器直连播放
-- PARTIAL: 重连/不支持，无静态冒充
-
-- FEATURE: SSE/Flow
-- LOADING: 建立连接
-- EMPTY: 无事件
-- ERROR: 断连/resync
-- SUCCESS: 有序新事件
-- PARTIAL: 旧数据标 stale，不重复步骤
-
-- FEATURE: 审批
-- LOADING: 生成请求
-- EMPTY: 无 pending
-- ERROR: unavailable/expired/rejected
-- SUCCESS: approved 后继续
-- PARTIAL: needs_approval 保留
+| FEATURE | LOADING | EMPTY | ERROR | SUCCESS | PARTIAL |
+| --- | --- | --- | --- | --- | --- |
+| Task 列表 | Current/Recent 行 skeleton，保留页面标题与 New task | 显示 `No runtime tasks yet`、说明持续 Task 的用途，主行动为 New task | 已读行保留并标 stale；顶部错误条给出原因与 Retry，不用错误替换整页 | Current/Recent 分组、状态和最近活动时间可见 | 单组为空不影响另一组；分页失败保留已读行并在末尾提供 Retry |
+| Agent Loop | 保留 objective/头部，时间线 skeleton；后续推进不清空旧步骤 | 显示 `No runs yet`，说明 Task 已创建、等待首次推进；无伪造 ToolCard | Run 失败原因、可理解的恢复提示和只读历史保留；失败步骤不显示 Done | 按序显示 Reason/Act/Tool/Result；completed 明确显示最终结论 | waiting_job/waiting_watch 显示等待对象与开始时间；部分证据不可用时保留其余步骤并就地说明 |
+| 关联设备 | 右栏结构 skeleton，不清空 Loop | 显示 `No devices referenced yet`，说明实际 read/call/watch 后才会出现，不提供无效设备选择 | 离线/删除设备保留名称、最后状态和 tombstone/stale 文案；详情行动按可用性禁用 | 按首次引用顺序显示声明、health、关键字段和 Task 关系 | 单设备失败不拖空整栏；旧值标 stale，未知值显示 `Unknown` 而非 0/正常 |
+| Job | 首次读取显示状态 skeleton；accepted/running 显示真实状态与已等待时间 | 无 job 时不渲染进度或空进度条，仅在该 ToolCard 显示 `No active job` | rejected/failed/interrupted 显示原因与设备；unknown 显示结果未确定 | done/cancelled 显示终态、完成时间与结果摘要，不显示百分比 | cancelling/cancelled_unknown 明示设备侧停止未完全确认，禁止显示 `All stopped` |
+| 图片证据 | 缩略图区域 skeleton 与加载说明，证据元数据先可读 | Evidence 区显示 `No image evidence`；不渲染破图或空 modal | 非 vision/超限/校验失败/过期分别说明原因；过期图不当作当前事实 | 显示图片、来源、时间、证据关联和 Details；模型不可读时不得标为已感知 | 单张失败保留其他证据；unsupported/expired 在原位置说明，可提供的重试/刷新入口就地出现 |
+| 视频播放 | 播放器区域显示获取播放描述状态，保留设备与证据上下文 | 无声明视频时显示文本说明，不显示假 poster 或不可用播放按钮 | CORS/签名/协议/断流分别给出可见原因；失败时不以静态帧冒充播放成功 | 原生播放器显示时长、暂停和播放位置；过期后明确刷新播放描述 | 重连时保留上下文并标缓冲/离线；不支持时提供证据详情而非黑屏 |
+| SSE / Flow | 保留当前快照，显示 Connecting；首次无快照使用结构 skeleton | 已连接但无事件时显示 `Waiting for the first event`，不编造节点 | 断连显示 Disconnecting/Reconnecting 与最后更新时间；旧快照标 stale，提供重试状态 | 显示 Live、有序追加和 following 状态；resync 后不重复步骤 | 事件缺口显示 `Updates may be incomplete`，resync 期间保留可读旧快照与列表回退 |
+| 审批 | 请求区 skeleton，其他 Loop 内容保持可读 | 无 pending 请求时不渲染空审批卡或按钮 | unavailable/expired/rejected 分别显示结果与不可执行原因，不保留可点的 Approve | approved 后显示审批人/时间（若已有投影）并继续原 Task，不新建重复步骤 | needs_approval 显示动作、设备、原因与风险；其他设备证据仍可只读检查 |
 
 ### 11.3 设计系统与可访问性
 
-- 采用浅色紧凑 ToolCard、中性边框和既有 typography/token；正文 14px、辅助文字 ≥12px，
-不使用彩色 glow 或低对比灰字。CSS 超 200 行拆为同目录 `.css` 文件。
+- 采用紧凑 ToolCard 与既有 typography/token；表面遵循 dark/light 主题 token，
+  不用可见 border，以 inset 高光与阴影表达层级；Reason/Act/Result、
+审批原因等连续正文使用 16px，设备数值、时间戳和密集元数据使用 14px，
+辅助文字 ≥12px；不使用彩色 glow 或低对比灰字。CSS 超 200 行拆为同目录 `.css` 文件。
 
-- Loop 主栏优先；<980px 时 Devices 移到下方，seam 隐藏。触摸目标至少 44px。
+- 双主题按实际表面/文字组合验证 WCAG AA：普通正文与 14px 数据对比度 ≥4.5:1，
+  大字 ≥3:1，焦点环与必要非文本控件对相邻颜色 ≥3:1。stale/history/muted 等
+  重要事实不得借 disabled 例外降低可读性；覆盖默认、hover、focus、error 和
+  offline 状态，不只检查静态默认色。
+
+- 主 UI 字体沿用现有 `--font-body` / `--font-display` 系统栈与中文回退，mono
+  沿用 JetBrains Mono；本期不增加 Runtime 专属字体资产。默认字体的通用感作为
+  已接受的视觉缺口保留，不宣称已消除。
+
+- 深色用于长时间监控与低照度操作环境，light 用于明亮现场；跟随现有主题选择，
+  不按“运维工具”类别强制单一主题。具体映射如下：
+
+| 设计面 | 既有契约 |
+| --- | --- |
+| 表面/文字 | `{colors.deep-space}`、`{colors.surface-card}`、`{colors.surface-elevated}`、`{colors.text-primary}` 对应的双主题 token；不新增 Runtime palette |
+| 行动/状态 | `{colors.signal-blue}` 仅用于交互/焦点；`{colors.ok-green}`、`{colors.warn-amber}`、`{colors.danger-red}` 配文字/形状；焦点使用 `--focus-ring` |
+| 形状/间距 | 面板 `{rounded.lg}`、控件 `{rounded.md}`；间距使用 `--space-1`…`--space-9`，不写零散像素值 |
+| 深度 | 使用 `--shadow-md`/`--shadow-lg` 与 inset 高光；装饰性零偏移 halo 和静态 glow 不进入 Loop |
+| 动效 | 使用 `--duration-fast`/`--duration-normal` 与 `--ease-out`；弹簧/bounce 不用于状态反馈 |
+| 局部扩展 | 只有重复出现的 Runtime 时间线/双通道样式才建立 `--runtime-*` view-scoped tokens，不新增全局色板 |
+
+- 组件复用边界：
+  - 扩展 `run-timeline` 的投影与样式以表达 waiting_job/waiting_watch/approval/
+    cancelled_unknown，不把这些状态伪装成 done/active/failed。
+  - 复用 `live-devices` 的健康、关键字段、watch/job 徽标与键盘卡片模式；卡片与
+    详情按钮保持独立，不嵌套交互控件。
+  - 复用 Flow 的 live/history、键盘时间控制、代际守卫和列表回退；Runtime 只增加
+    Task 投影与 CONTROL/DATA 语义，不另造时间导航。
+  - 借鉴 `workbench-state` 的纯函数 URL 模式和 `run-detail` 的异步代际守卫；
+    不复制其 device 选中即历史的语义，也不把 3s polling 带入新 Runtime SSE。
+  - 复用设计系统 dialog/focus 规范与全局 selection/scrollbar/tabular-nums；
+    新组件不覆盖这些浏览器表面为浏览器默认样式。
+
+- 响应式遵循 7.6：桌面双栏、平板单栏、手机 Loop/Flow/Devices 标签；触摸目标
+  至少 44px，200%/400% zoom 与 Flow 列表回退纳入验收。
 
 - 设备链接、Details、停止和 seam 均可键盘操作；separator 有名称、宽度和展开状态。
 
-- 状态不只依赖颜色，错误有文本；图片有替代文本；视频可暂停；减少动态效果时停用粒子。
+- 状态不只依赖颜色，错误有文本；图片有替代文本；视频可暂停；减少动态效果时
+  停止所有非必要动画与平滑滚动，不只停用粒子。
 
 - API 只走 `web/src/api` 层，不在组件直接 fetch；不在 Lit 模板新增 unsafeHTML。
 
 ### 11.4 设计评审要求
 
-本设计属于显著 UI scope。实现前应再运行 `/plan-design-review` 检查信息层级、
-状态矩阵和响应式；实现后必须运行 `/design-review` 对真实页面验证两栏、seam、
-关联卡片、视频与错误状态，不能只凭 mockup 或 Vitest 判定视觉完成。
+本设计属于显著 UI scope。`/plan-design-review` 已完成七个 pass，新增列表/创建/详情
+信息架构、完整交互状态、响应式与可访问性契约；总体分 4→8，剩余字体与 captions
+为用户明确 deferred 的缺口，不计为已解决。
 
-**Decision gate：** 当前 UX 方向与已确认的两栏/seam/Flow 一致，无新增 UI 选择。
-保留 `/plan-design-review` 与实现后 `/design-review` 作为独立门禁。
+**Decision gate：** 21 个设计问题均有独立回答，19 项进入本期规格，2 项 deferred 并
+写入 TODOS。没有生成或批准 mockup，独立 design outside voice 按用户选择 skipped。
+新增创建流程、pause/resume 与审批/停止 API 后应重跑 `/plan-eng-review`；实现后必须
+运行 `/design-review` 对真实页面验证两栏、seam、关联卡片、视频、双主题和错误状态，
+不能只凭 Vitest 判定视觉完成。
+
+## Decision ledger
+
+### R1: Runtime 禁用时的存量 Task 处置
+Finding: [CRITICAL] (confidence: 9/10) 本文件 :2588-2634 — 三个开关只定义新创建、媒体和 UI 的关闭行为；先关 Workbench 再关 Task 的回滚顺序未定义存量 Task/Run/job/watch/outbox，可能让仍在推进的任务失去操作入口。第二轮工程评审。
+Plan baseline: flags 默认关闭、单完整 PR、`runtime_tasks_enabled=false` 时创建走旧 UserDirective 路径；没有存量 Task 的禁用裁定。
+Runtime evidence: 当前持久 Task Runtime 尚未实现，不能从旧 UserDirective 路径推导新开关的存量行为；现有 Task 取消闭环已批准停止所属副作用并保留 `cancel_unknown`。
+Comparison grid:
+
+| Choice | Current | A | B | C |
+| --- | --- | --- | --- | --- |
+| 新 Task 创建 | flag off 走旧 UserDirective | 不变 | 不变 | 不变 |
+| 非终态存量 Task | 未定义，pending | 仅由操作员显式取消，否则保持原推进语义 | 增加 rollout 来源的 paused，区分用户主动 paused | 进入既有 cancelling 闭环 |
+| 当前 Run / job / watch | 未定义，pending | 未显式取消则继续；drain 时按 cancel 闭环终止 | 按 pause 契约继续，不 abort、不停止 | abort Run，停止所属 watch/outbox/job |
+| Workbench 关闭顺序 | 当前先关 UI | 先取消并非终态清零/处理 unknown，再关 UI | 先确认无活跃 Run/job，再关 UI | 等取消闭环与 unknown 处置后再关 UI |
+| 单 PR / flags 默认关闭 | 已批准 | 不变 | 不变 | 不变 |
+| 其他审批/停止修复 | pending | 仍 pending | 仍 pending | 仍 pending |
+
+Question D1:
+D1 — 禁用 Runtime 时如何处理存量 Task
+Project/branch/task: e4-p2-declaration-closeout，通用 Runtime 的三开关灰度与回滚。
+ELI10: 关闭“新建任务”开关，不会让已经创建的任务自动停下。若先藏起 Workbench 而旧任务仍唤醒 Run，用户将看不到、也停不了后续设备动作。
+Stakes if we pick wrong: 回滚可能留下无人可见的设备副作用，或仅因配置切换就批量中断物理操作。
+Recommendation: A) 显式 drain 后关闭，因为它不把配置开关变成隐式批量物理控制，同时给回滚一条可验证的安全顺序。
+Note: options differ in kind, not coverage — no completeness score.
+Pros / cons:
+A) 显式 drain 后关闭 (recommended)
+  ✅ `runtime_tasks_enabled=false` 只阻止新持久 Task 创建；既有 Task 不被隐式改写，回滚前先逐个取消非终态 Task 并等待确定终态或处理 `cancel_unknown`，最后才关闭 Workbench。
+  ✅ 保留三个 flags 默认关闭和单 PR 既定方案；只需补 runbook、状态检查与 smoke，human ~0.5d / CC ~30min [estimated]，维护成本低。
+  ❌ 它不是紧急 kill switch；跳过 drain 仍会让旧 Task 推进，操作员必须看到并执行前置检查。
+B) 禁用即全部暂停
+  ✅ 禁用时将非终态 Task 统一置为 rollout 来源的 paused，保留 job/watch 与事件，重新启用后按等待关系恢复，避免新增 Run。
+  ✅ 与已批准 pause 的设备语义一致，不批量取消物理 job；human ~2d / CC ~2h [estimated]，需要持久批量状态迁移和恢复测试。
+  ❌ 当前 Run 与设备 job 仍继续；还必须区分 rollout paused 与用户主动 paused，否则重新启用会误恢复用户原本暂停的任务。
+C) 禁用即全部取消
+  ✅ 禁用时走既有 Task cancel 闭环，abort 当前 Run 并停止所属 watch/outbox/job，提供最强的回滚隔离。
+  ✅ 复用 cancelling/cancel_unknown，不另造设备停止结果；human ~3d / CC ~3h [estimated]，需要批量取消进度与失败处置。
+  ❌ 配置开关会触发真实物理副作用，可能中断仍需完成的设备动作；unknown 会阻塞干净回滚，不能承诺立即安全。
+Net: 只决定禁用/回滚对既有任务的控制语义；不改变的单 PR、默认关闭、Task pause 与 Task cancel 契约。
+Header: 存量任务回滚
+Options:
+A) 显式 drain 后关闭
+  ✅ `runtime_tasks_enabled=false` 只阻止新持久 Task 创建；既有 Task 不被隐式改写，回滚前先逐个取消非终态 Task 并等待确定终态或处理 `cancel_unknown`，最后才关闭 Workbench。
+  ✅ 保留三个 flags 默认关闭和单 PR 既定方案；只需补 runbook、状态检查与 smoke，human ~0.5d / CC ~30min [estimated]，维护成本低。
+  ❌ 它不是紧急 kill switch；跳过 drain 仍会让旧 Task 推进，操作员必须看到并执行前置检查。
+B) 禁用即全部暂停
+  ✅ 禁用时将非终态 Task 统一置为 rollout 来源的 paused，保留 job/watch 与事件，重新启用后按等待关系恢复，避免新增 Run。
+  ✅ 与已批准 pause 的设备语义一致，不批量取消物理 job；human ~2d / CC ~2h [estimated]，需要持久批量状态迁移和恢复测试。
+  ❌ 当前 Run 与设备 job 仍继续；还必须区分 rollout paused 与用户主动 paused，否则重新启用会误恢复用户原本暂停的任务。
+C) 禁用即全部取消
+  ✅ 禁用时走既有 Task cancel 闭环，abort 当前 Run 并停止所属 watch/outbox/job，提供最强的回滚隔离。
+  ✅ 复用 cancelling/cancel_unknown，不另造设备停止结果；human ~3d / CC ~3h [estimated]，需要批量取消进度与失败处置。
+  ❌ 配置开关会触发真实物理副作用，可能中断仍需完成的设备动作；unknown 会阻塞干净回滚，不能承诺立即安全。
+
+State: approved
+Actual answer: A) 显式 drain 后关闭（D1，本轮 AskUserQuestion）
+Accepted scope: 仅 R1/A。`runtime_tasks_enabled=false` 只阻止新持久 Task 创建，不隐式改写既有 Task；回滚先显式取消非终态 Task，等待确定终态或处理 `cancel_unknown`，再关闭 Workbench。它不是紧急 kill switch。单 PR、flags 默认关闭、Task pause/cancel 契约保持不变；R2/R3 分别按各自记录处置。
+History: 第一轮只批准 flags 默认关闭和 gated rollout，未裁定存量 Task；设计评审新增控制 API 后的第二轮工程复审发现。用户已选择 D1=A。
+
+### R2: Task 审批的持久决策与崩溃恢复
+Finding: [CRITICAL] (confidence: 9/10) 本文件 :403-496 — API 已批准 Task/approval/decision 幂等、冲突 409、过期/不可用不执行且防重复 Run，但 6.2/6.3 没有 approval 持久记录、冻结参数、decider、expiry、decision 与执行/job/wake 的恢复关联。Section 1，第二轮工程评审。
+Plan baseline: 设计评审 D8/D21 等已批准内联审批和控制 API；6.4 的幂等与冲突语义是固定契约，但崩溃期间如何保证批准一次、执行可恢复尚未批准。
+Runtime evidence: `pending_action.rs:11-23` 是进程内 `DashMap`，`take_pending_action_reasoned` 在 :74-80 先 remove 再消费；`workspace_heartbeat.rs:777-796` 虽有条件状态翻转，但翻转后直接执行，崩溃仍可能留下已批准未执行或结果未知。现有实现不能证明新 Task 审批的重启恢复与持久幂等。
+Comparison grid:
+
+| Choice | Current | A | B | C |
+| --- | --- | --- | --- | --- |
+| 审批身份与冻结参数 | API 有 ID，表/字段未定义 | 持久 Task/run/approval、展示与执行参数、decider、expires_at、decision | 持久同类必要身份与参数 | 未定义，pending |
+| approve/reject 原子性 | 仅定义 HTTP 结果 | 条件 decision CAS；approve 同事务写唯一执行 intent/outbox，reject 不写执行 | 条件 decision CAS 后同步执行 | 未定义，pending |
+| 崩溃恢复 | 未定义 | 按 approval 唯一执行关联恢复；设备结果未知走既有 job unknown，不盲重放 | 已批准未执行或结果未知转人工核查，不自动恢复执行 | 未定义，pending |
+| 幂等/409/expiry/权限 | 已批准 | 不变 | 不变 | 不变，仍缺实现契约 |
+| R1 drain | 已批准 A | 不变 | 不变 | 不变 |
+| R3 单 Job Stop | 已批准 A | 不变 | 不变 | 不变 |
+
+Question D2:
+D2 — Task 审批如何保证崩溃后不丢、不重、不错发
+Project/branch/task: e4-p2-declaration-closeout，通用 Runtime 的持久审批与设备副作用恢复。
+ELI10: 用户点“批准一次”后，服务可能刚好重启。系统既要记住人究竟批准了什么，也要知道设备命令是否已进入执行流程，否则可能永远不执行，或恢复时重复执行。
+Stakes if we pick wrong: 崩溃可能让审批卡死、让人看到的参数与实际动作不同，或对物理设备重复下发命令。
+Recommendation: A) 持久决策＋执行信箱，因为它把已批准的幂等、参数一致性与重启恢复落到同一事务和唯一执行关联，而不是依赖进程内存或崩溃后的猜测。
+Completeness: A=10/10, B=6/10, C=2/10
+Pros / cons:
+A) 持久决策＋执行信箱 (recommended)
+  ✅ 新增持久 approval 记录，冻结展示/执行参数并记录 Task/run、decider、expiry 与 decision；approve 的 CAS 与唯一执行 intent/outbox 同事务，reject 不产生执行。
+  ✅ 重启后按 approval 唯一关联恢复，设备结果未知沿用 job unknown 而不盲重放；同 decision 重放返回投影、冲突 409、过期/不可用不执行，human ~3d / CC ~4h [estimated]。
+  ❌ 需要新表/port、迁移、执行关联与崩溃注入测试，维护成本高；不能只复用旧 heartbeat 翻转后直接调用的路径。
+B) 持久决策＋同步执行
+  ✅ 持久化审批身份、冻结参数和 decision CAS，可复用旧 heartbeat 的条件翻转与防盲签校验；同 decision 与冲突决定仍有明确持久依据。
+  ✅ 不新增自动执行恢复器，代码与运维状态更少，human ~1.5d / CC ~2h [estimated]；正常进程内批准路径更直接。
+  ❌ CAS 后崩溃可能留下已批准未执行或设备结果未知，只能转人工核查且不能自动续跑；不满足完整重启恢复，unknown 时仍不得盲目重试。
+C) 保持现状待补
+  ✅ 本轮不引入新表或执行恢复机制，也不假装旧 DashMap/heartbeat 已满足新契约；文档与核对成本约 human ~0.5d / CC ~30min [estimated]。
+  ✅ 保留现有 API 产品语义和其他已批准决定，不会在未裁定实现前写入错误的持久化保证。
+  ❌ 审批持久性、崩溃恢复与防重复执行仍未定义，本评审保持 unresolved，不能据此开始审批实现或宣称 Approval readiness 通过。
+Net: 只选择审批决策到执行关联的恢复机制；不改变已批准的内联审批、权限、幂等、409、expiry、单 PR 或 R1 drain。
+Header: 审批恢复语义
+Options:
+A) 持久决策＋执行信箱
+  ✅ 新增持久 approval 记录，冻结展示/执行参数并记录 Task/run、decider、expiry 与 decision；approve 的 CAS 与唯一执行 intent/outbox 同事务，reject 不产生执行。
+  ✅ 重启后按 approval 唯一关联恢复，设备结果未知沿用 job unknown 而不盲重放；同 decision 重放返回投影、冲突 409、过期/不可用不执行，human ~3d / CC ~4h [estimated]。
+  ❌ 需要新表/port、迁移、执行关联与崩溃注入测试，维护成本高；不能只复用旧 heartbeat 翻转后直接调用的路径。
+B) 持久决策＋同步执行
+  ✅ 持久化审批身份、冻结参数和 decision CAS，可复用旧 heartbeat 的条件翻转与防盲签校验；同 decision 与冲突决定仍有明确持久依据。
+  ✅ 不新增自动执行恢复器，代码与运维状态更少，human ~1.5d / CC ~2h [estimated]；正常进程内批准路径更直接。
+  ❌ CAS 后崩溃可能留下已批准未执行或设备结果未知，只能转人工核查且不能自动续跑；不满足完整重启恢复，unknown 时仍不得盲目重试。
+C) 保持现状待补
+  ✅ 本轮不引入新表或执行恢复机制，也不假装旧 DashMap/heartbeat 已满足新契约；文档与核对成本约 human ~0.5d / CC ~30min [estimated]。
+  ✅ 保留现有 API 产品语义和其他已批准决定，不会在未裁定实现前写入错误的持久化保证。
+  ❌ 审批持久性、崩溃恢复与防重复执行仍未定义，本评审保持 unresolved，不能据此开始审批实现或宣称 Approval readiness 通过。
+
+State: pending
+Actual answer: C) 保持现状待补（D2，本轮 AskUserQuestion）
+Accepted scope: none; 用户选择暂不补充审批恢复机制，A/B 均未批准。既有 API 产品语义与其他已批准决定保留，但审批持久性、崩溃恢复与防重复执行仍未定义，不得开始该审批实现；R1 drain 与 R3 job 级停止按各自批准记录执行。
+History: 第一轮没有新增审批控制 API；设计评审批准产品语义后，第二轮工程评审发现持久化与崩溃恢复缺口。用户已选择 D2=C，remedy 保持 unresolved。
+
+Follow-up resolution（2026-10-27，显式重开 R2）: 用户在开始开发前选择
+“持久化并幂等续跑”，即本 finding 的 A。上述 State/Actual answer/Accepted scope 保留为
+第二轮历史记录，由本段取代其当前门控状态；没有改写历史回答。
+
+- 持久身份：`approval_id` 为服务器生成 UUID；请求在同一事务写入 pending approval、冻结
+  `task_id/run_id/tool_call_id/device_id/tool/args_json/reason/expires_at`、预分配
+  `decision_event_id`，并把 Task 迁为 `needs_approval`。客户端和后续模型输出都不能改写
+  这些执行字段。
+- 决策事务：approve/reject 先校验 workspace、Task、approval 和 Agent 管理权限，再以
+  `WHERE state='pending'` CAS 写 decision/decider/time。approve 与 `approval_decided`
+  outbox 同事务；该 outbox 是唯一执行 intent。reject 也唤醒原 Task 记录拒绝，但不创建
+  DeviceJob。相同 decision 重放返回原投影，冲突 decision 409；expired/unavailable/terminal
+  只返回或记录当前事实，不授权执行。pending 首次到期仍以原 `decision_event_id` 原子写
+  `expired + outbox`，恢复扫描先处理到期记录；重复到期决策不再新增 wake。
+- 执行接续：WakeRouter 读取 approved 决策后，ApprovalExecutor 只使用冻结参数和原
+  `tool_call_id` 调 JobService；Job 插入与 Task `needs_approval → waiting_job` 同事务，
+  事务内重查 Task/approval，cancel/pause/terminal 不能绕过。`device_jobs.tool_call_id`
+  唯一约束是第二层防重，既有记录必须逐字段匹配冻结执行身份。设备 Job 终态仍经原有
+  wake 回原 Task。批准不新跑模型来“猜测”原动作，也不由浏览器直接调用设备。
+- 崩溃矩阵：pending 在重启后仍为 pending；approve 提交前回滚则仍可重新决定；approve
+  提交后、outbox dispatch 前由 pending 扫描续跑；dispatch 后崩溃按 decision_event_id 与
+  tool_call_id 去重；Job 已 accepted/running 则恢复原等待关系；Job 已有终态只补投影；
+  `cancelled_unknown`、物理结果不明或不可恢复调用不得自动重放。
+- 控制竞态：pause 只记录 decision/outbox，恢复前不派发新 Job；approve 与
+  reject/expired/unavailable 的 Task advance 若返回 `Deferred`，都必须把原 outbox 留作
+  pending，不得标为 dispatched；resume 重试同一 `decision_event_id`。cancel/terminal 使未 dispatch
+  intent 失效并走既有 outbox/job 解决流程。approve 与 cancel 竞争时只能由 Task 状态 CAS
+  决定一个顺序，cancel 先提交则不得执行。过期使用注入时钟测试，不新增固定全局 TTL。
+- 验收：双击/并发同 decision 仅一个决策与 outbox；冲突 409；事务故障无半提交；冻结参数
+  逐字节一致；在上述每个崩溃点恢复后最多一个 Job；reject/expired/unavailable 零 Job；
+  跨 workspace/Task 404；非管理员 403；历史模式无审批操作。恢复不承诺物理 exactly-once，
+  只承诺不盲重放和明确 unknown。
+
+Current state: resolved / approved for implementation planning，仍须通过本文件 11.4 要求的
+聚焦 `/plan-eng-review` 和实现测试；不代表功能已经实现或验收。
+
+### R3: 单 Job Stop 的排队与在途隔离
+Finding: [CRITICAL] (confidence: 10/10) 本文件 :529-532、:663-671 — 已批准只停止当前 Task 所属 accepted/running job、按 Task/job 幂等且不取消 Task，但现有 worker 命令与结果没有 job 身份，无法安全覆盖 queued/in-flight 及重启恢复。Section 1，第二轮工程评审。
+Plan baseline: 设计 D10 与 6.4/7.5 已批准单 Job Stop 的产品边界；不得取消整个 Task、不得自动重放设备命令、不得影响同设备其他 Task，迟到终态与 `cancelled_unknown` 必须保留。
+Runtime evidence: `worker.rs:54-64` 的 CancelSlot 只有当前 token；`WorkerCommand::Execute` 在 :129-138 没有 job_id，`WorkerResult::Cancelled` 在 :173-178 也没有；`data_server.rs:152` 按 thing 调 `cancel_current`，`arbitration.rs:161-168` 的 set_stop 是设备级 gate 并释放资源。直接复用两者可能误停另一 Task 或阻断该设备后续 claim。
+Comparison grid:
+
+| Choice | Current | A | B | C |
+| --- | --- | --- | --- | --- |
+| 排队取消 | job_id 未传入 worker | Execute 携带 job_id；领取时检查持久 stop_requested，目标 job 直接形成 cancelled 终态 | 新单设备 Job 调度器持有队列；queued 目标不再 submit 到 worker | 未定义，pending |
+| 在途取消 | 仅 thing 当前 token | CancelSlot 绑定 job_id，仅匹配目标时 cancel；结果携带同一 job_id | 调度器只跟踪一个当前 job，仅映射匹配时 cancel_current | 未定义，pending |
+| 重启与幂等 | API 幂等已批准，恢复未定义 | 持久 stop_requested；重启按 job_id 重断言，重复 stop 返回投影 | 同样持久 stop_requested；重启重建单设备当前映射 | 未定义，pending |
+| 同设备/跨 Task 隔离与 unknown | 已批准 | 不变，不用设备 stop gate | 不变，不用设备 stop gate | 不变，仍缺实现契约 |
+| Task 不取消、不自动重放 | 已批准 | 不变 | 不变 | 不变 |
+| R1 drain / R2 审批 | R1 已批准；R2 pending | 均不变 | 均不变 | 均不变 |
+
+Question D3:
+D3 — 单 Job Stop 如何覆盖排队、在途与重启
+Project/branch/task: e4-p2-declaration-closeout，通用 Runtime 的 job 级设备取消隔离。
+ELI10: 一台设备可能同时替多个任务排队执行动作。停止其中一个动作时，系统必须准确认出它在队列里还是正在执行，不能误停同设备的另一个任务，也不能重启后忘记这次停止。
+Stakes if we pick wrong: 用户可能停错设备动作、让另一 Task 意外失败，或在崩溃恢复后重复/漏掉停止并误报设备已安全。
+Recommendation: A) job_id 贯穿 worker，因为它让排队跳过、在途取消、结果关联与重启重断言使用同一个身份，避免另建一层隐含的当前调用映射。
+Completeness: A=10/10, B=9/10, C=2/10
+Pros / cons:
+A) job_id 贯穿 worker (recommended)
+  ✅ Execute、CancelSlot 与 WorkerResult 全程携带 job_id；queued 领取时按持久 stop_requested 跳过，in-flight 只取消匹配 token，终态准确回到原 Task/job。
+  ✅ 重复 stop 返回当前投影，重启按 job_id 重断言；同设备其他 Task 不受影响，保留 cancelled_unknown 且不自动重放，human ~3d / CC ~4h [estimated]。
+  ❌ 要修改 worker 命令/结果、取消槽、DataServer 投影和迁移，并补竞态与重启测试；旧调用点都要显式关联或保留人工 job 的空身份语义。
+B) 单设备 Job 调度器
+  ✅ 在 worker 前增加每设备串行 Job 调度层，queued stop 不再 submit，in-flight 仅当前映射匹配时调用 cancel_current，也能保持跨 Task 隔离。
+  ✅ 可少改 WorkerCommand/WorkerResult 的公开形状，并集中处理持久 stop_requested 与重启映射，human ~5d / CC ~6h [estimated]。
+  ❌ 新增调度状态与当前映射竞态，重启和结果迟到时更容易错配；仍然需要持久身份、终态去重、unknown 与完整隔离测试，维护成本更高。
+C) 保持现状待补
+  ✅ 不误用设备级 stop gate 或 thing 当前调用来冒充单 Job Stop，避免在方案未定时引入误停其他 Task 的实现。
+  ✅ 保留已批准的 UI/API 产品语义和其他决定，文档核对成本约 human ~0.5d / CC ~30min [estimated]。
+  ❌ queued/in-flight、重启和结果关联仍未定义，本评审保持 unresolved，不能开始 Job Stop 实现或宣称整体 readiness 通过。
+Net: 只选择单 Job Stop 的工程隔离机制；不改变 Task 不取消、不自动重放、unknown 语义、R1 drain 或仍 pending 的 R2。
+Header: Job 停止隔离
+Options:
+A) job_id 贯穿 worker
+  ✅ Execute、CancelSlot 与 WorkerResult 全程携带 job_id；queued 领取时按持久 stop_requested 跳过，in-flight 只取消匹配 token，终态准确回到原 Task/job。
+  ✅ 重复 stop 返回当前投影，重启按 job_id 重断言；同设备其他 Task 不受影响，保留 cancelled_unknown 且不自动重放，human ~3d / CC ~4h [estimated]。
+  ❌ 要修改 worker 命令/结果、取消槽、DataServer 投影和迁移，并补竞态与重启测试；旧调用点都要显式关联或保留人工 job 的空身份语义。
+B) 单设备 Job 调度器
+  ✅ 在 worker 前增加每设备串行 Job 调度层，queued stop 不再 submit，in-flight 仅当前映射匹配时调用 cancel_current，也能保持跨 Task 隔离。
+  ✅ 可少改 WorkerCommand/WorkerResult 的公开形状，并集中处理持久 stop_requested 与重启映射，human ~5d / CC ~6h [estimated]。
+  ❌ 新增调度状态与当前映射竞态，重启和结果迟到时更容易错配；仍然需要持久身份、终态去重、unknown 与完整隔离测试，维护成本更高。
+C) 保持现状待补
+  ✅ 不误用设备级 stop gate 或 thing 当前调用来冒充单 Job Stop，避免在方案未定时引入误停其他 Task 的实现。
+  ✅ 保留已批准的 UI/API 产品语义和其他决定，文档核对成本约 human ~0.5d / CC ~30min [estimated]。
+  ❌ queued/in-flight、重启和结果关联仍未定义，本评审保持 unresolved，不能开始 Job Stop 实现或宣称整体 readiness 通过。
+
+State: approved
+Actual answer: A) job_id 贯穿 worker（D3，本轮 AskUserQuestion）
+Accepted scope: 仅 R3/A。Execute、CancelSlot、WorkerResult 使用同一 job_id；持久 stop_requested 覆盖 queued 跳过、in-flight 匹配取消、重启重断言与重复 stop 投影。保留同设备/跨 Task 隔离、cancelled_unknown、不取消 Task、不自动重放，不使用设备级 stop gate。R1 drain 不变，R2 仍 pending。
+History: 第一轮批准设备生命周期与 stop 边界；设计评审新增单 Job Stop 操作后，第二轮工程评审发现 job 身份与隔离缺口。用户已选择 D3=A。
 
 ## Approval readiness
 
-PASS — D0-path、D0-task、D0-media、D0-ui、D0-recovery、D0-generic、D0-mode、
+Approval readiness: BLOCKED — R2/D2=C 保留审批持久 decision、执行关联与崩溃恢复未决，
+不能开始完整 Runtime PR。R1/D1=A 与 R3/D3=A 已批准；R4 cancel 接线与 R5 控制测试是
+D6-task-cancel、既有 pause 契约及 R1/R3 的必要实现与证明，没有另开范围。
+
+第一轮 D0-path、D0-task、D0-media、D0-ui、D0-recovery、D0-generic、D0-mode、
 D0-pr、D1-media-adapter、D2-job-progress、D3-job-pause、D5-task-create、
-D6-task-cancel、D7-video-proxy、D8-resource-budget 均有实际回答。
-没有未批准实现混入接受范围；剩余 TODO 提案为零。
+D6-task-cancel、D7-video-proxy、D8-resource-budget、D10-context-budget 的实际回答保持有效。
+本轮没有把 R2/A 或 R2/B 混入 accepted scope，也已从 T6/T7B/T8 移除可执行审批任务。
+设计评审的字体与 captions 两项 deferred/TODO 继续单独登记。
 
 ## Review facts
 
 - Mode：HOLD SCOPE；单个完整 PR，三切分作为提交/启用顺序。
 
-- 当前结论：设计可进入实施计划，但未实现、未验收；D8 容量风险明确保留。
+- 当前结论：第二轮工程复审为 ISSUES OPEN；R1 drain 与 R3 job 级停止已写回，R4/R5
+  接线与测试已补齐，但 R2/D2=C 使审批持久恢复和完整 PR 保持 blocked。未实现、未验收；
+  D8 容量风险与 D10 无 Task prompt 总硬顶的上下文/成本风险明确保留。
 
-- Outside Voice：Codex 配置失败 + native fallback 超时，unavailable，无 clean 信用。
+- Outside Voice：本轮 Codex 配置失败 + native fallback 超时，unavailable，无 clean 信用；
+  两次 unavailable 均已记录，未采用部分输出。
 
-- 当前未决项：0。GoalWatch/E1d/OpState 等独立后续项不是未决项。
+- 工程评审未决项：1（R2）。GoalWatch/E1d/OpState 等独立后续项不是未决项；设计评审的
+  2 个 deferred 缺口在下方单独登记，不回写为工程决策。
 
 ## NOT in scope
 
@@ -2468,6 +3144,10 @@ D6-task-cancel、D7-video-proxy、D8-resource-budget 均有实际回答。
 | provider 专用图片旁路 | rejected | D2 用户选择反腐败层统一附件契约 |
 | Hub 视频代理/清单重写 | rejected | D5 用户选择浏览器直连，失败不兜底代理 |
 | 新增固定 Task/媒体配额 | rejected | D8 用户选择无固定配额，仅保留背压与告警 |
+| Task prompt 总字节硬顶/隐藏截断 | rejected | D10 用户选择完整拼接；保留现有设备快照边界并观测上下文与成本 |
+| Runtime 专属字体资产 | deferred | 设计 D13/D24 选择本期保留系统中英文字体栈与 JetBrains Mono；默认字体的通用感进入 TODOS，不在本期伪装成已解决 |
+| 视频 captions 轨与自动转录 | deferred | 设计 D22/D25 选择首版保留原声并显示 `Captions unavailable`；含语音证据的 WebVTT 可达性进入 TODOS，不宣称已有字幕或转录 |
+| Task 审批持久 decision/执行恢复与审批实现 | blocked / unresolved | 第二轮 R2/D2=C 选择保持待补；旧 DashMap/heartbeat 不满足恢复契约，解决前不得实现审批路由、执行恢复或审批按钮 |
 | MHS/MOS wire 兼容 | rejected | 只借信息结构，不宣称协议兼容 |
 
 ## What already exists
@@ -2476,7 +3156,16 @@ D6-task-cancel、D7-video-proxy、D8-resource-budget 均有实际回答。
 
 - 固定设备工具与 LiveState/WatchEngine：感知、watch 命中和重织。
 
-- `DataServer`/worker：声明校验、资源仲裁、取消、completion signaling。
+- `DataServer`/worker：声明校验、资源仲裁、取消、completion signaling。现有
+  `cancel_calls(thing_id)` 与设备级 `set_stop` 不能复用为单 Job Stop；R3 要求补 job_id
+  队列/在途/结果关联与持久 stop_requested。
+
+- `Runner`/rig：rig 已消费 CancellationToken，可复用同一 token 完成 Task cancel；
+  但 Runner 当前内部私有 token、ActiveRunRegistry 只有 RunContext，必须按 R4 补外部绑定。
+
+- heartbeat proposal：已有 workspace/admin、防盲签与条件状态翻转先例，可复用校验思路；
+  `PendingActionStore` 是进程内 DashMap，翻转后直接执行，不是新 Task 审批的持久恢复方案，
+  R2 未批准前不得拿来冒充实现。
 
 - `hub_ledger`/EventBus/hub_stream：有序控制与 latest-wins 遥测、现有 Flow。
 
@@ -2484,7 +3173,27 @@ D6-task-cancel、D7-video-proxy、D8-resource-budget 均有实际回答。
 
 - `provider.rs`/rig 适配器：可扩展为统一附件，不重写 provider。
 
-- Lit 前端、现有设备卡与 SSE 基建：可组成两栏 Task Runtime 视图。
+- Lit 前端、`web/src/api` 与 SSE 基建：可组成 Task Runtime 列表、创建页和详情视图，
+  组件不直接 fetch。
+
+- `DESIGN.md`、`web/DESIGN_SYSTEM.md`、`web/src/styles/base.css`：自治机舱方向、
+  完整 dark/light token、无边框层级、spacing/radius/shadow/duration/ease、focus ring、
+  selection/scrollbar/tabular-nums 和系统字体栈均已存在；Runtime 不另建全局色板。
+
+- `web/src/ui/shared/run-timeline.ts`：复用步骤与折叠结果模式，扩展 waiting、approval、
+  cancelled_unknown 等真实投影，不新造聊天式时间线。
+
+- `web/src/ui/views/live-devices.ts`：复用健康、关键字段、watch/job 徽标与键盘卡片模式；
+  Task 关联集合仍由本 spec 的实际引用规则决定。
+
+- `web/src/ui/views/flow.ts`：已有 live/history、键盘时间控制、代际守卫、CONTROL/DATA
+  与列表回退，可承载 Task 投影和共享游标。
+
+- `web/src/ui/views/workbench-state.ts` 与 `run-detail.ts`：复用纯函数 URL 状态与异步
+  代际守卫；不复制 device 选中即历史或 3s polling。
+
+- 既有设计系统 modal/focus 规范：提供 dialog、菜单、focus trap/restoration 和可见焦点
+  的复用边界；创建表单继续使用可见 label 与原生输入语义。
 
 ## Dream state delta
 
@@ -2518,14 +3227,26 @@ D6-task-cancel、D7-video-proxy、D8-resource-budget 均有实际回答。
 - 能力: Device Job
 - 失败机制: busy/timeout/stop/崩溃/重复终态
 - 用户影响: 拒绝或明确终态，不盲重放
-- 已有/批准护栏: 真实 deadline、stop queued、终态去重、恢复
-- 验证责任: worker+recovery 测试
+- 已有/批准护栏: 真实 deadline、job_id queued/in-flight stop、持久 stop_requested、终态去重、恢复
+- 验证责任: worker+recovery+同设备跨 Task 隔离测试
 
 - 能力: Task 取消
 - 失败机制: 部分停止/未知
 - 用户影响: failed(cancel_unknown)，不假称全停
-- 已有/批准护栏: cancelling、停止所属 job/watch、迟到去重
-- 验证责任: 两向取消矩阵
+- 已有/批准护栏: cancelling、Runner/rig 同一 cancel token、停止所属 job/watch、迟到去重
+- 验证责任: 两向取消矩阵与取消后无新工具测试
+
+- 能力: Task 审批
+- 失败机制: decision 提交前后崩溃、执行结果未知、重放
+- 用户影响: 若按旧内存/同步路径实现，可能卡死、丢失批准或重复副作用
+- 已有/批准护栏: 只有 HTTP 产品语义；R2 持久恢复方案未批准，当前 blocked
+- 验证责任: R2 unresolved；没有可执行崩溃恢复测试或实现任务
+
+- 能力: Runtime 回滚
+- 失败机制: 先关 UI/跳过 drain/cancel_unknown
+- 用户影响: 旧 Task 可能继续推进但失去操作入口，或物理结果未核查
+- 已有/批准护栏: R1 显式逐个取消、非终态/活跃项清零与 unknown 处置后才关 Workbench
+- 验证责任: flag transition + rollback runbook 演练
 
 - 能力: Watch
 - 失败机制: 非法/无数据/失效/Lagged
@@ -2575,6 +3296,9 @@ Task transition+outbox    | 半提交/重复唤醒     | Y tx+dedup| required  |
 Wake dispatch             | 崩溃/重复/死信      | Y retry   | required  | 可恢复/告警| Y
 Job result                | DB 失败/进程崩溃    | Y retry   | required  | 等待/恢复  | Y
 Task cancel               | 部分停止未知        | Y failed  | required  | 不明确终态 | Y
+Job stop                  | 误停他 Task/重启丢失| Y job_id  | required  | 当前投影/未知| Y
+Approval decision/execute | 崩溃/重放           | N pending | blocked   | 未实现     | N
+Rollout drain             | 先关 UI/unknown     | Y gate    | required  | 阻止并告警 | Y
 Watch                     | 无数据/失效/Lagged  | Y rebuild | required  | 等待/失效  | Y
 Model response            | 空/拒答/非法 JSON   | Y typed   | required  | 失败原因   | Y
 Image attachment          | 非 vision/超限/过期 | Y explicit| required  | 明确不可用 | Y
@@ -2584,7 +3308,8 @@ SSE                       | 重复/断连/stale     | Y resync  | required  | �
 StopAll                   | 部分失败            | Y partial | required  | 逐设备结果 | Y
 ```
 
-CRITICAL GAPS: 0（按已批准设计；实现验证尚未发生）。
+CRITICAL GAPS: 1（R2 审批持久 decision/执行恢复未批准且无可执行测试；D2=C 保持 blocked。
+不得按旧 DashMap/heartbeat 路径实现。R1/R3/R4/R5 已有获批护栏或必要测试，实现验证尚未发生）。
 
 ## Diagrams
 
@@ -2600,11 +3325,42 @@ CRITICAL GAPS: 0（按已批准设计；实现验证尚未发生）。
 
 - 所有百分比进度图已移除，视频图已改为浏览器直连，无 Hub 代理图残留。
 
+## Scope Challenge Result
+
+- Feature answers: 当前 spec 全量接受（D0-path/task/media/ui/recovery/generic/mode/pr、D1-media-adapter、D2-job-progress、D3-job-pause、D5-task-create、D6-task-cancel、D7-video-proxy、D8-resource-budget、D10-context-budget）。
+- Structure: **Original arrangement**（用户 D2，2026-10-26）。按 Task/Job/Media/Projection 分离约 35 文件、6 新服务 [estimated]，不为减少文件合并事务、设备副作用、媒体凭证与 UI 生命周期。
+- Accepted scope: 与当前 spec 一致，不减少能力。
+- Pending remedies: none at structure gate.
+
+## Worktree parallelization strategy
+
+| Step | Modules touched | Depends on |
+|------|-----------------|------------|
+| A: T1→T2→T3 | agent task/ports/prompt、runtime job/worker、db、cloud agent/admin | —；T1 先稳定关联 ID 与 Task 契约 |
+| B: T4→T5 | core manifest、runtime media/job、agent provider/rig、cloud media、web playback/api | T1 的关联 ID；与 A 协调 runtime/job 和 db migration |
+| C: T6→T6A→T7A→T7→T7B→T7C | cloud agent/admin/router、web api/views | A 的 wake/API 与 B 的媒体/playback 契约 |
+| D: T8 | acceptance/evals、web、docs、rollout | A+B+C 全部合并 |
+
+**Parallel lanes：** Lane A 先落地 T1；随后 Lane B 可与 A 的 T2/T3 并行，但共享
+`runtime/`、`db/` 的改动必须按 migration 与 job 契约顺序协调。A+B 合并后启动 Lane C；
+`cloud/` 与 `web/` 不在 C 内再拆分并行。Lane D 最后串行执行全量验收。
+
+**Execution order：** Launch A；T1 合并后 launch B；A+B 合并后 launch C，依次执行
+T6→T6A→T7A→T7→T7B→T7C；C 合并后运行 D。所有 lane 仍进入同一个完整 PR，不改变 D9。
+
+**Conflict flags：** A/B 共享 runtime job、db migrations 与关联 ID；B/C 共享 cloud media/API
+和 web 播放契约；不得让并行 lane 各自发明事件、证据或路由格式。
+
 ## Implementation Tasks
 
-Synthesized from this review's findings. All tasks belong to one complete PR;
-commit/enable order is T1→T2→T3→T4→T5→T6→T7→T8. Each task derives from a
-specific finding above.
+Synthesized from the engineering and design reviews. All tasks belong to one complete PR;
+commit/enable order is T1→T2→T3→T4→T5→T6→T6A→T7A→T7→T7B→T7C→T8. Each task derives from
+an approved finding above. T7A/T7B/T7C extend the original T7 Workbench scope without
+splitting the PR; captions and a dedicated font are not accepted implementation work.
+The 2026-10-27 R2 follow-up approves durable approvals, frozen arguments, decision CAS,
+a unique decision/execution outbox and idempotent crash continuation. T6A/T7B/T8 include
+that mechanism and its tests; the old in-memory/heartbeat direct-execution path is not an
+implementation substitute.
 
 - [ ] **T1 (P1, human: ~4d / CC: ~4h)** — Task model — 持久 Task、强制
 Idempotency-Key 与迁移
@@ -2617,26 +3373,33 @@ Idempotency-Key 与迁移
 - Verify: `cargo test -p tinyiothub-cloud task_create`（同 key 并发/重放/异
 objective/缺 key）
 
-- [ ] **T2 (P1, human: ~5d / CC: ~5h)** — Device Job — 生命周期、真实 timeout 与 stop 边界
-- Surfaced by: Section 1/2/4 — 入队即 executed、timeout 未消费、stop 不 drain queued
-Execute。
+- [ ] **T2 (P1, human: ~5d / CC: ~5h)** — Device Job — 生命周期、真实 timeout 与 job 级 stop
+- Surfaced by: Section 1/2/4 + 第二轮 R3/D3 — 入队即 executed、timeout 未消费、stop 不 drain queued
+Execute，且 worker 缺 job_id 会误停同设备其他 Task。
 - Files: `crates/runtime/src/job/`, `crates/runtime/src/data_server.rs`,
-`crates/runtime/src/driver/worker.rs`,
-`crates/runtime/src/access/service.rs`,
+`crates/runtime/src/driver/worker.rs`, `crates/runtime/src/ports.rs`,
+`crates/runtime/src/access/service.rs`, `crates/db/migrations/`, `crates/db/src/`,
 `apps/cloud/src/domains/agent/host/tools/thing/invoke_action.rs`,
 `apps/cloud/src/domains/thing/handler/actions.rs`
 - Verify: `cargo test -p runtime job` + `cargo test -p tinyiothub-cloud stop`
-（长 job、deadline、queued stop、重复终态、无 paused/百分比）
+（长 job、deadline、queued/in-flight job_id stop、重复 stop、同设备跨 Task 隔离、
+stop 后重启、重复终态、cancelled_unknown、无 paused/百分比、不取消 Task）
 
 - [ ] **T3 (P1, human: ~4d / CC: ~4h)** — Wake — outbox、Task-owned watch、取消与恢复
 - Surfaced by: Section 2/4/9 — 唤醒去重、取消所属 job/watch、重启恢复与 outbox 重试。
 - Files: `crates/agent/src/runtime/thing_agent/task/`,
-`crates/agent/src/port/task.rs`,
+`crates/agent/src/runtime/thing_agent/runner.rs`,
+`crates/agent/src/runtime/thing_agent/active_runs.rs`,
+`crates/agent/src/runtime/thing_agent/manager.rs`,
+`crates/agent/src/adapters/rig/loop_.rs`,
+`crates/agent/src/port/task.rs`, `crates/agent/src/prompt/`,
 `crates/db/src/`, `apps/cloud/src/domains/agent/runtime/`,
 `apps/cloud/src/domains/agent/host/handler/`,
 `apps/cloud/src/domains/admin/`
-- Verify: `cargo test -p tinyiothub-cloud task_recovery`
-（重复投递、accepted 后崩溃、取消 unknown、dead retry、watch 重织）
+- Verify: `cargo test -p tinyiothub-cloud task_recovery` + `cargo test -p agent task_prompt`
+（重复投递、accepted 后崩溃、取消 unknown、dead retry、watch 重织、完整拼接与确定顺序；
+Runner/ActiveRunRegistry/rig 使用同一 cancel token，取消后无新工具，pause 不 abort；
+pause/resume 与 wake 竞态不重复 Run）
 
 - [ ] **T4 (P1, human: ~6d / CC: ~6h)** — Source/Media — dataKind、证据与统一附件
 - Surfaced by: D1-media-adapter + Section 2/3/5 — rig 静默丢图、证据关联与去重。
@@ -2654,27 +3417,74 @@ Execute。
 - Files: `apps/cloud/src/domains/media/`, `web/src/api/`, `web/src/ui/views/`,
 `web/package.json`, `web/pnpm-lock.yaml`
 - Verify: `npm --prefix web test -- playback` + 浏览器本地上游验证
-（脱敏 URL、CORS 失败、切 Task destroy、无后台请求、无代理调用）
+（脱敏 URL、CORS 失败、切 Task destroy、无后台请求、无代理调用；首版显示
+`Captions unavailable`，不虚构 captions 或自动转录）
 
-- [ ] **T6 (P1, human: ~4d / CC: ~4h)** — Projection — Task API、runtime stream
-与排障入口
-- Surfaced by: Section 1/4/8 — 关联投影、游标重连、dead/unknown 运维处置。
+- [ ] **T6 (P1, human: ~5d / CC: ~5h)** — Projection — Task 控制 API、runtime stream 与排障入口
+- Surfaced by: Section 1/4/8 + Design Issues 6/21 — 关联投影、游标重连、dead/unknown
+运维处置，以及已批准的单 job Stop 和一键 Pause/Resume 缺少传输契约。审批持久化与执行恢复在 T6A。
 - Files: `apps/cloud/src/domains/agent/runtime/`,
-`apps/cloud/src/domains/admin/`,
+`apps/cloud/src/domains/agent/host/handler/`, `apps/cloud/src/domains/admin/`,
 `apps/cloud/src/router.rs`, `web/src/api/`, `web/src/ui/views/`
-- Verify: `cargo test -p tinyiothub-cloud runtime_stream`
-（snapshot/resync/去重/跨区/outbox retry/unknown 查询）
+- Verify: `cargo test -p tinyiothub-cloud runtime_stream` + Task 控制 handler 测试
+（snapshot/resync/去重/跨区/outbox retry/unknown 查询；pause/resume 幂等且不 abort
+当前 Run 或停止 job/watch；Job Stop 校验 Task 归属、重复返回投影、不取消 Task，
+同设备另一 Task 不受影响）
+
+- [ ] **T6A (P1, human: ~3d / CC: ~4h)** — Durable approvals — 冻结参数、决策信箱与幂等恢复
+- Surfaced by: 第二轮 R2 + 2026-10-27 follow-up A — 内存审批不能满足决策持久性、
+  执行关联与崩溃恢复。
+- Files: `crates/core/src/task_approval.rs`, `crates/agent/src/port/approval.rs`,
+  `crates/agent/src/runtime/thing_agent/task/approval.rs`, `crates/db/src/task_approval.rs`,
+  `crates/db/migrations/20261027000004_task_approvals.sql`,
+  `apps/cloud/src/domains/agent/runtime/approvals.rs`
+- Verify: `cargo test -p tinyiothub-storage task_approval` +
+  `cargo test -p tinyiothub-agent thing_agent::task::approval` +
+  `cargo test -p tinyiothub-cloud domains::agent::runtime::approvals`
+  （decision CAS/409、冻结参数、approve 同事务 outbox、reject 零 Job、各崩溃点最多一个
+  Job、pending 恢复、未知物理结果不盲重放、pause/cancel 竞态与权限/跨区隔离）
+
+- [ ] **T7A (P1, human: ~2d / CC: ~2h)** — Runtime shell — Task 列表、专用创建页与切换
+- Surfaced by: Design Issues 1/19 — `#/runtime` 不能是 KPI 仪表盘；需要 Current/Recent
+列表、`#/runtime/new` 可见 label 表单、创建幂等重试和安全的详情切换。
+- Files: `web/src/ui/views/runtime-list.ts`, `web/src/ui/views/runtime-new.ts`,
+`web/src/ui/views/runtime-task.ts`, `web/src/ui/app.ts`, `web/src/api/`
+- Verify: `npm --prefix web test -- runtime`（分组/空态/分页错误、objective 保留、
+pending 防重复、同输入重试保留 key、400/409 不静默重试、accepted replace 导航、
+Switch task 清理旧 SSE/媒体/游标）
 
 - [ ] **T7 (P1, human: ~5d / CC: ~5h)** — Workbench — 两栏 ToolCard、关联设备卡与
 seam/Flow
-- Surfaced by: D0-ui + Section 11 — Agent Loop 主导、图片/视频入卡、关联定位与可访问性。
+- Surfaced by: D0-ui + Design Issues 2/3/13 — objective/状态/干预优先，Agent Loop 主导、
+图片/视频入卡、详情内 Flow 标签、关联定位与既有 token/component 复用。
 - Files: `web/src/ui/views/runtime-task.ts`,
 `web/src/ui/views/runtime-task.css`,
 `web/src/ui/views/runtime-devices.ts`,
 `web/src/ui/views/runtime-devices.css`,
-`web/src/ui/views/runtime-flow.ts`, `web/src/ui/app.ts`, `web/src/api/`
-- Verify: `npm --prefix web test -- runtime` + 浏览器键盘/seam/关联/历史只读检查
-（无 Goal 页、无独立 World 栏、无场景专用组件）
+`web/src/ui/views/runtime-flow.ts`, `web/src/ui/shared/run-timeline.ts`,
+`web/src/ui/app.ts`, `web/src/api/`
+- Verify: `npm --prefix web test -- runtime` + 浏览器键盘/seam/关联/Flow URL 检查
+（无 Goal 页、无独立 World 栏、无场景专用组件、无固定浅色卡片或新增全局色板）
+
+- [ ] **T7B (P1, human: ~4d / CC: ~4h)** — Interaction states — 可见五态、历史模式与干预闭环
+- Surfaced by: Design Issues 4/5/6/7/21 — loading/empty/error/success/partial 矩阵、
+History read-only、Task cancel、Job Stop 和 Pause/Resume 必须以服务器投影为准。
+R2 已按 follow-up A 解除：T7B 包含内联 Approve once/Reject、pending 防双击、冲突/过期/不可用投影和 Task 切换清理；执行恢复仍归 T6A。
+- Files: `web/src/ui/views/runtime-task.ts`, `web/src/ui/views/runtime-devices.ts`,
+`web/src/ui/views/runtime-flow.ts`, `web/src/ui/shared/run-timeline.ts`, `web/src/api/`
+- Verify: `npm --prefix web test -- runtime` + 浏览器交互检查（stale/局部错误保留旧数据；
+历史移除所有推进操作；暂停不暗示副作用停止；取消/停止 pending 与 unknown 不假成功；
+Back to live 执行 resync）
+
+- [ ] **T7C (P1, human: ~3d / CC: ~3h)** — Responsive & accessibility — 三档布局、键盘、读屏与双主题
+- Surfaced by: Design Issues 12/14/15/16/17/18/20 — 双主题无边框、三档响应式、焦点与滚动、
+动态播报、全面 reduced-motion、WCAG AA；首版 captions 缺口必须可见而非隐藏。
+- Files: `web/src/ui/views/runtime-*.ts`, `web/src/ui/views/runtime-*.css`,
+`web/src/ui/shared/run-timeline.ts`, `web/src/styles/`
+- Verify: `npm --prefix web test -- runtime` + axe/键盘/读屏与浏览器人工验收
+（600/980px 断点、<400px 列表、200%/400% zoom、44px 目标、tablist/menu/dialog/separator、
+焦点归还、单一 polite region、Flow 等价列表、reduced-motion 停非必要动画、dark/light AA；
+视频可键盘暂停且无自动声音，显示 `Captions unavailable`）
 
 - [ ] **T8 (P1, human: ~5d / CC: ~5h)** — Acceptance — 第二夹具、eval、指标与 rollout
 - Surfaced by: Section 6/7/8/9/10 — 通用性、恢复矩阵、容量风险、灰度与回滚。
@@ -2690,148 +3500,200 @@ type-check`
 - `npm --prefix web test` + `npm --prefix web run build`
 - `MINIMAX_API_KEY=... cargo test -p tinyiothub-cloud runtime_eval --
 --ignored --nocapture`
-- staging 启用/回滚演练；vision 不可用不得记 PASS。
+- staging 启用/回滚演练；覆盖 flag off 不改写存量 Task、显式 drain、unknown 阻断关 UI、
+  同设备跨 Task stop、pause/resume+wake 与 stop/restart；vision 不可用不得记 PASS。
+- 实现后对真实 Runtime 页面运行 `/design-review`，覆盖 dark/light、三档布局、键盘/读屏、
+  reduced-motion、历史只读和已批准干预状态；审批双击、拒绝、过期、不可用、切换清理与
+  恢复后继续均计入验收，没有 approved mockup 不能替代视觉 QA。
 
 ## Reality rows
 
 ```text
-REALITY: premise-table pass（5e6ffd00f4f20e9d419e97118e481e863dc58196）：
-  当前 Runner 单 Run 执行（`runner.rs:180-220`），
-  设备调用直接入队（`invoke_action.rs:280-299`），rig 跳过媒体（`provider.rs:14-17`）， ABI
-  仅最终回调（`dynamic.rs:67-90`），worker 继续消费 FIFO（`worker.rs:471-480`）。
-REALITY: already-done pass（5e6ffd00f4f20e9d419e97118e481e863dc58196）：
+REALITY: premise-table pass（3e4847223c468d5358718455c7d3d5091cb21416）unverified=0：
+  Runner 内部创建 cancel token（`runner.rs:180-220`），ActiveRunRegistry 仅保存 RunContext；
+  worker Execute/Cancelled 无 job_id（`worker.rs:129-138,173-178`），旧审批为进程内
+  DashMap（`pending_action.rs:11-23`）；均为当前代码证据，不把规划行为写成已实现。
+REALITY: already-done pass（3e4847223c468d5358718455c7d3d5091cb21416）：
   `origin/main` 已有 E1-E4 底座但无 Task Runtime； 证据 commits `061f20bc`（E2
   接缝）、`92052090`（Watch 装配）、`9bb05f8b`（WatchEngine）； E4 P2 仍在 PR #101。
-REALITY: surface-check pass（5e6ffd00f4f20e9d419e97118e481e863dc58196）：
+REALITY: surface-check pass（3e4847223c468d5358718455c7d3d5091cb21416）：
   现有创建端点仅 `agent_tasks.rs:56`；新路由/flags/runtime_eval 均为 planned，未宣称存在。既有 eval
   命令见 `evals/README.md:8-10`。
-REALITY: binding-decisions pass（5e6ffd00f4f20e9d419e97118e481e863dc58196）：
-  branch decision search 无结果；新裁定均已记录。 GoalWatch/TrendAnomaly 仍是独立
-  deferred（同前），未混入本 spec（本文件 :30-36）。
-REALITY: numbers pass（5e6ffd00f4f20e9d419e97118e481e863dc58196）：
-  `ACTIVE_RUNS_CAPACITY=64` 实测（`manager.rs:56-60`）； watch=20
-  实测（`watch.rs:28`）；快照 6144 bytes 实测（`snapshot.rs:11`）。 其他文件数、耗时与性能目标均标
-  `[estimated]` 或 re-measure。
-REALITY: deferred-asks pass（5e6ffd00f4f20e9d419e97118e481e863dc58196）：
-  无关联 issue 的未答请求；PR #101 合入依赖已显式记录。
-REALITY: pr-count pass（5e6ffd00f4f20e9d419e97118e481e863dc58196）：
-  D9 用户选择单个完整 PR（另见 :1587），无跨 PR 队列或引用成本。
-REALITY: prior-art pass（5e6ffd00f4f20e9d419e97118e481e863dc58196）：
+REALITY: binding-decisions pass（3e4847223c468d5358718455c7d3d5091cb21416）：
+  第二轮 R1/D1=A、R2/D2=C、R3/D3=A 均有独立 ledger 与实际回答；R2 保持 pending，
+  未重开 GoalWatch、固定配额、prompt 硬顶或单 PR 等既有决定（本文件 Decision ledger）。
+REALITY: numbers pass（3e4847223c468d5358718455c7d3d5091cb21416）：
+  `ACTIVE_RUNS_CAPACITY=64` 实测（`manager.rs:56-60`）；`HOURLY_WAKE_LIMIT=20`
+  实测（`scheduler.rs:54`，不是 watch 数上限）；快照 6144 bytes 实测（`snapshot.rs:11`）。
+  其他文件数、耗时与性能目标均标 `[estimated]` 或 re-measure。
+REALITY: deferred-asks pass（3e4847223c468d5358718455c7d3d5091cb21416）：
+  无关联 issue 的未答请求；PR #101 合入依赖显式记录。R2/D2=C 是已回答但明确 pending
+  的 remedy，未静默转成已实现或 TODO；两个字体的/captions 设计 deferred 仍有 TODOS 记录。
+REALITY: pr-count pass（3e4847223c468d5358718455c7d3d5091cb21416）：
+  D9 用户选择单个完整 PR（本文件 :2687-2719），无跨 PR 队列或引用成本。
+REALITY: prior-art pass（3e4847223c468d5358718455c7d3d5091cb21416）：
   采用 AGH ToolCard/Flow/dock 结构； hls.js v1.7.3 + #8119 要求
-  destroy（`docs/superpowers/specs/2026-10-26-multi-device-agent-runtime-design.md:617-618`）；无
+  destroy（`docs/superpowers/specs/2026-10-26-multi-device-agent-runtime-design.md:1043-1047`）；无
   vendored/patched 依赖。
-REALITY: transaction-semantics pass（5e6ffd00f4f20e9d419e97118e481e863dc58196）：
-  Task+outbox、job 终态按同事务处理；媒体外部资源
-  采用孤儿清理而非伪事务（`docs/superpowers/specs/2026-10-26-multi-device-agent-runtime-design.md:914-920`）。
-REALITY: contract-assumptions pass（5e6ffd00f4f20e9d419e97118e481e863dc58196）：
+REALITY: transaction-semantics finding（3e4847223c468d5358718455c7d3d5091cb21416）：
+  Task+outbox 同事务、job 终态去重与 stop_requested 已明确；R2 审批 decision/执行关联
+  没有获批事务与恢复语义（`workspace_heartbeat.rs:777-796` 仍有旧 CAS 后直执窗口），保持 blocked。
+REALITY: contract-assumptions pass（3e4847223c468d5358718455c7d3d5091cb21416）：
   50s 等待窗口与 AGH `hub/call` 一致； 当前 `negotiate_manifest_version` 只限制 major，故 1.1
   minor 可接受，未知字段忽略；不宣称 MHS/MOS wire 兼容。
-REALITY: units pass（5e6ffd00f4f20e9d419e97118e481e863dc58196）：
-  6144 bytes 快照（`snapshot.rs:11`）；2 MiB/16MP/8 MiB 是本设计新限制 （本文件
-  :226、:261、:935），50s/5min/7d/30d 为设计值，均需实现与测试；性能目标 re-measure。
-REALITY: perf-table pass（5e6ffd00f4f20e9d419e97118e481e863dc58196）：
-  未声称已有 benchmark；`<2s`/`<1s` 是计划门槛，当前无测量 （同文件 :1363-1366），部署前必须按实际机器/数据量复测。
-REALITY: dependency-fallback pass（5e6ffd00f4f20e9d419e97118e481e863dc58196）：
-  三个 flags 默认关闭分别回退旧指令、数值读取和旧页面 （另见 :1530-1534）；vision provider/key 不可用只记
-  unavailable（同文件 :1339-1342）。
-REALITY: obligation-tiers pass（5e6ffd00f4f20e9d419e97118e481e863dc58196）：
-  必须交付当前批准范围；GoalWatch/OpState 为 deferred， 百分比/pause/provider bypass/Hub
-  proxy/固定配额按 D3/D4/D5/D8 排除。
+REALITY: units pass（3e4847223c468d5358718455c7d3d5091cb21416）：
+  6144 bytes 快照（`snapshot.rs:11`）；2 MiB/16MP/8 MiB 是本设计新限制（本文件
+  :346、:1584、:2036-2037），50s 等待窗口是设计值（:226）；Run 5min 是现有限制
+  （`runner.rs:32`）。性能目标 re-measure。
+REALITY: perf-table pass（3e4847223c468d5358718455c7d3d5091cb21416）：
+  未声称已有 benchmark；`<2s`/`<1s` 是计划门槛，当前无测量（本文件 :2172-2174、
+  :2222），部署前必须按实际机器/数据量复测。
+REALITY: dependency-fallback pass（3e4847223c468d5358718455c7d3d5091cb21416）：
+  三个 flags 默认关闭分别回退旧指令、数值读取和旧页面；Task flag off 不改写存量，
+  Workbench 关闭前显式 drain（本文件 :2588-2634）；vision provider/key 不可用只记
+  unavailable（本文件 :1368）。
+REALITY: obligation-tiers pass（3e4847223c468d5358718455c7d3d5091cb21416）：
+  必须交付当前批准范围；GoalWatch/OpState 为 deferred，百分比/Device Job pause/provider
+  bypass/Hub proxy/固定配额按 D3/D4/D5/D8 排除；Task pause/resume 已批准。R2 审批持久化、
+  执行恢复、路由和 UI 控件明确 blocked，不进入当前必交付任务。
 
-PLAN_REALITY: phase=ceo rows=14/14 missing=none unverified=0：当前 verdict=complete
+PLAN_REALITY: phase=eng rows=7/7 missing=none unverified=0： verdict=complete
 
 ```
 
 ## Completion Summary
 
+- Step 0: Scope Challenge — scope accepted as-is（FULL_REVIEW；单个完整 PR）
+- Reality rows: 7/7 applicable rows emitted（`PLAN_REALITY: phase=eng rows=7/7 missing=none unverified=0： verdict=complete`），0 unverified premises
+- Architecture Review: 3 issues found（R1/R3 已批准并写回；R2 保持 blocked）
+- Code Quality Review: 1 issue found（R4 cancel token 接线已写入既定取消范围）
+- Test Review: diagram produced, 1 gap identified（R5 控制竞态证明已补齐，未执行实现测试）
+- Performance Review: 0 issues found
+- NOT in scope: written（14 items；含 2 个 design-deferred 与 1 个 R2 blocked 项）
+- What already exists: written（区分可复用校验/取消底座与缺失的持久恢复/接线）
+- TODOS.md updates: 0 items proposed in this engineering review；design review 已登记 2 items
+- Failure modes: 1 critical gap flagged（R2 审批持久 decision/执行恢复未批准；实现验证尚未发生）
+- Unresolved decisions: 1 in this review（R2/D2=C）
+- Outside voice: codex / plan-review — unavailable（自定义 endpoint 模型配置无效；原生 fallback 5 分钟无完整报告，未采用部分输出）
+- Parallelization: 3 implementation lanes + final acceptance，3 parallel / 1 sequential；共享 runtime/db/cloud/web 按依赖串行协调
+- Lake Score: 1/2（D3 选择 10/10；D2 选择 2/10 的保持待补；D1 无 coverage 计分）
+- Test Plan: `~/.gstack/projects/Grong-tinyiothub/chenguorong-e4-p2-declaration-closeout-eng-review-test-plan-20261026-192418.md`
+- Task JSONL: `~/.gstack/projects/Grong-tinyiothub/tasks-eng-review-20261027-151659.jsonl`（11 tasks；无 R2 审批实现任务）
+
+## Unresolved decisions that may bite you later
+
+- **R2 / D2=C（pending）**：用户选择保持现状待补，没有批准持久 approval、冻结参数、decision 与执行关联或崩溃恢复方案。审批路由、执行恢复、审批按钮及其崩溃测试继续 blocked；完整 Runtime PR 在 R2 解决前不可开始，也不得把旧 DashMap/heartbeat 路径当成满足契约的实现。
+
+## Suppressed findings
+
+None recorded in this review.
+
+## Design Review Pass Record
+
+- **Step 0 — 7/10。** 用户选择全部七个 pass；目标是补全实现前设计契约，不重做工程评审。
+  分类为 **OPERATE / APP UI**：用户要完成持续 Task 的监督、核查与干预，不是阅读营销页。
+- **Step 0.5 — unavailable。** 请求 3 个视觉 variants 时设计工具报告无 OpenAI API key，
+  0/3 图片保存；按规则停止生成、check 与 compare board。没有手工替代 mockup，
+  后续评分只依据计划、DESIGN.md 与现有前端契约。
+- **Design Outside Voices — skipped。** 用户选择跳过；该阶段没有外部覆盖或 clean 信用。
+
+| Pass | 分数 | 已批准改动与剩余缺口 |
+| --- | --- | --- |
+| 1. Information Architecture | 6→10 | Issues 1/2/3/19：Task 列表、专用创建页、objective 优先的详情头部、详情内 Flow 标签与切换清理均有明确契约 |
+| 2. Interaction State Coverage | 5→10 | Issues 4/5/6/7/8/21：完整五态矩阵、历史只读、Task cancel、Job Stop、内联审批与 Pause/Resume 的服务器投影和未知结果 |
+| 3. User Journey & Emotional Arc | 6→10 | Issue 9：10 步信任故事板与 5 秒/5 分钟/长期使用验收已写入 §11.1 |
+| 4. AI Slop Risk | 7→8 | Issues 10/11：字号与实用型 OPERATE 层级已明确；用户保留系统字体，默认字体通用感仍是缺口，因此不评 10 |
+| 5. Design System Alignment | 5→10 | Issues 12/13：双主题无边框、token 路径、组件复用与浏览器表面均有明确映射 |
+| 6. Responsive & Accessibility | 4→9 | Issues 14/15/16/17/18/20：三档布局、键盘/焦点/滚动、读屏、reduced-motion 与 AA 已明确；captions deferred，保留 1 分缺口 |
+| 7. Unresolved Design Decisions | unscored | 21 项均有独立回答：19 项 resolved，2 项 deferred；deferred 项只进入 NOT in scope/TODOS，不进入本期 accepted tasks |
+
+Pass 4 采用 OPERATE 规则。七个 hard-rejection 模式在修订后的计划中没有未处置项：
+首屏不是 KPI/通用 SaaS 卡片网格，主工作区不是堆叠营销卡，标题有明确行动，文字不压在
+繁忙图片上，没有重复情绪文案、无目的 carousel 或弱品牌大图。唯一保留的 AI-slop 风险是
+系统字体作为默认主字体；它是用户明确接受的视觉债务，而非遗漏。
+
+Litmus：品牌与产品在首屏可辨识 **YES**（Runtime + objective + 既有品牌表面）；有单一视觉
+锚点 **YES**（Agent Loop 主工作区）；只看标题可理解 **YES**（Runtime/Current/Recent/
+Agent Loop/Devices/Flow）；每个区域一个职责 **YES**；卡片确有必要 **YES**（ToolCard 与
+设备实体承载交互，不是装饰网格）；动效服务层级 **YES**（只用于状态与空间关系，且有完整
+reduced-motion）；移除装饰阴影仍成立 **YES**（依赖布局、字号、间距与文字，不依赖 glow）。
+这些结论没有 PNG 或浏览器实测支持，实现后仍需 `/design-review`。
+
+## Design Review Completion Summary
+
 ```text
 +====================================================================+
-|            MEGA PLAN REVIEW — COMPLETION SUMMARY                   |
+|         DESIGN PLAN REVIEW — COMPLETION SUMMARY                    |
 +====================================================================+
-| Mode selected        | HOLD_SCOPE                                  |
-| System Audit         | base=main；复用 Runner/Hub；Task/媒体断点已定位 |
-| Step 0               | HOLD SCOPE；D0-path/task/media/ui/recovery/ |
-|                      | generic/mode/pr 等 14 项均有实际回答          |
-| Section 1  (Arch)    | 4 issues found（媒体/progress/pause/容量）    |
-| Section 2  (Errors)  | 23 error paths mapped, 0 GAPS               |
-| Section 3  (Security)| 3 issues found, 0 High severity             |
-| Section 4  (Data/UX) | 12 edge cases mapped, 0 unhandled           |
-| Section 5  (Quality) | 2 issues found（ports/附件边界）              |
-| Section 6  (Tests)   | Diagram produced, 8 verification areas       |
-| Section 7  (Perf)    | 3 issues found；D8 容量风险保留               |
-| Section 8  (Observ)  | 2 gaps found（指标/runbook 已补齐）           |
-| Section 9  (Deploy)  | 3 risks flagged（单 PR/迁移/直连 staging）    |
-| Section 10 (Future)  | Reversibility: 4/5, debt items: 4           |
-| Section 11 (Design)  | 2 issues；eng+design review 后续必需         |
+| System Audit         | DESIGN.md present; Vite + Lit; OPERATE UI   |
+| Step 0               | 7/10; all seven passes selected             |
+| Pass 1  (Info Arch)  | 6/10 → 10/10 after fixes                   |
+| Pass 2  (States)     | 5/10 → 10/10 after fixes                   |
+| Pass 3  (Journey)    | 6/10 → 10/10 after fixes                   |
+| Pass 4  (AI Slop)    | 7/10 → 8/10; system font deferred          |
+| Pass 5  (Design Sys) | 5/10 → 10/10 after fixes                   |
+| Pass 6  (Responsive) | 4/10 → 9/10; captions deferred             |
+| Pass 7  (Decisions)  | 19 resolved, 2 deferred; unscored           |
 +--------------------------------------------------------------------+
-| NOT in scope         | written (10 items)                          |
-| What already exists  | written                                     |
-| Dream state delta    | written                                     |
-| Error/rescue registry| 11 rows, 0 CRITICAL GAPS                    |
-| Failure modes        | 12 total, 0 CRITICAL GAPS                   |
-| TODOS.md updates     | 0 new proposals                             |
-| Scope proposals      | 0 proposed, 0 accepted (HOLD)               |
-| CEO plan             | skipped by mode                             |
-| Outside voice        | codex unavailable + native 5min timeout     |
-| Lake Score           | N/A（无 coverage 计分题）                    |
-| Diagrams produced    | 8 (arch/data/state/error/deploy/rollback/   |
-|                      | test/UX)                                   |
-| Stale diagrams found | 1 found and corrected（上位 E1-E5 顺序）     |
-| Unresolved decisions | 0                                           |
-| Reality rows         | 14/14 rows (PLAN_REALITY), 0 unverified     |
+| NOT in scope         | written (13 items total, 2 design-deferred) |
+| What already exists  | written; tokens and concrete UI components  |
+| TODOS.md updates     | 2 proposed, 2 added                         |
+| Approved Mockups     | 0 generated, 0 approved                     |
+| Decisions made       | 21 added to plan                            |
+| Decisions deferred   | 2 (listed below)                            |
+| Overall design score | 4/10 → 8/10                                 |
 +====================================================================+
 ```
 
+总体分取六个评分 pass 的最低值，不是平均分；Pass 7 不评分。所有评分 pass 均达到 8+，
+但两个用户明确 deferred 的缺口仍存在，因此本轮状态是 **ISSUES OPEN**，不是 clean。
+设计契约已写入，尚未实现或做真实页面视觉验收。
+
+### Unresolved Decisions
+
+| DECISION NEEDED | IF DEFERRED, WHAT HAPPENS |
+| --- | --- |
+| 是否以有意图的自托管主字体替代系统栈 | 本期保留 `--font-body`/`--font-display` 与中文系统回退，默认字体通用感仍存在；Pass 4 保持 8。后续按 `TODOS.md` 的 Runtime 主字体项评估，不阻塞本期 |
+| 何时为含语音视频证据提供 WebVTT captions | 首版只提供画面/原声与 `Captions unavailable`，语音内容没有等价文本访问；Pass 6 保持 9。后续按 `TODOS.md` 的 captions 项在可信字幕来源就绪后实现 |
+
+- **Task JSONL:** `~/.gstack/projects/Grong-tinyiothub/tasks-design-review-20261027-120412.jsonl`（7 tasks）
+- **Deferred TODOs:** `TODOS.md` → `Multi-device Agent Runtime — Deferred`（2 items）
+- **Outside voice:** design phase skipped by user；engineering phase 的 unavailable 记录独立保留。
+
 ## GSTACK REVIEW REPORT
 
-- Review: --------
-- Trigger: ---------
-- Why: -----
-- Runs: ------
-- Status: --------
-- Findings: ----------
+| Review | Trigger | Why | Runs | Status | Findings |
+|--------|---------|-----|------|--------|----------|
+| CEO Review | `/plan-ceo-review` | Scope & strategy | 1 | CLEAR | mode: HOLD_SCOPE, 0 critical gaps |
+| Outside Review | codex plan-review + design outside-voice | Independent 2nd opinion | 5 | UNAVAILABLE / SKIPPED | 0 completed external reviews; 0 usable findings |
+| Eng Review | `/plan-eng-review` | Architecture & tests (required) | 2 | ISSUES OPEN | 5 issues, 1 critical gap; 1 unresolved decision |
+| Design Review | `/plan-design-review` | UI/UX gaps | 1 | ISSUES OPEN | score: 4/10 → 8/10, 21 decisions, 2 deferred |
+| DX Review | `/plan-devex-review` | Developer experience gaps | 0 | — | not run |
 
-- Review: CEO Review
-- Trigger: `/plan-ceo-review`
-- Why: Scope & strategy
-- Runs: 1
-- Status: CLEAN
-- Findings: 14 decisions answered; 0 unresolved, 0 critical gaps
+- **OUTSIDE COVERAGE:** codex, engineering plan-review phase, unavailable——本轮自定义 endpoint 未配置 frontier plan-review 模型；原生 fallback 5 分钟内无完整报告，两次 unavailable 均已记录，未采用部分输出。没有外部覆盖或 clean 信用。
+- **OUTSIDE COVERAGE:** codex, design phase, skipped by user——未启动独立设计 reviewer，0 findings；不得从 engineering 记录推断 design 外部覆盖。
+- **VERDICT:** CEO CLEAR；ENG ISSUES OPEN（R1/R3 已处置，R2 审批恢复仍 blocked）；DESIGN ISSUES OPEN（2 个 deferred 缺口）。eng review required；完整 Runtime PR 在 R2 解决前不可开始，未实现、未验收。
 
-- Review: Outside Review
-- Trigger: codex (auto)
-- Why: Independent 2nd opinion
-- Runs: 1
-- Status: unavailable
-- Findings: custom endpoint model invalid; native fallback 5min timeout
+**UNRESOLVED DECISIONS:**
+- 本轮 R2 / D2=C：Task 审批的持久 decision、执行关联与崩溃恢复保持 pending；审批路由、执行恢复、审批按钮及其测试均 blocked，完整 Runtime PR 在解决并批准该机制前不可开始。
+- 前次设计评审 deferred：系统字体继续作为 Runtime 主字体；有意图的字体选型已登记 `TODOS.md`，Pass 4 保持 8/10。
+- 前次设计评审 deferred：含语音视频证据的 WebVTT captions 已登记 `TODOS.md`；首版显示 `Captions unavailable`，Pass 6 保持 9/10。
 
-- Review: Eng Review
-- Trigger: `/plan-eng-review`
-- Why: Architecture & tests (required)
-- Runs: 0
-- Status: —
-- Findings: not run; required before implementation
+## Current Follow-up Status（2026-10-27）
 
-- Review: Design Review
-- Trigger: `/plan-design-review`
-- Why: UI/UX gaps
-- Runs: 0
-- Status: —
-- Findings: not run; recommended before UI implementation
+以上 GSTACK REVIEW REPORT 保留第二轮工程评审的历史结果，不改写当时的 R2/D2=C 回答。
+用户随后显式重开 R2 并选择 A“持久化并幂等续跑”；规范契约见 R2 Follow-up resolution，
+实施任务见 `docs/superpowers/plans/2026-10-27-multi-device-agent-runtime.md` 的 T6A/T7B/T8。
 
-- Review: DX Review
-- Trigger: `/plan-devex-review`
-- Why: Developer experience gaps
-- Runs: 0
-- Status: —
-- Findings: not run
-
-- **OUTSIDE COVERAGE:** codex, plan-review phase, **unavailable**——自定义
-endpoint 未配置 frontier
-plan-review 模型；native fallback 5 分钟内无完整报告。无可计外部覆盖，无 clean 信用。
-
-- **VERDICT:** CEO review **CLEAN**，仅表示当前无未决方案或设计缺口。实现、实时模型、
-摄像头和生产性能均未验证；单 PR 与无固定配额仍有明确风险。**eng review required**；
-`/plan-design-review` recommended before UI implementation。
-
-NO UNRESOLVED DECISIONS
+- **当前 R2：** resolved / approved for implementation planning；持久 decision、冻结参数、
+  原子 outbox、Job 插入/Task 状态事务及幂等崩溃续跑均已写入。
+- **当前工程门：** 2026-10-27 F1/F2 聚焦复核通过：paused reject/expiry/unavailable
+  的 `Deferred` 传播、原 decision outbox 保留与同事件 resume，以及 T6A/T8/QA 回归契约
+  均已核对；本轮 0 个新发现、0 个新未决决策、0 个 critical gap，工程计划门已满足。
+  报告附在实施计划末尾；实现测试与验收仍待完成。
+- **当前交付门（D6）：** 用户选择“全部并入 PR #101”。在当前分支以声明提交 `6876707f`
+  为基线继续 SDD，不再等待 PR #101 先合入，也不另开 Runtime PR；声明收口与完整 Runtime
+  最终进入同一个 PR。该决定不授权 push/merge，实现测试与验收仍是交付门。
+- **当前交付：** 12 个任务按 D6 全部并入现有 PR #101，三个默认关闭 flags；没有审批实现的
+  范围豁免，也没有 commit/push/merge 授权。功能尚未实现或验收，历史 blocked 文字仅作评审记录。
+- **仍保留的非阻塞 deferred：** 系统主字体与 WebVTT captions，按设计评审和 TODOS 处置。

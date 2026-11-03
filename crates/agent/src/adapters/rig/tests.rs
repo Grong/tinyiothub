@@ -826,6 +826,190 @@ async fn rig_loop_forwards_tool_and_usage_events() {
     assert_eq!(usages, vec![(Some(10), Some(0), Some(5)), (Some(20), Some(3), Some(7))]);
 }
 
+/// 命名可配的记录工具（用于验证旧名修复到指定现行工具）。
+struct NamedRecordingTool {
+    name: &'static str,
+    calls: Arc<Mutex<Vec<serde_json::Value>>>,
+}
+
+impl Attributable for NamedRecordingTool {
+    fn role(&self) -> Role {
+        Role::Tool(ToolKind::Plugin)
+    }
+    fn alias(&self) -> &str {
+        self.name
+    }
+}
+
+#[async_trait::async_trait]
+impl Tool for NamedRecordingTool {
+    fn name(&self) -> &str {
+        self.name
+    }
+    fn description(&self) -> &str {
+        "Records its arguments"
+    }
+    fn parameters_schema(&self) -> serde_json::Value {
+        serde_json::json!({"type": "object"})
+    }
+    async fn execute(&self, args: serde_json::Value) -> anyhow::Result<ToolResult> {
+        self.calls.lock().unwrap().push(args);
+        Ok(ToolResult {
+            success: true,
+            output: "recorded".into(),
+            error: None,
+            attachments: vec![],
+        })
+    }
+}
+
+/// 第一次调用返回给定工具名，之后返回最终文本；记录每次请求的消息供断言。
+struct InvalidToolModel {
+    first_tool: &'static str,
+    calls: Mutex<usize>,
+    seen: Arc<Mutex<Vec<String>>>,
+}
+
+impl Attributable for InvalidToolModel {
+    fn role(&self) -> Role {
+        Role::Provider(crate::port::attribution::ProviderKind::Model(
+            crate::port::attribution::ModelProviderKind::Custom,
+        ))
+    }
+    fn alias(&self) -> &str {
+        "InvalidToolModel"
+    }
+}
+
+#[async_trait::async_trait]
+impl crate::port::provider::ModelProvider for InvalidToolModel {
+    async fn chat(
+        &self,
+        request: crate::port::provider::ChatRequest<'_>,
+        _model: &str,
+        _temperature: Option<f64>,
+    ) -> anyhow::Result<crate::port::provider::ChatResponse> {
+        self.seen
+            .lock()
+            .unwrap()
+            .extend(request.messages.iter().map(|m| format!("{}:{}", m.role, m.content)));
+        let mut calls = self.calls.lock().unwrap();
+        *calls += 1;
+        if *calls == 1 {
+            return Ok(crate::port::provider::ChatResponse {
+                text: None,
+                tool_calls: vec![crate::port::provider::ToolCall {
+                    id: "call_bad".into(),
+                    name: self.first_tool.into(),
+                    arguments: r#"{"thingId":"d1"}"#.into(),
+                }],
+                usage: None,
+                reasoning_content: None,
+            });
+        }
+        Ok(crate::port::provider::ChatResponse {
+            text: Some("recovered".into()),
+            tool_calls: vec![],
+            usage: None,
+            reasoning_content: None,
+        })
+    }
+}
+
+fn invalid_tool_loop(
+    first_tool: &'static str,
+    tool: Box<dyn Tool>,
+    seen: Arc<Mutex<Vec<String>>>,
+) -> crate::port::runtime::AgentLoopHandle {
+    use crate::adapters::rig::loop_::rig_loop_factory;
+    use crate::port::runtime::AgentLoopConfig;
+
+    let dir = tempfile::tempdir().expect("tempdir");
+    rig_loop_factory(AgentLoopConfig {
+        model_name: "invalid-tool-model".into(),
+        prompt_builder: crate::port::prompt::SystemPromptBuilder::with_defaults(),
+        tools: vec![tool],
+        memory: Arc::new(crate::port::memory::NoopMemory),
+        observer: Arc::new(crate::port::observer::NoopObserver),
+        workspace_dir: dir.path().to_path_buf(),
+        security_summary: None,
+        provider_factory: Arc::new(move || {
+            Ok(Box::new(InvalidToolModel {
+                first_tool,
+                calls: Mutex::new(0),
+                seen: Arc::clone(&seen),
+            }))
+        }),
+        conversation_memory: false,
+    })
+    .expect("factory builds loop")
+}
+
+/// 旧工具名（read_property）修复为现行 read_device 并真正执行，
+/// 不因为模型沿用旧名而丢掉整轮工具调用。
+#[tokio::test]
+async fn legacy_tool_alias_is_repaired_and_executed() {
+    use crate::port::events::TurnEvent;
+
+    let calls: Arc<Mutex<Vec<serde_json::Value>>> = Arc::new(Mutex::new(vec![]));
+    let seen = Arc::new(Mutex::new(Vec::new()));
+    let loop_ = invalid_tool_loop(
+        "read_property",
+        Box::new(NamedRecordingTool {
+            name: "read_device",
+            calls: Arc::clone(&calls),
+        }),
+        Arc::clone(&seen),
+    );
+
+    let (tx, _rx) = tokio::sync::mpsc::channel::<TurnEvent>(64);
+    let final_text = loop_
+        .lock()
+        .await
+        .turn_streamed("go", tx, None)
+        .await
+        .expect("repaired call must not fail the turn");
+    assert_eq!(final_text, "recovered");
+    assert_eq!(
+        calls.lock().unwrap().as_slice(),
+        &[serde_json::json!({"thingId": "d1"})],
+        "the repaired call must execute against read_device"
+    );
+}
+
+/// 未知工具名不再终结整轮：跳过该调用并把纠正反馈交还模型。
+#[tokio::test]
+async fn unknown_tool_call_is_skipped_instead_of_failing_the_turn() {
+    use crate::port::events::TurnEvent;
+
+    let calls: Arc<Mutex<Vec<serde_json::Value>>> = Arc::new(Mutex::new(vec![]));
+    let seen = Arc::new(Mutex::new(Vec::new()));
+    let loop_ = invalid_tool_loop(
+        "totally_made_up_tool",
+        Box::new(RecordingTool {
+            calls: Arc::clone(&calls),
+        }),
+        Arc::clone(&seen),
+    );
+
+    let (tx, _rx) = tokio::sync::mpsc::channel::<TurnEvent>(64);
+    let final_text = loop_
+        .lock()
+        .await
+        .turn_streamed("go", tx, None)
+        .await
+        .expect("unknown tool must not fail the turn");
+    assert_eq!(final_text, "recovered");
+    assert!(
+        calls.lock().unwrap().is_empty(),
+        "the skipped call must not reach any tool"
+    );
+    // 第二次请求必须带上 skip 反馈，模型才有机会自我纠正。
+    let seen = seen.lock().unwrap();
+    assert!(seen.iter().any(|m| m.contains("未知工具 `totally_made_up_tool`")), "{seen:?}");
+    assert!(seen.iter().any(|m| m.contains("recording_tool")), "{seen:?}");
+}
+
 #[tokio::test]
 async fn run_budget_rejects_fifth_distinct_image_before_provider_delivery() {
     use crate::adapters::rig::loop_::rig_loop_factory;

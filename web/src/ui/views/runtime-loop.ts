@@ -19,6 +19,58 @@ const toolEvents = new Set([
 const stopStates = new Set(['accepted', 'running']);
 const terminalStatuses = new Set<TaskStatus>(['completed', 'failed', 'cancelled']);
 
+const eventTitles: Record<string, string> = {
+  'task.created': 'Task created',
+  'task.completed': 'Task completed',
+  'task.failed': 'Task failed',
+  'task.cancelled': 'Task cancelled',
+  'task.run_bound': 'Run bound',
+  'run.started': 'Agent started',
+  'run.finished': 'Agent finished',
+  read_device: 'Read device',
+  set_device: 'Set device',
+  call_device: 'Call device',
+  stop_device: 'Stop device',
+  watch_device: 'Watch device',
+};
+
+function eventTitle(event: RuntimeEvent): string {
+  return (
+    eventTitles[event.eventType] ?? event.eventType.replaceAll('_', ' ').replaceAll('.', ' · ')
+  );
+}
+
+function clockLabel(iso: string): string {
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return '';
+  return date.toLocaleTimeString([], {
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hour12: false,
+  });
+}
+
+/** Lifecycle events carry only bookkeeping in their payload. The status
+ *  header already states the outcome, so a raw disclosure is noise. */
+const bookkeepingKeys = new Set(['stateVersion', 'taskStatus', 'outcome']);
+
+function hasMeaningfulPayload(event: RuntimeEvent): boolean {
+  const keys = Object.keys(event.data ?? {});
+  return keys.length > 0 && keys.some((key) => !bookkeepingKeys.has(key));
+}
+
+/** Surface the values a read returned instead of hiding them behind Details. */
+function eventFacts(event: RuntimeEvent): [string, string][] {
+  if (!toolEvents.has(event.eventType)) return [];
+  const state = event.data.state;
+  if (!state || typeof state !== 'object' || Array.isArray(state)) return [];
+  return Object.entries(state as Record<string, unknown>)
+    .filter(([, value]) => value !== null && value !== undefined)
+    .slice(0, 4)
+    .map(([key, value]) => [key, String(value)]);
+}
+
 @customElement('runtime-loop')
 export class RuntimeLoop extends LitElement {
   @property({ attribute: false }) projection: RuntimeProjection | null = null;
@@ -78,7 +130,7 @@ export class RuntimeLoop extends LitElement {
 
   private deviceLink(deviceId: string): TemplateResult {
     return html`<button
-      class="runtime-loop__device"
+      class="unstyled runtime-loop__device"
       type="button"
       data-device-id=${deviceId}
       @click=${() => this.locate(deviceId)}
@@ -94,15 +146,55 @@ export class RuntimeLoop extends LitElement {
     return 'Act';
   }
 
-  private renderEvent(event: RuntimeEvent): TemplateResult {
-    return html`<article class="runtime-loop__step" data-event-id=${event.eventId}>
-      <header><span>${this.stepKind(event)}</span><strong>${event.eventType}</strong></header>
-      ${event.deviceId ? this.deviceLink(event.deviceId) : nothing}
-      <details>
-        <summary>Details</summary>
-        <pre>${safeJson(event.data)}</pre>
-      </details>
-    </article>`;
+  private renderEvent(event: RuntimeEvent, approval?: TemplateResult): TemplateResult {
+    const kind = this.stepKind(event);
+    const facts = eventFacts(event);
+    // Facts answer the common question; raw payload stays available only when
+    // it carries something the row does not already show.
+    const hasPayload = facts.length === 0 && hasMeaningfulPayload(event);
+    const isResult = kind === 'Result';
+    const failed =
+      isResult && (event.eventType === 'task.failed' || this.projection?.task.status === 'failed');
+    return html`<li
+      class="runtime-event ${isResult ? 'is-terminal' : ''} ${failed ? 'is-failed' : ''}"
+      data-event-id=${event.eventId}
+      data-kind=${kind}
+    >
+      <time class="runtime-event__time" datetime=${event.occurredAt}>
+        ${clockLabel(event.occurredAt)}
+      </time>
+      <span class="runtime-event__node" aria-hidden="true"></span>
+      <div class="runtime-event__body">
+        <header class="runtime-event__header">
+          <span class="runtime-event__kind">${kind}</span>
+          <strong class="runtime-event__title">${eventTitle(event)}</strong>
+          <code class="runtime-event__type">${event.eventType}</code>
+        </header>
+        ${event.deviceId ? html`<div class="runtime-event__device">${this.deviceLink(event.deviceId)}</div>` : nothing}
+        ${
+          facts.length
+            ? html`<p class="runtime-event__facts">
+                ${facts.map(
+                  ([label, value]) =>
+                    html`<span class="runtime-event__fact"
+                      ><span class="runtime-event__fact-label">${label}</span
+                      ><span class="runtime-event__fact-value">${value}</span></span
+                    >`,
+                )}
+              </p>`
+            : nothing
+        }
+        ${
+          hasPayload
+            ? html`<details class="runtime-event__payload">
+                <summary>Payload</summary>
+                <pre>${safeJson(event.data)}</pre>
+              </details>`
+            : nothing
+        }
+        ${approval ?? nothing}
+      </div>
+    </li>`;
   }
 
   private renderApproval(approval: RuntimeProjectedApproval): TemplateResult {
@@ -272,7 +364,7 @@ export class RuntimeLoop extends LitElement {
       </div>`;
     }
     return html`<button
-      class="runtime-loop__evidence"
+      class="unstyled runtime-loop__evidence"
       type="button"
       data-evidence-id=${evidence.evidenceId}
       @click=${() => this.locate(evidence.deviceId, evidence.evidenceId)}
@@ -300,7 +392,7 @@ export class RuntimeLoop extends LitElement {
       // card once, attached to the first referencing step.
       if (approval && !renderedApprovals.has(approval.id)) {
         renderedApprovals.add(approval.id);
-        return html`${this.renderEvent(event)}${this.renderApproval(approval)}`;
+        return this.renderEvent(event, this.renderApproval(approval));
       }
       if (approval) renderedApprovals.add(approval.id);
       return this.renderEvent(event);
@@ -312,10 +404,28 @@ export class RuntimeLoop extends LitElement {
     const imageEvidence = projection.evidence.filter(
       (evidence) => evidence.deviceId && evidence.mime.startsWith('image/'),
     );
+    const hasActivity =
+      this.loading ||
+      projection.jobs.length ||
+      projection.steps.length ||
+      projection.evidence.length ||
+      projection.approvals.length;
     return html`<section class="runtime-loop" aria-label="Agent Loop">
-      <h2>Agent Loop</h2>
-      ${this.loading || projection.jobs.length || projection.steps.length || projection.evidence.length || projection.approvals.length ? nothing : html`<p class="runtime-loop__empty">No agent activity yet</p>`}
-      <div class="runtime-loop__jobs">${projection.jobs.map((job) => this.renderJob(job))}</div>
+      <header class="runtime-loop__head">
+        <h2 class="runtime-loop__title">Execution</h2>
+        <span class="runtime-loop__count">${projection.steps.length} events</span>
+      </header>
+      ${hasActivity ? nothing : html`<p class="runtime-loop__empty">No agent activity yet</p>`}
+      ${
+        projection.jobs.length
+          ? html`<section class="runtime-loop__jobs" aria-label="Device jobs">
+              <h3 class="runtime-loop__subhead">
+                Device jobs <span>${projection.jobs.length}</span>
+              </h3>
+              ${projection.jobs.map((job) => this.renderJob(job))}
+            </section>`
+          : nothing
+      }
       ${
         orphanApprovals.length
           ? html`<div class="runtime-loop__approvals">
@@ -323,10 +433,17 @@ export class RuntimeLoop extends LitElement {
             </div>`
           : nothing
       }
-      <div class="runtime-loop__steps">${steps}</div>
+      ${
+        steps.length
+          ? html`<ol class="runtime-loop__steps" aria-label="Agent activity">
+              ${steps}
+            </ol>`
+          : nothing
+      }
       ${
         imageEvidence.length
           ? html`<section aria-label="Image evidence" class="runtime-loop__evidence-list">
+              <h3 class="runtime-loop__subhead">Image evidence</h3>
               ${imageEvidence.map((evidence) => this.renderEvidence(evidence))}
             </section>`
           : nothing

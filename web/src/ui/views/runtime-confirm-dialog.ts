@@ -73,10 +73,10 @@ export class RuntimeConfirmDialog extends LitElement {
         <h2 id=${this.titleId}>${this.title}</h2>
         <div class="runtime-confirm-dialog__body" id=${this.bodyId}>${this.body}</div>
         <div class="runtime-confirm-dialog__actions">
-          <button type="button" data-action="primary" @click=${this.close}>
+          <button class="unstyled" type="button" data-action="primary" @click=${this.close}>
             ${this.primaryLabel}
           </button>
-          <button type="button" data-action="danger" @click=${this.confirmDanger}>
+          <button class="unstyled" type="button" data-action="danger" @click=${this.confirmDanger}>
             ${this.dangerLabel}
           </button>
         </div>

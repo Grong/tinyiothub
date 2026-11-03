@@ -10,8 +10,8 @@ use tokio_util::sync::CancellationToken;
 use futures::StreamExt;
 use rig_agent::agent::hook::ToolCall as ToolCallEvent;
 use rig_agent::agent::{
-    Agent, AgentBuilder, AgentHook, CompletionCallAction, CompletionCallEvent, HookContext, MultiTurnStreamItem,
-    RequestPatch, ToolCallAction,
+    Agent, AgentBuilder, AgentHook, CompletionCallAction, CompletionCallEvent, HookContext, InvalidToolCallAction,
+    InvalidToolCallContext, MultiTurnStreamItem, RequestPatch, ToolCallAction,
 };
 use rig_agent::completion::{Document, Prompt};
 use rig_agent::streaming::StreamingPrompt;
@@ -177,6 +177,51 @@ impl AgentHook for BudgetHook {
     }
 }
 
+/// rig 默认把模型调用未暴露的工具当致命错误（`PromptError::UnknownToolCall`）
+/// 终结整轮。模型在长工具链里偶尔会臆造旧工具名或新名字——一次臆造就让
+/// 整个 Run 失败、Task 变 Failed（2026-11-02 实测：`read_property`）。
+/// 这里修复已知旧别名，其余未知调用改为跳过并回传纠正反馈，让模型自我纠正。
+struct InvalidToolCallRecovery;
+
+/// 旧工具名 → E2 现行工具名（只映射语义等价、参数兼容的只读别名）。
+const LEGACY_TOOL_ALIASES: &[(&str, &str)] = &[
+    ("list_things", "list_devices"),
+    ("get_thing", "read_device"),
+    ("get_thing_profile", "read_device"),
+    ("read_property", "read_device"),
+];
+
+impl AgentHook for InvalidToolCallRecovery {
+    async fn on_invalid_tool_call(
+        &self,
+        _ctx: &HookContext,
+        event: &InvalidToolCallContext,
+    ) -> Option<InvalidToolCallAction> {
+        if let Some((_, current)) = LEGACY_TOOL_ALIASES
+            .iter()
+            .find(|(legacy, _)| *legacy == event.tool_name.as_str())
+            && event.available_tools.iter().any(|tool| tool == current)
+        {
+            tracing::info!(
+                emitted = %event.tool_name,
+                repaired = %current,
+                "legacy tool name repaired"
+            );
+            return Some(InvalidToolCallAction::repair(*current));
+        }
+        tracing::warn!(
+            tool = %event.tool_name,
+            available = ?event.available_tools,
+            "unknown tool call skipped"
+        );
+        Some(InvalidToolCallAction::skip(format!(
+            "未知工具 `{}`，本次不可用。可用工具：{}。请只用可用工具重新调用，不要编造工具名。",
+            event.tool_name,
+            event.available_tools.join(", ")
+        )))
+    }
+}
+
 fn map_stream_error(error: rig_agent::agent::StreamingError, cancel: Option<&CancellationToken>) -> anyhow::Error {
     if cancel.is_some_and(CancellationToken::is_cancelled) {
         return anyhow::Error::new(crate::port::outcome::ToolLoopCancelled);
@@ -214,7 +259,8 @@ impl AgentLoop for RigAgentLoop {
                 cancel: cancel_token.clone(),
                 steering,
                 media: tokio::sync::Mutex::new(RunMediaAccountant::default()),
-            });
+            })
+            .add_hook(InvalidToolCallRecovery);
         // conversation_memory=false：历史由 cloud DB 每轮 seed，经 .history() 传入。
         let seeded = self.seeded_history().await;
         if !seeded.is_empty() {
@@ -315,7 +361,8 @@ impl AgentLoop for RigAgentLoop {
             cancel: None,
             steering: None,
             media: tokio::sync::Mutex::new(RunMediaAccountant::default()),
-        });
+        })
+        .add_hook(InvalidToolCallRecovery);
         let seeded = self.seeded_history().await;
         if !seeded.is_empty() {
             request = request.history(seeded);
