@@ -5,7 +5,8 @@ use chrono::{DateTime, Duration, Utc};
 use serde_json::json;
 use tinyiothub_agent::harness::{EffectReconciler, ReconcileOutcome};
 use tinyiothub_cloud::domains::agent::runtime::{EffectRecovery, RecoveryMode};
-use tinyiothub_core::harness::{DecisionState, EffectIntent, EffectState};
+use tinyiothub_core::harness::{DecisionState, EffectIntent, EffectState, ExecutionMode};
+use tinyiothub_storage::harness_event::EventFilter;
 use tinyiothub_storage::test_helpers::{WorkspaceFixture, fixture_workspace};
 
 const WS: &str = "ws-recovery";
@@ -432,6 +433,10 @@ async fn effect_recovery_cancel_before_send_or_stop_unknown_never_claims_stopped
     );
     assert_eq!(decision_state(&fixture, "effect-cancel-prepared").await.0, "withdrawn");
     assert_eq!(effect_state(&fixture, "effect-cancel-sent").await.0, "cancelling");
+    assert_eq!(
+        run_task_states(&fixture, "effect-cancel-sent").await,
+        ("cancelling".to_string(), "cancelling".to_string())
+    );
 
     let reconciler = ScriptedReconciler::new(ReconcileOutcome::Unknown {
         reason: "stop request failed; device may still run".to_string(),
@@ -616,6 +621,234 @@ async fn effect_recovery_restore_fences_all_effects_before_any_reconciliation() 
 }
 
 #[tokio::test]
+async fn effect_recovery_restore_cancelling_preserves_stop_semantics() {
+    for (case, outcome, expected) in [
+        (
+            "unknown",
+            ReconcileOutcome::Unknown {
+                reason: "stop unavailable; password=nested-secret".to_string(),
+            },
+            "cancelled_unknown",
+        ),
+        (
+            "settled",
+            ReconcileOutcome::Settled(json!({"completed":true})),
+            "invalid",
+        ),
+        (
+            "cancelled",
+            ReconcileOutcome::Cancelled(json!({"stopped":true})),
+            "cancelled",
+        ),
+    ] {
+        let fixture = fixture().await;
+        let effect_id = format!("effect-restore-stop-{case}");
+        seed_effect(&fixture, &effect_id, EffectState::Cancelling, "cancelling").await;
+        let reconciler = ScriptedReconciler::new(outcome);
+        let host = EffectRecovery::new(Arc::new(fixture.db.clone()));
+        let result = host.recover_workspace(WS, RecoveryMode::Restore, &reconciler).await;
+        if expected == "invalid" {
+            result.expect_err("execution success cannot prove a restored stop");
+            assert_eq!(effect_state(&fixture, &effect_id).await.0, "unknown");
+            assert_eq!(
+                run_task_states(&fixture, &effect_id).await,
+                ("cancelling".to_string(), "cancelling".to_string())
+            );
+        } else {
+            result.expect("restored stop outcome");
+            assert_eq!(effect_state(&fixture, &effect_id).await.0, expected);
+            let expected_parent = if expected == "cancelled_unknown" {
+                "failed"
+            } else {
+                "cancelled"
+            };
+            assert_eq!(
+                run_task_states(&fixture, &effect_id).await,
+                (expected_parent.to_string(), expected_parent.to_string())
+            );
+        }
+        fixture.close().await;
+    }
+}
+
+#[tokio::test]
+async fn effect_recovery_answered_approval_cancel_and_consume_orders() {
+    for (answer, consume_first) in [
+        ("approved", false),
+        ("approved", true),
+        ("denied", false),
+        ("denied", true),
+    ] {
+        let fixture = fixture().await;
+        let effect_id = format!("effect-answered-{answer}-{consume_first}");
+        seed_effect(&fixture, &effect_id, EffectState::Prepared, "running").await;
+        seed_decision(
+            &fixture,
+            &effect_id,
+            "tool_approval",
+            DecisionState::Answered,
+            Some(answer),
+            None,
+        )
+        .await;
+        let reconciler = ScriptedReconciler::new(ReconcileOutcome::Unknown {
+            reason: "unused".to_string(),
+        });
+        let host = EffectRecovery::new(Arc::new(fixture.db.clone()));
+        if consume_first {
+            let report = host
+                .recover_workspace(WS, RecoveryMode::Restart, &reconciler)
+                .await
+                .expect("consume answer");
+            assert_eq!(report.dispatch_permits.len(), usize::from(answer == "approved"));
+        } else {
+            host.request_cancellation(WS, &effect_id)
+                .await
+                .expect("cancel answered approval");
+        }
+        host.request_cancellation(WS, &effect_id)
+            .await
+            .expect("idempotent cancellation ordering");
+        if answer == "approved" && consume_first {
+            assert_eq!(effect_state(&fixture, &effect_id).await.0, "cancelling");
+            assert_eq!(
+                run_task_states(&fixture, &effect_id).await,
+                ("cancelling".to_string(), "cancelling".to_string())
+            );
+            assert_eq!(decision_state(&fixture, &effect_id).await.0, "consumed");
+        } else {
+            assert_eq!(effect_state(&fixture, &effect_id).await.0, "not_applied");
+            let expected_parent = if answer == "denied" && consume_first {
+                "running"
+            } else {
+                "cancelled"
+            };
+            assert_eq!(
+                run_task_states(&fixture, &effect_id).await,
+                (expected_parent.to_string(), expected_parent.to_string())
+            );
+            let expected_decision = if consume_first { "consumed" } else { "withdrawn" };
+            assert_eq!(decision_state(&fixture, &effect_id).await.0, expected_decision);
+            let report = host
+                .recover_workspace(WS, RecoveryMode::Restart, &reconciler)
+                .await
+                .expect("no later permit");
+            assert!(report.dispatch_permits.is_empty());
+        }
+        fixture.close().await;
+    }
+}
+
+#[tokio::test]
+async fn effect_recovery_operator_evidence_and_debug_are_redacted() {
+    let fixture = fixture().await;
+    seed_effect(&fixture, "effect-evidence", EffectState::Unknown, "paused").await;
+    seed_decision(
+        &fixture,
+        "effect-evidence",
+        "effect_reconciliation",
+        DecisionState::Requested,
+        None,
+        None,
+    )
+    .await;
+    let host = EffectRecovery::new(Arc::new(fixture.db.clone()));
+    host.answer_reconciliation(
+        WS,
+        "effect-evidence",
+        "applied",
+        "operator-1",
+        Some(json!({"evidence":["evidence-1"],"credentials":{"password":"nested-secret"},"token":"raw-token"})),
+    )
+    .await
+    .expect("answer with evidence");
+    let decision = fixture
+        .db
+        .effect_decision(WS, "effect-evidence")
+        .await
+        .expect("decision query")
+        .expect("decision");
+    assert!(!format!("{decision:?}").contains("nested-secret"));
+    let recovery_items = fixture.db.list_effect_recovery(WS).await.expect("recovery items");
+    assert!(!format!("{recovery_items:?}").contains("nested-secret"));
+    let stored_evidence: String =
+        sqlx::query_scalar("SELECT answer_evidence_json FROM decisions WHERE effect_id = 'effect-evidence'")
+            .fetch_one(&fixture.workspace_pool().await)
+            .await
+            .expect("stored evidence");
+    assert!(!stored_evidence.contains("nested-secret"));
+    assert!(!stored_evidence.contains("raw-token"));
+    assert!(stored_evidence.contains("evidence-1"));
+
+    sqlx::query("UPDATE agent_tasks SET state = 'running' WHERE id = 'effect-evidence'")
+        .execute(&fixture.workspace_pool().await)
+        .await
+        .expect("resume");
+    let reconciler = ScriptedReconciler::new(ReconcileOutcome::DefinitelyNotApplied);
+    host.recover_workspace(WS, RecoveryMode::Restart, &reconciler)
+        .await
+        .expect("consume sanitized answer");
+    let page = fixture
+        .db
+        .session_event_page(
+            WS,
+            &EventFilter {
+                session_id: Some("session-1".to_string()),
+                run_id: None,
+                task_id: None,
+                execution_mode: ExecutionMode::Production,
+            },
+            0,
+            256,
+        )
+        .await
+        .expect("SSE projection page");
+    let public_json = serde_json::to_string(&page.events).expect("serialize SSE events");
+    assert!(!public_json.contains("nested-secret"));
+    assert!(!public_json.contains("raw-token"));
+    let internal = fixture
+        .db
+        .effect_intent(WS, "effect-evidence")
+        .await
+        .expect("intent query")
+        .expect("intent");
+    assert!(
+        !serde_json::to_string(&internal)
+            .expect("intent DTO")
+            .contains("nested-secret")
+    );
+    fixture.close().await;
+}
+
+#[tokio::test]
+async fn effect_recovery_automatic_settlement_preserves_paused_task() {
+    let fixture = fixture().await;
+    seed_effect(&fixture, "effect-paused-auto", EffectState::Unknown, "paused").await;
+    seed_decision(
+        &fixture,
+        "effect-paused-auto",
+        "effect_reconciliation",
+        DecisionState::Requested,
+        None,
+        None,
+    )
+    .await;
+    let reconciler = ScriptedReconciler::new(ReconcileOutcome::Settled(json!({"confirmed":true})));
+    let host = EffectRecovery::new(Arc::new(fixture.db.clone()));
+    host.recover_workspace(WS, RecoveryMode::Restart, &reconciler)
+        .await
+        .expect("settle without resuming");
+    assert_eq!(effect_state(&fixture, "effect-paused-auto").await.0, "completed");
+    assert_eq!(decision_state(&fixture, "effect-paused-auto").await.0, "withdrawn");
+    assert_eq!(
+        run_task_states(&fixture, "effect-paused-auto").await,
+        ("paused".to_string(), "paused".to_string())
+    );
+    assert_eq!(wake_count(&fixture, "effect-paused-auto").await, 1);
+    fixture.close().await;
+}
+
+#[tokio::test]
 async fn effect_recovery_reconciliation_never_expires_and_events_redact_nested_secrets() {
     let fixture = fixture().await;
     seed_effect(&fixture, "effect-secret", EffectState::Unknown, "running").await;
@@ -628,9 +861,11 @@ async fn effect_recovery_reconciliation_never_expires_and_events_redact_nested_s
         None,
     )
     .await;
-    let reconciler = ScriptedReconciler::new(ReconcileOutcome::Unknown {
-        reason: "still unknown".to_string(),
-    });
+    let outcome = ReconcileOutcome::Unknown {
+        reason: "reconcile failed with password=nested-secret".to_string(),
+    };
+    assert!(!format!("{outcome:?}").contains("nested-secret"));
+    let reconciler = ScriptedReconciler::new(outcome);
     let host = EffectRecovery::new(Arc::new(fixture.db.clone()));
     host.recover_workspace(WS, RecoveryMode::Restart, &reconciler)
         .await

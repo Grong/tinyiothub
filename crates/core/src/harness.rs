@@ -211,6 +211,7 @@ pub struct EffectIntent {
     pub idempotency_key: String,
     pub external_ref: Option<String>,
     pub state: EffectState,
+    pub recovery_from: Option<EffectState>,
     pub state_version: i64,
     pub result_json: Option<Value>,
     pub created_at: DateTime<Utc>,
@@ -231,6 +232,7 @@ impl std::fmt::Debug for EffectIntent {
             .field("idempotency_key", &self.idempotency_key)
             .field("external_ref", &self.external_ref)
             .field("state", &self.state)
+            .field("recovery_from", &self.recovery_from)
             .field("state_version", &self.state_version)
             .field("result_json", &self.result_json)
             .field("created_at", &self.created_at)
@@ -239,7 +241,7 @@ impl std::fmt::Debug for EffectIntent {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Decision {
     pub decision_id: String,
@@ -260,6 +262,27 @@ pub struct Decision {
     pub answer_evidence: Option<Value>,
     pub consumed_at: Option<DateTime<Utc>>,
     pub consumed_by: Option<String>,
+}
+
+impl std::fmt::Debug for Decision {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("Decision")
+            .field("decision_id", &self.decision_id)
+            .field("kind", &self.kind)
+            .field("state", &self.state)
+            .field("session_id", &self.session_id)
+            .field("run_id", &self.run_id)
+            .field("task_id", &self.task_id)
+            .field("effect_id", &self.effect_id)
+            .field("expires_at", &self.expires_at)
+            .field("answer", &self.answer)
+            .field("answer_actor", &self.answer_actor)
+            .field("answer_event_id", &self.answer_event_id)
+            .field("consumed_at", &self.consumed_at)
+            .field("consumed_by", &self.consumed_by)
+            .finish_non_exhaustive()
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -339,6 +362,7 @@ pub struct TransitionPrecondition {
 pub struct EffectMutation {
     pub effect_id: String,
     pub state: EffectState,
+    pub recovery_from: Option<EffectState>,
     pub state_version: i64,
     pub external_ref: Option<String>,
     pub result: Option<Value>,

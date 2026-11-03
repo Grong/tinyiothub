@@ -45,6 +45,7 @@ struct EffectIntentRow {
     idempotency_key: String,
     external_ref: Option<String>,
     state: String,
+    recovery_from: Option<String>,
     state_version: i64,
     result_json: Option<String>,
     created_at: DateTime<Utc>,
@@ -68,6 +69,14 @@ impl TryFrom<EffectIntentRow> for EffectIntent {
             external_ref: row.external_ref,
             state: EffectState::from_db(&row.state)
                 .ok_or_else(|| DbError::Internal(format!("unknown effect state: {}", row.state)))?,
+            recovery_from: row
+                .recovery_from
+                .as_deref()
+                .map(|state| {
+                    EffectState::from_db(state)
+                        .ok_or_else(|| DbError::Internal(format!("unknown recovery state: {state}")))
+                })
+                .transpose()?,
             state_version: row.state_version,
             result_json: row.result_json.as_deref().map(serde_json::from_str).transpose()?,
             created_at: row.created_at,
@@ -129,6 +138,23 @@ impl TryFrom<DecisionRow> for Decision {
             consumed_by: row.consumed_by,
         })
     }
+}
+
+fn sanitize_evidence(evidence: Option<Value>) -> Option<Value> {
+    evidence.map(|value| {
+        let refs = ["evidence", "evidenceRefs", "evidence_refs"]
+            .into_iter()
+            .find_map(|key| value.get(key).and_then(Value::as_array))
+            .map(|values| {
+                values
+                    .iter()
+                    .filter_map(Value::as_str)
+                    .map(str::to_string)
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
+        serde_json::json!({"evidence": refs})
+    })
 }
 
 enum AttemptError {
@@ -452,10 +478,11 @@ async fn apply_writes(
 
     let updated = sqlx::query(
         "UPDATE effect_intents
-         SET state = ?, state_version = ?, external_ref = ?, result_json = ?, updated_at = ?
+         SET state = ?, recovery_from = ?, state_version = ?, external_ref = ?, result_json = ?, updated_at = ?
          WHERE effect_id = ? AND state = ? AND state_version = ?",
     )
     .bind(effect.state.as_str())
+    .bind(effect.recovery_from.map(EffectState::as_str))
     .bind(effect.state_version)
     .bind(&effect.external_ref)
     .bind(effect.result.as_ref().map(serde_json::to_string).transpose()?)
@@ -589,7 +616,7 @@ async fn apply_writes(
 impl Db {
     pub async fn effect_intent(&self, workspace_id: &str, effect_id: &str) -> Result<Option<EffectIntent>> {
         let pool = self.workspace_pool(workspace_id).await?;
-        sqlx::query_as::<_, EffectIntentRow>("SELECT effect_id, session_id, task_id, run_id, tool_call_id, tool_name, request_json, request_digest, idempotency_key, external_ref, state, state_version, result_json, created_at, updated_at FROM effect_intents WHERE effect_id = ?")
+        sqlx::query_as::<_, EffectIntentRow>("SELECT effect_id, session_id, task_id, run_id, tool_call_id, tool_name, request_json, request_digest, idempotency_key, external_ref, state, recovery_from, state_version, result_json, created_at, updated_at FROM effect_intents WHERE effect_id = ?")
             .bind(effect_id)
             .fetch_optional(&pool)
             .await?
@@ -610,7 +637,7 @@ impl Db {
 
     pub async fn list_effect_recovery(&self, workspace_id: &str) -> Result<Vec<EffectRecoveryItem>> {
         let pool = self.workspace_pool(workspace_id).await?;
-        let intents = sqlx::query_as::<_, EffectIntentRow>("SELECT effect_id, session_id, task_id, run_id, tool_call_id, tool_name, request_json, request_digest, idempotency_key, external_ref, state, state_version, result_json, created_at, updated_at FROM effect_intents
+        let intents = sqlx::query_as::<_, EffectIntentRow>("SELECT effect_id, session_id, task_id, run_id, tool_call_id, tool_name, request_json, request_digest, idempotency_key, external_ref, state, recovery_from, state_version, result_json, created_at, updated_at FROM effect_intents
              WHERE state IN ('prepared', 'dispatching', 'cancelling', 'unknown') ORDER BY created_at, effect_id")
         .fetch_all(&pool)
         .await?
@@ -660,8 +687,9 @@ impl Db {
             });
         }
         let pool = self.workspace_pool(workspace_id).await?;
+        let evidence = sanitize_evidence(evidence);
         let mut tx = pool.begin().await?;
-        let effect = sqlx::query_as::<_, EffectIntentRow>("SELECT effect_id, session_id, task_id, run_id, tool_call_id, tool_name, request_json, request_digest, idempotency_key, external_ref, state, state_version, result_json, created_at, updated_at FROM effect_intents WHERE effect_id = ?")
+        let effect = sqlx::query_as::<_, EffectIntentRow>("SELECT effect_id, session_id, task_id, run_id, tool_call_id, tool_name, request_json, request_digest, idempotency_key, external_ref, state, recovery_from, state_version, result_json, created_at, updated_at FROM effect_intents WHERE effect_id = ?")
         .bind(effect_id)
         .fetch_optional(&mut *tx)
         .await?
@@ -772,7 +800,11 @@ impl Db {
     ) -> Result<()> {
         let pool = self.workspace_pool(workspace_id).await?;
         let event_id = format!("reconcile-attempt:{}", uuid::Uuid::new_v4());
-        let payload = serde_json::json!({"effectId":intent.effect_id,"reason":reason});
+        let payload = serde_json::json!({
+            "effectId": intent.effect_id,
+            "reason": "reconciliation_unknown",
+            "reasonDigest": format!("{:x}", sha2::Sha256::digest(reason.as_bytes())),
+        });
         let event = tinyiothub_core::harness::HarnessEventInput {
             event_id,
             workspace_id: workspace_id.to_string(),
@@ -815,7 +847,7 @@ impl Db {
             let mut tx = pool.begin().await?;
             let intent = sqlx::query_as::<_, EffectIntentRow>(
                 "SELECT effect_id, session_id, task_id, run_id, tool_call_id, tool_name, request_json,
-                        request_digest, idempotency_key, external_ref, state, state_version, result_json,
+                        request_digest, idempotency_key, external_ref, state, recovery_from, state_version, result_json,
                         created_at, updated_at FROM effect_intents WHERE effect_id = ?",
             )
             .bind(&effect_id)
@@ -1160,10 +1192,10 @@ pub(crate) mod tests {
             sqlx::query(
                 "INSERT INTO effect_intents
                     (effect_id, session_id, task_id, run_id, tool_call_id, tool_name, request_json,
-                     request_digest, idempotency_key, external_ref, state, state_version, result_json,
+                     request_digest, idempotency_key, external_ref, state, recovery_from, state_version, result_json,
                      created_at, updated_at)
                  VALUES ('effect-1', 'session-1', 'task-1', 'run-1', 'call-1', 'set_speed', '{}',
-                         'digest-1', 'effect-1', NULL, ?, ?, NULL, '2026-11-03T00:00:00Z', '2026-11-03T00:00:00Z')",
+                         'digest-1', 'effect-1', NULL, ?, NULL, ?, NULL, '2026-11-03T00:00:00Z', '2026-11-03T00:00:00Z')",
             )
             .bind(state.as_str())
             .bind(version)
@@ -1226,6 +1258,7 @@ pub(crate) mod tests {
             effect: Some(EffectMutation {
                 effect_id: "effect-1".to_string(),
                 state: EffectState::Completed,
+                recovery_from: None,
                 state_version: expected_version + 1,
                 external_ref: Some("driver-call-1".to_string()),
                 result: Some(json!({"confirmed": true})),

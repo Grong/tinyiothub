@@ -3,13 +3,25 @@ use tinyiothub_core::harness::{EffectIntent, EffectState};
 
 pub type EffectResult = Value;
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Clone, PartialEq)]
 pub enum ReconcileOutcome {
     Settled(EffectResult),
     Failed(EffectResult),
     Cancelled(EffectResult),
     DefinitelyNotApplied,
     Unknown { reason: String },
+}
+
+impl std::fmt::Debug for ReconcileOutcome {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(match self {
+            Self::Settled(_) => "Settled(<redacted>)",
+            Self::Failed(_) => "Failed(<redacted>)",
+            Self::Cancelled(_) => "Cancelled(<redacted>)",
+            Self::DefinitelyNotApplied => "DefinitelyNotApplied",
+            Self::Unknown { .. } => "Unknown { reason: <redacted> }",
+        })
+    }
 }
 
 #[async_trait::async_trait]

@@ -78,6 +78,7 @@ impl EffectRecovery {
             item.job_id.as_deref(),
             &format!("recovery:{}", uuid::Uuid::new_v4()),
             Utc::now(),
+            &item.task_state,
             fact,
         )
         .map_err(|error| error.to_string())?;
@@ -114,6 +115,14 @@ impl EffectRecovery {
             _ => return Err("unknown effect has an invalid reconciliation decision".to_string()),
         }
         match reconciler.settle(&item.intent).await {
+            ReconcileOutcome::Unknown { reason } if item.intent.recovery_from == Some(EffectState::Cancelling) => {
+                self.transition(
+                    workspace_id,
+                    item,
+                    RecoveryFact::Reconcile(ReconcileOutcome::Unknown { reason }),
+                )
+                .await
+            }
             ReconcileOutcome::Unknown { reason } => {
                 self.db
                     .record_effect_reconcile_attempt(workspace_id, &item.intent, &reason)
@@ -225,6 +234,15 @@ impl EffectRecovery {
     }
 
     pub async fn request_cancellation(&self, workspace_id: &str, effect_id: &str) -> Result<(), String> {
+        if self
+            .db
+            .effect_intent(workspace_id, effect_id)
+            .await
+            .map_err(|error| error.to_string())?
+            .is_some_and(|intent| intent.state.is_terminal())
+        {
+            return Ok(());
+        }
         let item = self.item(workspace_id, effect_id).await?;
         if matches!(item.intent.state, EffectState::Unknown | EffectState::Cancelling) {
             return Ok(());

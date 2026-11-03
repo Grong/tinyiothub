@@ -78,6 +78,7 @@ pub fn reduce(state: &HarnessState, fact: &HarnessFact) -> Result<Transition, Ha
         effect: Some(EffectMutation {
             effect_id: state.effect_id.clone(),
             state: fact.next,
+            recovery_from: None,
             state_version: next_version,
             external_ref: fact.external_ref.clone(),
             result: fact.result.clone(),
@@ -158,6 +159,7 @@ pub fn reduce_recovery(
     job_id: Option<&str>,
     transition_id: &str,
     occurred_at: DateTime<Utc>,
+    current_task_state: &str,
     fact: RecoveryFact,
 ) -> Result<Transition, HarnessError> {
     if intent.state.is_terminal() {
@@ -166,6 +168,7 @@ pub fn reduce_recovery(
             outcome: "terminal",
         });
     }
+    let effective_state = intent.recovery_from.unwrap_or(intent.state);
     let (next, result, outcome_name) = match &fact {
         RecoveryFact::Fence => (EffectState::Unknown, None, "fence"),
         RecoveryFact::EnsureReconciliation => (EffectState::Unknown, None, "ensure_reconciliation"),
@@ -208,7 +211,7 @@ pub fn reduce_recovery(
         },
         RecoveryFact::Reconcile(outcome) => match outcome {
             ReconcileOutcome::Settled(_) | ReconcileOutcome::DefinitelyNotApplied
-                if intent.state == EffectState::Cancelling =>
+                if effective_state == EffectState::Cancelling =>
             {
                 return Err(HarnessError::InvalidRecovery {
                     state: intent.state.as_str(),
@@ -217,7 +220,7 @@ pub fn reduce_recovery(
             }
             ReconcileOutcome::Settled(result) => (EffectState::Completed, Some(result.clone()), "settled"),
             ReconcileOutcome::Failed(result) => (EffectState::Failed, Some(result.clone()), "failed"),
-            ReconcileOutcome::Cancelled(result) if intent.state == EffectState::Cancelling => {
+            ReconcileOutcome::Cancelled(result) if effective_state == EffectState::Cancelling => {
                 (EffectState::Cancelled, Some(result.clone()), "cancelled")
             }
             ReconcileOutcome::DefinitelyNotApplied => (
@@ -225,7 +228,7 @@ pub fn reduce_recovery(
                 Some(json!({"confirmedNotApplied":true})),
                 "not_applied",
             ),
-            ReconcileOutcome::Unknown { .. } if intent.state == EffectState::Cancelling => (
+            ReconcileOutcome::Unknown { .. } if effective_state == EffectState::Cancelling => (
                 EffectState::CancelledUnknown,
                 Some(json!({"reason":"cancel_unknown"})),
                 "cancel_unknown",
@@ -339,8 +342,12 @@ pub fn reduce_recovery(
                 None
             }
             Some(existing)
-                if existing.kind == DecisionKind::ToolApproval && existing.state == DecisionState::Requested =>
+                if existing.kind == DecisionKind::ToolApproval
+                    && (existing.state == DecisionState::Requested
+                        || (existing.state == DecisionState::Answered
+                            && matches!(existing.answer.as_deref(), Some("approved" | "denied")))) =>
             {
+                let expected = existing.state;
                 let mut withdrawn = existing.clone();
                 withdrawn.state = DecisionState::Withdrawn;
                 withdrawn.updated_at = occurred_at;
@@ -354,7 +361,7 @@ pub fn reduce_recovery(
                 ));
                 Some(DecisionMutation {
                     decision: withdrawn,
-                    expected_state: Some(DecisionState::Requested),
+                    expected_state: Some(expected),
                     insert_if_missing: false,
                 })
             }
@@ -375,7 +382,14 @@ pub fn reduce_recovery(
     let task_state = match next {
         EffectState::Cancelled => "cancelled",
         EffectState::CancelledUnknown => "failed",
+        EffectState::Cancelling => "cancelling",
         EffectState::NotApplied if matches!(&fact, RecoveryFact::Cancel) => "cancelled",
+        EffectState::Completed | EffectState::Failed | EffectState::NotApplied
+            if matches!(&fact, RecoveryFact::Reconcile(_)) && current_task_state != "running" =>
+        {
+            current_task_state
+        }
+        EffectState::Unknown if effective_state == EffectState::Cancelling => "cancelling",
         EffectState::Unknown => "paused",
         _ => "running",
     };
@@ -391,6 +405,12 @@ pub fn reduce_recovery(
         effect: Some(EffectMutation {
             effect_id: intent.effect_id.clone(),
             state: next,
+            recovery_from: match &fact {
+                RecoveryFact::Fence if intent.state == EffectState::Cancelling => Some(EffectState::Cancelling),
+                RecoveryFact::Fence => None,
+                RecoveryFact::EnsureReconciliation => intent.recovery_from,
+                _ => None,
+            },
             state_version: intent.state_version + 1,
             external_ref: intent.external_ref.clone(),
             result: result.clone(),

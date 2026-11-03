@@ -10,6 +10,7 @@ CREATE TABLE effect_intents (
     idempotency_key TEXT NOT NULL UNIQUE,
     external_ref    TEXT,
     state           TEXT NOT NULL,
+    recovery_from   TEXT,
     state_version   INTEGER NOT NULL,
     result_json     TEXT,
     created_at      TEXT NOT NULL,
