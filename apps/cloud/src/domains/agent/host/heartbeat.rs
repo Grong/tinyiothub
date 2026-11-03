@@ -128,9 +128,9 @@ pub async fn migrate_file_tasks_to_db(
     if tasks.is_empty() {
         return Ok(false);
     }
-    let new_tasks: Vec<tinyiothub_agent::runtime::heartbeat::types::NewHeartbeatTask> = tasks
+    let new_tasks: Vec<crate::domains::agent::heartbeat::types::NewHeartbeatTask> = tasks
         .into_iter()
-        .map(|t| tinyiothub_agent::runtime::heartbeat::types::NewHeartbeatTask {
+        .map(|t| crate::domains::agent::heartbeat::types::NewHeartbeatTask {
             priority: t.priority,
             text: t.text,
             paused: t.paused,

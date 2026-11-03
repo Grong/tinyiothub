@@ -1,9 +1,9 @@
+use crate::domains::agent::thing_agent::task::coordinator::TaskError;
 use axum::{
     extract::{Extension, Path, State},
     http::StatusCode,
     response::Response,
 };
-use tinyiothub_agent::runtime::thing_agent::task::coordinator::TaskError;
 use tinyiothub_core::agent_task::TaskStoreError;
 use tinyiothub_core::device_job::DeviceJobError;
 use tinyiothub_web::security::Claims;

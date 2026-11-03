@@ -63,13 +63,13 @@ async fn judgment_eval_verdict_accuracy() {
         eprintln!("SKIP: MINIMAX_API_KEY not set");
         return;
     };
-    tinyiothub_agent::pool::set_minimax_settings(tinyiothub_agent::pool::MinimaxSettings {
+    tinyiothub_agent::provider::set_minimax_settings(tinyiothub_agent::provider::MinimaxSettings {
         base_url: std::env::var("MINIMAX_BASE_URL").unwrap_or_else(|_| "https://api.minimaxi.com/v1".to_string()),
         auth_token: api_key,
         model: std::env::var("MINIMAX_MODEL").unwrap_or_else(|_| "MiniMax-M2.5".to_string()),
     });
     let provider: Box<dyn ModelProvider> =
-        tinyiothub_agent::pool::minimax_provider_factory()().expect("provider build");
+        tinyiothub_agent::provider::minimax_provider_factory()().expect("provider build");
 
     let scenarios: Vec<Scenario> = serde_json::from_str(
         &std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/../../evals/scenarios.json"))
@@ -106,7 +106,7 @@ async fn judgment_eval_verdict_accuracy() {
             resolved: false,
             created_at: chrono::Utc::now(),
         };
-        let prompt = tinyiothub_agent::prompt::investigation::alarm_investigation_text(&alarm);
+        let prompt = crate::domains::agent::prompt::investigation::alarm_investigation_text(&alarm);
         let messages = [ChatMessage::user(prompt)];
         let resp = provider
             .chat(

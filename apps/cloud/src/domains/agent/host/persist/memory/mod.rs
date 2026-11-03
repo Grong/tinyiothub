@@ -9,7 +9,7 @@ pub mod types;
 pub struct PromptMemoryStoreAdapter(pub std::sync::Arc<tinyiothub_storage::memory::MemoryStore>);
 
 #[async_trait::async_trait]
-impl tinyiothub_agent::prompt::PromptMemorySource for PromptMemoryStoreAdapter {
+impl crate::domains::agent::prompt::PromptMemorySource for PromptMemoryStoreAdapter {
     async fn list_active(
         &self,
         workspace_id: &str,

@@ -7,7 +7,7 @@
 //! `pool::provider`）；本文件只剩带数据/下游依赖的组合缝：
 //!
 //! - [`external_tool_registry`] — 从 MCP registry 按需派生
-//!   `tinyiothub_agent::tools::ExternalToolRegistry` 适配器（G3 —— 无注册
+//!   `crate::domains::agent::tools::ExternalToolRegistry` 适配器（G3 —— 无注册
 //!   静态，MCP_REGISTRY 是单一事实源）。
 //! - [`WorkspaceAccess`] — workspace existence + tenant ownership lookup used
 //!   by HTTP handlers. Implemented in cloud over
@@ -20,7 +20,7 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 
-use tinyiothub_agent::tools::ExternalToolRegistry;
+use crate::domains::agent::tools::ExternalToolRegistry;
 
 // ---------------------------------------------------------------------------
 // External tool registry (MCP seam)
@@ -89,7 +89,7 @@ impl StorageAutonomyPolicyReader {
 }
 
 #[async_trait]
-impl tinyiothub_agent::runtime::thing_agent::traits::AutonomyPolicyReader for StorageAutonomyPolicyReader {
+impl crate::domains::agent::thing_agent::traits::AutonomyPolicyReader for StorageAutonomyPolicyReader {
     async fn load_autonomy(
         &self,
         workspace_id: &str,
@@ -112,7 +112,7 @@ impl DbTicketResolutionProvider {
 }
 
 #[async_trait]
-impl tinyiothub_agent::runtime::thing_agent::traits::TicketResolutionProvider for DbTicketResolutionProvider {
+impl crate::domains::agent::thing_agent::traits::TicketResolutionProvider for DbTicketResolutionProvider {
     async fn recent_resolutions(
         &self,
         workspace_id: &str,

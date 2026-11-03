@@ -6,7 +6,7 @@
 //! confirmation-token one. The thing-agent runner (T9) consumes the
 //! returned [`AgentHandle`].
 //!
-//! Construction mirrors the chat `AgentPool` (now in `tinyiothub_agent::pool`): fast-path
+//! Construction mirrors the chat `AgentPool` (now in `crate::domains::agent::pool`): fast-path
 //! cache hit, slow-path build, double-checked insert; never hold a DashMap
 //! guard across `.await`. Differences from the chat pool, deliberately:
 //! - no response cache (an autonomous control loop must never replay a
@@ -19,19 +19,19 @@
 
 use std::sync::Arc;
 
+use crate::domains::agent::thing_agent::{AgentHandle, RunContextInner, manager::AutonomousAgentProvider};
 use crate::domains::thing::service::ThingService;
 use anyhow::anyhow;
 use dashmap::DashMap;
 use sqlx::SqlitePool;
 use tinyiothub_agent::adapters::rig::loop_::rig_loop_factory;
 use tinyiothub_agent::memory::workspace_memory::WorkspaceScopedMemory;
-use tinyiothub_agent::pool::ProviderFactory;
 use tinyiothub_agent::port::memory::Memory;
 use tinyiothub_agent::port::observer::Observer;
 use tinyiothub_agent::port::prompt::SystemPromptBuilder;
 use tinyiothub_agent::port::runtime::AgentLoopConfig;
 use tinyiothub_agent::port::tool::Tool;
-use tinyiothub_agent::runtime::thing_agent::{AgentHandle, RunContextInner, manager::AutonomousAgentProvider};
+use tinyiothub_agent::provider::ProviderFactory;
 use tinyiothub_storage::Db;
 use tokio::sync::RwLock;
 
@@ -57,7 +57,7 @@ pub struct AutonomousAgentFactory {
     model: String,
     runtime: ThingToolContext,
     /// E2 ToolExec 接缝（默认直通；组合根可替换证明可换）。
-    tool_exec: Arc<dyn tinyiothub_agent::runtime::thing_agent::seams::tool_exec::ToolExecSeam>,
+    tool_exec: Arc<dyn crate::domains::agent::thing_agent::seams::tool_exec::ToolExecSeam>,
     pub(crate) agents: DashMap<String, AutonomousEntry>,
 }
 
@@ -84,7 +84,7 @@ impl AutonomousAgentFactory {
             provider_factory,
             model,
             runtime,
-            tool_exec: Arc::new(tinyiothub_agent::runtime::thing_agent::seams::tool_exec::DefaultToolExec),
+            tool_exec: Arc::new(crate::domains::agent::thing_agent::seams::tool_exec::DefaultToolExec),
             agents: DashMap::new(),
         }
     }
@@ -92,7 +92,7 @@ impl AutonomousAgentFactory {
     /// E2：注入 ToolExec 接缝替换实现（组合根调用）。
     pub fn with_tool_exec(
         mut self,
-        seam: Arc<dyn tinyiothub_agent::runtime::thing_agent::seams::tool_exec::ToolExecSeam>,
+        seam: Arc<dyn crate::domains::agent::thing_agent::seams::tool_exec::ToolExecSeam>,
     ) -> Self {
         self.tool_exec = seam;
         self
@@ -129,7 +129,7 @@ impl AutonomousAgentFactory {
         )
         .into_iter()
         .map(|t| {
-            Box::new(tinyiothub_agent::runtime::thing_agent::seams::tool_exec::SeamTool::new(
+            Box::new(crate::domains::agent::thing_agent::seams::tool_exec::SeamTool::new(
                 t,
                 Arc::clone(&self.tool_exec),
                 workspace_id,
@@ -151,7 +151,7 @@ impl AutonomousAgentFactory {
             tools,
             memory,
             observer: Arc::clone(&self.observer),
-            workspace_dir: tinyiothub_agent::prompt::paths::workspace_dir(workspace_id),
+            workspace_dir: crate::domains::agent::prompt::paths::workspace_dir(workspace_id),
             security_summary: Some(
                 "Autonomous thing-agent loop: every action is gated by the workspace autonomy policy (mode/allowlist/denylist/rate fuses)."
                     .into(),
@@ -506,11 +506,11 @@ mod tests {
     // worker and declaration validator/resolver are the only fakes; the Job
     // facts, wake outbox rows and idempotency all go through SQLite.
 
-    use tinyiothub_agent::runtime::thing_agent::RunContextInner;
-    use tinyiothub_agent::runtime::thing_agent::task::approval::{
+    use crate::domains::agent::thing_agent::RunContextInner;
+    use crate::domains::agent::thing_agent::task::approval::{
         ApprovalExecutor, ApprovalTasks, ApprovedJobs, ExecutionOutcome,
     };
-    use tinyiothub_agent::runtime::thing_agent::task::coordinator::{Advance, TaskError};
+    use crate::domains::agent::thing_agent::task::coordinator::{Advance, TaskError};
     use tinyiothub_core::agent_task::{AgentTask, TaskStatus, TaskWake, WakeDispatchState};
     use tinyiothub_core::device_job::DeviceJobState;
     use tinyiothub_core::driver::manifest::{ManifestTool, ToolKindDecl, ToolSafetyDecl, ToolTimeout};
@@ -1099,7 +1099,7 @@ mod tests {
             dispatched_at: None,
             resolved_at: None,
         };
-        tinyiothub_agent::port::approval::TaskApprovalStore::decide(
+        crate::domains::agent::thing_agent::approval_port::TaskApprovalStore::decide(
             approvals.as_ref(),
             "ws-approve",
             "task-1",

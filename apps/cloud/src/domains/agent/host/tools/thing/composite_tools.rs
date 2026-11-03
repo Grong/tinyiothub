@@ -5,13 +5,13 @@
 
 use std::sync::Arc;
 
+use crate::domains::agent::thing_agent::seams::composite::{CompositeDef, validate_composite};
 use async_trait::async_trait;
 use serde::Deserialize;
 use serde_json::{Value, json};
 use sqlx::SqlitePool;
 use tinyiothub_agent::port::attribution::{Attributable, Role, ToolKind};
 use tinyiothub_agent::port::tool::{Tool, ToolResult};
-use tinyiothub_agent::runtime::thing_agent::seams::composite::{CompositeDef, validate_composite};
 
 use super::PendingActionStore;
 use super::{store_pending_action, take_pending_action_reasoned, tool_err, tool_ok};
@@ -205,8 +205,8 @@ impl Tool for RunCompositeTool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::domains::agent::thing_agent::{ArbitrationRegistry, DEFAULT_LEASE_TTL, ResourceMode, ResourceSpec};
     use async_trait::async_trait;
-    use tinyiothub_agent::runtime::thing_agent::{ArbitrationRegistry, DEFAULT_LEASE_TTL, ResourceMode, ResourceSpec};
     use tinyiothub_runtime::access::resources::{ResourceClaim, ResourceResolver};
 
     async fn setup() -> SqlitePool {

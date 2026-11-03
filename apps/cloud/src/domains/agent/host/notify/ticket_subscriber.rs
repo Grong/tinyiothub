@@ -25,7 +25,7 @@ use tokio::sync::broadcast::error::RecvError;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info, warn};
 
-use tinyiothub_agent::runtime::events::{AgentEvent, AgentEventKind};
+use crate::domains::agent::events::{AgentEvent, AgentEventKind};
 use tinyiothub_core::agent_runs::{ActionResult, Outcome, RunReport};
 use tinyiothub_storage::Db;
 
@@ -239,7 +239,7 @@ pub(crate) async fn ticket_for_run(
 
 async fn enqueue_dlq(db: &Db, report: &RunReport, reason: &str) {
     let dlq = crate::domains::agent::host::persist::dlq_repo::SqliteDeadLetterQueue::new(db.pool().clone());
-    use tinyiothub_agent::runtime::event::dlq::DeadLetterQueue;
+    use crate::domains::agent::event::dlq::DeadLetterQueue;
     let payload = serde_json::json!({
         "run_id": report.run_id,
         "outcome": report.outcome.as_str(),

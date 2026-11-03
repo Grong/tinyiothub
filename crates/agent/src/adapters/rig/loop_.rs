@@ -107,8 +107,24 @@ impl BudgetHook {
 }
 
 #[derive(Default)]
+struct RunMediaBudget {
+    image_bytes: usize,
+}
+
+impl RunMediaBudget {
+    fn record(&mut self, bytes: usize) -> Result<(), tinyiothub_core::media::MediaError> {
+        let next = self.image_bytes.saturating_add(bytes);
+        if next > 8 * 1024 * 1024 {
+            return Err(tinyiothub_core::media::MediaError::RunImageBudget);
+        }
+        self.image_bytes = next;
+        Ok(())
+    }
+}
+
+#[derive(Default)]
 struct RunMediaAccountant {
-    budget: tinyiothub_runtime::media::evidence::RunMediaBudget,
+    budget: RunMediaBudget,
     seen: std::collections::HashSet<String>,
 }
 
@@ -355,14 +371,17 @@ impl AgentLoop for RigAgentLoop {
     }
 
     async fn run_single(&self, message: &str) -> anyhow::Result<String> {
-        let mut request = self.agent.prompt(message.to_string()).add_hook(BudgetHook {
-            budget: MAX_LOOP_TURNS,
-            count: AtomicUsize::new(0),
-            cancel: None,
-            steering: None,
-            media: tokio::sync::Mutex::new(RunMediaAccountant::default()),
-        })
-        .add_hook(InvalidToolCallRecovery);
+        let mut request = self
+            .agent
+            .prompt(message.to_string())
+            .add_hook(BudgetHook {
+                budget: MAX_LOOP_TURNS,
+                count: AtomicUsize::new(0),
+                cancel: None,
+                steering: None,
+                media: tokio::sync::Mutex::new(RunMediaAccountant::default()),
+            })
+            .add_hook(InvalidToolCallRecovery);
         let seeded = self.seeded_history().await;
         if !seeded.is_empty() {
             request = request.history(seeded);

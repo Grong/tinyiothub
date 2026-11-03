@@ -33,15 +33,15 @@
 
 use std::sync::Arc;
 
+use crate::domains::agent::thing_agent::approval_port::TaskApprovalStore;
+use crate::domains::agent::thing_agent::seams::policy::{DefaultPolicy, PolicyDecision, PolicyInput, PolicySeam};
+use crate::domains::agent::thing_agent::{ArbitrationRegistry, DEFAULT_LEASE_TTL, RunContextInner};
 use async_trait::async_trait;
 use serde::Deserialize;
 use serde_json::{Value, json};
 use sqlx::SqlitePool;
-use tinyiothub_agent::port::approval::TaskApprovalStore;
 use tinyiothub_agent::port::attribution::{Attributable, Role, ToolKind};
 use tinyiothub_agent::port::tool::{Tool, ToolResult};
-use tinyiothub_agent::runtime::thing_agent::seams::policy::{DefaultPolicy, PolicyDecision, PolicyInput, PolicySeam};
-use tinyiothub_agent::runtime::thing_agent::{ArbitrationRegistry, DEFAULT_LEASE_TTL, RunContextInner};
 use tinyiothub_core::models::event::EventLevel;
 use tinyiothub_core::task_approval::{ApprovalState, TaskApproval};
 use tinyiothub_policy::autonomy::AutonomyPolicy;
@@ -603,9 +603,9 @@ fn self_pending_actions() -> Arc<super::thing::PendingActionStore> {
 
 #[cfg(test)]
 mod tests {
+    use crate::domains::agent::thing_agent::RunContextInner;
     use crate::domains::thing::service::ThingService;
     use tinyiothub_agent::port::tool::Tool;
-    use tinyiothub_agent::runtime::thing_agent::RunContextInner;
     use tinyiothub_policy::autonomy::{AutonomyMode, AutonomyPolicy};
 
     use super::*;
@@ -1444,9 +1444,9 @@ mod tests {
             .try_acquire_resources(
                 "dev-1",
                 "watch-run-A".into(),
-                &[tinyiothub_agent::runtime::thing_agent::ResourceSpec {
+                &[crate::domains::agent::thing_agent::ResourceSpec {
                     id: "actuator".into(),
-                    mode: tinyiothub_agent::runtime::thing_agent::ResourceMode::Exclusive,
+                    mode: crate::domains::agent::thing_agent::ResourceMode::Exclusive,
                     capacity: 1,
                 }],
                 DEFAULT_LEASE_TTL,

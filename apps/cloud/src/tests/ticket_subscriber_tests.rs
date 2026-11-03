@@ -4,7 +4,7 @@
 
 use std::sync::Arc;
 
-use tinyiothub_agent::runtime::events::{AgentEventBus, AgentEventKind};
+use crate::domains::agent::events::{AgentEventBus, AgentEventKind};
 use tinyiothub_core::agent_runs::{ActionRecord, ActionResult, EndReason, Outcome, RunReport};
 use tinyiothub_storage::Db;
 
@@ -189,9 +189,9 @@ fn title_strips_trigger_prefix_and_truncates() {
 #[tokio::test]
 async fn closure_chain_resolution_flows_into_next_prompt() {
     use crate::domains::agent::host::ports::DbTicketResolutionProvider;
-    use tinyiothub_agent::prompt::runtime::build_prompt;
-    use tinyiothub_agent::runtime::thing_agent::traits::TicketResolutionProvider;
-    use tinyiothub_agent::runtime::thing_agent::types::{Priority, TriggerSource, WakeSignal};
+    use crate::domains::agent::prompt::runtime::build_prompt;
+    use crate::domains::agent::thing_agent::traits::TicketResolutionProvider;
+    use crate::domains::agent::thing_agent::types::{Priority, TriggerSource, WakeSignal};
 
     let db = Arc::new(test_db_async().await);
     let sse = sse();

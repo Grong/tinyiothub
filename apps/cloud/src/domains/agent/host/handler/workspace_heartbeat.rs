@@ -7,6 +7,7 @@
 //   GET  /tasks — read heartbeat tasks (DB)
 //   PUT  /tasks — replace heartbeat tasks (DB)
 
+use crate::domains::agent::heartbeat::types::NewHeartbeatTask;
 use crate::domains::agent::host::heartbeat;
 use crate::verify_workspace_access_port;
 use axum::{
@@ -14,13 +15,12 @@ use axum::{
     extract::{Extension, Path, State},
 };
 use serde::{Deserialize, Serialize};
-use tinyiothub_agent::runtime::heartbeat::types::NewHeartbeatTask;
 use tinyiothub_web::api_response::ApiResponse;
 use tinyiothub_web::response::ApiResponseBuilder;
 use tinyiothub_web::security::Claims;
 
 use crate::domains::agent::AgentState;
-use tinyiothub_agent::prompt::paths;
+use crate::domains::agent::prompt::paths;
 
 /// Heartbeat routes (`/{id}/heartbeat/*`), nested at `/workspaces` by the
 /// composition layer next to `tinyiothub_tenant::workspace_router()` —
@@ -148,7 +148,7 @@ pub async fn get_config(
 
     // enabled/interval/last_tick 读统一循环共享表（T15 起唯一读源）；
     // 未接线（测试/降级路径）回退缺省。
-    let default_interval = tinyiothub_agent::runtime::heartbeat::types::HeartbeatConfig::default().interval_minutes;
+    let default_interval = crate::domains::agent::heartbeat::types::HeartbeatConfig::default().interval_minutes;
     let (enabled, interval_minutes) = match state.thing_agents.as_ref() {
         Some(manager) => (
             manager.heartbeat_enabled(&workspace_id),
@@ -212,7 +212,7 @@ pub async fn update_config(
     // the other field（读统一循环共享表，T15 起唯一读源）。
     let current_interval = manager
         .heartbeat_interval_minutes(&workspace_id)
-        .unwrap_or(tinyiothub_agent::runtime::heartbeat::types::HeartbeatConfig::default().interval_minutes);
+        .unwrap_or(crate::domains::agent::heartbeat::types::HeartbeatConfig::default().interval_minutes);
     let current_enabled = manager.heartbeat_enabled(&workspace_id);
     let enabled = req.enabled.unwrap_or(current_enabled);
     let interval = req.interval_minutes.unwrap_or(current_interval);
@@ -685,10 +685,10 @@ async fn approve_and_execute(
     pool: &sqlx::SqlitePool,
     workspace_id: &str,
     proposal_id: &str,
-    registry: &tinyiothub_agent::tools::ToolRegistry,
-    runtime: &tinyiothub_agent::tools::ToolRuntimeContext,
+    registry: &crate::domains::agent::tools::ToolRegistry,
+    runtime: &crate::domains::agent::tools::ToolRuntimeContext,
     pending_actions: &crate::domains::agent::host::tools::thing::PendingActionStore,
-    arbitration: Option<&tinyiothub_agent::runtime::thing_agent::ArbitrationRegistry>,
+    arbitration: Option<&crate::domains::agent::thing_agent::ArbitrationRegistry>,
     resources: Option<&dyn tinyiothub_runtime::access::resources::ResourceResolver>,
 ) -> Result<serde_json::Value, String> {
     let db = tinyiothub_storage::Db::new(pool.clone());
@@ -830,9 +830,9 @@ async fn execute_approved_tool(
     tool: &dyn tinyiothub_agent::port::tool::Tool,
     params: serde_json::Value,
     workspace_id: &str,
-    runtime: &tinyiothub_agent::tools::ToolRuntimeContext,
+    runtime: &crate::domains::agent::tools::ToolRuntimeContext,
     pending_actions: &crate::domains::agent::host::tools::thing::PendingActionStore,
-    arbitration: Option<&tinyiothub_agent::runtime::thing_agent::ArbitrationRegistry>,
+    arbitration: Option<&crate::domains::agent::thing_agent::ArbitrationRegistry>,
     resources: Option<&dyn tinyiothub_runtime::access::resources::ResourceResolver>,
 ) -> Result<serde_json::Value, String> {
     fn output_json(output: String) -> serde_json::Value {
@@ -1053,9 +1053,9 @@ mod tests {
 
     use super::*;
     use crate::domains::agent::host::tools::thing::{PendingActionStore, store_pending_action};
+    use crate::domains::agent::tools::{ToolRegistry, ToolRuntimeContext};
     use tinyiothub_agent::port::attribution::{Attributable, Role, ToolKind};
     use tinyiothub_agent::port::tool::{Tool, ToolResult};
-    use tinyiothub_agent::tools::{ToolRegistry, ToolRuntimeContext};
     use tinyiothub_skills::trust::ToolSafety;
 
     #[derive(Clone)]
@@ -1291,7 +1291,7 @@ mod tests {
         // 确认流：mint token（thing_id=dev_1）→ 批准后 dispatch_command 下发。
         tool.confirm_store = Some((pending.clone(), "ws_1"));
         let (registry, runtime, _) = fixture(tool);
-        let arbitration = tinyiothub_agent::runtime::thing_agent::ArbitrationRegistry::default();
+        let arbitration = crate::domains::agent::thing_agent::ArbitrationRegistry::default();
 
         // 值守 run 持锁期间：批准下发被拒，busy 带持有者名。
         let lease = arbitration
@@ -1365,7 +1365,7 @@ mod tests {
         let mut tool = recording_tool("write_properties", false);
         tool.confirm_store = Some((pending.clone(), "ws_1"));
         let (registry, runtime, _) = fixture(tool);
-        let arbitration = tinyiothub_agent::runtime::thing_agent::ArbitrationRegistry::default();
+        let arbitration = crate::domains::agent::thing_agent::ArbitrationRegistry::default();
         let resolver = ActuatorResolver;
 
         // 另一执行体占住声明的 actuator → 批准下发 busy（带资源 id）。
@@ -1373,12 +1373,12 @@ mod tests {
             .try_acquire_resources(
                 "dev_1",
                 "watch-run-A".into(),
-                &[tinyiothub_agent::runtime::thing_agent::ResourceSpec {
+                &[crate::domains::agent::thing_agent::ResourceSpec {
                     id: "actuator".into(),
-                    mode: tinyiothub_agent::runtime::thing_agent::ResourceMode::Exclusive,
+                    mode: crate::domains::agent::thing_agent::ResourceMode::Exclusive,
                     capacity: 1,
                 }],
-                tinyiothub_agent::runtime::thing_agent::DEFAULT_LEASE_TTL,
+                crate::domains::agent::thing_agent::DEFAULT_LEASE_TTL,
             )
             .expect("run-A 占 actuator");
         let err = approve_and_execute(

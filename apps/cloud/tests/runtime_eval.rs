@@ -22,16 +22,16 @@ use tinyiothub_agent::port::events::TurnEvent;
 use tinyiothub_agent::port::provider::{ChatMessage, ChatRequest, ChatResponse, ModelProvider};
 use tinyiothub_agent::port::runtime::AgentLoop;
 use tinyiothub_agent::port::task::TaskStore;
-use tinyiothub_agent::runtime::events::AgentEventBus;
-use tinyiothub_agent::runtime::thing_agent::active_runs::ActiveRunRegistry;
-use tinyiothub_agent::runtime::thing_agent::manager::AutonomousAgentProvider;
-use tinyiothub_agent::runtime::thing_agent::runner::{AgentHandle, RunContext, RunContextInner, Runner};
-use tinyiothub_agent::runtime::thing_agent::task::coordinator::TaskCoordinator;
-use tinyiothub_agent::runtime::thing_agent::task::prompt::{TaskPromptApproval, build_task_prompt};
-use tinyiothub_agent::runtime::thing_agent::types::{Priority, TriggerSource, WakeSignal};
 use tinyiothub_cloud::Db;
+use tinyiothub_cloud::domains::agent::events::AgentEventBus;
 use tinyiothub_cloud::domains::agent::runtime::DbTaskStore;
 use tinyiothub_cloud::domains::agent::runtime::stream::{RuntimeFrame, RuntimeRecorder, RuntimeStreamHub};
+use tinyiothub_cloud::domains::agent::thing_agent::active_runs::ActiveRunRegistry;
+use tinyiothub_cloud::domains::agent::thing_agent::manager::AutonomousAgentProvider;
+use tinyiothub_cloud::domains::agent::thing_agent::runner::{AgentHandle, RunContext, RunContextInner, Runner};
+use tinyiothub_cloud::domains::agent::thing_agent::task::coordinator::TaskCoordinator;
+use tinyiothub_cloud::domains::agent::thing_agent::task::prompt::{TaskPromptApproval, build_task_prompt};
+use tinyiothub_cloud::domains::agent::thing_agent::types::{Priority, TriggerSource, WakeSignal};
 use tinyiothub_cloud::shared::runtime_ports::{DbDeviceJobStore, WatchRuleStoreAdapter};
 use tinyiothub_core::agent_runs::{Outcome, RunReport};
 use tinyiothub_core::agent_task::{AgentTask, TaskStatus, TaskWake, WakeDispatchState};
@@ -615,7 +615,7 @@ async fn local_watch_to_run_starts_under_two_seconds() {
     let advance = coordinator.advance("task_eval", "wake_eval").await.expect("advance");
     assert!(matches!(
         advance,
-        tinyiothub_agent::runtime::thing_agent::task::coordinator::Advance::Started { .. }
+        tinyiothub_cloud::domains::agent::thing_agent::task::coordinator::Advance::Started { .. }
     ));
     let event = next_matching_frame(&mut connection, Duration::from_secs(2), |event| {
         event.event_type == "run.started"

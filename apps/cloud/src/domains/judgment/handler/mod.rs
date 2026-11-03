@@ -270,12 +270,12 @@ async fn redispatch_investigation(state: &AppState, judgment: &tinyiothub_storag
         created_at: alarm.alarm_time,
     };
     let rule_part = alarm.rule_id.as_deref().unwrap_or("-");
-    let signal = tinyiothub_agent::runtime::thing_agent::types::WakeSignal {
+    let signal = crate::domains::agent::thing_agent::types::WakeSignal {
         workspace_id: judgment.workspace_id.clone(),
-        priority: tinyiothub_agent::runtime::thing_agent::types::Priority::High,
-        source: tinyiothub_agent::runtime::thing_agent::types::TriggerSource::UserDirective {
+        priority: crate::domains::agent::thing_agent::types::Priority::High,
+        source: crate::domains::agent::thing_agent::types::TriggerSource::UserDirective {
             user_id: "alarm-triage".to_string(),
-            text: tinyiothub_agent::prompt::investigation::alarm_investigation_text(&ai_alarm),
+            text: crate::domains::agent::prompt::investigation::alarm_investigation_text(&ai_alarm),
             session_key: None,
             source: Some("alarm".to_string()),
             problem_key: Some(format!("alarm:{}:{}", thing_id, rule_part)),
@@ -359,8 +359,8 @@ async fn approve_judgment(
     // 4A/T-3：动作文本由服务端模板按 action_category 生成——LLM 的
     // suggested_action 只做展示，不进执行指令（注入面收敛）。
     // 6A/T-4：exec prompt 携带调查上下文（判断理由 + 证据摘录）。
-    // 模板已迁入 prompt 层（tinyiothub_agent::prompt::exec，2026-09-20 提示词收敛）。
-    let action = tinyiothub_agent::prompt::exec::exec_action_template(
+    // 模板已迁入 prompt 层（crate::domains::agent::prompt::exec，2026-09-20 提示词收敛）。
+    let action = crate::domains::agent::prompt::exec::exec_action_template(
         judgment.action_category.as_deref(),
         judgment.thing_id.as_deref(),
     );
@@ -375,10 +375,10 @@ async fn approve_judgment(
         })
         .map(|e| e.chars().take(300).collect::<String>())
         .unwrap_or_default();
-    let signal = tinyiothub_agent::runtime::thing_agent::types::WakeSignal {
+    let signal = crate::domains::agent::thing_agent::types::WakeSignal {
         workspace_id: judgment.workspace_id.clone(),
-        priority: tinyiothub_agent::runtime::thing_agent::types::Priority::High,
-        source: tinyiothub_agent::runtime::thing_agent::types::TriggerSource::UserDirective {
+        priority: crate::domains::agent::thing_agent::types::Priority::High,
+        source: crate::domains::agent::thing_agent::types::TriggerSource::UserDirective {
             user_id: claims.0.user_id.clone(),
             text: format!(
                 "执行已批准的处置动作：{action}。\n调查结论：{}\n证据摘录：{}\n完成后简述结果。",

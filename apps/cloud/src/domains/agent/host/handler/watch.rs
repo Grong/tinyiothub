@@ -13,7 +13,7 @@ use axum::{
 };
 use serde::{Deserialize, Serialize};
 
-use tinyiothub_agent::runtime::thing_agent::WatchCommand;
+use crate::domains::agent::thing_agent::WatchCommand;
 use tinyiothub_core::watch::{WatchCondition, WatchRule};
 use tinyiothub_runtime::ports::WatchRuleStore;
 use tinyiothub_web::api_response::ApiResponse;

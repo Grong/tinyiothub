@@ -8,9 +8,9 @@ use axum::{body::Body, http::Request};
 use serde_json::{Value, json};
 use tower::ServiceExt;
 
-use tinyiothub_agent::runtime::runtime::{AgentRuntime, RuntimeDeps};
-use tinyiothub_agent::runtime::snapshot::RestoreSnapshot;
-use tinyiothub_agent::runtime::thing_agent::ThingAgentManager;
+use crate::domains::agent::agent_runtime::{AgentRuntime, RuntimeDeps};
+use crate::domains::agent::snapshot::RestoreSnapshot;
+use crate::domains::agent::thing_agent::ThingAgentManager;
 use tinyiothub_storage::Db;
 use tinyiothub_storage::heartbeat::WorkspaceHeartbeatConfig;
 

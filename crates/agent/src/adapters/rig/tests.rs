@@ -1006,7 +1006,10 @@ async fn unknown_tool_call_is_skipped_instead_of_failing_the_turn() {
     );
     // 第二次请求必须带上 skip 反馈，模型才有机会自我纠正。
     let seen = seen.lock().unwrap();
-    assert!(seen.iter().any(|m| m.contains("未知工具 `totally_made_up_tool`")), "{seen:?}");
+    assert!(
+        seen.iter().any(|m| m.contains("未知工具 `totally_made_up_tool`")),
+        "{seen:?}"
+    );
     assert!(seen.iter().any(|m| m.contains("recording_tool")), "{seen:?}");
 }
 

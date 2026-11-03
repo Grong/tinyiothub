@@ -184,10 +184,10 @@ use sqlx::SqlitePool;
 use tinyiothub_core::agent_runs::{Outcome, RunReport};
 use tinyiothub_storage::Db;
 
-use tinyiothub_agent::runtime::heartbeat::types::HeartbeatConfig;
-use tinyiothub_agent::runtime::runtime::AgentRuntime;
-use tinyiothub_agent::runtime::snapshot::{ProblemMetaRow, RestoreSnapshot, WorkspaceHeartbeatState};
-use tinyiothub_agent::runtime::thing_agent::registry::COMPLETED_CAPACITY;
+use crate::domains::agent::agent_runtime::AgentRuntime;
+use crate::domains::agent::heartbeat::types::HeartbeatConfig;
+use crate::domains::agent::snapshot::{ProblemMetaRow, RestoreSnapshot, WorkspaceHeartbeatState};
+use crate::domains::agent::thing_agent::registry::COMPLETED_CAPACITY;
 
 /// 启动顺序第 1 步：从 DB 装配 AgentRuntime 恢复快照。
 ///

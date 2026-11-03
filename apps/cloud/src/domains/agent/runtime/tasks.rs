@@ -1,3 +1,4 @@
+use crate::domains::agent::thing_agent::{Priority, TriggerSource, WakeSignal};
 use axum::{
     Json,
     extract::{Path, Query, State},
@@ -8,7 +9,6 @@ use chrono::Utc;
 use serde::Deserialize;
 use serde_json::{Value, json};
 use tinyiothub_agent::port::task::TaskStore;
-use tinyiothub_agent::runtime::thing_agent::{Priority, TriggerSource, WakeSignal};
 use tinyiothub_core::agent_task::{AgentTask, TaskStatus, TaskStoreError, TaskWake, WakeDispatchState};
 use tinyiothub_web::{api_response::ApiResponse, response::ApiResponseBuilder, security::Claims};
 

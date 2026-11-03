@@ -31,14 +31,14 @@ use serde_json::{Value, json};
 use tokio_util::sync::CancellationToken;
 use tower::ServiceExt;
 
-use tinyiothub_agent::pool::ProviderFactory;
-use tinyiothub_agent::port::attribution::{Attributable, ModelProviderKind, ProviderKind, Role};
-use tinyiothub_agent::port::provider::{ChatRequest, ChatResponse};
-use tinyiothub_agent::runtime::{
+use crate::domains::agent::{
+    agent_runtime::{AgentRuntime, RuntimeDeps},
     events::AgentEventBus,
-    runtime::{AgentRuntime, RuntimeDeps},
     thing_agent::{ThingAgentManager, ThingAgentManagerConfig, WatchCommand, WatchDeps},
 };
+use tinyiothub_agent::port::attribution::{Attributable, ModelProviderKind, ProviderKind, Role};
+use tinyiothub_agent::port::provider::{ChatRequest, ChatResponse};
+use tinyiothub_agent::provider::ProviderFactory;
 use tinyiothub_core::driver::{DriverReading, ResultValue};
 use tinyiothub_core::models::thing::{Thing, ThingStatus};
 use tinyiothub_core::models::thing_property::ThingProperty;
@@ -201,7 +201,7 @@ async fn assemble(
         event_bus: app_state.event_bus.clone(),
         drop_notifier: None,
         agent_events: agent_events.clone(),
-        ticket_resolutions: Arc::new(tinyiothub_agent::runtime::thing_agent::traits::NoopTicketResolutions),
+        ticket_resolutions: Arc::new(crate::domains::agent::thing_agent::traits::NoopTicketResolutions),
     };
     let runtime = Arc::new(AgentRuntime::restore(snapshot, deps));
     reconcile_zombie_runs(&db, &runtime).await;

@@ -34,10 +34,10 @@ pub struct ServiceManager {
     cron_scheduler: Arc<RwLock<Option<tinyiothub_scheduler::CronSchedulerService>>>,
 
     /// AI orchestrator (set during start_all)
-    orchestrator: Option<Arc<tinyiothub_agent::runtime::orchestrator::Orchestrator>>,
+    orchestrator: Option<Arc<crate::domains::agent::orchestrator::Orchestrator>>,
 
     /// Shared AI event publisher (set during start_all, drained on shutdown)
-    event_publisher: Option<Arc<tinyiothub_agent::runtime::event::bus::AiEventPublisher>>,
+    event_publisher: Option<Arc<crate::domains::agent::event::bus::AiEventPublisher>>,
 
     /// Agent 持久化订阅者关停令牌（Task 9）：cancel 后主循环退出、
     /// 落库重试任务中止；句柄在 service_handles 中随关停排空。
@@ -270,12 +270,11 @@ impl ServiceManager {
             // 统一循环心跳默认间隔（HeartbeatConfig::default 同源）；每工作区
             // 覆盖走统一循环 intervals 共享表。
             let heartbeat_default_interval = std::time::Duration::from_secs(
-                u64::from(tinyiothub_agent::runtime::heartbeat::types::HeartbeatConfig::default().interval_minutes)
-                    * 60,
+                u64::from(crate::domains::agent::heartbeat::types::HeartbeatConfig::default().interval_minutes) * 60,
             );
             let event_publisher = Arc::new(
-                tinyiothub_agent::runtime::event::bus::AiEventPublisher::new(app_state.event_bus.clone())
-                    .with_drop_notifier(Arc::new(tinyiothub_agent::runtime::event::bus::LoggingDropNotifier)),
+                crate::domains::agent::event::bus::AiEventPublisher::new(app_state.event_bus.clone())
+                    .with_drop_notifier(Arc::new(crate::domains::agent::event::bus::LoggingDropNotifier)),
             );
 
             // 遗留文件任务 → DB 一次性迁移必须先于快照装配，否则迁移落库
@@ -367,7 +366,7 @@ impl ServiceManager {
                 app_state.arbitration.clone(),
                 live_summary.clone(),
                 // E2 ToolExec 接缝默认实现（直通内层工具）。
-                std::sync::Arc::new(tinyiothub_agent::runtime::thing_agent::seams::tool_exec::DefaultToolExec),
+                std::sync::Arc::new(crate::domains::agent::thing_agent::seams::tool_exec::DefaultToolExec),
                 Some(app_state.event_bus.clone()),
                 manager_slot.clone(),
                 // E4a：调用边界校验（声明缺失/未声明操作/参数越界 → 拒绝）。
@@ -395,7 +394,7 @@ impl ServiceManager {
 
             // CEO review F11：容量对齐 spec D4 的 4096——256 在中等负载
             // （多 agent 同时 tick + DB 抖动）即可逼入 Lagged→全量重投影循环。
-            let agent_events = Arc::new(tinyiothub_agent::runtime::events::AgentEventBus::new(4096));
+            let agent_events = Arc::new(crate::domains::agent::events::AgentEventBus::new(4096));
             let persist_rx = agent_events.subscribe();
             // 工单订阅者（T5）：与 persist 同一 bus，restore 前取 receiver。
             let ticket_rx = agent_events.subscribe();
@@ -407,9 +406,9 @@ impl ServiceManager {
             let agent_events_supervisor = agent_events.clone();
             let pool = app_state.db.pool().clone();
             let policy_repo = app_state.db.clone();
-            let runtime = Arc::new(tinyiothub_agent::runtime::runtime::AgentRuntime::restore(
+            let runtime = Arc::new(crate::domains::agent::agent_runtime::AgentRuntime::restore(
                 snapshot,
-                tinyiothub_agent::runtime::runtime::RuntimeDeps {
+                crate::domains::agent::agent_runtime::RuntimeDeps {
                     thing_agent_host: Arc::new(
                         crate::domains::agent::host::thing_agent_host::CloudThingAgentHost::new(
                             pool.clone(),
@@ -427,7 +426,7 @@ impl ServiceManager {
                             Arc::new(crate::domains::event::router::ThrottleState::new(60)),
                             app_state.agent_pool.shared_memory(),
                             app_state.agent_pool.observer(),
-                            tinyiothub_agent::pool::minimax_provider_factory(),
+                            tinyiothub_agent::provider::minimax_provider_factory(),
                             tinyiothub_agent::config::AgentRuntimeConfig::default().model,
                             crate::domains::agent::host::tools::ThingToolContext {
                                 device_cache: Some(app_state.device_cache.clone()),
@@ -462,12 +461,12 @@ impl ServiceManager {
                             },
                         ),
                     ),
-                    thing_agent_config: tinyiothub_agent::runtime::thing_agent::ThingAgentManagerConfig {
+                    thing_agent_config: crate::domains::agent::thing_agent::ThingAgentManagerConfig {
                         heartbeat_default_interval,
                         ..Default::default()
                     },
                     event_bus: app_state.event_bus.clone(),
-                    drop_notifier: Some(Arc::new(tinyiothub_agent::runtime::event::bus::LoggingDropNotifier)),
+                    drop_notifier: Some(Arc::new(crate::domains::agent::event::bus::LoggingDropNotifier)),
                     agent_events,
                     ticket_resolutions: Arc::new(crate::domains::agent::host::ports::DbTicketResolutionProvider::new(
                         app_state.db.clone(),
@@ -660,7 +659,7 @@ impl ServiceManager {
             // E4d：maps/places/position 读面（runtime 经 MapStore 端口，零 db）；
             // 与 DataServer 共用启动时建立的 ZoneService/坐标缓存。
             thing_agent_manager.set_wake_ledger(hub_ledger.clone());
-            thing_agent_manager.set_watch_deps(tinyiothub_agent::runtime::thing_agent::WatchDeps {
+            thing_agent_manager.set_watch_deps(crate::domains::agent::thing_agent::WatchDeps {
                 cache: Arc::new(crate::shared::runtime_ports::ThingCacheAdapter(
                     app_state.device_cache.clone(),
                 )),
@@ -673,7 +672,7 @@ impl ServiceManager {
                 zones: Some(zone_service),
             });
             thing_agent_manager
-                .start_task_runtime(tinyiothub_agent::runtime::thing_agent::manager::TaskRuntimeDeps {
+                .start_task_runtime(crate::domains::agent::thing_agent::manager::TaskRuntimeDeps {
                     store: Arc::new(
                         crate::domains::agent::runtime::DbTaskStore::new(app_state.db.clone())
                             .with_recorder(app_state.runtime_recorder.clone()),

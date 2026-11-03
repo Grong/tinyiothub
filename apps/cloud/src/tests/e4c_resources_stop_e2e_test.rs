@@ -23,10 +23,10 @@ use std::time::{Duration, Instant};
 
 use serde_json::{Value, json};
 
+use crate::domains::agent::thing_agent::arbitration::DEVICE_RESOURCE;
+use crate::domains::agent::thing_agent::seams::composite::CompositeDef;
+use crate::domains::agent::thing_agent::{ArbitrationRegistry, DEFAULT_LEASE_TTL, ResourceMode, ResourceSpec};
 use tinyiothub_agent::port::tool::Tool;
-use tinyiothub_agent::runtime::thing_agent::arbitration::DEVICE_RESOURCE;
-use tinyiothub_agent::runtime::thing_agent::seams::composite::CompositeDef;
-use tinyiothub_agent::runtime::thing_agent::{ArbitrationRegistry, DEFAULT_LEASE_TTL, ResourceMode, ResourceSpec};
 use tinyiothub_core::driver::{CancelToken, DriverMode, ResultValue, RetryConfig, ThingDriver};
 use tinyiothub_core::error::Error;
 use tinyiothub_core::models::event::{Event, EventType, ThingEventType};

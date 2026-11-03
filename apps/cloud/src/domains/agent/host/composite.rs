@@ -7,10 +7,10 @@
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
+use crate::domains::agent::thing_agent::seams::composite::{CompositeDef, CompositeOp};
+use crate::domains::agent::thing_agent::{ArbitrationRegistry, DEFAULT_LEASE_TTL, Lease};
 use serde_json::{Value, json};
 use sqlx::SqlitePool;
-use tinyiothub_agent::runtime::thing_agent::seams::composite::{CompositeDef, CompositeOp};
-use tinyiothub_agent::runtime::thing_agent::{ArbitrationRegistry, DEFAULT_LEASE_TTL, Lease};
 use tinyiothub_core::models::event::{ContentElement, Event, EventSource, RichContent, TextFormat};
 use tinyiothub_runtime::access::resources::{ResourceClaim, ResourceResolver, device_claim};
 use tinyiothub_runtime::event_bus::EventBus;

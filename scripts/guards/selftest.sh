@@ -10,10 +10,14 @@ CLEANUP=()
 # 未提交改动（根清单本脚本从不修改；成员清单即使提前退出也会被
 # checkout）。只在真正备份过时才恢复。
 AGENT_TOML_BAK=""
+THING_AGENT_DIR_CREATED=0
 cleanup() {
   for path in "${CLEANUP[@]}"; do
     if [ -e "$path" ]; then rm -f "$path"; fi
   done
+  if [ "$THING_AGENT_DIR_CREATED" -eq 1 ]; then
+    rmdir crates/agent/src/runtime/thing_agent 2>/dev/null || true
+  fi
   if [ -n "$AGENT_TOML_BAK" ] && [ -f "$AGENT_TOML_BAK" ]; then
     cp "$AGENT_TOML_BAK" crates/agent/Cargo.toml
     rm -f "$AGENT_TOML_BAK"
@@ -102,6 +106,8 @@ EVIL_AGENT=crates/agent/src/selftest_evil.rs
 printf 'use axum::Router;\n' > "$EVIL_AGENT"
 CLEANUP+=("$EVIL_AGENT")
 expect_fails "agent-purity (source use axum)" bash scripts/guards/agent-purity.sh
+printf 'use tinyiothub_runtime::DataServer;\n' > "$EVIL_AGENT"
+expect_fails "agent-purity (source use Device Hub)" bash scripts/guards/agent-purity.sh
 rm -f "$EVIL_AGENT"
 printf '\nweb = { package = "axum" }\n' >> crates/agent/Cargo.toml
 expect_fails "agent-purity (renamed dep)" bash scripts/guards/agent-purity.sh
@@ -119,6 +125,21 @@ else
   SELFTEST_FAIL=1
 fi
 cp "$AGENT_TOML_BAK" crates/agent/Cargo.toml
+if ! grep -qE '^runtime\s*=' crates/agent/Cargo.toml; then
+  sed -i.bak 's/^\[dependencies\]$/[dependencies]\nruntime = { workspace = true }/' crates/agent/Cargo.toml && rm -f crates/agent/Cargo.toml.bak
+fi
+expect_fails "agent-purity (Device Hub dependency)" bash scripts/guards/agent-purity.sh
+cp "$AGENT_TOML_BAK" crates/agent/Cargo.toml
+THING_AGENT_DIR=crates/agent/src/runtime/thing_agent
+if [ ! -d "$THING_AGENT_DIR" ]; then
+  mkdir -p "$THING_AGENT_DIR"
+  THING_AGENT_DIR_CREATED=1
+fi
+expect_fails "agent-purity (thing-agent application dir)" bash scripts/guards/agent-purity.sh
+if [ "$THING_AGENT_DIR_CREATED" -eq 1 ]; then
+  rmdir "$THING_AGENT_DIR"
+  THING_AGENT_DIR_CREATED=0
+fi
 expect_passes "agent-purity" bash scripts/guards/agent-purity.sh
 
 if [ "$SELFTEST_FAIL" -ne 0 ]; then

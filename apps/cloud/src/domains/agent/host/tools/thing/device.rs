@@ -7,13 +7,13 @@
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
+use crate::domains::agent::thing_agent::arbitration::DEFAULT_STOP_TTL;
+use crate::domains::agent::thing_agent::{ArbitrationRegistry, DEFAULT_LEASE_TTL};
 use async_trait::async_trait;
 use serde::Deserialize;
 use serde_json::{Value, json};
 use tinyiothub_agent::port::attribution::{Attributable, Role, ToolKind};
 use tinyiothub_agent::port::tool::{Tool, ToolResult};
-use tinyiothub_agent::runtime::thing_agent::arbitration::DEFAULT_STOP_TTL;
-use tinyiothub_agent::runtime::thing_agent::{ArbitrationRegistry, DEFAULT_LEASE_TTL};
 use tinyiothub_core::models::event::{ContentElement, Event, EventSource, RichContent, TextFormat};
 use tinyiothub_runtime::access::DemandRecorder;
 use tinyiothub_runtime::access::resources::ResourceResolver;
@@ -779,10 +779,10 @@ impl Tool for StopTool {
 mod tests {
     use super::*;
     use crate::domains::agent::host::test_utils::seed_test_workspace;
+    use crate::domains::agent::thing_agent::{ResourceMode, ResourceSpec};
     use crate::shared::access_ports::{
         DbAcceptanceStore, DbDeviceStore, DbDriverStore, DbProjectionStore, DbThingSource,
     };
-    use tinyiothub_agent::runtime::thing_agent::{ResourceMode, ResourceSpec};
     use tinyiothub_core::driver::declaration::{DeviceDeclaration, DeviceDeclarationRecord};
     use tinyiothub_runtime::access::demand::DemandTracker;
     use tinyiothub_runtime::access::registry::ManifestRegistry;
@@ -1412,7 +1412,7 @@ mod tests {
             Arc::new(crate::domains::agent::runtime::stream::RuntimeStreamHub::default()),
         );
         let run_ctx = crate::domains::agent::host::tools::new_run_context_slot(Arc::new(tokio::sync::RwLock::new(
-            tinyiothub_agent::runtime::thing_agent::RunContextInner {
+            crate::domains::agent::thing_agent::RunContextInner {
                 run_id: "run-read".into(),
                 workspace_id: "ws-set".into(),
                 task_id: Some("task-read".into()),

@@ -1,25 +1,26 @@
-//! Agent domain for TinyIoTHub — host（Task 13 起 loop 运行时迁出；
-//! T16 起 chat 代理面并入 host/chat，不再单设顶层 chat 模块）。
-//!
-//! Two internal layers, plus the extracted runtime crate:
-//!
-//! - `tinyiothub_agent::runtime`（原 `loop_`）— the agent runtime:
-//!   thing-agent loop, orchestrator, heartbeat runner, AI event bus, agent
-//!   pool contract. Pure runtime code; lives in crates/agent (Task 13).
-//! - [`host`] — the HTTP/service host: AgentPool, session/chat services,
-//!   tools, handlers, repos, prompt scaffolding, and the chat session proxy
-//!   plane (OpenClaw-facing handlers, host/chat/handler). Consumes the
-//!   runtime crate.
+//! Agent domain for TinyIoTHub — thing-agent application, device adapters and
+//! HTTP/service host live here; `tinyiothub_agent` supplies generic Loop/Tool/
+//! Prompt ports and the rig adapter.
 //!
 //! ## 设计不变量
-//! - 运行时/宿主隔离：crates/agent（纯运行时，不依赖 web/存储实现）← host + chat
+//! - crates/agent 不依赖 web、存储或 Device Hub 实现
 //! - 跨领域调用只许 agent→{event,thing,policy,memory,skills,llm,auth}
 //! - D5：本模块不再做兼容 re-export —— 共享契约类型由消费方直接从
 //!   tinyiothub_agent / tinyiothub_core / tinyiothub_llm / tinyiothub_policy /
 //!   tinyiothub_skills 的真实住所导入。
 
+pub mod agent_runtime;
+pub mod event;
+pub mod events;
+pub mod heartbeat;
 pub mod host;
+pub mod orchestrator;
+pub mod pool;
+pub mod prompt;
 pub mod runtime;
+pub mod snapshot;
+pub mod thing_agent;
+pub mod tools;
 pub mod trace_handler;
 
 use std::sync::Arc;
@@ -40,31 +41,31 @@ pub struct AgentState {
     /// 工作空间访问校验（tenant seam）- files/heartbeat handlers
     pub workspace_access: Arc<crate::state::TenantWorkspaceAccess>,
     /// 用户指令投递入口 - agent_tasks 指令端点（None 时 503）
-    pub directive_sink: Option<Arc<dyn tinyiothub_agent::runtime::thing_agent::DirectiveSink>>,
+    pub directive_sink: Option<Arc<dyn crate::domains::agent::thing_agent::DirectiveSink>>,
     /// 进行中 run 注册表 - trace 端点实时分支（None = 未接线，只剩 DB 分支）
-    pub active_runs: Option<tinyiothub_agent::runtime::thing_agent::ActiveRunRegistry>,
+    pub active_runs: Option<crate::domains::agent::thing_agent::ActiveRunRegistry>,
     /// 统一循环 heartbeat 最近 tick 完成时间表（Task 12 透出，T13 bootstrap
     /// 注入）——get_config 的 last_tick 读源（T15 起唯一）。
     pub heartbeat_last_ticks: Option<Arc<dashmap::DashMap<String, chrono::DateTime<chrono::Utc>>>>,
     /// 统一循环管理器（T13 bootstrap 装配注入）——heartbeat handler 的
     /// enabled/interval/trust/tasks 读写源（T15 起唯一），写穿共享表后调
     /// `heartbeat_reload_notify(ws).notify_one()` 立即 tick。
-    pub thing_agents: Option<Arc<tinyiothub_agent::runtime::thing_agent::ThingAgentManager>>,
+    pub thing_agents: Option<Arc<crate::domains::agent::thing_agent::ThingAgentManager>>,
     /// AI subsystem orchestrator - agent run ack 的 O11 抑制回写（Task 6）
-    pub orchestrator: Option<Arc<tinyiothub_agent::runtime::orchestrator::Orchestrator>>,
+    pub orchestrator: Option<Arc<crate::domains::agent::orchestrator::Orchestrator>>,
     /// Agent MemoryService - memory profile compile/weekly digest（Task 6 起
     /// cloud 侧自持，不再经 Orchestrator 中转）
     pub memory_service: Option<Arc<tinyiothub_memory::service::MemoryService>>,
     /// Agent 记忆存储 - memory handlers + chat prompt 构造
     pub memory_store: Arc<tinyiothub_storage::memory::MemoryStore>,
     /// Agent Pool - chat proxy 的会话/配置/工具 API
-    pub agent_pool: Arc<tinyiothub_agent::pool::AgentPool>,
+    pub agent_pool: Arc<crate::domains::agent::pool::AgentPool>,
     /// invoke_action 确认 token 存储 - 提案批准执行的自动确认（与 chat 工具
     /// provider 捕获的同一实例，token 才能互通）
     pub pending_actions: Arc<host::tools::thing::PendingActionStore>,
     /// E1 仲裁（Task 9）：每设备互斥锁注册表——批准路径 dispatch 与
     /// chat/自治 run 共享同一份
-    pub arbitration: Arc<tinyiothub_agent::runtime::thing_agent::ArbitrationRegistry>,
+    pub arbitration: Arc<crate::domains::agent::thing_agent::ArbitrationRegistry>,
     /// 会话服务 - chat sessions 列表/标签/删除
     pub session_service: Arc<host::SessionService>,
     /// System prompts 配置 - chat proxy 构造 full prompt

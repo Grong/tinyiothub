@@ -15,14 +15,14 @@ use tinyiothub_core::agent_runs::{Outcome, RunReport};
 use tinyiothub_core::heartbeat::TrustConfig;
 use tinyiothub_storage::Db;
 
+use crate::domains::agent::agent_runtime::{AgentRuntime, RuntimeDeps};
+use crate::domains::agent::event::bus::AiEventPublisher;
+use crate::domains::agent::events::{AgentEventBus, AgentEventKind};
 use crate::domains::agent::host::persist::persist::{
     ResyncFailures, resync, run_persistence_loop, run_persistence_subscriber,
 };
 use crate::domains::agent::host::test_utils::seed_test_workspace;
-use tinyiothub_agent::runtime::event::bus::AiEventPublisher;
-use tinyiothub_agent::runtime::events::{AgentEventBus, AgentEventKind};
-use tinyiothub_agent::runtime::runtime::{AgentRuntime, RuntimeDeps};
-use tinyiothub_agent::runtime::snapshot::{RestoreSnapshot, WorkspaceHeartbeatState};
+use crate::domains::agent::snapshot::{RestoreSnapshot, WorkspaceHeartbeatState};
 
 // ── fixtures ──────────────────────────────────────────────
 
@@ -386,7 +386,7 @@ async fn supervisor_restarts_panicked_subscriber_and_exits_on_shutdown() {
 /// 不再导致 dedup 元数据永久丢失（重启后问题重复派发）。
 #[tokio::test]
 async fn resync_restores_dedup_metadata_on_missing_rows() {
-    use tinyiothub_agent::runtime::snapshot::RunDedupKeys;
+    use crate::domains::agent::snapshot::RunDedupKeys;
 
     let (_db, pool) = test_db().await;
     seed_test_workspace(&pool, "t1", "ws1").await;
@@ -560,7 +560,7 @@ async fn trust_config_event_fencing_at_projection_level() {
 
     // 旧事件（occurred_at 早 1 小时）→ fenced，行不变。
     project(
-        &tinyiothub_agent::runtime::events::AgentEvent {
+        &crate::domains::agent::events::AgentEvent {
             seq: 1,
             occurred_at: chrono::Utc::now() - chrono::Duration::hours(1),
             kind: AgentEventKind::TrustConfigChanged {
@@ -585,7 +585,7 @@ async fn trust_config_event_fencing_at_projection_level() {
 
     // 新事件（occurred_at 晚 1 分钟，在允许偏移内）→ 写入。
     project(
-        &tinyiothub_agent::runtime::events::AgentEvent {
+        &crate::domains::agent::events::AgentEvent {
             seq: 2,
             occurred_at: chrono::Utc::now() + chrono::Duration::minutes(1),
             kind: AgentEventKind::TrustConfigChanged {
@@ -610,7 +610,7 @@ async fn trust_config_event_fencing_at_projection_level() {
 
     // 远未来事件（+30 天）→ 偏移守卫丢弃，fencing 列不受污染。
     project(
-        &tinyiothub_agent::runtime::events::AgentEvent {
+        &crate::domains::agent::events::AgentEvent {
             seq: 3,
             occurred_at: chrono::Utc::now() + chrono::Duration::days(30),
             kind: AgentEventKind::TrustConfigChanged {
@@ -685,8 +685,8 @@ async fn shutdown_drains_buffered_events() {
 /// 升级路径间接覆盖。
 #[tokio::test]
 async fn projects_dlq_entry_added_to_agent_dead_letters() {
+    use crate::domains::agent::event::dlq::DeadLetterEntry;
     use crate::domains::agent::host::persist::persist::project;
-    use tinyiothub_agent::runtime::event::dlq::DeadLetterEntry;
 
     let (_db, pool) = test_db().await;
     seed_test_workspace(&pool, "t1", "ws1").await;
@@ -700,7 +700,7 @@ async fn projects_dlq_entry_added_to_agent_dead_letters() {
         enqueued_at: "2026-08-24 10:00:00".into(),
     };
     project(
-        &tinyiothub_agent::runtime::events::AgentEvent {
+        &crate::domains::agent::events::AgentEvent {
             seq: 1,
             occurred_at: chrono::Utc::now(),
             kind: AgentEventKind::DlqEntryAdded { entry: Box::new(entry) },
@@ -747,7 +747,7 @@ async fn run_recorded_persist_retries_before_dlq() {
 
     let shutdown = CancellationToken::new();
     project(
-        &tinyiothub_agent::runtime::events::AgentEvent {
+        &crate::domains::agent::events::AgentEvent {
             seq: 1,
             occurred_at: chrono::Utc::now(),
             kind: AgentEventKind::RunRecorded {
@@ -818,7 +818,7 @@ async fn heartbeat_proposals_retry_aborted_by_shutdown_goes_to_dlq() {
 
     let shutdown = CancellationToken::new();
     project(
-        &tinyiothub_agent::runtime::events::AgentEvent {
+        &crate::domains::agent::events::AgentEvent {
             seq: 1,
             occurred_at: chrono::Utc::now(),
             kind: AgentEventKind::RunRecorded {
@@ -876,7 +876,7 @@ async fn heartbeat_run_recorded_writes_proposal_rows_with_run_id_anchor() {
         rep.outcome = Outcome::Acted;
         rep
     };
-    let event = |seq: u64, rep: RunReport| tinyiothub_agent::runtime::events::AgentEvent {
+    let event = |seq: u64, rep: RunReport| crate::domains::agent::events::AgentEvent {
         seq,
         occurred_at: chrono::Utc::now(),
         kind: AgentEventKind::RunRecorded {
@@ -1020,7 +1020,7 @@ async fn failed_heartbeat_run_emits_system_error_event() {
     rep.outcome = Outcome::Failed;
 
     project(
-        &tinyiothub_agent::runtime::events::AgentEvent {
+        &crate::domains::agent::events::AgentEvent {
             seq: 1,
             occurred_at: chrono::Utc::now(),
             kind: AgentEventKind::RunRecorded {

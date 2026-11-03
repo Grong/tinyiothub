@@ -231,14 +231,14 @@ async fn reject_requires_reason_and_dismisses() {
     );
 }
 
-struct RecordingSink(std::sync::Mutex<Vec<tinyiothub_agent::runtime::thing_agent::types::WakeSignal>>);
+struct RecordingSink(std::sync::Mutex<Vec<crate::domains::agent::thing_agent::types::WakeSignal>>);
 
 #[async_trait::async_trait]
-impl tinyiothub_agent::runtime::thing_agent::DirectiveSink for RecordingSink {
+impl crate::domains::agent::thing_agent::DirectiveSink for RecordingSink {
     fn enqueue(
         &self,
-        signal: tinyiothub_agent::runtime::thing_agent::types::WakeSignal,
-    ) -> Result<(), tinyiothub_agent::runtime::thing_agent::scheduler::EnqueueError> {
+        signal: crate::domains::agent::thing_agent::types::WakeSignal,
+    ) -> Result<(), crate::domains::agent::thing_agent::scheduler::EnqueueError> {
         self.0.lock().unwrap().push(signal);
         Ok(())
     }
@@ -247,12 +247,12 @@ impl tinyiothub_agent::runtime::thing_agent::DirectiveSink for RecordingSink {
 struct FailingSink;
 
 #[async_trait::async_trait]
-impl tinyiothub_agent::runtime::thing_agent::DirectiveSink for FailingSink {
+impl crate::domains::agent::thing_agent::DirectiveSink for FailingSink {
     fn enqueue(
         &self,
-        _signal: tinyiothub_agent::runtime::thing_agent::types::WakeSignal,
-    ) -> Result<(), tinyiothub_agent::runtime::thing_agent::scheduler::EnqueueError> {
-        Err(tinyiothub_agent::runtime::thing_agent::scheduler::EnqueueError::Rejected)
+        _signal: crate::domains::agent::thing_agent::types::WakeSignal,
+    ) -> Result<(), crate::domains::agent::thing_agent::scheduler::EnqueueError> {
+        Err(crate::domains::agent::thing_agent::scheduler::EnqueueError::Rejected)
     }
 }
 
@@ -289,7 +289,7 @@ async fn approve_dispatches_execution_signal() {
 
     let signals = sink.0.lock().unwrap();
     assert_eq!(signals.len(), 1, "恰好派发一条执行 directive");
-    let tinyiothub_agent::runtime::thing_agent::types::TriggerSource::UserDirective { problem_key, .. } =
+    let crate::domains::agent::thing_agent::types::TriggerSource::UserDirective { problem_key, .. } =
         &signals[0].source
     else {
         panic!("exec 信号必须是 UserDirective");

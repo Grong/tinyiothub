@@ -8,8 +8,8 @@ use axum::{
 use serde_json::Value;
 use tower::ServiceExt;
 
-use tinyiothub_agent::runtime::thing_agent::runner::MAX_TOOL_CALLS_PER_RUN;
-use tinyiothub_agent::runtime::thing_agent::{ActiveRunRegistry, RunContext, ToolTraceEntry};
+use crate::domains::agent::thing_agent::runner::MAX_TOOL_CALLS_PER_RUN;
+use crate::domains::agent::thing_agent::{ActiveRunRegistry, RunContext, ToolTraceEntry};
 
 use crate::test_utils::{
     auth_header, create_test_token, response_parts, seed_test_workspace, setup_test_app_with_pool,

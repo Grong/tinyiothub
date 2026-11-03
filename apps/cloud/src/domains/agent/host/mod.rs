@@ -18,7 +18,7 @@
 // （RunRegistry vs ActiveRunRegistry，eng S1-P3）见 persist/mod.rs。
 //
 // 工具注册点：service_manager.rs 把数据工具 provider 注册进
-// `tinyiothub_agent::tools::ToolRegistry`（Task 14）。
+// `crate::domains::agent::tools::ToolRegistry`（Task 14）。
 
 pub mod autonomous_factory;
 pub mod chat;

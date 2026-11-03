@@ -6,11 +6,11 @@
 
 use std::sync::Arc;
 
+use crate::domains::agent::pool::AgentPool;
 use crate::domains::auth::redis::RedisClient;
 use crate::domains::driver::legacy::{
     ThingMonitoringService, ThingPerformanceService, ThingQueryService, ThingService,
 };
-use tinyiothub_agent::pool::AgentPool;
 
 use crate::domains::notify::channels::NotificationChannelFactory;
 use crate::domains::notify::service::NotificationManager;
@@ -126,7 +126,7 @@ pub struct AppState {
     pub tag_service: Arc<crate::domains::thing::tag::TagService>,
 
     /// AI subsystem orchestrator (set during async startup)
-    pub orchestrator: Option<Arc<tinyiothub_agent::runtime::orchestrator::Orchestrator>>,
+    pub orchestrator: Option<Arc<crate::domains::agent::orchestrator::Orchestrator>>,
 
     /// 统一循环 heartbeat 最近 tick 完成时间表（Task 12 透出，T13 bootstrap
     /// 注入同一张表）——get_config 的 last_tick 唯一读源（T15 起）。
@@ -135,7 +135,7 @@ pub struct AppState {
     /// 统一循环管理器（T13 bootstrap 装配注入）——heartbeat handler 的
     /// enabled/interval/trust/tasks 读写源（T15 起唯一）。
     /// None = AI 子系统未接线（测试/降级路径），handler 返回 503。
-    pub thing_agents: Option<Arc<tinyiothub_agent::runtime::thing_agent::ThingAgentManager>>,
+    pub thing_agents: Option<Arc<crate::domains::agent::thing_agent::ThingAgentManager>>,
 
     /// Agent MemoryService（set during async startup）—— Task 6 起由 cloud 侧
     /// 自持（memory profile compile / weekly digest handler），不再经
@@ -166,13 +166,13 @@ pub struct AppState {
     /// 用户指令投递入口（T14）—— HTTP 端点 / chat 工具经此向
     /// thing-agent loop 投递 WakeSignal。T15 用 ThingAgentManager 实现
     /// 并注入；None 时指令入口返回 503。
-    pub directive_sink: Option<Arc<dyn tinyiothub_agent::runtime::thing_agent::DirectiveSink>>,
+    pub directive_sink: Option<Arc<dyn crate::domains::agent::thing_agent::DirectiveSink>>,
 
     /// 进行中 agent run 注册表（AI 运行透明化 T5）—— /agent-runs/{id}/trace
     /// 实时分支数据源，与 ThingAgentManager 内 PipelineDeps 共享同一实例
     /// （克隆共享 DashMap）。None = 未接线（测试/降级路径），trace 端点
     /// 只剩 DB 分支。
-    pub active_runs: Option<tinyiothub_agent::runtime::thing_agent::ActiveRunRegistry>,
+    pub active_runs: Option<crate::domains::agent::thing_agent::ActiveRunRegistry>,
 
     /// Agent 记忆存储 - 持久化 agent 记忆到 SQLite
     pub memory_store: Arc<MemoryStore>,
@@ -221,7 +221,7 @@ pub struct AppState {
     /// 待确认动作暂存（G3，替代 PENDING_ACTIONS 全局静态）
     pub pending_actions: std::sync::Arc<crate::domains::agent::host::tools::thing::PendingActionStore>,
     /// E1 仲裁（Task 9）：每设备互斥锁注册表，跨 chat/自治 run 共享
-    pub arbitration: std::sync::Arc<tinyiothub_agent::runtime::thing_agent::ArbitrationRegistry>,
+    pub arbitration: std::sync::Arc<crate::domains::agent::thing_agent::ArbitrationRegistry>,
     /// 驱动心跳状态/配置（G3，替代 HEARTBEAT_STATUS/CONFIG 双全局静态）
     pub driver_heartbeat_status:
         std::sync::Arc<tokio::sync::RwLock<crate::domains::driver::heartbeat::types::HeartbeatStatus>>,
@@ -352,7 +352,7 @@ impl AppState {
         // Register the agent crate's config ports (minimax provider settings
         // + default model) — the agent crate no longer reads cloud's global
         // config directly (P4-Task22).
-        tinyiothub_agent::pool::set_minimax_settings(tinyiothub_agent::pool::MinimaxSettings {
+        tinyiothub_agent::provider::set_minimax_settings(tinyiothub_agent::provider::MinimaxSettings {
             base_url: minimax_config.base_url.clone(),
             auth_token: minimax_config.auth_token.clone(),
             model: minimax_config.model.clone(),
@@ -387,7 +387,7 @@ impl AppState {
                 &agent_settings,
                 agent_memory,
                 agent_observer,
-                tinyiothub_agent::pool::minimax_provider_factory(),
+                tinyiothub_agent::provider::minimax_provider_factory(),
             )
             .expect("failed to build AgentPool"),
         );
@@ -480,7 +480,7 @@ impl AppState {
 
         // E1 仲裁（Task 9）：每设备互斥锁注册表——chat 工具与自治 run 共享
         // 同一份，TTL 过期自动恢复，无清扫任务（acquire 时懒判定）。
-        let arbitration = std::sync::Arc::new(tinyiothub_agent::runtime::thing_agent::ArbitrationRegistry::default());
+        let arbitration = std::sync::Arc::new(crate::domains::agent::thing_agent::ArbitrationRegistry::default());
 
         // Thing action hooks（G5a）—— agent 侧实现 thing 域 trait，注入给 thing handler
         let thing_action_hooks: Arc<dyn crate::domains::thing::hooks::ThingActionHooks> = Arc::new(
@@ -584,13 +584,13 @@ impl AppState {
     }
 
     /// 注入用户指令投递入口（T15 闭环接线调用）
-    pub fn set_directive_sink(&mut self, sink: Arc<dyn tinyiothub_agent::runtime::thing_agent::DirectiveSink>) {
+    pub fn set_directive_sink(&mut self, sink: Arc<dyn crate::domains::agent::thing_agent::DirectiveSink>) {
         self.directive_sink = Some(sink);
     }
 
     /// 注入进行中 run 注册表（AI 运行透明化 T5；service_manager 在
     /// set_directive_sink 同点调用，与 manager 共享同一实例）。
-    pub fn set_active_runs(&mut self, registry: tinyiothub_agent::runtime::thing_agent::ActiveRunRegistry) {
+    pub fn set_active_runs(&mut self, registry: crate::domains::agent::thing_agent::ActiveRunRegistry) {
         self.active_runs = Some(registry);
     }
 
@@ -879,7 +879,7 @@ impl crate::domains::user::RoleChecker for EventSecurityRoleChecker {
 /// tears down the per-workspace Agent via cloud's `AgentPool` (agent plane,
 /// not yet extracted).
 pub struct AgentPoolLifecycle {
-    pub pool: Arc<tinyiothub_agent::pool::AgentPool>,
+    pub pool: Arc<crate::domains::agent::pool::AgentPool>,
     /// AgentPool 不持有存储句柄（Task 7）—— 生命周期 CRUD 的 db 由 cloud 注入。
     pub db_pool: sqlx::SqlitePool,
 }

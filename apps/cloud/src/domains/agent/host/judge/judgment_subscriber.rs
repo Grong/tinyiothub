@@ -26,7 +26,7 @@ use tokio::sync::broadcast::Receiver;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, warn};
 
-use tinyiothub_agent::runtime::events::{AgentEvent, AgentEventKind};
+use crate::domains::agent::events::{AgentEvent, AgentEventKind};
 use tinyiothub_core::agent_runs::{Outcome, RunReport};
 use tinyiothub_storage::Db;
 use tinyiothub_storage::judgment::{Judgment, JudgmentStatus, JudgmentVerdict};

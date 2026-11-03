@@ -2,8 +2,8 @@
 #![forbid(unsafe_code)]
 //! Agent 共性能力运行时 — 从 `apps/cloud/src/domains/agent` 抽取的纯运行时平面。
 //!
-//! 承载 agent loop（[`runtime`]）、记忆（[`memory`]）、pool（[`pool`]）、
-//! 工具框架（[`tools`]）、会话键（[`session`]）、prompt 组装（[`prompt`]）等共性能力。
+//! 承载通用 agent loop 端口（[`port`]）、记忆（[`memory`]）、会话键
+//!（[`session`]）与 rig 桥接（[`adapters::rig`]）；应用编排在 apps/cloud。
 //!
 //! 引擎架构：业务代码只依赖自有接口面 [`port`]（反腐败层：Tool/ModelProvider/
 //! AgentLoop/Memory/Observer/PromptSection/TurnEvent），当前引擎为 rig 0.42，
@@ -20,11 +20,9 @@ pub mod adapters;
 pub mod config;
 pub mod error;
 pub mod memory;
-pub mod pool;
 pub mod port;
-pub mod prompt;
+pub mod provider;
 pub mod runtime;
 pub mod session;
-pub mod tools;
 
 pub use error::AgentError;

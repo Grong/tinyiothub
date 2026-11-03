@@ -1,8 +1,8 @@
 //! SQLite implementation of DeadLetterQueue trait.
 
+use crate::domains::agent::event::dlq::{DeadLetterEntry, DeadLetterQueue};
 use async_trait::async_trait;
 use sqlx::SqlitePool;
-use tinyiothub_agent::runtime::event::dlq::{DeadLetterEntry, DeadLetterQueue};
 
 pub struct SqliteDeadLetterQueue {
     pool: SqlitePool,

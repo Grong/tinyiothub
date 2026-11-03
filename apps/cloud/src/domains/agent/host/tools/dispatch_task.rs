@@ -10,11 +10,11 @@
 
 use std::sync::Arc;
 
+use crate::domains::agent::thing_agent::{DirectiveSink, EnqueueError, Priority, TriggerSource, WakeSignal};
 use async_trait::async_trait;
 use serde_json::{Value, json};
 use tinyiothub_agent::port::attribution::{Attributable, Role, ToolKind};
 use tinyiothub_agent::port::tool::{Tool, ToolResult};
-use tinyiothub_agent::runtime::thing_agent::{DirectiveSink, EnqueueError, Priority, TriggerSource, WakeSignal};
 
 use super::thing::{tool_err, tool_ok};
 
@@ -117,7 +117,7 @@ impl Tool for DispatchThingTaskTool {
 
 #[cfg(test)]
 mod tests {
-    use tinyiothub_agent::runtime::thing_agent::EnqueueError;
+    use crate::domains::agent::thing_agent::EnqueueError;
 
     use super::*;
     use crate::domains::agent::host::trigger::directive_sink::StubDirectiveSink;

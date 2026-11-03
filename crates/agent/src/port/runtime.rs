@@ -20,7 +20,7 @@ pub struct AgentLoopConfig {
     pub workspace_dir: PathBuf,
     pub security_summary: Option<String>,
     /// 每 agent 构建一个 model provider（provider 是 per-agent 的）。
-    pub provider_factory: crate::pool::provider::ProviderFactory,
+    pub provider_factory: crate::provider::ProviderFactory,
     /// 是否给引擎接线会话级 ConversationMemory（自动 load/append）。
     ///
     /// chat/heartbeat 路径传 `false`：历史由 cloud 侧 DB 每轮重建
@@ -108,7 +108,7 @@ mod tests {
     }
 
     /// 桩 factory：本组测试不走真实 provider，一律报错。
-    fn stub_provider_factory() -> crate::pool::provider::ProviderFactory {
+    fn stub_provider_factory() -> crate::provider::ProviderFactory {
         Arc::new(|| -> anyhow::Result<Box<dyn crate::port::provider::ModelProvider>> {
             anyhow::bail!("stub provider factory")
         })

@@ -2,16 +2,16 @@
 
 use std::sync::Arc;
 
+use crate::domains::agent::thing_agent::seams::approval::{
+    ApprovalDecision, ApprovalInput, ApprovalSeam, DefaultApproval,
+};
+use crate::domains::agent::thing_agent::{ArbitrationRegistry, DEFAULT_LEASE_TTL};
 use async_trait::async_trait;
 use serde::Deserialize;
 use serde_json::{Value, json};
 use sqlx::SqlitePool;
 use tinyiothub_agent::port::attribution::{Attributable, Role, ToolKind};
 use tinyiothub_agent::port::tool::{Tool, ToolResult};
-use tinyiothub_agent::runtime::thing_agent::seams::approval::{
-    ApprovalDecision, ApprovalInput, ApprovalSeam, DefaultApproval,
-};
-use tinyiothub_agent::runtime::thing_agent::{ArbitrationRegistry, DEFAULT_LEASE_TTL};
 use tinyiothub_core::device_job::DeviceJobState;
 use tinyiothub_runtime::access::resources::ResourceResolver;
 use tinyiothub_skills::trust::ToolSafety;
@@ -458,10 +458,10 @@ impl Tool for InvokeActionTool {
 mod tests {
     use super::*;
     use crate::domains::agent::host::test_utils::seed_test_workspace;
+    use crate::domains::agent::thing_agent::{ResourceMode, ResourceSpec};
     use crate::shared::access_ports::{
         DbAcceptanceStore, DbDeviceStore, DbDriverStore, DbProjectionStore, DbThingSource,
     };
-    use tinyiothub_agent::runtime::thing_agent::{ResourceMode, ResourceSpec};
     use tinyiothub_core::driver::declaration::{DeviceDeclaration, DeviceDeclarationRecord};
     use tinyiothub_runtime::access::demand::DemandTracker;
     use tinyiothub_runtime::access::registry::ManifestRegistry;
@@ -815,7 +815,7 @@ mod tests {
         registry.set_stop(
             "dev-1",
             "tenant-a stop".into(),
-            tinyiothub_agent::runtime::thing_agent::arbitration::DEFAULT_STOP_TTL,
+            crate::domains::agent::thing_agent::arbitration::DEFAULT_STOP_TTL,
         );
         let tool = tool(&pool, "ws-b", Some(registry), "chat:ws-b");
 
@@ -845,7 +845,7 @@ mod tests {
         registry.set_stop(
             "dev-1",
             "operator stop".into(),
-            tinyiothub_agent::runtime::thing_agent::arbitration::DEFAULT_STOP_TTL,
+            crate::domains::agent::thing_agent::arbitration::DEFAULT_STOP_TTL,
         );
         let tool = tool_with_access(&pool, "ws-stop", registry, "chat", access);
 

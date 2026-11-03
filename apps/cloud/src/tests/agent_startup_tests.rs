@@ -7,10 +7,10 @@
 use std::sync::Arc;
 use std::time::Duration;
 
+use crate::domains::agent::agent_runtime::{AgentRuntime, RuntimeDeps};
 use chrono::Utc;
 use serde_json::json;
 use sqlx::SqlitePool;
-use tinyiothub_agent::runtime::runtime::{AgentRuntime, RuntimeDeps};
 use tinyiothub_core::agent_runs::{Outcome, RunReport};
 use tinyiothub_core::agent_task::{AgentTask, TaskStatus, TaskWake, WakeDispatchState};
 use tinyiothub_core::heartbeat::TrustConfig;

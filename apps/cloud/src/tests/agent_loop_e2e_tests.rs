@@ -38,14 +38,14 @@ use crate::domains::agent::host::{
     autonomous_factory::AutonomousAgentFactory, persist::persist::run_persistence_subscriber,
     thing_agent_host::CloudThingAgentHost, tools::ThingToolContext,
 };
-use crate::domains::event::{bus::ThingEventBus, router::ThrottleState};
-use crate::test_utils::{auth_header, create_test_token, response_parts, seed_test_workspace, test_app_state_on_pool};
-use tinyiothub_agent::pool::ProviderFactory;
-use tinyiothub_agent::runtime::{
+use crate::domains::agent::{
+    agent_runtime::{AgentRuntime, RuntimeDeps},
     events::{AgentEventBus, AgentEventKind},
-    runtime::{AgentRuntime, RuntimeDeps},
     thing_agent::{DirectiveSink, Priority, ThingAgentManagerConfig, TriggerSource, WakeSignal},
 };
+use crate::domains::event::{bus::ThingEventBus, router::ThrottleState};
+use crate::test_utils::{auth_header, create_test_token, response_parts, seed_test_workspace, test_app_state_on_pool};
+use tinyiothub_agent::provider::ProviderFactory;
 
 const WS: &str = "ws-e2e";
 const THING: &str = "dev-e2e";
@@ -264,7 +264,7 @@ async fn thing_agent_run_flows_event_to_db_to_read_api() {
         event_bus,
         drop_notifier: None,
         agent_events: agent_events.clone(),
-        ticket_resolutions: Arc::new(tinyiothub_agent::runtime::thing_agent::traits::NoopTicketResolutions),
+        ticket_resolutions: Arc::new(crate::domains::agent::thing_agent::traits::NoopTicketResolutions),
     };
     let runtime = Arc::new(AgentRuntime::restore(snapshot, deps));
     reconcile_zombie_runs(&db, &runtime).await;

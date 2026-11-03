@@ -487,10 +487,10 @@ impl ApprovalTimeoutAdapter {
         };
         tracing::info!(judgment_id = %judgment.id, problem_key, run_id = %report.run_id,
             "reprojecting stale judgment from completed run (RunRecorded event was lost)");
-        let event = tinyiothub_agent::runtime::events::AgentEvent {
+        let event = crate::domains::agent::events::AgentEvent {
             seq: 0,
             occurred_at: chrono::Utc::now(),
-            kind: tinyiothub_agent::runtime::events::AgentEventKind::RunRecorded {
+            kind: crate::domains::agent::events::AgentEventKind::RunRecorded {
                 report: Box::new(report),
                 problem_key: Some(problem_key),
                 dedup_key: None,

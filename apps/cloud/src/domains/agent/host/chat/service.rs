@@ -8,9 +8,9 @@ use std::sync::Arc;
 use tokio::sync::mpsc;
 
 use crate::domains::agent::host::types::{ChatError, ChatEvent};
+use crate::domains::agent::pool::AgentPool;
 use tinyiothub_agent::AgentError;
 use tinyiothub_agent::config::AgentRuntimeConfig;
-use tinyiothub_agent::pool::AgentPool;
 use tinyiothub_agent::port::events::TurnEvent;
 use tinyiothub_agent::port::runtime::AgentLoopHandle;
 
@@ -168,7 +168,7 @@ pub async fn send_message(
     system_prompt: &str,
     chat_handles: &Arc<tokio::sync::Mutex<std::collections::HashMap<String, tokio::task::JoinHandle<()>>>>,
     memory_service: Option<std::sync::Arc<tinyiothub_memory::service::MemoryService>>,
-    event_publisher: Option<std::sync::Arc<tinyiothub_agent::runtime::event::bus::AiEventPublisher>>,
+    event_publisher: Option<std::sync::Arc<crate::domains::agent::event::bus::AiEventPublisher>>,
     enable_reflection: bool,
     model: &str,
     workspace_id: &str,
@@ -181,8 +181,8 @@ pub async fn send_message(
     // display/reflection. A bare trigger (e.g. auto-`/workspace`) falls back to
     // a neutral default request.
     let (turn_message, reflect_message) = {
-        let ws_dir = tinyiothub_agent::prompt::paths::workspace_dir(workspace_id);
-        let skills = tinyiothub_agent::pool::load_workspace_skills(&ws_dir);
+        let ws_dir = crate::domains::agent::prompt::paths::workspace_dir(workspace_id);
+        let skills = crate::domains::agent::pool::load_workspace_skills(&ws_dir);
         match tinyiothub_skills::resolve_trigger(message, &skills) {
             Some(hit) => {
                 let user_text = if hit.cleaned_message.is_empty() {
@@ -363,7 +363,7 @@ pub async fn send_message(
                 {
                     tracing::warn!(%ws_id, %aid, "Reflection failed: {}", e);
                     if let Some(ref ep) = ep {
-                        ep.publish(tinyiothub_agent::runtime::event::types::AiEvent::ReflectionFailed {
+                        ep.publish(crate::domains::agent::event::types::AiEvent::ReflectionFailed {
                             workspace_id: ws_id.clone(),
                             agent_id: aid.clone(),
                             session_key: sk.clone(),
@@ -394,7 +394,7 @@ mod tests {
             &tinyiothub_core::config::AgentSettings::default(),
             Arc::new(tinyiothub_agent::port::memory::NoopMemory),
             Arc::new(tinyiothub_agent::port::observer::NoopObserver),
-            tinyiothub_agent::pool::minimax_provider_factory(),
+            tinyiothub_agent::provider::minimax_provider_factory(),
         )
         .expect("test AgentPool");
         let err = send_with_pool(

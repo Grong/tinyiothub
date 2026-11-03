@@ -34,12 +34,12 @@ mod watch_tools;
 
 use std::sync::Arc;
 
+use crate::domains::agent::thing_agent::{
+    ArbitrationRegistry, ResourceMode, ResourceSpec, ThingAgentManager, WatchCommand,
+};
 use crate::domains::thing::service::ThingService;
 use sqlx::SqlitePool;
 use tinyiothub_agent::port::tool::{Tool, ToolResult};
-use tinyiothub_agent::runtime::thing_agent::{
-    ArbitrationRegistry, ResourceMode, ResourceSpec, ThingAgentManager, WatchCommand,
-};
 use tinyiothub_runtime::access::resources::{ResourceClaim, ResourceResolver};
 use tinyiothub_runtime::watch::live_state::ThingLiveSummary;
 use tinyiothub_skills::trust::ToolSafety;
@@ -183,7 +183,7 @@ pub struct ThingToolContext {
     pub data_server: Option<Arc<tinyiothub_runtime::DataServer>>,
     pub pending_actions: Option<Arc<PendingActionStore>>,
     /// Durable approval origination for confirmation-gated Task tool calls.
-    pub task_approvals: Option<Arc<dyn tinyiothub_agent::port::approval::TaskApprovalStore>>,
+    pub task_approvals: Option<Arc<dyn crate::domains::agent::thing_agent::approval_port::TaskApprovalStore>>,
     /// E1 仲裁（Task 9）：跨 chat/自治 run 共享的每设备互斥锁注册表；
     /// None = 不仲裁。
     pub arbitration: Option<Arc<ArbitrationRegistry>>,
@@ -680,7 +680,7 @@ mod tests {
         .await
         .unwrap();
         let inner = Arc::new(tokio::sync::RwLock::new(
-            tinyiothub_agent::runtime::thing_agent::RunContextInner {
+            crate::domains::agent::thing_agent::RunContextInner {
                 task_id: Some("task_1".into()),
                 task_session_key: Some("session_1".into()),
                 ..Default::default()
@@ -732,7 +732,7 @@ mod tests {
         .await
         .expect("task");
         let inner = Arc::new(tokio::sync::RwLock::new(
-            tinyiothub_agent::runtime::thing_agent::RunContextInner {
+            crate::domains::agent::thing_agent::RunContextInner {
                 task_id: Some("task_1".into()),
                 task_session_key: Some("session_1".into()),
                 ..Default::default()
@@ -1033,7 +1033,7 @@ mod tests {
     fn device_resource_constants_agree_between_runtime_and_agent() {
         assert_eq!(
             tinyiothub_runtime::access::resources::DEVICE_RESOURCE,
-            tinyiothub_agent::runtime::thing_agent::DEVICE_RESOURCE
+            crate::domains::agent::thing_agent::DEVICE_RESOURCE
         );
     }
 

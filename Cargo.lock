@@ -82,7 +82,6 @@ dependencies = [
  "regex",
  "rig-agent",
  "rig-core",
- "runtime",
  "serde",
  "serde_json",
  "sha2 0.10.9",

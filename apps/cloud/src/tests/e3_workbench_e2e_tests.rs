@@ -172,7 +172,7 @@ async fn template_rules_resolve_then_land_as_watch_and_composite() {
         .await
         .unwrap();
     assert_eq!(composites.len(), 1);
-    let parsed: tinyiothub_agent::runtime::thing_agent::seams::composite::CompositeDef =
+    let parsed: crate::domains::agent::thing_agent::seams::composite::CompositeDef =
         serde_json::from_str(&composites[0].definition).unwrap();
     assert_eq!(parsed.name, "storm_guard");
     assert_eq!(parsed.steps.len(), 2);

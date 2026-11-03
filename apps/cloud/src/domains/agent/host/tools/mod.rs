@@ -1,5 +1,5 @@
 // 框架部分（registry/adapter/trust/catalog）已迁入
-// `tinyiothub_agent::tools`（Task 14）；本模块只剩组合层工具实现。
+// `crate::domains::agent::tools`（Task 14）；本模块只剩组合层工具实现。
 pub mod autonomous_invoke;
 pub mod canvas;
 pub mod dispatch_task;

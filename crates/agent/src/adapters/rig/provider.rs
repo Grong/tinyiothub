@@ -45,7 +45,7 @@ pub(crate) fn check_vision_request(provider: &dyn ModelProvider, messages: &[Cha
 }
 
 fn media_attachment_to_rig(attachment: &MediaAttachment) -> Result<ToolResultContent, MediaError> {
-    if attachment.bytes.len() > tinyiothub_runtime::media::evidence::MAX_IMAGE_BYTES {
+    if attachment.bytes.len() > tinyiothub_core::media::MAX_IMAGE_BYTES {
         return Err(MediaError::ImageTooLarge);
     }
     Ok(ToolResultContent::Image(Image {
@@ -82,7 +82,7 @@ pub(crate) fn tool_result_attachments(result: &RigToolResult) -> Result<Vec<Medi
             let DocumentSourceKind::Raw(bytes) = &image.data else {
                 return Err(MediaError::InvalidImage);
             };
-            if bytes.len() > tinyiothub_runtime::media::evidence::MAX_IMAGE_BYTES {
+            if bytes.len() > tinyiothub_core::media::MAX_IMAGE_BYTES {
                 return Err(MediaError::ImageTooLarge);
             }
             let mime = match image.media_type {

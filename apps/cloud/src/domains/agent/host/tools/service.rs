@@ -2,17 +2,17 @@
 // 闭包）+ effective_tool_names（db 校验）。
 //
 // Task 14：框架部分（ToolRuntimeContext / IoTToolAdapter / TrustAwareTool /
-// ToolRegistry / catalog / denylist 过滤）已迁入 `tinyiothub_agent::tools`；
+// ToolRegistry / catalog / denylist 过滤）已迁入 `crate::domains::agent::tools`；
 // 本文件只剩数据实现接线。注册点见 `shared/service_manager.rs`。
 
 use std::sync::Arc;
 
+use crate::domains::agent::thing_agent::ArbitrationRegistry;
+use crate::domains::agent::thing_agent::seams::tool_exec::{SeamTool, ToolExecSeam};
+use crate::domains::agent::tools::{ToolProvider, ToolRegistry, ToolRuntimeContext, filter_by_denylist};
 use sqlx::SqlitePool;
 use tinyiothub_agent::AgentError;
 use tinyiothub_agent::port::tool::Tool;
-use tinyiothub_agent::runtime::thing_agent::ArbitrationRegistry;
-use tinyiothub_agent::runtime::thing_agent::seams::tool_exec::{SeamTool, ToolExecSeam};
-use tinyiothub_agent::tools::{ToolProvider, ToolRegistry, ToolRuntimeContext, filter_by_denylist};
 use tinyiothub_skills::trust::{ToolSafety, classify_tool_safety};
 use tinyiothub_storage::cache::ThingCache;
 

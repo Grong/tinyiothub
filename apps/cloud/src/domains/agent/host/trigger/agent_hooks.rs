@@ -8,8 +8,8 @@ use std::sync::{Arc, RwLock};
 
 use tinyiothub_core::heartbeat::HeartbeatTask;
 
+use crate::domains::agent::agent_runtime::AgentRuntime;
 use crate::domains::agent::host::heartbeat;
-use tinyiothub_agent::runtime::runtime::AgentRuntime;
 
 /// [`AgentHooks`](crate::domains::tenant::hooks::AgentHooks) backed by the
 /// agent domain's real implementations.

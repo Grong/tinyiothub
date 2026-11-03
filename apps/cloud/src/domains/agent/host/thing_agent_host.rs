@@ -13,7 +13,7 @@
 
 use std::sync::Arc;
 
-use tinyiothub_agent::runtime::thing_agent::{ThingAgentHost, ThingEventSignal};
+use crate::domains::agent::thing_agent::{ThingAgentHost, ThingEventSignal};
 
 use crate::domains::event::bus::ThingEventBus;
 

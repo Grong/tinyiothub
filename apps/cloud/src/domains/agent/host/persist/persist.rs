@@ -38,12 +38,12 @@ use tinyiothub_core::agent_runs::RunReport;
 use tinyiothub_storage::Db;
 
 use super::dlq_repo::SqliteDeadLetterQueue;
-use tinyiothub_agent::runtime::event::bus::AiEventPublisher;
-use tinyiothub_agent::runtime::event::dlq::DeadLetterQueue;
-use tinyiothub_agent::runtime::event::types::AiEvent;
-use tinyiothub_agent::runtime::events::{AgentEvent, AgentEventBus, AgentEventKind};
-use tinyiothub_agent::runtime::runtime::AgentRuntime;
-use tinyiothub_agent::runtime::snapshot::RestoreSnapshot;
+use crate::domains::agent::agent_runtime::AgentRuntime;
+use crate::domains::agent::event::bus::AiEventPublisher;
+use crate::domains::agent::event::dlq::DeadLetterQueue;
+use crate::domains::agent::event::types::AiEvent;
+use crate::domains::agent::events::{AgentEvent, AgentEventBus, AgentEventKind};
+use crate::domains::agent::snapshot::RestoreSnapshot;
 
 /// 周期全量对账间隔（生产）。
 const RECONCILE_INTERVAL: Duration = Duration::from_secs(300);
@@ -439,8 +439,7 @@ async fn project_heartbeat_run(
     publisher: &Arc<AiEventPublisher>,
     shutdown: &CancellationToken,
 ) {
-    let parsed =
-        tinyiothub_agent::runtime::heartbeat::report::parse_healing_report(&report.summary, &report.workspace_id);
+    let parsed = crate::domains::agent::heartbeat::report::parse_healing_report(&report.summary, &report.workspace_id);
     if !parsed.proposals.is_empty()
         && let Err(e) = upsert_heartbeat_run_proposals(pool, report, &parsed.proposals).await
     {
@@ -517,7 +516,7 @@ pub(crate) async fn resync(snapshot: RestoreSnapshot, pool: &SqlitePool, failure
                     // upsert 按 problem_key 折叠，幂等安全（重复 resync 不
                     // 新增行）；失败计入本 run 的连续失败计数，下周期重试。
                     if tinyiothub_storage::agent_runs::trigger_type_of(&report.trigger) == "heartbeat" {
-                        let parsed = tinyiothub_agent::runtime::heartbeat::report::parse_healing_report(
+                        let parsed = crate::domains::agent::heartbeat::report::parse_healing_report(
                             &report.summary,
                             &report.workspace_id,
                         );

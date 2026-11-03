@@ -1,5 +1,6 @@
 use std::sync::Arc;
 
+use crate::domains::agent::thing_agent::approval_port::{ApprovalError, TaskApprovalStore};
 use async_trait::async_trait;
 use axum::{
     extract::{Extension, Path, State},
@@ -8,7 +9,6 @@ use axum::{
 };
 use chrono::{DateTime, Utc};
 use serde_json::json;
-use tinyiothub_agent::port::approval::{ApprovalError, TaskApprovalStore};
 use tinyiothub_core::agent_task::{AgentTask, TaskWake, WakeDispatchState};
 use tinyiothub_core::task_approval::{ApprovalDecision, DecisionOutcome, TaskApproval, TaskApprovalStoreError};
 use tinyiothub_storage::Db;
@@ -395,12 +395,12 @@ mod tests {
     }
 
     #[async_trait]
-    impl tinyiothub_agent::runtime::thing_agent::manager::AutonomousAgentProvider for RuntimeProvider {
+    impl crate::domains::agent::thing_agent::manager::AutonomousAgentProvider for RuntimeProvider {
         async fn get_or_create(
             &self,
             _workspace_id: &str,
-            _ctx: Arc<tokio::sync::RwLock<tinyiothub_agent::runtime::thing_agent::RunContextInner>>,
-        ) -> anyhow::Result<tinyiothub_agent::runtime::thing_agent::AgentHandle> {
+            _ctx: Arc<tokio::sync::RwLock<crate::domains::agent::thing_agent::RunContextInner>>,
+        ) -> anyhow::Result<crate::domains::agent::thing_agent::AgentHandle> {
             Ok(Arc::new(tokio::sync::Mutex::new(RuntimeAgent {
                 prompts: self.prompts.clone(),
                 block_next: self.block_next.clone(),
@@ -415,10 +415,10 @@ mod tests {
     struct ApprovalRuntime {
         store: Arc<crate::domains::agent::runtime::DbTaskStore>,
         approvals: Arc<DbApprovalStore>,
-        coordinator: Arc<tinyiothub_agent::runtime::thing_agent::task::coordinator::TaskCoordinator>,
-        executor: Arc<tinyiothub_agent::runtime::thing_agent::task::approval::ApprovalExecutor>,
-        router: Arc<tinyiothub_agent::runtime::thing_agent::task::wake::WakeRouter>,
-        active: tinyiothub_agent::runtime::thing_agent::active_runs::ActiveRunRegistry,
+        coordinator: Arc<crate::domains::agent::thing_agent::task::coordinator::TaskCoordinator>,
+        executor: Arc<crate::domains::agent::thing_agent::task::approval::ApprovalExecutor>,
+        router: Arc<crate::domains::agent::thing_agent::task::wake::WakeRouter>,
+        active: crate::domains::agent::thing_agent::active_runs::ActiveRunRegistry,
         jobs: tinyiothub_runtime::job::service::JobService,
     }
 
@@ -459,31 +459,31 @@ mod tests {
                 access,
                 Arc::new(tinyiothub_runtime::arbitration::ArbitrationRegistry::default()),
             );
-            let active = tinyiothub_agent::runtime::thing_agent::active_runs::ActiveRunRegistry::new(8);
+            let active = crate::domains::agent::thing_agent::active_runs::ActiveRunRegistry::new(8);
             let coordinator = Arc::new(
-                tinyiothub_agent::runtime::thing_agent::task::coordinator::TaskCoordinator::new(
+                crate::domains::agent::thing_agent::task::coordinator::TaskCoordinator::new(
                     store.clone(),
                     Some(jobs.clone()),
                     Arc::new(crate::shared::runtime_ports::WatchRuleStoreAdapter::new(
                         self.db.as_ref().clone(),
                     )),
                     Arc::new(dashmap::DashMap::new()),
-                    Arc::new(tinyiothub_agent::runtime::events::AgentEventBus::new(64)),
+                    Arc::new(crate::domains::agent::events::AgentEventBus::new(64)),
                     active.clone(),
-                    Arc::new(tinyiothub_agent::runtime::thing_agent::runner::Runner::new()),
+                    Arc::new(crate::domains::agent::thing_agent::runner::Runner::new()),
                     provider,
                 )
                 .with_approvals(approvals.clone()),
             );
             let executor = Arc::new(
-                tinyiothub_agent::runtime::thing_agent::task::approval::ApprovalExecutor::new(
+                crate::domains::agent::thing_agent::task::approval::ApprovalExecutor::new(
                     approvals.clone(),
                     Arc::new(jobs.clone()),
                     coordinator.clone(),
                 ),
             );
             let router = Arc::new(
-                tinyiothub_agent::runtime::thing_agent::task::wake::WakeRouter::new(store.clone(), coordinator.clone())
+                crate::domains::agent::thing_agent::task::wake::WakeRouter::new(store.clone(), coordinator.clone())
                     .with_approvals(executor.clone()),
             );
             ApprovalRuntime {
@@ -621,7 +621,7 @@ mod tests {
         approval: &TaskApproval,
         decision: tinyiothub_core::task_approval::ApprovalDecision,
     ) -> tinyiothub_core::task_approval::DecisionOutcome {
-        tinyiothub_agent::port::approval::TaskApprovalStore::decide(
+        crate::domains::agent::thing_agent::approval_port::TaskApprovalStore::decide(
             runtime.approvals.as_ref(),
             &approval.workspace_id,
             &approval.task_id,
@@ -704,7 +704,7 @@ mod tests {
                     .await;
                 }
                 "expire" => {
-                    tinyiothub_agent::port::approval::TaskApprovalStore::expire_due(
+                    crate::domains::agent::thing_agent::approval_port::TaskApprovalStore::expire_due(
                         runtime.approvals.as_ref(),
                         pending.expires_at + chrono::Duration::seconds(1),
                     )
@@ -804,7 +804,7 @@ mod tests {
             if point == CrashPoint::BeforeDecisionCommit {
                 let mut invalid = decision_wake(&pending);
                 invalid.event_id = "wrong-event".into();
-                let result = tinyiothub_agent::port::approval::TaskApprovalStore::decide(
+                let result = crate::domains::agent::thing_agent::approval_port::TaskApprovalStore::decide(
                     crashed.approvals.as_ref(),
                     WS,
                     &pending.task_id,
@@ -837,7 +837,7 @@ mod tests {
                             .execute_decision(&pending.workspace_id, &pending.decision_event_id)
                             .await
                             .expect("job before crash"),
-                        tinyiothub_agent::runtime::thing_agent::task::approval::ExecutionOutcome::Job(_)
+                        crate::domains::agent::thing_agent::task::approval::ExecutionOutcome::Job(_)
                     ));
                 }
             }
@@ -845,7 +845,7 @@ mod tests {
             let recovered = fixture.runtime(worker.clone(), provider);
             recovered.recover().await;
             recovered.recover().await;
-            let current = tinyiothub_agent::port::approval::TaskApprovalStore::get_scoped(
+            let current = crate::domains::agent::thing_agent::approval_port::TaskApprovalStore::get_scoped(
                 recovered.approvals.as_ref(),
                 WS,
                 &pending.task_id,
@@ -983,7 +983,7 @@ mod tests {
                 .execute_decision(&pending.workspace_id, &pending.decision_event_id)
                 .await
                 .expect("deferred cancelled execution"),
-            tinyiothub_agent::runtime::thing_agent::task::approval::ExecutionOutcome::Deferred
+            crate::domains::agent::thing_agent::task::approval::ExecutionOutcome::Deferred
         ));
         runtime
             .store
@@ -1324,7 +1324,7 @@ mod tests {
                     .await;
                 }
                 "expire" => {
-                    tinyiothub_agent::port::approval::TaskApprovalStore::expire_due(
+                    crate::domains::agent::thing_agent::approval_port::TaskApprovalStore::expire_due(
                         runtime.approvals.as_ref(),
                         pending.expires_at + chrono::Duration::seconds(1),
                     )

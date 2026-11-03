@@ -7,9 +7,9 @@
 
 use std::collections::HashMap;
 
+use crate::domains::agent::thing_agent::seams::composite::{COMPOSITE_V, CompositeDef, CompositeOp, CompositeStep};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use tinyiothub_agent::runtime::thing_agent::seams::composite::{COMPOSITE_V, CompositeDef, CompositeOp, CompositeStep};
 use tinyiothub_core::watch::{CompareOp, HealthLevel, WatchCondition, WatchRule};
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]

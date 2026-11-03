@@ -6,7 +6,7 @@
 //! （快照恢复）；不依赖 judge/notify/trigger。
 //!
 //! 注册表关系注记（eng S1-P3）：persist.rs 的 RunRegistry 投影 = 记忆注入源
-//! （chat prompt 构造读最近 run 摘要）；`tinyiothub_agent::runtime::thing_agent::ActiveRunRegistry`
+//! （chat prompt 构造读最近 run 摘要）；`crate::domains::agent::thing_agent::ActiveRunRegistry`
 //! = 实时 trace 源（trace 端点读在途 run）。两者职责不同，归一时不合并。
 
 pub mod dlq_repo;

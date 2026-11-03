@@ -25,19 +25,19 @@ use std::{
 use crate::domains::agent::host::{
     autonomous_factory::AutonomousAgentFactory, thing_agent_host::CloudThingAgentHost, tools::DispatchThingTaskTool,
 };
+use crate::domains::agent::thing_agent::{
+    DirectiveSink, EnqueueError, Runner, ThingAgentManager, ThingAgentManagerConfig, TriggerSource, WakeSignal,
+};
 use crate::domains::event::{
     bus::ThingEventBus,
     router::{ThingEventInput, ThrottleState, route_thing_event},
 };
 use serde_json::json;
 use sqlx::Row;
-use tinyiothub_agent::pool::ProviderFactory;
 use tinyiothub_agent::port::attribution::{Attributable, ModelProviderKind, ProviderKind, Role};
 use tinyiothub_agent::port::provider::{ChatRequest, ChatResponse, ToolCall};
 use tinyiothub_agent::port::tool::Tool;
-use tinyiothub_agent::runtime::thing_agent::{
-    DirectiveSink, EnqueueError, Runner, ThingAgentManager, ThingAgentManagerConfig, TriggerSource, WakeSignal,
-};
+use tinyiothub_agent::provider::ProviderFactory;
 use tinyiothub_core::models::event::EventLevel;
 use tinyiothub_policy::autonomy::{AutonomyMode, AutonomyPolicy};
 
@@ -352,13 +352,13 @@ async fn build_fixture(
     // Task 4：run 记录走内存 RunRegistry + RunRecorded 事件出口。这里挂一个
     // Task 8 持久化订阅者的测试替身（显式 wiring，先 subscribe 再 start），
     // 让本文件既有 agent_runs 表断言继续覆盖持久化投影。
-    let run_registry = tinyiothub_agent::runtime::thing_agent::registry::RunRegistry::new();
-    let agent_events = Arc::new(tinyiothub_agent::runtime::events::AgentEventBus::new(256));
+    let run_registry = crate::domains::agent::thing_agent::registry::RunRegistry::new();
+    let agent_events = Arc::new(crate::domains::agent::events::AgentEventBus::new(256));
     {
         let db = tinyiothub_storage::Db::new(pool.clone());
         let mut rx = agent_events.subscribe();
         tokio::spawn(async move {
-            use tinyiothub_agent::runtime::events::AgentEventKind;
+            use crate::domains::agent::events::AgentEventKind;
             while let Ok(event) = rx.recv().await {
                 let AgentEventKind::RunRecorded {
                     report,
@@ -394,9 +394,9 @@ async fn build_fixture(
             min_wake_level: 3,
             ..Default::default()
         },
-        Arc::new(tinyiothub_agent::runtime::thing_agent::traits::NoopTicketResolutions),
+        Arc::new(crate::domains::agent::thing_agent::traits::NoopTicketResolutions),
         // Task 6：空表默认——heartbeat trigger 空任务抑制不 tick。
-        tinyiothub_agent::runtime::thing_agent::HeartbeatDeps::default(),
+        crate::domains::agent::thing_agent::HeartbeatDeps::default(),
     ));
 
     FixtureParts {
@@ -718,7 +718,7 @@ async fn user_directive_runs_and_pushes_assistant_message() {
     let sink: &dyn DirectiveSink = fx.manager.as_ref();
     sink.enqueue(WakeSignal {
         workspace_id: WS.to_string(),
-        priority: tinyiothub_agent::runtime::thing_agent::Priority::High,
+        priority: crate::domains::agent::thing_agent::Priority::High,
         source: TriggerSource::UserDirective {
             user_id: "u1".to_string(),
             text: "把车间温度降到 26 度".to_string(),
@@ -782,7 +782,7 @@ async fn user_directive_runs_and_pushes_assistant_message() {
     // 未知工作区指令 → Closed（端点映射为错误而非静默）。
     let err = sink.enqueue(WakeSignal {
         workspace_id: "ws-nope".to_string(),
-        priority: tinyiothub_agent::runtime::thing_agent::Priority::High,
+        priority: crate::domains::agent::thing_agent::Priority::High,
         source: TriggerSource::UserDirective {
             user_id: "u1".to_string(),
             text: "hi".to_string(),
@@ -800,11 +800,11 @@ async fn user_directive_runs_and_pushes_assistant_message() {
 
 #[tokio::test]
 async fn policy_denial_streak_triggers_relax_hint_with_registry() {
-    use tinyiothub_agent::runtime::thing_agent::{ActionRecord, ActionResult, Outcome, Priority, RunReport, pushback};
+    use crate::domains::agent::thing_agent::{ActionRecord, ActionResult, Outcome, Priority, RunReport, pushback};
 
     let (pool, _dir) = test_pool("loop_relax_hint").await;
     seed_test_workspace(&pool, "tenant-1", WS).await;
-    let registry = tinyiothub_agent::runtime::thing_agent::registry::RunRegistry::new();
+    let registry = crate::domains::agent::thing_agent::registry::RunRegistry::new();
     let host = CloudThingAgentHost::new(pool.clone(), Arc::new(ThingEventBus::new()));
 
     let denied_report = |run_id: &str| RunReport {
