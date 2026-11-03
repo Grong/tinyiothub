@@ -1,12 +1,19 @@
+use std::sync::Arc;
+
 use crate::domains::agent::thing_agent::task::coordinator::TaskError;
 use axum::{
     extract::{Extension, Path, State},
     http::StatusCode,
     response::Response,
 };
+use chrono::{DateTime, Utc};
 use tinyiothub_core::agent_task::TaskStoreError;
 use tinyiothub_core::device_job::DeviceJobError;
+use tinyiothub_core::harness::{CommandKind, HarnessCommand};
+use tinyiothub_storage::Db;
 use tinyiothub_web::security::Claims;
+
+use super::RecoveryMode;
 
 use crate::domains::agent::AgentState;
 use crate::domains::agent::host::handler::agent_tasks::check_agent_admin_response;
@@ -102,5 +109,89 @@ pub async fn stop_job(
             tracing::warn!(%error, "single Device Job stop failed");
             error_response(StatusCode::SERVICE_UNAVAILABLE, "Device Job 服务不可用")
         }
+    }
+}
+
+pub trait CommandControl: Send + Sync {
+    fn interrupt_model_call(&self, command: &HarnessCommand);
+    fn steer_before_model_call(&self, command: &HarnessCommand);
+    fn cancel_model_call(&self, command: &HarnessCommand);
+}
+
+#[derive(Clone)]
+pub struct CommandRecovery {
+    db: Arc<Db>,
+}
+
+impl CommandRecovery {
+    pub fn new(db: Arc<Db>) -> Self {
+        Self { db }
+    }
+
+    pub async fn consume_next(
+        &self,
+        workspace_id: &str,
+        target_task_id: &str,
+        now: DateTime<Utc>,
+        control: &dyn CommandControl,
+    ) -> Result<Option<HarnessCommand>, String> {
+        let consumed = self
+            .db
+            .consume_next_command(workspace_id, target_task_id, now)
+            .await
+            .map_err(|error| error.to_string())?;
+        if let Some(command) = &consumed {
+            match command.kind {
+                CommandKind::Interrupt => control.interrupt_model_call(command),
+                CommandKind::Steer => control.steer_before_model_call(command),
+                CommandKind::Cancel => control.cancel_model_call(command),
+                CommandKind::Pause | CommandKind::Queue => {}
+            }
+        }
+        Ok(consumed)
+    }
+
+    pub async fn recover_workspace(
+        &self,
+        workspace_id: &str,
+        mode: RecoveryMode,
+        control: &dyn CommandControl,
+    ) -> Result<(), String> {
+        let now = Utc::now();
+        self.db
+            .expire_harness_commands(workspace_id, now)
+            .await
+            .map_err(|error| error.to_string())?;
+        if matches!(mode, RecoveryMode::Restart | RecoveryMode::Restore) {
+            let requested = self
+                .db
+                .list_requested_harness_commands(workspace_id)
+                .await
+                .map_err(|error| error.to_string())?;
+            for command in requested
+                .into_iter()
+                .filter(|command| command.kind == CommandKind::Interrupt)
+            {
+                self.db
+                    .reject_harness_command(workspace_id, &command.command_id, now, "restart_without_model_call")
+                    .await
+                    .map_err(|error| error.to_string())?;
+            }
+        }
+        let requested = self
+            .db
+            .list_requested_harness_commands(workspace_id)
+            .await
+            .map_err(|error| error.to_string())?;
+        let mut targets = Vec::new();
+        for command in requested {
+            if !targets.contains(&command.target_task_id) {
+                targets.push(command.target_task_id);
+            }
+        }
+        for target in targets {
+            self.consume_next(workspace_id, &target, now, control).await?;
+        }
+        Ok(())
     }
 }

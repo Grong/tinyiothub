@@ -50,6 +50,7 @@ pub mod edge;
 pub mod error;
 /// Event + real-time status persistence and query types.
 pub mod event;
+pub mod harness_command;
 pub mod harness_effect;
 pub mod harness_event;
 mod harness_workspace;

@@ -196,6 +196,96 @@ impl DecisionState {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CommandKind {
+    Steer,
+    Interrupt,
+    Pause,
+    Cancel,
+    Queue,
+}
+
+impl CommandKind {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Steer => "steer",
+            Self::Interrupt => "interrupt",
+            Self::Pause => "pause",
+            Self::Cancel => "cancel",
+            Self::Queue => "queue",
+        }
+    }
+
+    pub fn from_db(value: &str) -> Option<Self> {
+        match value {
+            "steer" => Some(Self::Steer),
+            "interrupt" => Some(Self::Interrupt),
+            "pause" => Some(Self::Pause),
+            "cancel" => Some(Self::Cancel),
+            "queue" => Some(Self::Queue),
+            _ => None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CommandState {
+    Requested,
+    Consumed,
+    Rejected,
+    Superseded,
+    Expired,
+}
+
+impl CommandState {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Requested => "requested",
+            Self::Consumed => "consumed",
+            Self::Rejected => "rejected",
+            Self::Superseded => "superseded",
+            Self::Expired => "expired",
+        }
+    }
+
+    pub fn from_db(value: &str) -> Option<Self> {
+        match value {
+            "requested" => Some(Self::Requested),
+            "consumed" => Some(Self::Consumed),
+            "rejected" => Some(Self::Rejected),
+            "superseded" => Some(Self::Superseded),
+            "expired" => Some(Self::Expired),
+            _ => None,
+        }
+    }
+
+    pub fn event_type(self) -> &'static str {
+        match self {
+            Self::Requested => "command.requested",
+            Self::Consumed => "command.consumed",
+            Self::Rejected => "command.rejected",
+            Self::Superseded => "command.superseded",
+            Self::Expired => "command.expired",
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HarnessCommand {
+    pub command_id: String,
+    pub kind: CommandKind,
+    pub target_task_id: String,
+    pub target_run_id: String,
+    pub actor: String,
+    pub payload: Value,
+    pub created_at: DateTime<Utc>,
+    pub expires_at: Option<DateTime<Utc>>,
+    pub state: CommandState,
+}
+
 #[derive(Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct EffectIntent {

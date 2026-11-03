@@ -313,7 +313,7 @@ async fn deduplicated_outcome(
     }))
 }
 
-async fn insert_event(
+pub(crate) async fn insert_event(
     connection: &mut SqliteConnection,
     event: &tinyiothub_core::harness::HarnessEventInput,
 ) -> Result<()> {

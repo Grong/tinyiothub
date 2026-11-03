@@ -4,8 +4,11 @@ use async_trait::async_trait;
 use chrono::{DateTime, Duration, Utc};
 use serde_json::json;
 use tinyiothub_agent::harness::{EffectReconciler, ReconcileOutcome};
+use tinyiothub_cloud::domains::agent::runtime::controls::{CommandControl, CommandRecovery};
 use tinyiothub_cloud::domains::agent::runtime::{EffectRecovery, RecoveryMode};
-use tinyiothub_core::harness::{DecisionState, EffectIntent, EffectState, ExecutionMode};
+use tinyiothub_core::harness::{
+    CommandKind, CommandState, DecisionState, EffectIntent, EffectState, ExecutionMode, HarnessCommand,
+};
 use tinyiothub_storage::harness_event::EventFilter;
 use tinyiothub_storage::test_helpers::{WorkspaceFixture, fixture_workspace};
 
@@ -895,5 +898,244 @@ async fn effect_recovery_reconciliation_never_expires_and_events_redact_nested_s
     assert!(!format!("{internal:?}").contains("nested-secret"));
     assert!(!accidental_dto.contains("nested-secret"));
     assert!(!accidental_dto.contains("request_json"));
+    fixture.close().await;
+}
+
+#[derive(Default)]
+struct RecordingCommandControl {
+    interrupts: Mutex<Vec<String>>,
+    steering: Mutex<Vec<String>>,
+    cancellations: Mutex<Vec<String>>,
+}
+
+impl CommandControl for RecordingCommandControl {
+    fn interrupt_model_call(&self, command: &HarnessCommand) {
+        self.interrupts
+            .lock()
+            .expect("interrupts")
+            .push(command.command_id.clone());
+    }
+
+    fn steer_before_model_call(&self, command: &HarnessCommand) {
+        self.steering.lock().expect("steering").push(command.command_id.clone());
+    }
+
+    fn cancel_model_call(&self, command: &HarnessCommand) {
+        self.cancellations
+            .lock()
+            .expect("cancellations")
+            .push(command.command_id.clone());
+    }
+}
+
+fn harness_command(id: &str, kind: CommandKind, task_id: &str) -> HarnessCommand {
+    HarnessCommand {
+        command_id: id.to_string(),
+        kind,
+        target_task_id: task_id.to_string(),
+        target_run_id: format!("run-{task_id}"),
+        actor: "operator-1".to_string(),
+        payload: json!({"guidance":"use the next model call","input":"queued"}),
+        created_at: at(),
+        expires_at: Some(Utc::now() + Duration::hours(1)),
+        state: CommandState::Requested,
+    }
+}
+
+async fn command_state(fixture: &WorkspaceFixture, command_id: &str) -> CommandState {
+    fixture
+        .db
+        .harness_command(WS, command_id)
+        .await
+        .expect("load command")
+        .expect("command exists")
+        .state
+}
+
+#[tokio::test]
+async fn command_recovery_interrupt_aborts_only_current_model_call_and_never_replays() {
+    let fixture = fixture().await;
+    seed_effect(
+        &fixture,
+        "effect-command-interrupt",
+        EffectState::Dispatching,
+        "running",
+    )
+    .await;
+    sqlx::query("UPDATE agent_runs SET state = 'model_calling' WHERE id = 'run-effect-command-interrupt'")
+        .execute(&fixture.workspace_pool().await)
+        .await
+        .expect("model call in progress");
+    fixture
+        .db
+        .request_harness_command(
+            WS,
+            &harness_command("interrupt-current", CommandKind::Interrupt, "effect-command-interrupt"),
+        )
+        .await
+        .expect("request interrupt");
+    let host = CommandRecovery::new(Arc::new(fixture.db.clone()));
+    let control = RecordingCommandControl::default();
+
+    let consumed = host
+        .consume_next(WS, "effect-command-interrupt", at(), &control)
+        .await
+        .expect("consume interrupt")
+        .expect("current model call");
+    assert_eq!(consumed.command_id, "interrupt-current");
+    assert_eq!(control.interrupts.lock().expect("interrupts").len(), 1);
+    assert!(control.cancellations.lock().expect("cancellations").is_empty());
+    assert_eq!(
+        effect_state(&fixture, "effect-command-interrupt").await.0,
+        "dispatching"
+    );
+    assert_eq!(
+        run_task_states(&fixture, "effect-command-interrupt").await,
+        ("interrupted".to_string(), "running".to_string())
+    );
+
+    host.recover_workspace(WS, RecoveryMode::Restart, &control)
+        .await
+        .expect("restart recovery");
+    assert_eq!(control.interrupts.lock().expect("interrupts").len(), 1);
+    assert_eq!(event_count(&fixture, "run.interrupted").await, 1);
+    fixture.close().await;
+}
+
+#[tokio::test]
+async fn command_recovery_restart_consumes_valid_steer_once_and_rejects_stale_interrupt() {
+    let fixture = fixture().await;
+    seed_effect(&fixture, "effect-command-steer", EffectState::Dispatching, "running").await;
+    fixture
+        .db
+        .request_harness_command(
+            WS,
+            &harness_command("steer-after-restart", CommandKind::Steer, "effect-command-steer"),
+        )
+        .await
+        .expect("request steer");
+    fixture
+        .db
+        .request_harness_command(
+            WS,
+            &harness_command(
+                "interrupt-after-restart",
+                CommandKind::Interrupt,
+                "effect-command-steer",
+            ),
+        )
+        .await
+        .expect("request interrupt");
+    fixture
+        .db
+        .close_workspace_store(WS)
+        .await
+        .expect("close before restart");
+    fixture
+        .db
+        .create_workspace_store(WS)
+        .await
+        .expect("reopen after restart");
+    let host = CommandRecovery::new(Arc::new(fixture.db.clone()));
+    let control = RecordingCommandControl::default();
+
+    host.recover_workspace(WS, RecoveryMode::Restart, &control)
+        .await
+        .expect("restart command recovery");
+    assert_eq!(
+        control.steering.lock().expect("steering").as_slice(),
+        &["steer-after-restart"]
+    );
+    assert!(control.interrupts.lock().expect("interrupts").is_empty());
+    assert_eq!(
+        command_state(&fixture, "steer-after-restart").await,
+        CommandState::Consumed
+    );
+    assert_eq!(
+        command_state(&fixture, "interrupt-after-restart").await,
+        CommandState::Rejected
+    );
+    assert_eq!(effect_state(&fixture, "effect-command-steer").await.0, "dispatching");
+
+    host.recover_workspace(WS, RecoveryMode::Restart, &control)
+        .await
+        .expect("duplicate restart recovery");
+    assert_eq!(control.steering.lock().expect("steering").len(), 1);
+    assert_eq!(wake_count(&fixture, "effect-command-steer").await, 1);
+    fixture.close().await;
+}
+
+#[tokio::test]
+async fn command_recovery_pause_resume_and_cancel_keep_durable_fifo_semantics() {
+    let fixture = fixture().await;
+    seed_effect(&fixture, "effect-command-queue", EffectState::Dispatching, "running").await;
+    for command in [
+        harness_command("pause-before-queue", CommandKind::Pause, "effect-command-queue"),
+        harness_command("queue-after-pause", CommandKind::Queue, "effect-command-queue"),
+    ] {
+        fixture
+            .db
+            .request_harness_command(WS, &command)
+            .await
+            .expect("request command");
+    }
+    let host = CommandRecovery::new(Arc::new(fixture.db.clone()));
+    let control = RecordingCommandControl::default();
+
+    host.recover_workspace(WS, RecoveryMode::Restart, &control)
+        .await
+        .expect("consume pause");
+    assert_eq!(
+        command_state(&fixture, "pause-before-queue").await,
+        CommandState::Consumed
+    );
+    assert_eq!(
+        command_state(&fixture, "queue-after-pause").await,
+        CommandState::Requested
+    );
+    assert_eq!(run_task_states(&fixture, "effect-command-queue").await.1, "paused");
+
+    sqlx::query("UPDATE agent_tasks SET state = 'running' WHERE id = 'effect-command-queue'")
+        .execute(&fixture.workspace_pool().await)
+        .await
+        .expect("resume task");
+    host.recover_workspace(WS, RecoveryMode::Restart, &control)
+        .await
+        .expect("consume queue after resume");
+    assert_eq!(
+        command_state(&fixture, "queue-after-pause").await,
+        CommandState::Consumed
+    );
+    assert_eq!(effect_state(&fixture, "effect-command-queue").await.0, "dispatching");
+
+    for command in [
+        harness_command("cancel-after-queue", CommandKind::Cancel, "effect-command-queue"),
+        harness_command("steer-superseded", CommandKind::Steer, "effect-command-queue"),
+    ] {
+        fixture
+            .db
+            .request_harness_command(WS, &command)
+            .await
+            .expect("request command");
+    }
+    host.recover_workspace(WS, RecoveryMode::Restart, &control)
+        .await
+        .expect("consume cancel");
+    assert_eq!(
+        command_state(&fixture, "cancel-after-queue").await,
+        CommandState::Consumed
+    );
+    assert_eq!(
+        command_state(&fixture, "steer-superseded").await,
+        CommandState::Superseded
+    );
+    assert_eq!(control.cancellations.lock().expect("cancellations").len(), 1);
+    assert!(control.steering.lock().expect("steering").is_empty());
+    assert_eq!(effect_state(&fixture, "effect-command-queue").await.0, "dispatching");
+
+    host.recover_workspace(WS, RecoveryMode::Restart, &control)
+        .await
+        .expect("duplicate cancel recovery");
+    assert_eq!(control.cancellations.lock().expect("cancellations").len(), 1);
     fixture.close().await;
 }
