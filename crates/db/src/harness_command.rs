@@ -310,10 +310,18 @@ async fn consume_once(
                             message: format!("run {} left its model call", selected.target_run_id),
                         });
                     }
+                    let last_persisted_seq = sqlx::query_scalar::<_, i64>(
+                        "SELECT COALESCE(MAX(seq), 0) FROM session_events WHERE run_id = ?",
+                    )
+                    .bind(&selected.target_run_id)
+                    .fetch_one(&mut connection)
+                    .await?;
                     let payload = json!({
                         "commandId": selected.command_id,
                         "runId": selected.target_run_id,
                         "state": "interrupted",
+                        "incomplete_tail": true,
+                        "last_persisted_seq": last_persisted_seq,
                     });
                     crate::harness_effect::insert_event(
                         &mut connection,

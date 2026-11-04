@@ -1002,9 +1002,12 @@ export class RuntimeTaskView extends LitElement {
     }
   }
 
-  private installSnapshot(snapshot: TaskProjection, cursor: number): void {
-    if (this.projection) this.projection.replaceWithSnapshot(snapshot, cursor);
-    else this.projection = new RuntimeProjection(snapshot, { history: this.historyMode });
+  private installSnapshot(snapshot: TaskProjection, cursor: number, highWatermark = cursor): void {
+    if (this.projection) this.projection.replaceWithSnapshot(snapshot, cursor, highWatermark);
+    else {
+      this.projection = new RuntimeProjection(snapshot, { history: this.historyMode });
+      this.projection.highWatermark = highWatermark;
+    }
     this.revision += 1;
     this.invalidatePlaybackTarget();
   }
@@ -1034,21 +1037,21 @@ export class RuntimeTaskView extends LitElement {
       after: this.projection?.cursor ?? 0,
       isCurrent: () => generation === this.generation && taskId === this.taskId,
       callbacks: {
-        snapshot: (snapshot, cursor) => {
+        snapshot: (snapshot, cursor, highWatermark) => {
           if (generation !== this.generation) return;
-          this.installSnapshot(snapshot, cursor);
+          this.installSnapshot(snapshot, cursor, highWatermark);
         },
-        event: (event) => {
+        event: (event, highWatermark) => {
           if (generation !== this.generation) return;
-          this.projection?.apply(event);
+          this.projection?.apply(event, highWatermark);
           // Live device facts can remove or replace the playing source; the
           // descriptor (and its rendered alt) must not outlive that target.
           this.invalidatePlaybackTarget();
           this.revision += 1;
         },
-        resync: (snapshot, cursor) => {
+        resync: (snapshot, cursor, highWatermark) => {
           if (generation !== this.generation) return;
-          this.installSnapshot(snapshot, cursor);
+          this.installSnapshot(snapshot, cursor, highWatermark);
         },
         connection: (connection) => {
           if (generation !== this.generation) return;

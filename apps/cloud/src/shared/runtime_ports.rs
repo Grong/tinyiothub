@@ -1068,7 +1068,8 @@ mod runtime_job_event_tests {
             .await
             .expect("query persisted event")
             .expect("persisted event");
-        let Some(crate::domains::agent::runtime::stream::RuntimeFrame::Event { event }) = connection.next_frame().await
+        let Some(crate::domains::agent::runtime::stream::RuntimeFrame::Event { event, .. }) =
+            connection.next_frame().await
         else {
             panic!("expected live evidence event");
         };
@@ -1159,7 +1160,7 @@ mod runtime_job_event_tests {
         assert_eq!(events[3].data["progress"]["percent"], 75);
         let mut streamed_ids = Vec::new();
         for _ in 0..events.len() {
-            let Some(crate::domains::agent::runtime::stream::RuntimeFrame::Event { event }) =
+            let Some(crate::domains::agent::runtime::stream::RuntimeFrame::Event { event, .. }) =
                 connection.next_frame().await
             else {
                 panic!("expected every persisted revision on the live stream");
@@ -1248,7 +1249,7 @@ mod runtime_job_event_tests {
         store.insert(&rule("watch-cancel-1")).await.expect("first watch");
         store.insert(&rule("watch-cancel-2")).await.expect("second watch");
         for id in ["watch-cancel-1", "watch-cancel-2"] {
-            let Some(crate::domains::agent::runtime::stream::RuntimeFrame::Event { event }) =
+            let Some(crate::domains::agent::runtime::stream::RuntimeFrame::Event { event, .. }) =
                 connection.next_frame().await
             else {
                 panic!("expected live creation");
@@ -1263,7 +1264,7 @@ mod runtime_job_event_tests {
             2
         );
         for id in ["watch-cancel-1", "watch-cancel-2"] {
-            let Some(crate::domains::agent::runtime::stream::RuntimeFrame::Event { event }) =
+            let Some(crate::domains::agent::runtime::stream::RuntimeFrame::Event { event, .. }) =
                 connection.next_frame().await
             else {
                 panic!("expected live cancellation");
@@ -1277,7 +1278,8 @@ mod runtime_job_event_tests {
             Some(crate::domains::agent::runtime::stream::RuntimeFrame::Event { .. })
         ));
         assert!(store.delete("ws-job", "watch-generic").await.expect("generic delete"));
-        let Some(crate::domains::agent::runtime::stream::RuntimeFrame::Event { event }) = connection.next_frame().await
+        let Some(crate::domains::agent::runtime::stream::RuntimeFrame::Event { event, .. }) =
+            connection.next_frame().await
         else {
             panic!("expected live generic deletion");
         };

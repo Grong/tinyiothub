@@ -61,13 +61,19 @@ pub enum RuntimeFrame {
     Snapshot {
         snapshot: Box<TaskProjection>,
         cursor: i64,
+        #[serde(rename = "highWatermark")]
+        high_watermark: i64,
     },
     Event {
         event: Box<RuntimeEvent>,
+        #[serde(rename = "highWatermark")]
+        high_watermark: i64,
     },
     Resync {
         snapshot: Box<TaskProjection>,
         cursor: i64,
+        #[serde(rename = "highWatermark")]
+        high_watermark: i64,
         reason: String,
     },
 }
@@ -303,34 +309,15 @@ impl RuntimeStreamHub {
             pending.push_back(RuntimeFrame::Resync {
                 snapshot: Box::new(projection),
                 cursor,
+                high_watermark: cursor,
                 reason: "unknown_cursor".into(),
             });
         } else {
             pending.push_back(RuntimeFrame::Snapshot {
                 snapshot: Box::new(projection),
                 cursor,
+                high_watermark: cursor,
             });
-            if after.is_some() {
-                let mut replay_after = after;
-                loop {
-                    let rows = db
-                        .runtime_events_after(workspace_id, replay_after, Some(task_id), 256)
-                        .await
-                        .map_err(|error| RuntimeStreamError(error.to_string()))?;
-                    if rows.is_empty() {
-                        break;
-                    }
-                    let count = rows.len();
-                    replay_after = rows.last().map(|event| event.cursor);
-                    pending.extend(
-                        rows.into_iter()
-                            .map(|event| RuntimeFrame::Event { event: Box::new(event) }),
-                    );
-                    if count < 256 {
-                        break;
-                    }
-                }
-            }
         }
         let guard = ConnectionGuard::new(self, workspace_id.to_string());
         self.connections_opened.fetch_add(1, Ordering::Relaxed);
@@ -347,7 +334,10 @@ impl RuntimeStreamHub {
             task_id: task_id.to_string(),
             events,
             pending,
+            replay_after: if unknown { None } else { after },
+            replay_page: VecDeque::new(),
             last_cursor: cursor,
+            high_watermark: cursor,
             seen: SeenEvents::default(),
             hub: self.clone(),
             connected_at: Instant::now(),
@@ -400,7 +390,10 @@ pub struct RuntimeConnection {
     task_id: String,
     events: Receiver<RuntimeEvent>,
     pending: VecDeque<RuntimeFrame>,
+    replay_after: Option<i64>,
+    replay_page: VecDeque<RuntimeEvent>,
     last_cursor: i64,
+    high_watermark: i64,
     seen: SeenEvents,
     hub: Arc<RuntimeStreamHub>,
     connected_at: Instant,
@@ -420,14 +413,41 @@ impl RuntimeConnection {
     pub async fn next_frame(&mut self) -> Option<RuntimeFrame> {
         loop {
             if let Some(frame) = self.pending.pop_front() {
-                if let RuntimeFrame::Event { event } = &frame {
-                    self.seen.insert(event.event_id.clone());
-                }
                 self.record_first_frame();
                 return Some(frame);
             }
+            if let Some(event) = self.replay_page.pop_front() {
+                self.last_cursor = self.last_cursor.max(event.cursor);
+                self.high_watermark = self.high_watermark.max(event.cursor);
+                self.seen.insert(event.event_id.clone());
+                self.record_first_frame();
+                return Some(RuntimeFrame::Event {
+                    event: Box::new(event),
+                    high_watermark: self.high_watermark,
+                });
+            }
+            if let Some(after) = self.replay_after {
+                let rows = match self
+                    .db
+                    .runtime_events_after(&self.workspace_id, Some(after), Some(&self.task_id), 256)
+                    .await
+                {
+                    Ok(rows) => rows,
+                    Err(error) => {
+                        self.warn_closing("replay_read", Some(after), &error);
+                        return None;
+                    }
+                };
+                self.replay_after = rows.last().map(|event| event.cursor);
+                self.replay_page.extend(rows);
+                if self.replay_page.is_empty() {
+                    self.replay_after = None;
+                }
+                continue;
+            }
             match self.events.recv().await {
                 Ok(event) => {
+                    self.high_watermark = self.high_watermark.max(event.cursor);
                     match event.task_id.as_deref() {
                         Some(task_id) if task_id == self.task_id => {}
                         Some(_) => {
@@ -459,7 +479,10 @@ impl RuntimeConnection {
                     self.last_cursor = event.cursor;
                     self.seen.insert(event.event_id.clone());
                     self.record_first_frame();
-                    return Some(RuntimeFrame::Event { event: Box::new(event) });
+                    return Some(RuntimeFrame::Event {
+                        event: Box::new(event),
+                        high_watermark: self.high_watermark,
+                    });
                 }
                 Err(RecvError::Lagged(skipped)) => {
                     tracing::warn!(skipped, "runtime stream lagged; sending resync");
@@ -534,9 +557,13 @@ impl RuntimeConnection {
             }
         };
         self.last_cursor = projection.cursor;
+        self.high_watermark = projection.cursor;
+        self.replay_after = None;
+        self.replay_page.clear();
         self.seen.clear();
         Some(RuntimeFrame::Resync {
             cursor: projection.cursor,
+            high_watermark: projection.cursor,
             snapshot: Box::new(projection),
             reason: reason.to_string(),
         })
@@ -657,6 +684,82 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn replay_streams_one_bounded_page_instead_of_preloading_history() {
+        let (db, hub) = fixture(16).await;
+        let created_cursor = db
+            .runtime_projection("ws-1", "task-1")
+            .await
+            .expect("projection")
+            .expect("task")
+            .cursor;
+        for index in 0..513 {
+            db.append_runtime_event(input(&format!("page-event-{index}")))
+                .await
+                .expect("append replay fixture");
+        }
+
+        let mut connection = hub
+            .connect(db, "ws-1", "task-1", Some(created_cursor))
+            .await
+            .expect("connect");
+        assert!(
+            connection.pending.len() <= 1,
+            "connect must not buffer the replay: {} frames",
+            connection.pending.len()
+        );
+        assert!(matches!(
+            connection.next_frame().await,
+            Some(RuntimeFrame::Snapshot { .. })
+        ));
+        let Some(RuntimeFrame::Event { event, .. }) = connection.next_frame().await else {
+            panic!("first replay event");
+        };
+        assert_eq!(event.event_id, "page-event-0");
+        assert!(
+            !connection.replay_page.is_empty() && connection.replay_page.len() <= 256,
+            "at most one 256-event page may be prefetched, got {}",
+            connection.replay_page.len()
+        );
+    }
+
+    #[tokio::test]
+    #[ignore = "million-event fixture; run explicitly for bounded-memory checks"]
+    async fn million_event_replay_still_prefetches_only_one_page() {
+        let (db, hub) = fixture(16).await;
+        let payload = sqlx::query_scalar::<_, String>(
+            "SELECT payload FROM hub_ledger
+             WHERE workspace_id = 'ws-1' AND kind = 'runtime.v1'
+               AND json_extract(payload, '$.eventId') = 'task:task-1:created'",
+        )
+        .fetch_one(db.pool())
+        .await
+        .expect("source event payload");
+        sqlx::query(
+            "WITH RECURSIVE fixture(n) AS (
+                 SELECT 1 UNION ALL SELECT n + 1 FROM fixture WHERE n < 1000000
+             )
+             INSERT INTO hub_ledger (workspace_id, ts, kind, thing_id, payload)
+             SELECT 'ws-1', '2026-11-03T00:00:00Z', 'runtime.v1', NULL, ? FROM fixture",
+        )
+        .bind(payload)
+        .execute(db.pool())
+        .await
+        .expect("million-event fixture");
+
+        let mut connection = hub.connect(db, "ws-1", "task-1", Some(0)).await.expect("connect");
+        assert_eq!(connection.pending.len(), 1, "only the snapshot is pending");
+        assert!(matches!(
+            connection.next_frame().await,
+            Some(RuntimeFrame::Snapshot { .. })
+        ));
+        assert!(matches!(
+            connection.next_frame().await,
+            Some(RuntimeFrame::Event { .. })
+        ));
+        assert!(connection.replay_page.len() <= 256);
+    }
+
+    #[tokio::test]
     async fn reconnect_replays_persisted_cursor_without_duplicate_or_lost_events() {
         let (db, hub) = fixture(16).await;
         let first = db.append_runtime_event(input("event-1")).await.expect("first");
@@ -669,7 +772,7 @@ mod tests {
             connection.next_frame().await,
             Some(RuntimeFrame::Snapshot { .. })
         ));
-        let Some(RuntimeFrame::Event { event }) = connection.next_frame().await else {
+        let Some(RuntimeFrame::Event { event, .. }) = connection.next_frame().await else {
             panic!("expected replayed event");
         };
         assert_eq!(event.event_id, "event-2");
@@ -859,7 +962,7 @@ mod tests {
         assert_eq!(snapshot.task.state_version, 3);
         let mut replayed_versions = Vec::new();
         for _ in 0..2 {
-            let Some(RuntimeFrame::Event { event }) = connection.next_frame().await else {
+            let Some(RuntimeFrame::Event { event, .. }) = connection.next_frame().await else {
                 panic!("expected two committed versions");
             };
             replayed_versions.push(event.data["stateVersion"].as_i64());
@@ -899,6 +1002,7 @@ mod tests {
             snapshot,
             cursor,
             reason,
+            ..
         } = frame
         else {
             panic!("expected out-of-order live recovery");
@@ -962,13 +1066,13 @@ mod tests {
         hub.publish(deleted[0].clone());
         probe.release();
         let mut connection = connecting.await.expect("join connection").expect("connect");
-        let Some(RuntimeFrame::Snapshot { snapshot, cursor }) = connection.next_frame().await else {
+        let Some(RuntimeFrame::Snapshot { snapshot, cursor, .. }) = connection.next_frame().await else {
             panic!("expected initial snapshot");
         };
         assert_eq!(probe.attempts(), 1);
         assert_eq!(snapshot.watches.len(), 1);
         assert!(cursor < deleted[0].cursor);
-        let Some(RuntimeFrame::Event { event }) = connection.next_frame().await else {
+        let Some(RuntimeFrame::Event { event, .. }) = connection.next_frame().await else {
             panic!("expected deletion correction");
         };
         assert_eq!(event.event_id, "watch:watch-race:deleted");
@@ -1005,6 +1109,7 @@ mod tests {
             snapshot,
             cursor,
             reason,
+            ..
         }) = frame
         else {
             panic!("expected resync");
@@ -1015,7 +1120,7 @@ mod tests {
         assert_eq!(snapshot.task.status, TaskStatus::Active);
         assert!(cursor < correction.cursor);
         match connection.next_frame().await {
-            Some(RuntimeFrame::Event { event }) => {
+            Some(RuntimeFrame::Event { event, .. }) => {
                 assert_eq!(event.event_id, correction.event_id);
                 assert_eq!(event.data["stateVersion"], paused.state_version);
             }
@@ -1109,7 +1214,7 @@ mod tests {
         let replay = recorder.record(input("stable-event")).await.expect("duplicate record");
         assert_eq!(first.cursor, replay.cursor);
         assert_eq!(first.event_id, replay.event_id);
-        let Some(RuntimeFrame::Event { event }) = connection.next_frame().await else {
+        let Some(RuntimeFrame::Event { event, .. }) = connection.next_frame().await else {
             panic!("expected live event");
         };
         assert_eq!(event.event_id, "stable-event");

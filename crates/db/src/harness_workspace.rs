@@ -59,6 +59,7 @@ fn harness_migrator() -> Migrator {
         crate::harness_effect::migration(),
         crate::harness_command::migration(),
         crate::harness_workflow::migration(),
+        crate::harness_snapshot::migration(),
     ])
 }
 

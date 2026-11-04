@@ -576,7 +576,7 @@ async fn next_matching_frame(
     loop {
         let remaining = deadline.checked_sub(started.elapsed())?;
         let frame = tokio::time::timeout(remaining, connection.next_frame()).await.ok()??;
-        if let RuntimeFrame::Event { event } = frame
+        if let RuntimeFrame::Event { event, .. } = frame
             && matches(&event)
         {
             return Some(*event);

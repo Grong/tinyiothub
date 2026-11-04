@@ -89,9 +89,13 @@ export class RuntimeProjection {
   evidence: EvidenceRef[] = [];
   connection: RuntimeConnection = 'connecting';
   cursor = 0;
+  highWatermark = 0;
+  incompleteTail = false;
+  lastPersistedSeq: number | null = null;
 
   frozenHistory: boolean;
   eventIds = new Set<string>();
+  private stepCursors = new Set<number>();
   private baseSnapshot: TaskProjection;
   private baseCursor = 0;
 
@@ -148,6 +152,7 @@ export class RuntimeProjection {
     this.frozenHistory = true;
     this.steps = [...events].sort(byCursor);
     this.eventIds = new Set(this.steps.map((event) => event.eventId));
+    this.stepCursors = new Set(this.steps.map((event) => event.cursor));
   }
 
   /** Merge a bounded timeline page or live deltas into the shown steps. */
@@ -155,8 +160,9 @@ export class RuntimeProjection {
     if (this.frozenHistory) return;
     let changed = false;
     for (const event of events) {
-      if (this.eventIds.has(event.eventId)) continue;
+      if (this.eventIds.has(event.eventId) || this.stepCursors.has(event.cursor)) continue;
       this.eventIds.add(event.eventId);
+      this.stepCursors.add(event.cursor);
       this.steps.push(event);
       changed = true;
     }
@@ -166,11 +172,13 @@ export class RuntimeProjection {
     this.rebuild();
   }
 
-  apply(event: RuntimeEvent): void {
+  apply(event: RuntimeEvent, highWatermark = event.cursor): void {
+    if (this.frozenHistory) return;
+    this.highWatermark = Math.max(this.highWatermark, highWatermark);
     this.mergeSteps([event]);
   }
 
-  replaceWithSnapshot(snapshot: TaskProjection, cursor = snapshot.cursor): void {
+  replaceWithSnapshot(snapshot: TaskProjection, cursor = snapshot.cursor, highWatermark = cursor): void {
     // Binding user decision: a same-Task snapshot must never erase the timeline.
     // Only a Task switch (or an explicit clear) replaces the shown steps.
     const sameTask = snapshot.task.id === this.baseSnapshot.task.id;
@@ -199,9 +207,11 @@ export class RuntimeProjection {
     };
     // Never move the snapshot guard backwards on a stale same-Task response.
     this.baseCursor = sameTask ? Math.max(this.baseCursor, cursor) : cursor;
+    this.highWatermark = sameTask ? Math.max(this.highWatermark, highWatermark) : highWatermark;
     this.steps = [...retainedSteps].sort(byCursor);
     this.cursor = Math.max(cursor, this.steps.at(-1)?.cursor ?? cursor);
     this.eventIds = new Set(this.steps.map((event) => event.eventId));
+    this.stepCursors = new Set(this.steps.map((event) => event.cursor));
     this.rebuild();
   }
 
@@ -212,6 +222,8 @@ export class RuntimeProjection {
     this.watches = this.baseSnapshot.watches.map((watch) => ({ ...watch }));
     this.evidence = this.baseSnapshot.evidence.map((evidence) => ({ ...evidence }));
     this.devices = [];
+    this.incompleteTail = false;
+    this.lastPersistedSeq = null;
 
     for (const association of this.baseSnapshot.associations) {
       this.associate(association.deviceId);
@@ -252,6 +264,12 @@ export class RuntimeProjection {
         }
       }
       this.applyDeviceFacts(event.data.deviceFacts);
+      if (event.eventType === 'run.interrupted') {
+        const incomplete = event.data.incompleteTail ?? event.data.incomplete_tail;
+        const lastPersisted = event.data.lastPersistedSeq ?? event.data.last_persisted_seq;
+        if (incomplete === true) this.incompleteTail = true;
+        if (typeof lastPersisted === 'number') this.lastPersistedSeq = lastPersisted;
+      }
       if (event.cursor <= this.baseCursor) continue;
 
       this.applyTaskEvent(task, event);

@@ -198,7 +198,7 @@ async fn startup_interrupted_event_is_replayed_on_a_reconnecting_task_stream() {
         connection.next_frame().await,
         Some(RuntimeFrame::Snapshot { .. })
     ));
-    let Some(RuntimeFrame::Event { event }) = connection.next_frame().await else {
+    let Some(RuntimeFrame::Event { event, .. }) = connection.next_frame().await else {
         panic!("persisted interrupted event must replay to the reconnecting Task");
     };
     assert_eq!(event.event_type, "run.interrupted");

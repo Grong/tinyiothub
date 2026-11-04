@@ -272,6 +272,32 @@ describe('RuntimeProjection', () => {
     expect(projection.eventIds.has('event_3')).toBe(false);
   });
 
+  it('tracks high-watermark separately from replay progress and deduplicates by cursor', () => {
+    const projection = new RuntimeProjection(snapshotWithNoDevices());
+    projection.replaceWithSnapshot(snapshotWithNoDevices({ cursor: 20 }), 20, 25);
+    projection.apply(event('event_11', 'read_device', {}, { cursor: 11 }), 25);
+    projection.apply(event('event_11_other_id', 'read_device', {}, { cursor: 11 }), 25);
+
+    expect(projection.cursor).toBe(20);
+    expect(projection.highWatermark).toBe(25);
+    expect(projection.steps.map((step) => step.eventId)).toEqual(['event_11']);
+  });
+
+  it('marks an interrupted unclosed text tail without pretending replay is complete', () => {
+    const projection = new RuntimeProjection(snapshotWithNoDevices());
+    projection.apply(
+      event(
+        'event_9',
+        'run.interrupted',
+        { incomplete_tail: true, last_persisted_seq: 8 },
+        { cursor: 9 },
+      ),
+    );
+
+    expect(projection.incompleteTail).toBe(true);
+    expect(projection.lastPersistedSeq).toBe(8);
+  });
+
   it('round-trips live deviceFacts through the projection snapshot', () => {
     const projection = new RuntimeProjection(snapshotWithNoDevices());
     projection.apply(

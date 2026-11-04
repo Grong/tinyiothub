@@ -792,7 +792,7 @@ mod tests {
             .await
             .expect("live unwatch deletion")
             .expect("open runtime connection");
-        let crate::domains::agent::runtime::stream::RuntimeFrame::Event { event } = frame else {
+        let crate::domains::agent::runtime::stream::RuntimeFrame::Event { event, .. } = frame else {
             panic!("expected exact live deletion event");
         };
         assert_eq!(event.event_id, format!("watch:{rule_id}:deleted"));

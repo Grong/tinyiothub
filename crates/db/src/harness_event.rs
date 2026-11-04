@@ -279,6 +279,26 @@ impl Db {
         Ok(event)
     }
 
+    pub async fn projection_tail(
+        &self,
+        subject: &crate::harness_snapshot::ProjectionSubject,
+        after: i64,
+        limit: i64,
+    ) -> Result<EventPage> {
+        self.session_event_page(
+            &subject.workspace_id,
+            &EventFilter {
+                session_id: subject.session_id.clone(),
+                run_id: subject.run_id.clone(),
+                task_id: subject.task_id.clone(),
+                execution_mode: subject.execution_mode,
+            },
+            after,
+            limit,
+        )
+        .await
+    }
+
     pub async fn session_event_page(
         &self,
         workspace_id: &str,

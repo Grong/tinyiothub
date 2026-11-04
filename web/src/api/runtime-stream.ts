@@ -4,9 +4,9 @@ import { parseSseChunk, type SseEvent } from './live.js';
 import type { RuntimeEvent, TaskProjection } from '../types/runtime.js';
 
 export interface RuntimeStreamCallbacks {
-  snapshot(projection: TaskProjection, cursor: number): void;
-  event(event: RuntimeEvent): void;
-  resync(projection: TaskProjection, cursor: number): void;
+  snapshot(projection: TaskProjection, cursor: number, highWatermark?: number): void;
+  event(event: RuntimeEvent, highWatermark?: number): void;
+  resync(projection: TaskProjection, cursor: number, highWatermark?: number): void;
   connection(state: 'connecting' | 'online' | 'offline'): void;
 }
 
@@ -28,9 +28,9 @@ const stableStreamMs = 5_000;
 const defaultMaxDedupeIds = 500;
 
 type RuntimeFrame =
-  | { type: 'snapshot'; projection: TaskProjection; cursor: number }
-  | { type: 'event'; event: RuntimeEvent }
-  | { type: 'resync'; projection: TaskProjection; cursor: number };
+  | { type: 'snapshot'; projection: TaskProjection; cursor: number; highWatermark: number }
+  | { type: 'event'; event: RuntimeEvent; highWatermark: number }
+  | { type: 'resync'; projection: TaskProjection; cursor: number; highWatermark: number };
 
 function record(value: unknown): Record<string, unknown> | null {
   return value !== null && typeof value === 'object' && !Array.isArray(value)
@@ -47,7 +47,9 @@ export function parseRuntimeStreamFrame(frame: SseEvent): RuntimeFrame | null {
       const event = record(data.event);
       if (!event || typeof event.eventId !== 'string' || typeof event.cursor !== 'number')
         return null;
-      return { type: 'event', event: event as unknown as RuntimeEvent };
+      const highWatermark =
+        typeof data.highWatermark === 'number' ? data.highWatermark : event.cursor;
+      return { type: 'event', event: event as unknown as RuntimeEvent, highWatermark };
     }
     const projection = record(data.snapshot);
     if (!projection || typeof data.cursor !== 'number') return null;
@@ -57,6 +59,7 @@ export function parseRuntimeStreamFrame(frame: SseEvent): RuntimeFrame | null {
       type: frame.event === 'snapshot' ? 'snapshot' : 'resync',
       projection: projection as unknown as TaskProjection,
       cursor: data.cursor,
+      highWatermark: typeof data.highWatermark === 'number' ? data.highWatermark : data.cursor,
     };
   } catch {
     return null;
@@ -98,6 +101,16 @@ export function connectRuntimeStream(input: RuntimeStreamInput): () => void {
   let controller: AbortController | null = null;
   let sleeper: AbortController | null = null;
   const eventIds = new Set<string>();
+  const eventCursors = new Set<number>();
+
+  const remember = <T>(values: Set<T>, value: T): void => {
+    values.add(value);
+    while (values.size > maxDedupeIds) {
+      const oldest = values.values().next().value;
+      if (oldest === undefined) break;
+      values.delete(oldest);
+    }
+  };
 
   const active = () => !closed && isCurrent();
   const path = () =>
@@ -107,15 +120,11 @@ export function connectRuntimeStream(input: RuntimeStreamInput): () => void {
     if (!active()) return;
     if (frame.type === 'event') {
       if (frame.event.taskId !== null && frame.event.taskId !== taskId) return;
-      if (eventIds.has(frame.event.eventId)) return;
-      eventIds.add(frame.event.eventId);
-      while (eventIds.size > maxDedupeIds) {
-        const oldest = eventIds.values().next().value;
-        if (oldest === undefined) break;
-        eventIds.delete(oldest);
-      }
+      if (eventIds.has(frame.event.eventId) || eventCursors.has(frame.event.cursor)) return;
+      remember(eventIds, frame.event.eventId);
+      remember(eventCursors, frame.event.cursor);
       cursor = Math.max(cursor, frame.event.cursor);
-      callbacks.event(frame.event);
+      callbacks.event(frame.event, frame.highWatermark);
       return;
     }
     if (frame.projection.task.id !== taskId) return;
@@ -123,8 +132,10 @@ export function connectRuntimeStream(input: RuntimeStreamInput): () => void {
     // acknowledge durable replay progress. Resync is an authoritative cursor reset.
     if (frame.type === 'resync') cursor = frame.cursor;
     eventIds.clear();
-    if (frame.type === 'snapshot') callbacks.snapshot(frame.projection, frame.cursor);
-    else callbacks.resync(frame.projection, frame.cursor);
+    eventCursors.clear();
+    if (frame.type === 'snapshot')
+      callbacks.snapshot(frame.projection, frame.cursor, frame.highWatermark);
+    else callbacks.resync(frame.projection, frame.cursor, frame.highWatermark);
   };
 
   const run = async (): Promise<void> => {

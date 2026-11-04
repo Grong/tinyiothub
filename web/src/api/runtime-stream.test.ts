@@ -372,6 +372,50 @@ describe('Runtime SSE cursor client', () => {
     close();
   });
 
+  it('carries high-watermarks and deduplicates replay/live races by cursor and event id', async () => {
+    const { mock, streams } = streamingFetch();
+    vi.stubGlobal('fetch', mock);
+    const calls: string[] = [];
+    const close = connectRuntimeStream({
+      workspaceId: 'ws',
+      taskId: 'task_1',
+      after: 10,
+      callbacks: {
+        snapshot: (_projection, cursor, highWatermark) =>
+          calls.push(`snapshot:${cursor}:${highWatermark}`),
+        event: (event, highWatermark) => calls.push(`event:${event.eventId}:${highWatermark}`),
+        resync: (_projection, cursor, highWatermark) =>
+          calls.push(`resync:${cursor}:${highWatermark}`),
+        connection: () => {},
+      },
+    });
+    await flush();
+    streams[0].push(
+      frame('snapshot', {
+        snapshot: snapshotWithNoDevices({ cursor: 20 }),
+        cursor: 20,
+        high_watermark: 20,
+      }),
+    );
+    const first = runtimeEvent('event_11', 'read_device', {}, { cursor: 11 });
+    const sameCursor = runtimeEvent('event_11_retry', 'read_device', {}, { cursor: 11 });
+    streams[0].push(frame('event', { event: first, highWatermark: 20 }));
+    streams[0].push(frame('event', { event: first, highWatermark: 20 }));
+    streams[0].push(frame('event', { event: sameCursor, highWatermark: 20 }));
+    streams[0].push(
+      frame('resync', {
+        snapshot: snapshotWithNoDevices({ cursor: 22 }),
+        cursor: 22,
+        highWatermark: 22,
+        reason: 'lagged',
+      }),
+    );
+    await flush();
+
+    expect(calls).toEqual(['snapshot:20:20', 'event:event_11:20', 'resync:22:22']);
+    close();
+  });
+
   it('cancels a non-OK response body before reconnecting', async () => {
     vi.useFakeTimers();
     const response = controlledResponse();

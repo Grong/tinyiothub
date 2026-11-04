@@ -8,8 +8,10 @@ use tinyiothub_cloud::domains::agent::runtime::controls::{CommandControl, Comman
 use tinyiothub_cloud::domains::agent::runtime::{EffectRecovery, RecoveryMode};
 use tinyiothub_core::harness::{
     CommandKind, CommandState, DecisionState, EffectIntent, EffectState, ExecutionMode, HarnessCommand,
+    HarnessEventInput,
 };
 use tinyiothub_storage::harness_event::EventFilter;
+use tinyiothub_storage::harness_snapshot::{ProjectionSnapshot, ProjectionSubject};
 use tinyiothub_storage::test_helpers::{WorkspaceFixture, fixture_workspace};
 
 const WS: &str = "ws-recovery";
@@ -1140,6 +1142,173 @@ async fn command_recovery_pause_resume_and_cancel_keep_durable_fifo_semantics() 
         .await
         .expect("duplicate cancel recovery");
     assert_eq!(control.cancellations.lock().expect("cancellations").len(), 1);
+    fixture.close().await;
+}
+
+#[tokio::test]
+async fn stream_snapshot_tail_uses_matching_version_and_bounded_pages() {
+    let fixture = fixture().await;
+    let pool = fixture.workspace_pool().await;
+    sqlx::query(
+        "INSERT INTO projection_snapshots
+            (projection_name, subject_id, last_seq, projection_version, state_version, state_json, updated_at)
+         VALUES ('task', 'task-1', 0, 7, 1, '{\"steps\":[]}', ?)",
+    )
+    .bind(at().to_rfc3339())
+    .execute(&pool)
+    .await
+    .expect("snapshot fixture");
+
+    let snapshot = fixture
+        .db
+        .projection_snapshot(WS, "task", "task-1", 7)
+        .await
+        .expect("read snapshot")
+        .expect("matching snapshot");
+    assert_eq!(
+        snapshot,
+        ProjectionSnapshot {
+            projection_name: "task".to_string(),
+            subject_id: "task-1".to_string(),
+            last_seq: 0,
+            projection_version: 7,
+            state_version: 1,
+            state_json: json!({"steps": []}),
+            updated_at: at(),
+        }
+    );
+    assert!(
+        fixture
+            .db
+            .projection_snapshot(WS, "task", "task-1", 8)
+            .await
+            .expect("version mismatch")
+            .is_none(),
+        "a stale projection format must trigger an explicit rebuild"
+    );
+
+    for number in 0..257 {
+        fixture
+            .db
+            .append_session_event(&HarnessEventInput {
+                event_id: format!("stream-event-{number}"),
+                workspace_id: WS.to_string(),
+                session_id: "session-1".to_string(),
+                execution_mode: ExecutionMode::Production,
+                run_id: Some("run-1".to_string()),
+                task_id: Some("task-1".to_string()),
+                event_type: "step.text".to_string(),
+                occurred_at: at(),
+                cause_id: None,
+                schema_v: 1,
+                payload_digest: format!("digest-{number}"),
+                payload_json: json!({"text": format!("step {number}")}),
+            })
+            .await
+            .expect("append stream fixture");
+    }
+    fixture
+        .db
+        .append_session_event(&HarnessEventInput {
+            event_id: "stream-filtered-gap".to_string(),
+            workspace_id: WS.to_string(),
+            session_id: "session-other".to_string(),
+            execution_mode: ExecutionMode::Production,
+            run_id: Some("run-other".to_string()),
+            task_id: Some("task-other".to_string()),
+            event_type: "step.tool_result".to_string(),
+            occurred_at: at(),
+            cause_id: None,
+            schema_v: 1,
+            payload_digest: "digest-gap".to_string(),
+            payload_json: json!({"result": {"ok": true}}),
+        })
+        .await
+        .expect("append filtered event");
+
+    let subject = ProjectionSubject {
+        workspace_id: WS.to_string(),
+        session_id: Some("session-1".to_string()),
+        run_id: None,
+        task_id: None,
+        execution_mode: ExecutionMode::Production,
+    };
+    let first = fixture
+        .db
+        .projection_tail(&subject, 0, 1_000)
+        .await
+        .expect("first tail page");
+    assert_eq!(first.events.len(), 256);
+    assert_eq!(first.high_watermark, 258);
+    let second = fixture
+        .db
+        .projection_tail(&subject, first.events.last().expect("page boundary").seq, 256)
+        .await
+        .expect("second tail page");
+    assert_eq!(second.events.len(), 1);
+    assert_eq!(second.events[0].seq, 257);
+    assert_eq!(second.high_watermark, 258);
+    let empty = fixture
+        .db
+        .projection_tail(&subject, 257, 256)
+        .await
+        .expect("filtered gap is an empty page");
+    assert!(empty.events.is_empty());
+    assert_eq!(empty.high_watermark, 258);
+
+    fixture.close().await;
+}
+
+#[tokio::test]
+async fn stream_interrupted_run_marks_unclosed_text_tail_and_last_persisted_seq() {
+    let fixture = fixture().await;
+    seed_effect(&fixture, "effect-stream-interrupt", EffectState::Dispatching, "running").await;
+    fixture
+        .db
+        .append_session_event(&HarnessEventInput {
+            event_id: "stream-before-interrupt".to_string(),
+            workspace_id: WS.to_string(),
+            session_id: "session-1".to_string(),
+            execution_mode: ExecutionMode::Production,
+            run_id: Some("run-effect-stream-interrupt".to_string()),
+            task_id: Some("effect-stream-interrupt".to_string()),
+            event_type: "step.text".to_string(),
+            occurred_at: at(),
+            cause_id: None,
+            schema_v: 1,
+            payload_digest: "digest-before-interrupt".to_string(),
+            payload_json: json!({"text": "last complete segment"}),
+        })
+        .await
+        .expect("persist last complete text");
+    fixture
+        .db
+        .request_harness_command(
+            WS,
+            &harness_command("interrupt-stream", CommandKind::Interrupt, "effect-stream-interrupt"),
+        )
+        .await
+        .expect("request interrupt");
+    sqlx::query("UPDATE agent_runs SET state = 'model_calling' WHERE id = 'run-effect-stream-interrupt'")
+        .execute(&fixture.workspace_pool().await)
+        .await
+        .expect("model call in progress");
+    let host = CommandRecovery::new(Arc::new(fixture.db.clone()));
+    host.consume_next(WS, "effect-stream-interrupt", at(), &RecordingCommandControl::default())
+        .await
+        .expect("consume interrupt")
+        .expect("interrupt event");
+
+    let (incomplete, last_seq, interrupted_seq): (bool, i64, i64) = sqlx::query_as(
+        "SELECT json_extract(payload_json, '$.incomplete_tail'),
+                json_extract(payload_json, '$.last_persisted_seq'), seq
+         FROM session_events WHERE event_id = 'command:interrupt-stream:interrupted'",
+    )
+    .fetch_one(&fixture.workspace_pool().await)
+    .await
+    .expect("interrupted payload");
+    assert!(incomplete, "an unclosed crash/interrupt tail must not look complete");
+    assert_eq!(last_seq, interrupted_seq - 1);
     fixture.close().await;
 }
 
