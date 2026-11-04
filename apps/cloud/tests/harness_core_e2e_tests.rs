@@ -1878,6 +1878,60 @@ mod workflow_tests {
     }
 
     #[tokio::test]
+    async fn workflow_controls_terminal_effect_commit_completes_paused_task() {
+        let workspace_id = "ws-workflow-controls-pause-terminal";
+        let fixture = fixture_workspace(workspace_id).await;
+        seed_effect(&fixture, "pause-terminal-effect", EffectState::Dispatching, "running").await;
+        let item = fixture
+            .db
+            .list_effect_recovery(workspace_id)
+            .await
+            .expect("recovery item")
+            .into_iter()
+            .next()
+            .expect("dispatching effect");
+        let mut transition = reduce_recovery(
+            &item.intent,
+            item.decision.as_ref(),
+            item.job_id.as_deref(),
+            "pause-terminal-transition",
+            at(),
+            &item.task_state,
+            RecoveryFact::Reconcile(ReconcileOutcome::Settled(json!({"confirmed":true}))),
+        )
+        .expect("terminal outcome transition");
+        let projection = transition.run_task.as_mut().expect("Run/Task projection");
+        projection.run_state = "completed".to_string();
+        projection.task_state = "completed".to_string();
+        transition.event.as_mut().expect("effect event").workspace_id = workspace_id.to_string();
+        let controls = WorkflowControls::new(Arc::new(fixture.db.clone()), workspace_id);
+        controls
+            .pause("pause-terminal-effect")
+            .await
+            .expect("pause before terminal commit");
+        fixture
+            .db
+            .apply_workspace_transition(workspace_id, &transition.precondition.clone(), &transition)
+            .await
+            .expect("commit terminal outcome while paused");
+
+        assert_eq!(control_state(&fixture, "pause-terminal-effect").await, "completed");
+        assert_eq!(
+            super::effect_state(&fixture, "pause-terminal-effect").await.0,
+            "completed"
+        );
+        assert_eq!(
+            controls
+                .resume("pause-terminal-effect")
+                .await
+                .expect("terminal resume is a no-op"),
+            "completed"
+        );
+        assert_eq!(control_state(&fixture, "pause-terminal-effect").await, "completed");
+        fixture.close().await;
+    }
+
+    #[tokio::test]
     async fn workflow_controls_parent_cancel_drains_children_and_fails_on_stop_unknown() {
         let fixture = fixture_workspace("ws-workflow-controls-cancel").await;
         let workspace_id = "ws-workflow-controls-cancel";

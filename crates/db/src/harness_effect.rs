@@ -522,7 +522,8 @@ async fn apply_writes(
                 message: format!("task projection is missing for {}", projection.task_id),
             })?;
         drain_cancelling = current_task_state == "cancelling";
-        let preserve_paused = current_task_state == "paused";
+        let preserve_paused = current_task_state == "paused"
+            && !matches!(projection.task_state.as_str(), "completed" | "failed" | "cancelled");
         let run_updated = sqlx::query("UPDATE agent_runs SET state = ? WHERE id = ? AND task_id = ?")
             .bind(&projection.run_state)
             .bind(&projection.run_id)
