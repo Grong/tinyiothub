@@ -31,6 +31,40 @@ pub struct RecoveryReport {
     pub blocked: usize,
 }
 
+#[async_trait]
+pub trait EffectSender: Send + Sync {
+    async fn send(&self, intent: &EffectIntent) -> Result<(), String>;
+}
+
+#[derive(Clone)]
+pub struct EffectDispatcher {
+    db: Arc<Db>,
+}
+
+impl EffectDispatcher {
+    pub fn new(db: Arc<Db>) -> Self {
+        Self { db }
+    }
+
+    pub async fn dispatch(
+        &self,
+        workspace_id: &str,
+        intent: &EffectIntent,
+        sender: &dyn EffectSender,
+    ) -> Result<bool, String> {
+        let controls = controls::WorkflowControls::new(self.db.clone(), workspace_id);
+        if !controls
+            .dispatch_permitted(&intent.effect_id)
+            .await
+            .map_err(|error| error.to_string())?
+        {
+            return Ok(false);
+        }
+        sender.send(intent).await?;
+        Ok(true)
+    }
+}
+
 #[derive(Clone)]
 pub struct EffectRecovery {
     db: Arc<Db>,

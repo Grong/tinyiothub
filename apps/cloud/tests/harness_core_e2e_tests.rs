@@ -1151,15 +1151,16 @@ mod workflow_tests {
     use chrono::{DateTime, Duration, Utc};
     use serde_json::json;
     use tinyiothub_agent::harness::{
-        MainAgent, MainInput, ReconcileOutcome, SubagentExecutor, SubagentInput, TaskOutcome,
+        MainAgent, MainInput, ReconcileOutcome, RecoveryFact, SubagentExecutor, SubagentInput, TaskOutcome,
+        reduce_recovery,
     };
     use tinyiothub_cloud::domains::agent::runtime::controls::WorkflowControls;
-    use tinyiothub_cloud::domains::agent::runtime::{EffectRecovery, RecoveryMode};
+    use tinyiothub_cloud::domains::agent::runtime::{EffectDispatcher, EffectRecovery, EffectSender, RecoveryMode};
     use tinyiothub_cloud::domains::agent::workflows::{
         MainCoordinator, SubagentRunner, WorkflowScheduler, WorkflowService,
     };
     use tinyiothub_core::harness::{
-        DecisionState, DeviceFactsSnapshot, EffectState, HarnessFact, WorkflowDefinition, WorkflowTrigger,
+        DecisionState, DeviceFactsSnapshot, EffectIntent, EffectState, HarnessFact, WorkflowDefinition, WorkflowTrigger,
     };
     use tinyiothub_storage::test_helpers::{WorkspaceFixture, fixture_workspace};
     use tokio_util::sync::CancellationToken;
@@ -1552,6 +1553,19 @@ mod workflow_tests {
         }
     }
 
+    #[derive(Default)]
+    struct RecordingEffectSender {
+        calls: Mutex<Vec<String>>,
+    }
+
+    #[async_trait]
+    impl EffectSender for RecordingEffectSender {
+        async fn send(&self, intent: &EffectIntent) -> Result<(), String> {
+            self.calls.lock().expect("send calls").push(intent.effect_id.clone());
+            Ok(())
+        }
+    }
+
     fn subagent_input(task_id: &str, run_id: &str) -> SubagentInput {
         SubagentInput {
             session_id: "task:shared/run:shared".to_string(),
@@ -1748,6 +1762,118 @@ mod workflow_tests {
             assert_eq!(controls.resume(task_id).await.expect("resume task"), expected);
             assert_eq!(control_state(&fixture, task_id).await, expected);
         }
+        fixture.close().await;
+    }
+
+    #[tokio::test]
+    async fn workflow_controls_production_dispatcher_rechecks_pause_and_cancel_before_send() {
+        for control in ["pause", "cancel"] {
+            let workspace_id = format!("ws-workflow-controls-dispatch-{control}");
+            let fixture = fixture_workspace(&workspace_id).await;
+            seed_effect(&fixture, "dispatch-race-effect", EffectState::Prepared, "running").await;
+            seed_decision(
+                &fixture,
+                "dispatch-race-effect",
+                "tool_approval",
+                DecisionState::Answered,
+                Some("approved"),
+                None,
+            )
+            .await;
+            let recovery = EffectRecovery::new(Arc::new(fixture.db.clone()));
+            let reconciler = super::ScriptedReconciler::new(ReconcileOutcome::Unknown {
+                reason: "unused".to_string(),
+            });
+            let report = recovery
+                .recover_workspace(&workspace_id, RecoveryMode::Restart, &reconciler)
+                .await
+                .expect("commit dispatch permit");
+            assert_eq!(report.dispatch_permits.len(), 1);
+            let controls = WorkflowControls::new(Arc::new(fixture.db.clone()), &workspace_id);
+            if control == "pause" {
+                controls
+                    .pause("dispatch-race-effect")
+                    .await
+                    .expect("pause after commit");
+            } else {
+                controls
+                    .cancel("dispatch-race-effect")
+                    .await
+                    .expect("cancel after commit");
+            }
+            let sender = RecordingEffectSender::default();
+            let sent = EffectDispatcher::new(Arc::new(fixture.db.clone()))
+                .dispatch(&workspace_id, &report.dispatch_permits[0], &sender)
+                .await
+                .expect("production dispatch decision");
+            assert!(!sent, "{control} must suppress the physical send");
+            assert!(sender.calls.lock().expect("send calls").is_empty());
+            fixture.close().await;
+        }
+    }
+
+    #[tokio::test]
+    async fn workflow_controls_nonterminal_effect_commit_cannot_unpause_task() {
+        let workspace_id = "ws-workflow-controls-pause-race";
+        let fixture = fixture_workspace(workspace_id).await;
+        seed_effect(&fixture, "pause-race-effect", EffectState::Prepared, "running").await;
+        seed_decision(
+            &fixture,
+            "pause-race-effect",
+            "tool_approval",
+            DecisionState::Answered,
+            Some("approved"),
+            None,
+        )
+        .await;
+        let item = fixture
+            .db
+            .list_effect_recovery(workspace_id)
+            .await
+            .expect("recovery item")
+            .into_iter()
+            .next()
+            .expect("approved effect");
+        let mut transition = reduce_recovery(
+            &item.intent,
+            item.decision.as_ref(),
+            item.job_id.as_deref(),
+            "pause-race-transition",
+            at(),
+            &item.task_state,
+            RecoveryFact::ConsumeApproval,
+        )
+        .expect("nonterminal dispatch projection");
+        let projection = transition.run_task.as_mut().expect("Run/Task projection");
+        projection.run_state = "waiting_job".to_string();
+        projection.task_state = "waiting_job".to_string();
+        transition.event.as_mut().expect("effect event").workspace_id = workspace_id.to_string();
+        for event in &mut transition.additional_events {
+            event.workspace_id = workspace_id.to_string();
+        }
+        let controls = WorkflowControls::new(Arc::new(fixture.db.clone()), workspace_id);
+        controls.pause("pause-race-effect").await.expect("pause before commit");
+        fixture
+            .db
+            .apply_workspace_transition(workspace_id, &transition.precondition.clone(), &transition)
+            .await
+            .expect("commit in-flight nonterminal outcome");
+
+        assert_eq!(control_state(&fixture, "pause-race-effect").await, "paused");
+        assert_eq!(
+            super::effect_state(&fixture, "pause-race-effect").await.0,
+            "dispatching"
+        );
+        let run_state: String = sqlx::query_scalar("SELECT state FROM agent_runs WHERE task_id = 'pause-race-effect'")
+            .fetch_one(&fixture.workspace_pool().await)
+            .await
+            .expect("Run state");
+        assert_eq!(run_state, "waiting_job", "the underlying Run fact must still commit");
+        assert_eq!(
+            controls.resume("pause-race-effect").await.expect("resume latest wait"),
+            "waiting_job"
+        );
+        assert_eq!(control_state(&fixture, "pause-race-effect").await, "waiting_job");
         fixture.close().await;
     }
 

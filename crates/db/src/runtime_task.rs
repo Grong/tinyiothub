@@ -1261,7 +1261,8 @@ impl Db {
         }
         let previous = sqlx::query_scalar::<_, String>(
             "SELECT json_extract(payload_json, '$.previousState') FROM session_events
-             WHERE task_id = ? AND type = 'task.paused' ORDER BY seq DESC LIMIT 1",
+             WHERE task_id = ? AND type IN ('task.paused', 'task.pause_waiting')
+             ORDER BY seq DESC LIMIT 1",
         )
         .bind(task_id)
         .fetch_optional(&mut *tx)

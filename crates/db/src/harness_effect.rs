@@ -522,6 +522,7 @@ async fn apply_writes(
                 message: format!("task projection is missing for {}", projection.task_id),
             })?;
         drain_cancelling = current_task_state == "cancelling";
+        let preserve_paused = current_task_state == "paused";
         let run_updated = sqlx::query("UPDATE agent_runs SET state = ? WHERE id = ? AND task_id = ?")
             .bind(&projection.run_state)
             .bind(&projection.run_id)
@@ -529,7 +530,7 @@ async fn apply_writes(
             .execute(&mut *connection)
             .await?
             .rows_affected();
-        let task_updated = if drain_cancelling {
+        let task_updated = if drain_cancelling || preserve_paused {
             1
         } else {
             sqlx::query("UPDATE agent_tasks SET state = ?, state_version = state_version + 1 WHERE id = ?")
@@ -543,6 +544,25 @@ async fn apply_writes(
             return Err(DbError::Conflict {
                 message: format!("run/task projection is missing for {}", projection.task_id),
             });
+        }
+        if preserve_paused
+            && matches!(
+                projection.task_state.as_str(),
+                "pending" | "running" | "waiting_job" | "waiting_watch" | "needs_approval"
+            )
+        {
+            let payload_json = serde_json::json!({
+                "taskId":projection.task_id,
+                "state":"paused",
+                "previousState":projection.task_state,
+            });
+            let payload = serde_json::to_string(&payload_json)?;
+            let mut pause_relation = event.clone();
+            pause_relation.event_id = format!("{}:pause-waiting", transition.transition_id);
+            pause_relation.event_type = "task.pause_waiting".to_string();
+            pause_relation.payload_digest = format!("{:x}", sha2::Sha256::digest(payload.as_bytes()));
+            pause_relation.payload_json = payload_json;
+            insert_event(connection, &pause_relation).await?;
         }
     }
 
