@@ -1,7 +1,49 @@
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use tinyiothub_core::harness::{EffectIntent, EffectState};
+use tinyiothub_core::harness::{DeviceFactsSnapshot, EffectIntent, EffectState, HarnessFact, WorkflowRevision};
+
+use crate::port::provider::ChatMessage;
 
 pub type EffectResult = Value;
+
+#[derive(Debug, Clone)]
+pub struct MainInput {
+    pub session_id: String,
+    pub fact: HarnessFact,
+    pub projection: Value,
+    pub transcript: Vec<ChatMessage>,
+}
+
+#[derive(Debug, Clone)]
+pub struct SubagentInput {
+    pub session_id: String,
+    pub task_id: String,
+    pub run_id: String,
+    pub workflow: WorkflowRevision,
+    pub facts: DeviceFactsSnapshot,
+    pub source: Value,
+    pub transcript: Vec<ChatMessage>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TaskOutcome {
+    pub status: String,
+    pub summary: String,
+    pub observations: Vec<String>,
+    pub evidence_refs: Vec<String>,
+    pub recommended_actions: Vec<String>,
+}
+
+#[async_trait::async_trait]
+pub trait MainAgent: Send + Sync {
+    async fn coordinate(&self, input: MainInput) -> anyhow::Result<()>;
+}
+
+#[async_trait::async_trait]
+pub trait SubagentExecutor: Send + Sync {
+    async fn execute(&self, input: SubagentInput) -> anyhow::Result<TaskOutcome>;
+}
 
 #[derive(Clone, PartialEq)]
 pub enum ReconcileOutcome {

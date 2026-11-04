@@ -1142,3 +1142,401 @@ async fn command_recovery_pause_resume_and_cancel_keep_durable_fifo_semantics() 
     assert_eq!(control.cancellations.lock().expect("cancellations").len(), 1);
     fixture.close().await;
 }
+
+mod workflow_tests {
+    use std::sync::{Arc, Mutex};
+
+    use async_trait::async_trait;
+    use chrono::{DateTime, Duration, Utc};
+    use serde_json::json;
+    use tinyiothub_agent::harness::{MainAgent, MainInput, SubagentExecutor, SubagentInput, TaskOutcome};
+    use tinyiothub_cloud::domains::agent::workflows::{
+        MainCoordinator, SubagentRunner, WorkflowScheduler, WorkflowService,
+    };
+    use tinyiothub_core::harness::{
+        DeviceFactsSnapshot, EffectState, HarnessFact, WorkflowDefinition, WorkflowTrigger,
+    };
+    use tinyiothub_storage::test_helpers::{WorkspaceFixture, fixture_workspace};
+    use tokio_util::sync::CancellationToken;
+
+    fn at() -> DateTime<Utc> {
+        DateTime::parse_from_rfc3339("2026-11-03T00:00:00Z")
+            .expect("timestamp")
+            .with_timezone(&Utc)
+    }
+
+    fn cron_definition(objective: &str) -> WorkflowDefinition {
+        WorkflowDefinition {
+            objective: objective.to_string(),
+            trigger: WorkflowTrigger::Cron {
+                trigger_id: "minutely".to_string(),
+                expression: "0 * * * * *".to_string(),
+            },
+            device_selector: json!({"device_ids":["robot-1"]}),
+            source_selector: json!({"source":"telemetry"}),
+            tool_ids: vec!["read_property".to_string()],
+            skill_refs: vec!["inspection@1".to_string()],
+            required_capabilities: vec![],
+            approval_policy: json!({"default":"required"}),
+            evidence_policy: json!({"required":true}),
+        }
+    }
+
+    fn event_definition() -> WorkflowDefinition {
+        WorkflowDefinition {
+            trigger: WorkflowTrigger::Event {
+                trigger_id: "alarm-events".to_string(),
+            },
+            ..cron_definition("inspect alarms")
+        }
+    }
+
+    async fn event_count(fixture: &WorkspaceFixture, event_type: &str) -> i64 {
+        sqlx::query_scalar("SELECT COUNT(*) FROM session_events WHERE type = ?")
+            .bind(event_type)
+            .fetch_one(&fixture.workspace_pool().await)
+            .await
+            .expect("event count")
+    }
+
+    async fn occurrence_count(fixture: &WorkspaceFixture) -> i64 {
+        sqlx::query_scalar("SELECT COUNT(*) FROM workflow_occurrences")
+            .fetch_one(&fixture.workspace_pool().await)
+            .await
+            .expect("occurrence count")
+    }
+
+    #[tokio::test]
+    async fn workflow_revisions_restart_and_source_identity_pin_the_first_occurrence() {
+        let fixture = fixture_workspace("ws-workflow-revisions").await;
+        let db = Arc::new(fixture.db.clone());
+        let service = WorkflowService::new(db.clone(), "ws-workflow-revisions");
+        let original = service
+            .create(cron_definition("inspect v1"))
+            .await
+            .expect("blank create");
+        assert_eq!(original.version, 1);
+        assert!(!original.enabled);
+
+        let enabled = service
+            .set_enabled(&original.workflow_id, true)
+            .await
+            .expect("explicit enable");
+        assert!(enabled.enabled);
+        let scheduler = WorkflowScheduler::new(db.clone(), "ws-workflow-revisions");
+        assert!(scheduler.tick(at()).await.expect("initial scheduler load").is_empty());
+
+        let first = scheduler
+            .tick(at() + Duration::minutes(1))
+            .await
+            .expect("first due slot")
+            .into_iter()
+            .next()
+            .expect("first occurrence");
+        assert_eq!(first.workflow_version, 1);
+        assert_eq!(
+            first.source_key,
+            format!("{}:minutely:2026-11-03T00:01:00Z", original.workflow_id)
+        );
+        assert_eq!(first.session_id, format!("task:{}/run:{}", first.task_id, first.run_id));
+
+        let edited = service
+            .edit(&original.workflow_id, 1, cron_definition("inspect v2"))
+            .await
+            .expect("ordinary edit");
+        assert_eq!(edited.version, 2);
+        assert!(edited.enabled);
+        let duplicate = scheduler
+            .schedule_slot(&original.workflow_id, "minutely", at() + Duration::minutes(1))
+            .await
+            .expect("duplicate slot")
+            .expect("existing occurrence");
+        assert_eq!(duplicate.task_id, first.task_id);
+        assert_eq!(duplicate.workflow_version, 1);
+        assert_eq!(occurrence_count(&fixture).await, 1);
+
+        fixture
+            .db
+            .close_workspace_store("ws-workflow-revisions")
+            .await
+            .expect("close for restart");
+        fixture
+            .db
+            .create_workspace_store("ws-workflow-revisions")
+            .await
+            .expect("reopen");
+        let restarted = scheduler
+            .schedule_slot(&original.workflow_id, "minutely", at() + Duration::minutes(1))
+            .await
+            .expect("restart replay")
+            .expect("persisted occurrence");
+        assert_eq!(restarted.task_id, first.task_id);
+        assert_eq!(restarted.workflow_version, 1);
+
+        let rolled_back = service
+            .edit(&original.workflow_id, 2, cron_definition("inspect v1"))
+            .await
+            .expect("rollback appends a revision");
+        assert_eq!(rolled_back.version, 3);
+        assert!(rolled_back.enabled);
+        let rollback_replay = scheduler
+            .schedule_slot(&original.workflow_id, "minutely", at() + Duration::minutes(1))
+            .await
+            .expect("rollback replay")
+            .expect("original occurrence");
+        assert_eq!(rollback_replay.task_id, first.task_id);
+
+        let second = scheduler.tick(at() + Duration::minutes(2)).await.expect("next slot");
+        assert_eq!(second[0].workflow_version, 3);
+        assert_ne!(second[0].task_id, first.task_id);
+        let old = service.revision(&original.workflow_id, 1).await.expect("old revision");
+        assert_eq!(old.definition.objective, "inspect v1");
+
+        service
+            .set_enabled(&original.workflow_id, false)
+            .await
+            .expect("disable future wakes");
+        let task_state: String = sqlx::query_scalar("SELECT state FROM agent_tasks WHERE id = ?")
+            .bind(&second[0].task_id)
+            .fetch_one(&fixture.workspace_pool().await)
+            .await
+            .expect("in-flight task state");
+        assert_eq!(task_state, "pending");
+        let disabled_edit = service
+            .edit(&original.workflow_id, 3, cron_definition("disabled edit"))
+            .await
+            .expect("disabled edit");
+        assert!(!disabled_edit.enabled);
+        assert!(
+            scheduler
+                .tick(at() + Duration::minutes(3))
+                .await
+                .expect("disabled tick")
+                .is_empty()
+        );
+        assert_eq!(occurrence_count(&fixture).await, 2);
+        fixture.close().await;
+    }
+
+    #[tokio::test]
+    async fn workflow_cron_misfires_skip_every_expired_slot_without_creating_work() {
+        let fixture = fixture_workspace("ws-workflow-misfire").await;
+        let db = Arc::new(fixture.db.clone());
+        let service = WorkflowService::new(db.clone(), "ws-workflow-misfire");
+        let workflow = service.create(cron_definition("inspect")).await.expect("create");
+        service.set_enabled(&workflow.workflow_id, true).await.expect("enable");
+        let scheduler = WorkflowScheduler::new(db, "ws-workflow-misfire");
+        scheduler.tick(at()).await.expect("initialize cursor");
+
+        let due = scheduler
+            .tick(at() + Duration::minutes(4))
+            .await
+            .expect("misfire window");
+        assert_eq!(due.len(), 1);
+        assert_eq!(
+            due[0].source_key,
+            format!("{}:minutely:2026-11-03T00:04:00Z", workflow.workflow_id)
+        );
+        assert_eq!(event_count(&fixture, "trigger.missed").await, 3);
+        assert_eq!(occurrence_count(&fixture).await, 1);
+        let missed_sessions: Vec<String> =
+            sqlx::query_scalar("SELECT DISTINCT session_id FROM session_events WHERE type = 'trigger.missed'")
+                .fetch_all(&fixture.workspace_pool().await)
+                .await
+                .expect("missed event sessions");
+        assert_eq!(missed_sessions, vec!["supervisor:ws-workflow-misfire"]);
+        let replay = fixture
+            .db
+            .session_event_page(
+                "ws-workflow-misfire",
+                &tinyiothub_storage::harness_event::EventFilter {
+                    session_id: Some("supervisor:ws-workflow-misfire".to_string()),
+                    run_id: None,
+                    task_id: None,
+                    execution_mode: tinyiothub_core::harness::ExecutionMode::Production,
+                },
+                0,
+                256,
+            )
+            .await
+            .expect("replay persisted trigger facts");
+        assert_eq!(replay.events.len(), 3);
+
+        scheduler
+            .tick(at() + Duration::minutes(4))
+            .await
+            .expect("idempotent misfire replay");
+        scheduler
+            .tick(at() + Duration::minutes(2))
+            .await
+            .expect("clock rollback");
+        assert_eq!(event_count(&fixture, "trigger.missed").await, 3);
+        assert_eq!(occurrence_count(&fixture).await, 1);
+
+        let shutdown = CancellationToken::new();
+        let runner = WorkflowScheduler::new(Arc::new(fixture.db.clone()), "ws-workflow-misfire");
+        let stopped = shutdown.clone();
+        let handle = tokio::spawn(async move { runner.run(stopped).await });
+        shutdown.cancel();
+        tokio::time::timeout(std::time::Duration::from_secs(1), handle)
+            .await
+            .expect("scheduler shutdown")
+            .expect("scheduler task");
+        fixture.close().await;
+    }
+
+    #[tokio::test]
+    async fn workflow_event_gaps_and_unreadable_sources_alert_without_synthesizing_effects() {
+        let fixture = fixture_workspace("ws-workflow-events").await;
+        let db = Arc::new(fixture.db.clone());
+        let service = WorkflowService::new(db.clone(), "ws-workflow-events");
+        let workflow = service.create(event_definition()).await.expect("create");
+        service.set_enabled(&workflow.workflow_id, true).await.expect("enable");
+        let scheduler = WorkflowScheduler::new(db, "ws-workflow-events");
+
+        let first = scheduler
+            .on_event("alarm-events", 1, "source-event-1", at())
+            .await
+            .expect("first source event");
+        assert_eq!(first.len(), 1);
+        let replay = scheduler
+            .on_event("alarm-events", 1, "source-event-1", at())
+            .await
+            .expect("source replay");
+        assert_eq!(replay[0].task_id, first[0].task_id);
+        assert_eq!(occurrence_count(&fixture).await, 1);
+
+        let gap = scheduler
+            .on_event("alarm-events", 3, "source-event-3", at())
+            .await
+            .expect("gap is an alert, not work");
+        assert!(gap.is_empty());
+        scheduler
+            .on_source_unavailable("alarm-events", "source cannot be read", at())
+            .await
+            .expect("unreadable source alert");
+        assert_eq!(event_count(&fixture, "trigger.unavailable").await, 2);
+        assert_eq!(occurrence_count(&fixture).await, 1);
+        let effects: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM effect_intents")
+            .fetch_one(&fixture.workspace_pool().await)
+            .await
+            .expect("effect count");
+        assert_eq!(effects, 0);
+        fixture.close().await;
+    }
+
+    #[derive(Default)]
+    struct RecordingMainAgent {
+        inputs: Mutex<Vec<MainInput>>,
+    }
+
+    #[async_trait]
+    impl MainAgent for RecordingMainAgent {
+        async fn coordinate(&self, input: MainInput) -> anyhow::Result<()> {
+            self.inputs.lock().expect("main inputs").push(input);
+            Ok(())
+        }
+    }
+
+    #[derive(Default)]
+    struct RecordingSubagent {
+        inputs: Mutex<Vec<SubagentInput>>,
+    }
+
+    #[async_trait]
+    impl SubagentExecutor for RecordingSubagent {
+        async fn execute(&self, input: SubagentInput) -> anyhow::Result<TaskOutcome> {
+            self.inputs.lock().expect("subagent inputs").push(input);
+            Ok(TaskOutcome {
+                status: "completed".to_string(),
+                summary: "inspection complete".to_string(),
+                observations: vec!["temperature nominal".to_string()],
+                evidence_refs: vec!["evidence-1".to_string()],
+                recommended_actions: vec!["set_speed".to_string()],
+            })
+        }
+    }
+
+    fn subagent_input(task_id: &str, run_id: &str) -> SubagentInput {
+        SubagentInput {
+            session_id: format!("task:{task_id}/run:{run_id}"),
+            task_id: task_id.to_string(),
+            run_id: run_id.to_string(),
+            workflow: tinyiothub_core::harness::WorkflowRevision {
+                workflow_id: "workflow-1".to_string(),
+                version: 7,
+                enabled: true,
+                definition: event_definition(),
+                created_at: at(),
+            },
+            facts: DeviceFactsSnapshot {
+                observed_at: at(),
+                declaration_hash: "declaration-1".to_string(),
+                driver_version: "driver-1".to_string(),
+                facts: json!({"temperature":20}),
+            },
+            source: json!({"event_id":"source-event-1"}),
+            transcript: vec![],
+        }
+    }
+
+    #[tokio::test]
+    async fn workflow_main_calls_are_bounded_and_subagents_have_fresh_explicit_context() {
+        let fixture = fixture_workspace("ws-workflow-context").await;
+        let main_agent = Arc::new(RecordingMainAgent::default());
+        let main = MainCoordinator::new(Arc::new(fixture.db.clone()), "ws-workflow-context", main_agent.clone());
+        let fact = HarnessFact {
+            transition_id: "transition-1".to_string(),
+            effect_id: "effect-1".to_string(),
+            next: EffectState::Completed,
+            occurred_at: at(),
+            external_ref: None,
+            result: Some(json!({"accepted":true})),
+            job: None,
+            wake: None,
+        };
+        main.on_fact(fact.clone()).await.expect("first bounded coordination");
+        main.on_fact(fact).await.expect("second bounded coordination");
+        {
+            let main_inputs = main_agent.inputs.lock().expect("main inputs");
+            assert_eq!(main_inputs.len(), 2);
+            assert!(
+                main_inputs
+                    .iter()
+                    .all(|input| input.session_id == "supervisor:ws-workflow-context")
+            );
+            assert!(main_inputs.iter().all(|input| input.transcript.is_empty()));
+            assert_eq!(main_inputs[0].projection, main_inputs[1].projection);
+        }
+
+        let subagent = Arc::new(RecordingSubagent::default());
+        let runner = SubagentRunner::new(subagent.clone());
+        let first = runner
+            .run(subagent_input("task-1", "run-1"))
+            .await
+            .expect("first outcome");
+        let second = runner
+            .run(subagent_input("task-2", "run-2"))
+            .await
+            .expect("second outcome");
+        assert_eq!(first.status, "completed");
+        assert_eq!(first.summary, "inspection complete");
+        assert_eq!(first.observations, vec!["temperature nominal"]);
+        assert_eq!(first.evidence_refs, vec!["evidence-1"]);
+        assert_eq!(second.recommended_actions, vec!["set_speed"]);
+        {
+            let inputs = subagent.inputs.lock().expect("subagent inputs");
+            assert_eq!(inputs.len(), 2);
+            assert_eq!(inputs[0].session_id, "task:task-1/run:run-1");
+            assert_eq!(inputs[1].session_id, "task:task-2/run:run-2");
+            assert_ne!(inputs[0].task_id, inputs[1].task_id);
+            assert!(inputs.iter().all(|input| input.transcript.is_empty()));
+        }
+        let effects: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM effect_intents")
+            .fetch_one(&fixture.workspace_pool().await)
+            .await
+            .expect("effect count");
+        assert_eq!(effects, 0, "recommended actions must not execute effects");
+        fixture.close().await;
+    }
+}

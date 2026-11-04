@@ -22,6 +22,7 @@ pub mod snapshot;
 pub mod thing_agent;
 pub mod tools;
 pub mod trace_handler;
+pub mod workflows;
 
 use std::sync::Arc;
 
