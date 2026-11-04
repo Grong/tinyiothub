@@ -68,20 +68,19 @@ impl WorkflowScheduler {
             if cursor > now {
                 continue;
             }
-            let mut next = cursor;
+            let mut current = cursor;
+            let mut next = schedule.after(&current).next().ok_or_else(|| DbError::Validation {
+                message: "workflow cron has no subsequent slot".to_string(),
+            })?;
             let mut missed = Vec::new();
-            while next < now {
-                missed.push(next);
-                next = schedule.after(&next).next().ok_or_else(|| DbError::Validation {
+            while next <= now {
+                missed.push(current);
+                current = next;
+                next = schedule.after(&current).next().ok_or_else(|| DbError::Validation {
                     message: "workflow cron has no subsequent slot".to_string(),
                 })?;
             }
-            let due = (next == now).then_some(next);
-            if due.is_some() {
-                next = schedule.after(&next).next().ok_or_else(|| DbError::Validation {
-                    message: "workflow cron has no subsequent slot".to_string(),
-                })?;
-            }
+            let due = Some(current);
             occurrences.extend(
                 self.db
                     .record_cron_window(
@@ -109,7 +108,7 @@ impl WorkflowScheduler {
         slot: DateTime<Utc>,
     ) -> Result<Option<WorkflowOccurrence>, DbError> {
         self.db
-            .schedule_workflow_slot(&self.workspace_id, workflow_id, trigger_id, slot, Utc::now())
+            .schedule_workflow_slot(&self.workspace_id, workflow_id, trigger_id, slot)
             .await
     }
 

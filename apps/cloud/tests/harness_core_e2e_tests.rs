@@ -1236,7 +1236,7 @@ mod workflow_tests {
         assert_eq!(first.workflow_version, 1);
         assert_eq!(
             first.source_key,
-            format!("{}:minutely:2026-11-03T00:01:00Z", original.workflow_id)
+            format!("{}:minutely:2026-11-03T00%3A01%3A00Z", original.workflow_id)
         );
         assert_eq!(first.session_id, format!("task:{}/run:{}", first.task_id, first.run_id));
 
@@ -1319,6 +1319,59 @@ mod workflow_tests {
     }
 
     #[tokio::test]
+    async fn workflow_cron_tick_with_subsecond_now_schedules_latest_and_misses_only_older_slots() {
+        let fixture = fixture_workspace("ws-workflow-subsecond").await;
+        let db = Arc::new(fixture.db.clone());
+        let service = WorkflowService::new(db.clone(), "ws-workflow-subsecond");
+        let workflow = service.create(cron_definition("inspect")).await.expect("create");
+        service.set_enabled(&workflow.workflow_id, true).await.expect("enable");
+        let scheduler = WorkflowScheduler::new(db, "ws-workflow-subsecond");
+        scheduler.tick(at()).await.expect("initialize cursor");
+
+        let due = scheduler
+            .tick(at() + Duration::milliseconds(120_123))
+            .await
+            .expect("subsecond tick");
+        assert_eq!(due.len(), 1);
+        assert_eq!(due[0].occurrence_id, "2026-11-03T00:02:00Z");
+        let missed: Vec<String> = sqlx::query_scalar(
+            "SELECT json_extract(payload_json, '$.slot') FROM session_events
+             WHERE type = 'trigger.missed' ORDER BY seq",
+        )
+        .fetch_all(&fixture.workspace_pool().await)
+        .await
+        .expect("missed slots");
+        assert_eq!(missed, vec!["2026-11-03T00:01:00Z"]);
+        assert_eq!(occurrence_count(&fixture).await, 1);
+        fixture.close().await;
+    }
+
+    #[tokio::test]
+    async fn workflow_slot_replay_rejects_previously_unseen_expired_slots() {
+        let fixture = fixture_workspace("ws-workflow-expired-replay").await;
+        let db = Arc::new(fixture.db.clone());
+        let service = WorkflowService::new(db.clone(), "ws-workflow-expired-replay");
+        let workflow = service.create(cron_definition("inspect")).await.expect("create");
+        service.set_enabled(&workflow.workflow_id, true).await.expect("enable");
+        let scheduler = WorkflowScheduler::new(db, "ws-workflow-expired-replay");
+        scheduler.tick(at()).await.expect("initialize cursor");
+
+        let replay = scheduler
+            .schedule_slot(&workflow.workflow_id, "minutely", at() - Duration::minutes(10))
+            .await
+            .expect("expired replay query");
+        assert!(replay.is_none());
+        assert_eq!(occurrence_count(&fixture).await, 0);
+        assert_eq!(event_count(&fixture, "trigger.missed").await, 0);
+        let wakes: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM task_wake_outbox")
+            .fetch_one(&fixture.workspace_pool().await)
+            .await
+            .expect("wake count");
+        assert_eq!(wakes, 0);
+        fixture.close().await;
+    }
+
+    #[tokio::test]
     async fn workflow_cron_misfires_skip_every_expired_slot_without_creating_work() {
         let fixture = fixture_workspace("ws-workflow-misfire").await;
         let db = Arc::new(fixture.db.clone());
@@ -1335,7 +1388,7 @@ mod workflow_tests {
         assert_eq!(due.len(), 1);
         assert_eq!(
             due[0].source_key,
-            format!("{}:minutely:2026-11-03T00:04:00Z", workflow.workflow_id)
+            format!("{}:minutely:2026-11-03T00%3A04%3A00Z", workflow.workflow_id)
         );
         assert_eq!(event_count(&fixture, "trigger.missed").await, 3);
         assert_eq!(occurrence_count(&fixture).await, 1);
@@ -1425,6 +1478,43 @@ mod workflow_tests {
         fixture.close().await;
     }
 
+    #[tokio::test]
+    async fn workflow_source_identity_escapes_delimiters_across_revisions() {
+        let fixture = fixture_workspace("ws-workflow-delimiters").await;
+        let db = Arc::new(fixture.db.clone());
+        let service = WorkflowService::new(db.clone(), "ws-workflow-delimiters");
+        let mut first_definition = event_definition();
+        first_definition.trigger = WorkflowTrigger::Event {
+            trigger_id: "a:b".to_string(),
+        };
+        let workflow = service.create(first_definition).await.expect("create");
+        service.set_enabled(&workflow.workflow_id, true).await.expect("enable");
+        let scheduler = WorkflowScheduler::new(db, "ws-workflow-delimiters");
+
+        let first = scheduler.on_event("a:b", 1, "c", at()).await.expect("first identity");
+        let mut second_definition = event_definition();
+        second_definition.trigger = WorkflowTrigger::Event {
+            trigger_id: "a".to_string(),
+        };
+        let edited = service
+            .edit(&workflow.workflow_id, 1, second_definition)
+            .await
+            .expect("edit trigger identity");
+        assert!(edited.enabled);
+        let second = scheduler
+            .on_event("a", 1, "b:c", at())
+            .await
+            .expect("distinct identity");
+
+        assert_ne!(first[0].task_id, second[0].task_id);
+        assert_eq!(first[0].workflow_version, 1);
+        assert_eq!(second[0].workflow_version, 2);
+        assert_eq!(first[0].source_key, format!("{}:a%3Ab:c", workflow.workflow_id));
+        assert_eq!(second[0].source_key, format!("{}:a:b%3Ac", workflow.workflow_id));
+        assert_eq!(occurrence_count(&fixture).await, 2);
+        fixture.close().await;
+    }
+
     #[derive(Default)]
     struct RecordingMainAgent {
         inputs: Mutex<Vec<MainInput>>,
@@ -1459,7 +1549,7 @@ mod workflow_tests {
 
     fn subagent_input(task_id: &str, run_id: &str) -> SubagentInput {
         SubagentInput {
-            session_id: format!("task:{task_id}/run:{run_id}"),
+            session_id: "task:shared/run:shared".to_string(),
             task_id: task_id.to_string(),
             run_id: run_id.to_string(),
             workflow: tinyiothub_core::harness::WorkflowRevision {
@@ -1476,7 +1566,9 @@ mod workflow_tests {
                 facts: json!({"temperature":20}),
             },
             source: json!({"event_id":"source-event-1"}),
-            transcript: vec![],
+            transcript: vec![tinyiothub_agent::port::provider::ChatMessage::user(
+                "shared transcript must not leak",
+            )],
         }
     }
 

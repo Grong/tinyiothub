@@ -44,6 +44,7 @@ impl SubagentRunner {
     }
 
     pub async fn run(&self, mut input: SubagentInput) -> anyhow::Result<TaskOutcome> {
+        input.session_id = format!("task:{}/run:{}", input.task_id, input.run_id);
         input.transcript.clear();
         self.agent.execute(input).await
     }

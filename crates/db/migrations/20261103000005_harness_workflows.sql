@@ -36,7 +36,7 @@ CREATE TABLE workflow_occurrences (
 
 CREATE INDEX idx_workflow_occurrences_task
     ON workflow_occurrences (task_id, run_id);
-CREATE INDEX idx_workflow_occurrences_workflow
+CREATE UNIQUE INDEX idx_workflow_occurrences_workflow
     ON workflow_occurrences (workflow_id, trigger_id, occurrence_id);
 
 CREATE TABLE workflow_cron_cursors (

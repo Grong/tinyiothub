@@ -24,7 +24,15 @@ fn timestamp(value: DateTime<Utc>) -> String {
 }
 
 fn source_key(workflow_id: &str, trigger_id: &str, occurrence_id: &str) -> String {
-    format!("{workflow_id}:{trigger_id}:{occurrence_id}")
+    fn escape(component: &str) -> String {
+        component.replace('%', "%25").replace(':', "%3A")
+    }
+    format!(
+        "{}:{}:{}",
+        escape(workflow_id),
+        escape(trigger_id),
+        escape(occurrence_id)
+    )
 }
 
 fn digest(payload: &Value) -> Result<String> {
@@ -541,21 +549,11 @@ impl Db {
         workflow_id: &str,
         trigger_id: &str,
         slot: DateTime<Utc>,
-        now: DateTime<Utc>,
     ) -> Result<Option<WorkflowOccurrence>> {
         let pool = self.workspace_pool(workspace_id).await?;
         let mut tx = pool.begin().await?;
-        let slot = timestamp(slot);
-        let occurrence = schedule_occurrence_tx(
-            &mut tx,
-            workspace_id,
-            workflow_id,
-            trigger_id,
-            &slot,
-            &json!({"slot": slot}),
-            now,
-        )
-        .await?;
+        let key = source_key(workflow_id, trigger_id, &timestamp(slot));
+        let occurrence = occurrence_by_source_tx(&mut tx, &key).await?;
         tx.commit().await?;
         Ok(occurrence)
     }
