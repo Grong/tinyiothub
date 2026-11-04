@@ -10,7 +10,7 @@ use chrono::{DateTime, Utc};
 use tinyiothub_core::agent_task::TaskStoreError;
 use tinyiothub_core::device_job::DeviceJobError;
 use tinyiothub_core::harness::{CommandKind, HarnessCommand};
-use tinyiothub_storage::Db;
+use tinyiothub_storage::{Db, DbError};
 use tinyiothub_web::security::Claims;
 
 use super::RecoveryMode;
@@ -109,6 +109,56 @@ pub async fn stop_job(
             tracing::warn!(%error, "single Device Job stop failed");
             error_response(StatusCode::SERVICE_UNAVAILABLE, "Device Job 服务不可用")
         }
+    }
+}
+
+#[derive(Clone)]
+pub struct WorkflowControls {
+    db: Arc<Db>,
+    workspace_id: String,
+}
+
+impl WorkflowControls {
+    pub fn new(db: Arc<Db>, workspace_id: impl Into<String>) -> Self {
+        Self {
+            db,
+            workspace_id: workspace_id.into(),
+        }
+    }
+
+    pub async fn pause(&self, task_id: &str) -> Result<(), DbError> {
+        self.db.pause_workflow_task(&self.workspace_id, task_id).await
+    }
+
+    pub async fn resume(&self, task_id: &str) -> Result<String, DbError> {
+        self.db.resume_workflow_task(&self.workspace_id, task_id).await
+    }
+
+    pub async fn dispatch_permitted(&self, effect_id: &str) -> Result<bool, DbError> {
+        self.db.workflow_dispatch_permitted(&self.workspace_id, effect_id).await
+    }
+
+    pub async fn cancel(&self, task_id: &str) -> Result<(), DbError> {
+        let task_ids = self.db.cancel_workflow_task(&self.workspace_id, task_id).await?;
+        if task_ids.is_empty() {
+            return Ok(());
+        }
+        let recovery = super::EffectRecovery::new(self.db.clone());
+        let items = self.db.list_effect_recovery(&self.workspace_id).await?;
+        for item in items.into_iter().filter(|item| {
+            task_ids.contains(&item.intent.task_id)
+                && matches!(
+                    item.intent.state,
+                    tinyiothub_core::harness::EffectState::Prepared
+                        | tinyiothub_core::harness::EffectState::Dispatching
+                )
+        }) {
+            recovery
+                .request_cancellation(&self.workspace_id, &item.intent.effect_id)
+                .await
+                .map_err(DbError::Internal)?;
+        }
+        self.db.drain_workflow_cancellation(&self.workspace_id).await
     }
 }
 

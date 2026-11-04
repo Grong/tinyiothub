@@ -138,6 +138,30 @@ impl EffectRecovery {
         }
     }
 
+    async fn recover_cancelling(
+        &self,
+        workspace_id: &str,
+        item: &EffectRecoveryItem,
+        reconciler: &dyn EffectReconciler,
+    ) -> Result<(), String> {
+        match reconciler.settle(&item.intent).await {
+            ReconcileOutcome::Unknown { .. } => {
+                self.transition(
+                    workspace_id,
+                    item,
+                    RecoveryFact::Reconcile(ReconcileOutcome::Unknown {
+                        reason: "stop result unknown".to_string(),
+                    }),
+                )
+                .await
+            }
+            outcome => {
+                self.transition(workspace_id, item, RecoveryFact::Reconcile(outcome))
+                    .await
+            }
+        }
+    }
+
     pub async fn recover_workspace(
         &self,
         workspace_id: &str,
@@ -152,7 +176,14 @@ impl EffectRecovery {
         let mut report = RecoveryReport::default();
         if mode == RecoveryMode::Restore {
             for item in &items {
-                self.transition(workspace_id, item, RecoveryFact::Fence).await?;
+                let fact = if item.task_state == "cancelling"
+                    && matches!(item.intent.state, EffectState::Prepared | EffectState::Dispatching)
+                {
+                    RecoveryFact::Cancel
+                } else {
+                    RecoveryFact::Fence
+                };
+                self.transition(workspace_id, item, fact).await?;
             }
             return Box::pin(self.recover_workspace(workspace_id, RecoveryMode::Restart, reconciler)).await;
         }
@@ -182,6 +213,11 @@ impl EffectRecovery {
                         }
                     }
                 }
+                EffectState::Dispatching if item.task_state == "cancelling" => {
+                    self.transition(workspace_id, &item, RecoveryFact::Cancel).await?;
+                    let cancelling = self.item(workspace_id, &item.intent.effect_id).await?;
+                    self.recover_cancelling(workspace_id, &cancelling, reconciler).await?;
+                }
                 EffectState::Dispatching => {
                     self.transition(workspace_id, &item, RecoveryFact::Fence).await?;
                     let fenced = self.item(workspace_id, &item.intent.effect_id).await?;
@@ -192,22 +228,9 @@ impl EffectRecovery {
                     self.recover_unknown(workspace_id, &item, reconciler, &mut report)
                         .await?;
                 }
-                EffectState::Cancelling => match reconciler.settle(&item.intent).await {
-                    ReconcileOutcome::Unknown { .. } => {
-                        self.transition(
-                            workspace_id,
-                            &item,
-                            RecoveryFact::Reconcile(ReconcileOutcome::Unknown {
-                                reason: "stop result unknown".to_string(),
-                            }),
-                        )
-                        .await?;
-                    }
-                    outcome => {
-                        self.transition(workspace_id, &item, RecoveryFact::Reconcile(outcome))
-                            .await?;
-                    }
-                },
+                EffectState::Cancelling => {
+                    self.recover_cancelling(workspace_id, &item, reconciler).await?;
+                }
                 EffectState::Completed
                 | EffectState::Failed
                 | EffectState::NotApplied

@@ -1,8 +1,9 @@
 use std::sync::Arc;
 
+use chrono::{DateTime, Utc};
 use tinyiothub_agent::harness::{MainAgent, MainInput, SubagentExecutor, SubagentInput, TaskOutcome};
 use tinyiothub_core::harness::HarnessFact;
-use tinyiothub_storage::Db;
+use tinyiothub_storage::{Db, DbError};
 
 #[derive(Clone)]
 pub struct MainCoordinator {
@@ -47,5 +48,23 @@ impl SubagentRunner {
         input.session_id = format!("task:{}/run:{}", input.task_id, input.run_id);
         input.transcript.clear();
         self.agent.execute(input).await
+    }
+
+    pub async fn commit_outcome(
+        &self,
+        db: &Db,
+        workspace_id: &str,
+        task_id: &str,
+        outcome: &TaskOutcome,
+        now: DateTime<Utc>,
+    ) -> Result<bool, DbError> {
+        db.complete_subagent_task(
+            workspace_id,
+            task_id,
+            &outcome.status,
+            serde_json::to_value(outcome)?,
+            now,
+        )
+        .await
     }
 }

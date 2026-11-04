@@ -1146,15 +1146,20 @@ async fn command_recovery_pause_resume_and_cancel_keep_durable_fifo_semantics() 
 mod workflow_tests {
     use std::sync::{Arc, Mutex};
 
+    use super::{seed_decision, seed_effect};
     use async_trait::async_trait;
     use chrono::{DateTime, Duration, Utc};
     use serde_json::json;
-    use tinyiothub_agent::harness::{MainAgent, MainInput, SubagentExecutor, SubagentInput, TaskOutcome};
+    use tinyiothub_agent::harness::{
+        MainAgent, MainInput, ReconcileOutcome, SubagentExecutor, SubagentInput, TaskOutcome,
+    };
+    use tinyiothub_cloud::domains::agent::runtime::controls::WorkflowControls;
+    use tinyiothub_cloud::domains::agent::runtime::{EffectRecovery, RecoveryMode};
     use tinyiothub_cloud::domains::agent::workflows::{
         MainCoordinator, SubagentRunner, WorkflowScheduler, WorkflowService,
     };
     use tinyiothub_core::harness::{
-        DeviceFactsSnapshot, EffectState, HarnessFact, WorkflowDefinition, WorkflowTrigger,
+        DecisionState, DeviceFactsSnapshot, EffectState, HarnessFact, WorkflowDefinition, WorkflowTrigger,
     };
     use tinyiothub_storage::test_helpers::{WorkspaceFixture, fixture_workspace};
     use tokio_util::sync::CancellationToken;
@@ -1629,6 +1634,404 @@ mod workflow_tests {
             .await
             .expect("effect count");
         assert_eq!(effects, 0, "recommended actions must not execute effects");
+        fixture.close().await;
+    }
+
+    async fn seed_control_task(fixture: &WorkspaceFixture, task_id: &str, state: &str, parent: Option<&str>) {
+        sqlx::query(
+            "INSERT INTO agent_tasks (id, run_id, state, state_version, parent_task_id)
+             VALUES (?, ?, ?, 1, ?)",
+        )
+        .bind(task_id)
+        .bind(format!("run-{task_id}"))
+        .bind(state)
+        .bind(parent)
+        .execute(&fixture.workspace_pool().await)
+        .await
+        .expect("control task");
+        sqlx::query("INSERT INTO agent_runs (id, task_id, state) VALUES (?, ?, 'running')")
+            .bind(format!("run-{task_id}"))
+            .bind(task_id)
+            .execute(&fixture.workspace_pool().await)
+            .await
+            .expect("control run");
+    }
+
+    async fn control_state(fixture: &WorkspaceFixture, task_id: &str) -> String {
+        sqlx::query_scalar("SELECT state FROM agent_tasks WHERE id = ?")
+            .bind(task_id)
+            .fetch_one(&fixture.workspace_pool().await)
+            .await
+            .expect("control state")
+    }
+
+    fn control_outcome() -> TaskOutcome {
+        TaskOutcome {
+            status: "completed".to_string(),
+            summary: "child finished".to_string(),
+            observations: vec!["observed".to_string()],
+            evidence_refs: vec!["evidence-1".to_string()],
+            recommended_actions: vec!["not-an-execution-permit".to_string()],
+        }
+    }
+
+    #[tokio::test]
+    async fn workflow_controls_pause_resume_preserves_wait_without_cancelling_inflight_work() {
+        let fixture = fixture_workspace("ws-workflow-controls-pause").await;
+        let workspace_id = "ws-workflow-controls-pause";
+        let controls = WorkflowControls::new(Arc::new(fixture.db.clone()), workspace_id);
+        seed_effect(&fixture, "control-waiting-job", EffectState::Dispatching, "waiting_job").await;
+        seed_effect(
+            &fixture,
+            "control-needs-approval",
+            EffectState::Prepared,
+            "needs_approval",
+        )
+        .await;
+        seed_decision(
+            &fixture,
+            "control-needs-approval",
+            "tool_approval",
+            DecisionState::Answered,
+            Some("approved"),
+            None,
+        )
+        .await;
+        seed_control_task(&fixture, "control-waiting-watch", "waiting_watch", None).await;
+        seed_control_task(&fixture, "control-running", "running", None).await;
+
+        for task_id in [
+            "control-waiting-job",
+            "control-needs-approval",
+            "control-waiting-watch",
+            "control-running",
+        ] {
+            controls.pause(task_id).await.expect("pause task");
+            assert_eq!(control_state(&fixture, task_id).await, "paused");
+        }
+        let run_state: String =
+            sqlx::query_scalar("SELECT state FROM agent_runs WHERE task_id = 'control-waiting-job'")
+                .fetch_one(&fixture.workspace_pool().await)
+                .await
+                .expect("current run");
+        assert_eq!(run_state, "running", "pause must not abort the current model/run token");
+        assert_eq!(
+            super::effect_state(&fixture, "control-waiting-job").await.0,
+            "dispatching",
+            "pause must not cancel an in-flight effect"
+        );
+
+        let recovery = EffectRecovery::new(Arc::new(fixture.db.clone()));
+        let reconciler = super::ScriptedReconciler::new(ReconcileOutcome::Unknown {
+            reason: "still running".to_string(),
+        });
+        let report = recovery
+            .recover_workspace(workspace_id, RecoveryMode::Restart, &reconciler)
+            .await
+            .expect("paused recovery");
+        assert!(report.dispatch_permits.is_empty(), "pause must block new dispatch");
+        assert_eq!(
+            super::effect_state(&fixture, "control-needs-approval").await.0,
+            "prepared"
+        );
+        assert_ne!(
+            super::effect_state(&fixture, "control-waiting-job").await.0,
+            "cancelled"
+        );
+
+        for (task_id, expected) in [
+            ("control-waiting-job", "waiting_job"),
+            ("control-needs-approval", "needs_approval"),
+            ("control-waiting-watch", "waiting_watch"),
+            ("control-running", "running"),
+        ] {
+            assert_eq!(controls.resume(task_id).await.expect("resume task"), expected);
+            assert_eq!(control_state(&fixture, task_id).await, expected);
+        }
+        fixture.close().await;
+    }
+
+    #[tokio::test]
+    async fn workflow_controls_parent_cancel_drains_children_and_fails_on_stop_unknown() {
+        let fixture = fixture_workspace("ws-workflow-controls-cancel").await;
+        let workspace_id = "ws-workflow-controls-cancel";
+        seed_control_task(&fixture, "control-parent", "running", None).await;
+        seed_effect(&fixture, "control-prepared", EffectState::Prepared, "needs_approval").await;
+        seed_decision(
+            &fixture,
+            "control-prepared",
+            "tool_approval",
+            DecisionState::Requested,
+            None,
+            None,
+        )
+        .await;
+        seed_effect(&fixture, "control-sent", EffectState::Dispatching, "running").await;
+        seed_effect(&fixture, "control-unknown", EffectState::Unknown, "waiting_job").await;
+        seed_decision(
+            &fixture,
+            "control-unknown",
+            "effect_reconciliation",
+            DecisionState::Requested,
+            None,
+            None,
+        )
+        .await;
+        seed_control_task(&fixture, "control-idle", "running", Some("control-parent")).await;
+        for child in ["control-prepared", "control-sent", "control-unknown"] {
+            sqlx::query("UPDATE agent_tasks SET parent_task_id = 'control-parent' WHERE id = ?")
+                .bind(child)
+                .execute(&fixture.workspace_pool().await)
+                .await
+                .expect("attach child");
+        }
+        let controls = WorkflowControls::new(Arc::new(fixture.db.clone()), workspace_id);
+        assert!(
+            controls
+                .dispatch_permitted("control-sent")
+                .await
+                .expect("pre-send dispatch check")
+        );
+        controls.cancel("control-parent").await.expect("cancel parent");
+        assert!(
+            !controls
+                .dispatch_permitted("control-sent")
+                .await
+                .expect("post-cancel dispatch check")
+        );
+        assert!(
+            !controls
+                .dispatch_permitted("control-prepared")
+                .await
+                .expect("prepared dispatch check")
+        );
+
+        assert_eq!(control_state(&fixture, "control-parent").await, "cancelling");
+        assert_eq!(control_state(&fixture, "control-prepared").await, "cancelled");
+        assert_eq!(control_state(&fixture, "control-idle").await, "cancelled");
+        assert_eq!(control_state(&fixture, "control-sent").await, "cancelling");
+        assert_eq!(control_state(&fixture, "control-unknown").await, "cancelling");
+        assert_eq!(super::effect_state(&fixture, "control-prepared").await.0, "not_applied");
+        assert_eq!(super::effect_state(&fixture, "control-sent").await.0, "cancelling");
+        assert_eq!(super::decision_state(&fixture, "control-prepared").await.0, "withdrawn");
+        assert_eq!(
+            super::decision_state(&fixture, "control-unknown").await,
+            ("requested".to_string(), None),
+            "reconciliation must survive cancellation"
+        );
+        let external_ref: String =
+            sqlx::query_scalar("SELECT external_ref FROM effect_intents WHERE effect_id = 'control-sent'")
+                .fetch_one(&fixture.workspace_pool().await)
+                .await
+                .expect("same-ID stop reference");
+        assert_eq!(external_ref, "driver-call-1");
+
+        let recovery = EffectRecovery::new(Arc::new(fixture.db.clone()));
+        let reconciler = super::ScriptedReconciler::new(ReconcileOutcome::Unknown {
+            reason: "stop request failed; device may still run".to_string(),
+        });
+        let report = recovery
+            .recover_workspace(workspace_id, RecoveryMode::Restart, &reconciler)
+            .await
+            .expect("stop uncertainty");
+        assert!(report.dispatch_permits.is_empty());
+        assert_eq!(
+            super::effect_state(&fixture, "control-sent").await.0,
+            "cancelled_unknown"
+        );
+        assert_eq!(control_state(&fixture, "control-sent").await, "failed");
+        assert_eq!(control_state(&fixture, "control-unknown").await, "cancelling");
+        assert_eq!(
+            control_state(&fixture, "control-parent").await,
+            "cancelling",
+            "one unknown child must keep the parent draining"
+        );
+
+        recovery
+            .answer_reconciliation(workspace_id, "control-unknown", "not_applied", "operator", None)
+            .await
+            .expect("resolve remaining child");
+        recovery
+            .recover_workspace(workspace_id, RecoveryMode::Restart, &reconciler)
+            .await
+            .expect("finish drain");
+        assert_eq!(control_state(&fixture, "control-unknown").await, "cancelled");
+        assert_eq!(control_state(&fixture, "control-parent").await, "failed");
+        let failure_reason: String = sqlx::query_scalar(
+            "SELECT json_extract(payload_json, '$.reason') FROM session_events
+             WHERE task_id = 'control-parent' AND type = 'task.failed'",
+        )
+        .fetch_one(&fixture.workspace_pool().await)
+        .await
+        .expect("explicit cancel_unknown failure");
+        assert_eq!(failure_reason, "cancel_unknown");
+
+        let sent_wakes = super::wake_count(&fixture, "control-sent").await;
+        let runner = SubagentRunner::new(Arc::new(RecordingSubagent::default()));
+        assert!(
+            !runner
+                .commit_outcome(&fixture.db, workspace_id, "control-sent", &control_outcome(), at(),)
+                .await
+                .expect("late outcome is ignored")
+        );
+        recovery
+            .recover_workspace(workspace_id, RecoveryMode::Restart, &reconciler)
+            .await
+            .expect("late recovery is a no-op");
+        assert_eq!(control_state(&fixture, "control-parent").await, "failed");
+        assert_eq!(super::wake_count(&fixture, "control-parent").await, 0);
+        assert_eq!(super::wake_count(&fixture, "control-sent").await, sent_wakes);
+        fixture.close().await;
+    }
+
+    #[tokio::test]
+    async fn workflow_controls_cancel_cascade_recovers_inflight_stop_after_restart() {
+        for mode in [RecoveryMode::Restart, RecoveryMode::Restore] {
+            let workspace_id = match mode {
+                RecoveryMode::Restart => "ws-workflow-controls-cancel-restart",
+                RecoveryMode::Restore => "ws-workflow-controls-cancel-restore",
+            };
+            let fixture = fixture_workspace(workspace_id).await;
+            seed_control_task(&fixture, "restart-parent", "running", None).await;
+            seed_effect(&fixture, "restart-sent", EffectState::Dispatching, "running").await;
+            sqlx::query("UPDATE agent_tasks SET parent_task_id = 'restart-parent' WHERE id = 'restart-sent'")
+                .execute(&fixture.workspace_pool().await)
+                .await
+                .expect("attach child");
+            fixture
+                .db
+                .cancel_workflow_task(workspace_id, "restart-parent")
+                .await
+                .expect("commit only the task cascade before restart");
+            assert_eq!(super::effect_state(&fixture, "restart-sent").await.0, "dispatching");
+
+            let recovery = EffectRecovery::new(Arc::new(fixture.db.clone()));
+            let reconciler = super::ScriptedReconciler::new(ReconcileOutcome::Unknown {
+                reason: "stop result unknown".to_string(),
+            });
+            recovery
+                .recover_workspace(workspace_id, mode, &reconciler)
+                .await
+                .expect("recover same-ID stop");
+            assert_eq!(
+                super::effect_state(&fixture, "restart-sent").await.0,
+                "cancelled_unknown"
+            );
+            assert_eq!(control_state(&fixture, "restart-sent").await, "failed");
+            assert_eq!(control_state(&fixture, "restart-parent").await, "failed");
+            fixture.close().await;
+        }
+    }
+
+    #[tokio::test]
+    async fn workflow_controls_subagent_outcome_and_parent_wake_are_atomic_in_both_orders() {
+        for outcome_first in [true, false] {
+            let workspace_id = if outcome_first {
+                "ws-workflow-controls-result-first"
+            } else {
+                "ws-workflow-controls-cancel-first"
+            };
+            let fixture = fixture_workspace(workspace_id).await;
+            seed_control_task(&fixture, "outcome-parent", "running", None).await;
+            seed_control_task(&fixture, "outcome-child", "running", Some("outcome-parent")).await;
+            let runner = SubagentRunner::new(Arc::new(RecordingSubagent::default()));
+            let controls = WorkflowControls::new(Arc::new(fixture.db.clone()), workspace_id);
+            if outcome_first {
+                assert!(
+                    runner
+                        .commit_outcome(&fixture.db, workspace_id, "outcome-child", &control_outcome(), at())
+                        .await
+                        .expect("commit outcome")
+                );
+            }
+            controls.cancel("outcome-parent").await.expect("cancel parent");
+            assert!(
+                !runner
+                    .commit_outcome(&fixture.db, workspace_id, "outcome-child", &control_outcome(), at())
+                    .await
+                    .expect("late or duplicate outcome")
+            );
+            assert_eq!(control_state(&fixture, "outcome-parent").await, "cancelled");
+            assert_eq!(
+                control_state(&fixture, "outcome-child").await,
+                if outcome_first { "completed" } else { "cancelled" }
+            );
+            assert_eq!(
+                super::event_count(&fixture, "task.outcome").await,
+                i64::from(outcome_first)
+            );
+            assert_eq!(
+                super::wake_count(&fixture, "outcome-parent").await,
+                i64::from(outcome_first)
+            );
+            fixture.close().await;
+        }
+    }
+
+    #[tokio::test]
+    async fn workflow_controls_outcome_event_conflict_rolls_back_child_and_parent_wake() {
+        let workspace_id = "ws-workflow-controls-outcome-rollback";
+        let fixture = fixture_workspace(workspace_id).await;
+        seed_control_task(&fixture, "rollback-parent", "running", None).await;
+        seed_control_task(&fixture, "rollback-child", "running", Some("rollback-parent")).await;
+        sqlx::query(
+            "INSERT INTO session_events
+                (event_id, session_id, execution_mode, run_id, task_id, type, occurred_at,
+                 cause_id, schema_v, payload_digest, payload_json)
+             VALUES ('task:rollback-child:outcome', 'task:rollback-child', 'production',
+                     'run-rollback-child', 'rollback-child', 'conflict.marker', ?, NULL, 1,
+                     'conflicting-digest', '{}')",
+        )
+        .bind(at().to_rfc3339())
+        .execute(&fixture.workspace_pool().await)
+        .await
+        .expect("conflicting event");
+        let runner = SubagentRunner::new(Arc::new(RecordingSubagent::default()));
+        runner
+            .commit_outcome(&fixture.db, workspace_id, "rollback-child", &control_outcome(), at())
+            .await
+            .expect_err("event conflict must roll back the outcome");
+        assert_eq!(control_state(&fixture, "rollback-child").await, "running");
+        assert_eq!(super::wake_count(&fixture, "rollback-parent").await, 0);
+        assert_eq!(super::event_count(&fixture, "task.outcome").await, 0);
+        fixture.close().await;
+    }
+
+    #[tokio::test]
+    async fn workflow_controls_children_pin_revision_and_cannot_create_children() {
+        let workspace_id = "ws-workflow-controls-version";
+        let fixture = fixture_workspace(workspace_id).await;
+        let db = Arc::new(fixture.db.clone());
+        let service = WorkflowService::new(db.clone(), workspace_id);
+        let workflow = service.create(cron_definition("inspect v1")).await.expect("create");
+        service.set_enabled(&workflow.workflow_id, true).await.expect("enable");
+        let scheduler = WorkflowScheduler::new(db, workspace_id);
+        scheduler.tick(at()).await.expect("initialize");
+        let root = scheduler
+            .tick(at() + Duration::minutes(1))
+            .await
+            .expect("schedule")
+            .into_iter()
+            .next()
+            .expect("root occurrence");
+        let (child_id, _) = service.create_subagent(&root.task_id).await.expect("create child");
+        service
+            .edit(&workflow.workflow_id, 1, cron_definition("inspect v2"))
+            .await
+            .expect("edit after child creation");
+        let pinned: (i64, String) = sqlx::query_as(
+            "SELECT t.workflow_version, r.parent_run_id FROM agent_tasks t
+             JOIN agent_runs r ON r.task_id = t.id WHERE t.id = ?",
+        )
+        .bind(&child_id)
+        .fetch_one(&fixture.workspace_pool().await)
+        .await
+        .expect("child lineage");
+        assert_eq!(pinned, (1, root.run_id));
+        service
+            .create_subagent(&child_id)
+            .await
+            .expect_err("v1 forbids recursive subagents");
         fixture.close().await;
     }
 }

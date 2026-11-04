@@ -512,7 +512,16 @@ async fn apply_writes(
     if let Some(decision) = &transition.decision {
         apply_decision(connection, decision).await?;
     }
+    let mut drain_cancelling = false;
     if let Some(projection) = &transition.run_task {
+        let current_task_state = sqlx::query_scalar::<_, String>("SELECT state FROM agent_tasks WHERE id = ?")
+            .bind(&projection.task_id)
+            .fetch_optional(&mut *connection)
+            .await?
+            .ok_or_else(|| DbError::Conflict {
+                message: format!("task projection is missing for {}", projection.task_id),
+            })?;
+        drain_cancelling = current_task_state == "cancelling";
         let run_updated = sqlx::query("UPDATE agent_runs SET state = ? WHERE id = ? AND task_id = ?")
             .bind(&projection.run_state)
             .bind(&projection.run_id)
@@ -520,13 +529,16 @@ async fn apply_writes(
             .execute(&mut *connection)
             .await?
             .rows_affected();
-        let task_updated =
+        let task_updated = if drain_cancelling {
+            1
+        } else {
             sqlx::query("UPDATE agent_tasks SET state = ?, state_version = state_version + 1 WHERE id = ?")
                 .bind(&projection.task_state)
                 .bind(&projection.task_id)
                 .execute(&mut *connection)
                 .await?
-                .rows_affected();
+                .rows_affected()
+        };
         if run_updated != 1 || task_updated != 1 {
             return Err(DbError::Conflict {
                 message: format!("run/task projection is missing for {}", projection.task_id),
@@ -606,6 +618,10 @@ async fn apply_writes(
     .execute(&mut *connection)
     .await?;
 
+    if drain_cancelling {
+        crate::runtime_task::drain_cancelling_tasks(connection, &event.workspace_id, event.occurred_at).await?;
+    }
+
     Ok(ApplyOutcome {
         transition_id: transition.transition_id.clone(),
         deduplicated: false,
@@ -614,6 +630,22 @@ async fn apply_writes(
 }
 
 impl Db {
+    pub async fn workflow_dispatch_permitted(&self, workspace_id: &str, effect_id: &str) -> Result<bool> {
+        let pool = self.workspace_pool(workspace_id).await?;
+        sqlx::query_scalar::<_, bool>(
+            "SELECT EXISTS(
+                 SELECT 1 FROM effect_intents effect
+                 JOIN agent_tasks task ON task.id = effect.task_id
+                 WHERE effect.effect_id = ? AND effect.state = 'dispatching'
+                   AND task.state NOT IN ('paused', 'cancelling', 'completed', 'failed', 'cancelled')
+             )",
+        )
+        .bind(effect_id)
+        .fetch_one(&pool)
+        .await
+        .map_err(Into::into)
+    }
+
     pub async fn effect_intent(&self, workspace_id: &str, effect_id: &str) -> Result<Option<EffectIntent>> {
         let pool = self.workspace_pool(workspace_id).await?;
         sqlx::query_as::<_, EffectIntentRow>("SELECT effect_id, session_id, task_id, run_id, tool_call_id, tool_name, request_json, request_digest, idempotency_key, external_ref, state, recovery_from, state_version, result_json, created_at, updated_at FROM effect_intents WHERE effect_id = ?")
@@ -661,7 +693,7 @@ impl Db {
                 .bind(&intent.task_id)
                 .fetch_one(&pool)
                 .await?;
-            let task_active = task_state == "running";
+            let task_active = !matches!(task_state.as_str(), "paused" | "completed" | "failed" | "cancelled");
             items.push(EffectRecoveryItem {
                 intent,
                 decision,

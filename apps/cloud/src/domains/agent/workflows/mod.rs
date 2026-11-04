@@ -91,6 +91,15 @@ impl WorkflowService {
                 id: format!("{workflow_id}@{version}"),
             })
     }
+
+    pub async fn create_subagent(&self, parent_task_id: &str) -> Result<(String, String), DbError> {
+        let task_id = format!("task-{}", uuid::Uuid::new_v4());
+        let run_id = format!("run-{}", uuid::Uuid::new_v4());
+        self.db
+            .create_subagent_task(&self.workspace_id, parent_task_id, &task_id, &run_id, Utc::now())
+            .await?;
+        Ok((task_id, run_id))
+    }
 }
 
 pub(crate) fn normalize_cron(expression: &str) -> String {
