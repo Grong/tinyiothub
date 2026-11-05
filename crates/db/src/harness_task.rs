@@ -135,6 +135,18 @@ fn unavailable(error: impl std::fmt::Display) -> TaskStoreError {
     TaskStoreError::Unavailable(error.to_string())
 }
 
+/// SQLite extended constraint codes for PRIMARY KEY (1555) and UNIQUE (2067),
+/// plus the bare CONSTRAINT code (19) used by some bundled SQLite versions.
+fn is_unique_violation(error: &sqlx::Error) -> bool {
+    match error {
+        sqlx::Error::Database(database) => {
+            matches!(database.code().as_deref(), Some("1555" | "2067" | "19"))
+                || database.message().contains("UNIQUE constraint failed")
+        }
+        _ => false,
+    }
+}
+
 /// Harness projection state `<->` port status. The Runtime vocabulary calls
 /// the working state `active`, while Harness projections use `running`; an
 /// interrupted projection still belongs to an active Task and is resumed by
@@ -151,6 +163,36 @@ fn state_for_status(status: TaskStatus) -> &'static str {
         TaskStatus::Active => "running",
         other => other.as_str(),
     }
+}
+
+/// Every persisted Harness state that may legally precede `next`, derived from
+/// the core `TaskStatus` transition matrix (F6). `Active` expands to all
+/// Harness working projections so a crash-interrupted Task can still move.
+fn predecessor_states(next: TaskStatus) -> Vec<&'static str> {
+    const ALL: [TaskStatus; 9] = [
+        TaskStatus::Active,
+        TaskStatus::WaitingJob,
+        TaskStatus::WaitingWatch,
+        TaskStatus::NeedsApproval,
+        TaskStatus::Paused,
+        TaskStatus::Cancelling,
+        TaskStatus::Completed,
+        TaskStatus::Failed,
+        TaskStatus::Cancelled,
+    ];
+    let mut states = Vec::new();
+    for status in ALL {
+        if !status.can_transition_to(next) {
+            continue;
+        }
+        match status {
+            TaskStatus::Active => {
+                states.extend(["running", "pending", "model_calling", "interrupted"]);
+            }
+            other => states.push(other.as_str()),
+        }
+    }
+    states
 }
 
 fn nonterminal_state_placeholders() -> String {
@@ -294,51 +336,144 @@ impl Db {
                 workspaces.push(workspace_id);
                 continue;
             }
-            let pending_restore = self
-                .restore_journal_row(&workspace_id)
-                .await
-                .map_err(unavailable)?
-                .is_some();
-            if pending_restore {
-                workspaces.push(workspace_id);
+            match self.restore_journal_row(&workspace_id).await {
+                Ok(Some(_)) => workspaces.push(workspace_id),
+                Ok(None) => {}
+                Err(error) => {
+                    tracing::warn!(
+                        workspace_id = %workspace_id,
+                        %error,
+                        "workspace restore journal unreadable; skipping during store sweep"
+                    );
+                }
             }
         }
         Ok(workspaces)
     }
 
-    async fn task_workspace(&self, task_id: &str) -> Result<Option<String>, TaskStoreError> {
+    /// Open a workspace store for a cross-workspace scan. One unreadable
+    /// workspace must not fail a runtime-wide sweep (F4).
+    async fn try_workspace_pool(&self, workspace_id: &str) -> Option<sqlx::SqlitePool> {
+        match self.workspace_pool(workspace_id).await {
+            Ok(pool) => Some(pool),
+            Err(error) => {
+                tracing::warn!(
+                    workspace_id = %workspace_id,
+                    %error,
+                    "workspace harness store unreadable; skipping during store sweep"
+                );
+                None
+            }
+        }
+    }
+
+    /// Resolve exactly one workspace for a point lookup. Multiple matching
+    /// workspaces are an ambiguity error rather than a silent first match
+    /// (F3).
+    async fn unique_task_workspace(&self, task_id: &str) -> Result<Option<String>, TaskStoreError> {
+        let mut matched = None;
         for workspace_id in self.harness_workspaces().await? {
-            let pool = self.workspace_pool(&workspace_id).await.map_err(unavailable)?;
-            let found = sqlx::query_scalar::<_, i64>(
+            let Some(pool) = self.try_workspace_pool(&workspace_id).await else {
+                continue;
+            };
+            let found = match sqlx::query_scalar::<_, i64>(
                 "SELECT COUNT(*) FROM agent_tasks WHERE id = ? AND execution_mode = 'production'",
             )
             .bind(task_id)
             .fetch_one(&pool)
             .await
-            .map_err(unavailable)?;
+            {
+                Ok(found) => found,
+                Err(error) => {
+                    tracing::warn!(
+                        workspace_id = %workspace_id,
+                        %error,
+                        "task lookup failed; skipping workspace"
+                    );
+                    continue;
+                }
+            };
             if found > 0 {
-                return Ok(Some(workspace_id));
+                if matched.is_some() {
+                    return Err(TaskStoreError::Unavailable(format!(
+                        "task {task_id} exists in more than one workspace"
+                    )));
+                }
+                matched = Some(workspace_id);
             }
         }
-        Ok(None)
+        Ok(matched)
     }
 
-    async fn wake_workspace(&self, task_id: &str, event_id: &str) -> Result<Option<String>, TaskStoreError> {
+    async fn unique_wake_workspace(&self, task_id: &str, event_id: &str) -> Result<Option<String>, TaskStoreError> {
+        let mut matched = None;
         for workspace_id in self.harness_workspaces().await? {
-            let pool = self.workspace_pool(&workspace_id).await.map_err(unavailable)?;
-            let found = sqlx::query_scalar::<_, i64>(
+            let Some(pool) = self.try_workspace_pool(&workspace_id).await else {
+                continue;
+            };
+            let found = match sqlx::query_scalar::<_, i64>(
                 "SELECT COUNT(*) FROM task_wake_outbox WHERE task_id = ? AND event_id = ?",
             )
             .bind(task_id)
             .bind(event_id)
             .fetch_one(&pool)
             .await
-            .map_err(unavailable)?;
+            {
+                Ok(found) => found,
+                Err(error) => {
+                    tracing::warn!(
+                        workspace_id = %workspace_id,
+                        %error,
+                        "wake lookup failed; skipping workspace"
+                    );
+                    continue;
+                }
+            };
             if found > 0 {
-                return Ok(Some(workspace_id));
+                if matched.is_some() {
+                    return Err(TaskStoreError::Unavailable(format!(
+                        "wake {task_id}/{event_id} exists in more than one workspace"
+                    )));
+                }
+                matched = Some(workspace_id);
             }
         }
-        Ok(None)
+        Ok(matched)
+    }
+
+    async fn unique_run_workspace(&self, run_id: &str) -> Result<Option<String>, TaskStoreError> {
+        let mut matched = None;
+        for workspace_id in self.harness_workspaces().await? {
+            let Some(pool) = self.try_workspace_pool(&workspace_id).await else {
+                continue;
+            };
+            let found = match sqlx::query_scalar::<_, i64>(
+                "SELECT COUNT(*) FROM agent_runs WHERE id = ? AND execution_mode = 'production'",
+            )
+            .bind(run_id)
+            .fetch_one(&pool)
+            .await
+            {
+                Ok(found) => found,
+                Err(error) => {
+                    tracing::warn!(
+                        workspace_id = %workspace_id,
+                        %error,
+                        "run lookup failed; skipping workspace"
+                    );
+                    continue;
+                }
+            };
+            if found > 0 {
+                if matched.is_some() {
+                    return Err(TaskStoreError::Unavailable(format!(
+                        "run {run_id} exists in more than one workspace"
+                    )));
+                }
+                matched = Some(workspace_id);
+            }
+        }
+        Ok(matched)
     }
 
     pub async fn harness_create_task_with_wake(
@@ -353,15 +488,25 @@ impl Db {
         if wake.task_id != task.id {
             return Err(TaskStoreError::Validation("task and wake task id differ".to_string()));
         }
+        if task.idempotency_key.trim().is_empty() {
+            return Err(TaskStoreError::Validation(
+                "idempotency key must not be blank".to_string(),
+            ));
+        }
         let pool = self.workspace_pool(&task.workspace_id).await.map_err(unavailable)?;
         let mut tx = pool.begin().await.map_err(unavailable)?;
-        let inserted = sqlx::query(
+        // Scope conflict handling to the production idempotency index only. A
+        // primary-key collision on `id` is not swallowed; it is classified
+        // below as same-id/different-key (F2).
+        let insert_result = sqlx::query(
             "INSERT INTO agent_tasks
                  (id, run_id, state, state_version, execution_mode, runtime_idempotency_key,
                   runtime_objective, runtime_session_key, runtime_created_by,
                   runtime_created_at, runtime_updated_at, runtime_ended_at)
              VALUES (?, ?, ?, ?, 'production', ?, ?, ?, ?, ?, ?, ?)
-             ON CONFLICT DO NOTHING",
+             ON CONFLICT(runtime_idempotency_key)
+                 WHERE execution_mode = 'production' AND runtime_idempotency_key <> ''
+             DO NOTHING",
         )
         .bind(&task.id)
         .bind(&task.current_run_id)
@@ -375,24 +520,31 @@ impl Db {
         .bind(task.updated_at)
         .bind(task.ended_at)
         .execute(&mut *tx)
-        .await
-        .map_err(unavailable)?
-        .rows_affected();
+        .await;
+
+        let inserted = match insert_result {
+            Ok(done) => done.rows_affected(),
+            Err(error) if is_unique_violation(&error) => {
+                let original = self.create_conflict_original(&mut tx, task).await?;
+                let event = task_event(
+                    &task.workspace_id,
+                    &original,
+                    "task.created",
+                    format!("task:{}:created", original.id),
+                    Utc::now(),
+                )?;
+                write_event(&mut tx, &event).await?;
+                tx.commit().await.map_err(unavailable)?;
+                return Ok(CreateTaskOutcome {
+                    task: original,
+                    deduplicated: true,
+                });
+            }
+            Err(error) => return Err(unavailable(error)),
+        };
 
         if inserted == 0 {
-            let original = sqlx::query_as::<_, AgentTaskRow>(sqlx::AssertSqlSafe(format!(
-                "{TASK_SELECT} FROM agent_tasks
-                 WHERE runtime_idempotency_key = ? AND execution_mode = 'production'"
-            )))
-            .bind(&task.idempotency_key)
-            .fetch_optional(&mut *tx)
-            .await
-            .map_err(unavailable)?
-            .ok_or_else(|| TaskStoreError::Unavailable("idempotency conflict without original task".into()))?
-            .into_task(&task.workspace_id)?;
-            if original.objective != task.objective {
-                return Err(TaskStoreError::ObjectiveConflict);
-            }
+            let original = self.create_conflict_original(&mut tx, task).await?;
             let event = task_event(
                 &task.workspace_id,
                 &original,
@@ -438,6 +590,50 @@ impl Db {
         })
     }
 
+    /// Classify a create conflict without ever returning a different Task.
+    /// Priority: same id (must be the same key and objective), then the
+    /// idempotency key.
+    async fn create_conflict_original(
+        &self,
+        tx: &mut Transaction<'_, Sqlite>,
+        task: &AgentTask,
+    ) -> Result<AgentTask, TaskStoreError> {
+        let by_id = sqlx::query_as::<_, AgentTaskRow>(sqlx::AssertSqlSafe(format!(
+            "{TASK_SELECT} FROM agent_tasks WHERE id = ? AND execution_mode = 'production'"
+        )))
+        .bind(&task.id)
+        .fetch_optional(&mut **tx)
+        .await
+        .map_err(unavailable)?;
+        if let Some(row) = by_id {
+            let original = row.into_task(&task.workspace_id)?;
+            if original.idempotency_key != task.idempotency_key {
+                return Err(TaskStoreError::Unavailable(format!(
+                    "task id {} already exists with another idempotency key",
+                    task.id
+                )));
+            }
+            if original.objective != task.objective {
+                return Err(TaskStoreError::ObjectiveConflict);
+            }
+            return Ok(original);
+        }
+        let by_key = sqlx::query_as::<_, AgentTaskRow>(sqlx::AssertSqlSafe(format!(
+            "{TASK_SELECT} FROM agent_tasks
+             WHERE runtime_idempotency_key = ? AND execution_mode = 'production'"
+        )))
+        .bind(&task.idempotency_key)
+        .fetch_optional(&mut **tx)
+        .await
+        .map_err(unavailable)?
+        .ok_or_else(|| TaskStoreError::Unavailable("idempotency conflict without original task".into()))?
+        .into_task(&task.workspace_id)?;
+        if by_key.objective != task.objective {
+            return Err(TaskStoreError::ObjectiveConflict);
+        }
+        Ok(by_key)
+    }
+
     pub async fn harness_get_task(
         &self,
         workspace_id: &str,
@@ -476,25 +672,22 @@ impl Db {
     }
 
     pub async fn harness_wake_by_id(&self, task_id: &str, event_id: &str) -> Result<Option<TaskWake>, TaskStoreError> {
-        for workspace_id in self.harness_workspaces().await? {
-            let pool = self.workspace_pool(&workspace_id).await.map_err(unavailable)?;
-            let wake = sqlx::query_as::<_, TaskWakeRow>(
-                "SELECT task_id, event_id, signal_json, dispatch_state, created_at,
-                        dispatched_at, resolved_at
-                 FROM task_wake_outbox WHERE task_id = ? AND event_id = ?",
-            )
-            .bind(task_id)
-            .bind(event_id)
-            .fetch_optional(&pool)
-            .await
-            .map_err(unavailable)?
-            .map(TaskWakeRow::into_wake)
-            .transpose()?;
-            if wake.is_some() {
-                return Ok(wake);
-            }
-        }
-        Ok(None)
+        let Some(workspace_id) = self.unique_wake_workspace(task_id, event_id).await? else {
+            return Ok(None);
+        };
+        let pool = self.workspace_pool(&workspace_id).await.map_err(unavailable)?;
+        sqlx::query_as::<_, TaskWakeRow>(
+            "SELECT task_id, event_id, signal_json, dispatch_state, created_at,
+                    dispatched_at, resolved_at
+             FROM task_wake_outbox WHERE task_id = ? AND event_id = ?",
+        )
+        .bind(task_id)
+        .bind(event_id)
+        .fetch_optional(&pool)
+        .await
+        .map_err(unavailable)?
+        .map(TaskWakeRow::into_wake)
+        .transpose()
     }
 
     pub async fn harness_record_wake(&self, wake: &TaskWake) -> Result<bool, TaskStoreError> {
@@ -540,27 +733,29 @@ impl Db {
     }
 
     pub async fn harness_resolve_task_wakes(&self, task_id: &str) -> Result<usize, TaskStoreError> {
-        let mut affected = 0;
-        for workspace_id in self.harness_workspaces().await? {
-            let pool = self.workspace_pool(&workspace_id).await.map_err(unavailable)?;
-            affected += sqlx::query(
-                "UPDATE task_wake_outbox SET resolved_at = ?
-                 WHERE task_id = ? AND resolved_at IS NULL",
-            )
-            .bind(Utc::now())
-            .bind(task_id)
-            .execute(&pool)
-            .await
-            .map_err(unavailable)?
-            .rows_affected();
-        }
+        let Some(workspace_id) = self.unique_task_workspace(task_id).await? else {
+            return Ok(0);
+        };
+        let pool = self.workspace_pool(&workspace_id).await.map_err(unavailable)?;
+        let affected = sqlx::query(
+            "UPDATE task_wake_outbox SET resolved_at = ?
+             WHERE task_id = ? AND resolved_at IS NULL",
+        )
+        .bind(Utc::now())
+        .bind(task_id)
+        .execute(&pool)
+        .await
+        .map_err(unavailable)?
+        .rows_affected();
         Ok(affected as usize)
     }
 
     pub async fn harness_interrupt_unfinished_runs(&self, known_active: &[String]) -> Result<usize, TaskStoreError> {
         let mut marked = 0;
         for workspace_id in self.harness_workspaces().await? {
-            let pool = self.workspace_pool(&workspace_id).await.map_err(unavailable)?;
+            let Some(pool) = self.try_workspace_pool(&workspace_id).await else {
+                continue;
+            };
             let mut statement = "SELECT r.id, r.task_id FROM agent_runs r
                  WHERE r.state IN ('running', 'model_calling')
                    AND r.execution_mode = 'production'"
@@ -584,7 +779,17 @@ impl Db {
             for run_id in known_active {
                 query = query.bind(run_id);
             }
-            let runs = query.fetch_all(&pool).await.map_err(unavailable)?;
+            let runs = match query.fetch_all(&pool).await {
+                Ok(runs) => runs,
+                Err(error) => {
+                    tracing::warn!(
+                        workspace_id = %workspace_id,
+                        %error,
+                        "interrupted-run scan failed; skipping workspace"
+                    );
+                    continue;
+                }
+            };
             for (run_id, task_id) in runs {
                 let now = Utc::now();
                 let mut tx = pool.begin().await.map_err(unavailable)?;
@@ -631,46 +836,65 @@ impl Db {
         if let Some(wake) = wake {
             validate_wake(workspace_id, task_id, wake)?;
         }
+        let predecessors = predecessor_states(next);
+        if predecessors.is_empty() {
+            return Err(TaskStoreError::Validation(format!(
+                "task state {} has no legal predecessor",
+                state_for_status(next)
+            )));
+        }
         let pool = self.workspace_pool(workspace_id).await.map_err(unavailable)?;
         let now = Utc::now();
         let ended_at = next.is_terminal().then_some(now);
         let mut tx = pool.begin().await.map_err(unavailable)?;
-        let current = sqlx::query_as::<_, AgentTaskRow>(sqlx::AssertSqlSafe(format!(
-            "{TASK_SELECT} FROM agent_tasks WHERE id = ? AND execution_mode = 'production'"
-        )))
-        .bind(task_id)
-        .fetch_optional(&mut *tx)
-        .await
-        .map_err(unavailable)?
-        .ok_or(TaskStoreError::ConcurrentUpdate)?
-        .into_task(workspace_id)?;
-        if current.state_version != expected_version {
-            return Err(TaskStoreError::ConcurrentUpdate);
-        }
-        if !current.status.can_transition_to(next) {
-            return Err(TaskStoreError::Validation(format!(
-                "task state transition {} -> {} is forbidden",
-                current.status.as_str(),
-                next.as_str()
-            )));
-        }
-        let updated = sqlx::query_as::<_, AgentTaskRow>(sqlx::AssertSqlSafe(format!(
+        // The conditioned UPDATE is deliberately the first statement so SQLite
+        // takes the write lock before any read, matching the legacy store and
+        // avoiding a deferred SHARED -> RESERVED upgrade failure under
+        // contention (F1).
+        let placeholders = vec!["?"; predecessors.len()].join(", ");
+        let statement = format!(
             "UPDATE agent_tasks
              SET state = ?, state_version = state_version + 1,
                  runtime_updated_at = ?, runtime_ended_at = ?
-             WHERE id = ? AND state_version = ?
+             WHERE id = ? AND state_version = ? AND execution_mode = 'production'
+               AND state IN ({placeholders})
              RETURNING {TASK_COLUMNS}"
-        )))
-        .bind(state_for_status(next))
-        .bind(now)
-        .bind(ended_at)
-        .bind(task_id)
-        .bind(expected_version)
-        .fetch_optional(&mut *tx)
-        .await
-        .map_err(unavailable)?
-        .ok_or(TaskStoreError::ConcurrentUpdate)?
-        .into_task(workspace_id)?;
+        );
+        let mut query = sqlx::query_as::<_, AgentTaskRow>(sqlx::AssertSqlSafe(statement))
+            .bind(state_for_status(next))
+            .bind(now)
+            .bind(ended_at)
+            .bind(task_id)
+            .bind(expected_version);
+        for predecessor in &predecessors {
+            query = query.bind(*predecessor);
+        }
+        let updated = query.fetch_optional(&mut *tx).await.map_err(unavailable)?;
+        let Some(updated) = updated else {
+            let current = sqlx::query_as::<_, AgentTaskRow>(sqlx::AssertSqlSafe(format!(
+                "{TASK_SELECT} FROM agent_tasks WHERE id = ? AND execution_mode = 'production'"
+            )))
+            .bind(task_id)
+            .fetch_optional(&mut *tx)
+            .await
+            .map_err(unavailable)?;
+            return match current {
+                None => Err(TaskStoreError::ConcurrentUpdate),
+                Some(row) => {
+                    let current = row.into_task(workspace_id)?;
+                    if current.state_version != expected_version {
+                        Err(TaskStoreError::ConcurrentUpdate)
+                    } else {
+                        Err(TaskStoreError::Validation(format!(
+                            "task state transition {} -> {} is forbidden",
+                            current.status.as_str(),
+                            next.as_str()
+                        )))
+                    }
+                }
+            };
+        };
+        let updated = updated.into_task(workspace_id)?;
         if let Some(wake) = wake {
             sqlx::query(
                 "INSERT INTO task_wake_outbox
@@ -712,7 +936,7 @@ impl Db {
         run_id: Option<&str>,
     ) -> Result<AgentTask, TaskStoreError> {
         let workspace_id = self
-            .task_workspace(task_id)
+            .unique_task_workspace(task_id)
             .await?
             .ok_or(TaskStoreError::ConcurrentUpdate)?;
         let pool = self.workspace_pool(&workspace_id).await.map_err(unavailable)?;
@@ -902,29 +1126,35 @@ impl Db {
     }
 
     pub async fn harness_latest_task_run(&self, task_id: &str) -> Result<Option<RunReport>, TaskStoreError> {
-        for workspace_id in self.harness_workspaces().await? {
-            let pool = self.workspace_pool(&workspace_id).await.map_err(unavailable)?;
-            let report: Option<(String,)> = sqlx::query_as(
-                "SELECT runtime_report_json FROM agent_runs
-                 WHERE task_id = ? AND state = 'completed' AND runtime_report_json IS NOT NULL
-                 ORDER BY runtime_created_at DESC, rowid DESC LIMIT 1",
-            )
-            .bind(task_id)
-            .fetch_optional(&pool)
-            .await
-            .map_err(unavailable)?;
-            if let Some((json,)) = report {
-                return serde_json::from_str(&json).map(Some).map_err(unavailable);
-            }
-        }
-        Ok(None)
+        let Some(workspace_id) = self.unique_task_workspace(task_id).await? else {
+            return Ok(None);
+        };
+        let pool = self.workspace_pool(&workspace_id).await.map_err(unavailable)?;
+        let report: Option<(String,)> = sqlx::query_as(
+            "SELECT runtime_report_json FROM agent_runs
+             WHERE task_id = ? AND state = 'completed' AND runtime_report_json IS NOT NULL
+             ORDER BY runtime_created_at DESC, rowid DESC LIMIT 1",
+        )
+        .bind(task_id)
+        .fetch_optional(&pool)
+        .await
+        .map_err(unavailable)?;
+        report
+            .map(|(json,)| serde_json::from_str(&json).map_err(unavailable))
+            .transpose()
     }
 
     pub async fn harness_claim_pending_wakes(&self, limit: i64) -> Result<Vec<TaskWake>, TaskStoreError> {
+        let limit = limit.max(0);
+        if limit == 0 {
+            return Ok(Vec::new());
+        }
         let mut candidates: Vec<(String, TaskWake)> = Vec::new();
         for workspace_id in self.harness_workspaces().await? {
-            let pool = self.workspace_pool(&workspace_id).await.map_err(unavailable)?;
-            let rows = sqlx::query_as::<_, TaskWakeRow>(
+            let Some(pool) = self.try_workspace_pool(&workspace_id).await else {
+                continue;
+            };
+            let rows = match sqlx::query_as::<_, TaskWakeRow>(
                 "SELECT o.task_id, o.event_id, o.signal_json, o.dispatch_state, o.created_at,
                         o.dispatched_at, o.resolved_at
                  FROM task_wake_outbox o
@@ -936,7 +1166,17 @@ impl Db {
             .bind(limit)
             .fetch_all(&pool)
             .await
-            .map_err(unavailable)?;
+            {
+                Ok(rows) => rows,
+                Err(error) => {
+                    tracing::warn!(
+                        workspace_id = %workspace_id,
+                        %error,
+                        "wake claim scan failed; skipping workspace"
+                    );
+                    continue;
+                }
+            };
             for row in rows {
                 candidates.push((workspace_id.clone(), row.into_wake()?));
             }
@@ -948,46 +1188,79 @@ impl Db {
                 .then_with(|| left.1.task_id.cmp(&right.1.task_id))
                 .then_with(|| left.1.event_id.cmp(&right.1.event_id))
         });
-        candidates.truncate(limit.max(0) as usize);
+        candidates.truncate(limit as usize);
 
+        // Claim each workspace's selected rows in one conditioned statement,
+        // so selection and claim are atomic within that store (F5).
+        let mut groups: std::collections::HashMap<String, Vec<TaskWake>> = std::collections::HashMap::new();
+        for (workspace_id, wake) in candidates {
+            groups.entry(workspace_id).or_default().push(wake);
+        }
         let now = Utc::now();
         let mut claimed = Vec::new();
-        for (workspace_id, candidate) in candidates {
-            let pool = self.workspace_pool(&workspace_id).await.map_err(unavailable)?;
-            let wake = sqlx::query_as::<_, TaskWakeRow>(
+        for (workspace_id, selected) in groups {
+            let Some(pool) = self.try_workspace_pool(&workspace_id).await else {
+                continue;
+            };
+            let placeholders = vec!["(?, ?)"; selected.len()].join(", ");
+            let statement = format!(
                 "UPDATE task_wake_outbox SET dispatched_at = ?
-                 WHERE task_id = ? AND event_id = ? AND dispatch_state = 'pending'
-                   AND dispatched_at IS NULL AND resolved_at IS NULL
+                 WHERE (task_id, event_id) IN ({placeholders})
+                   AND dispatch_state = 'pending' AND dispatched_at IS NULL
+                   AND resolved_at IS NULL
                  RETURNING task_id, event_id, signal_json, dispatch_state, created_at,
-                           dispatched_at, resolved_at",
-            )
-            .bind(now)
-            .bind(&candidate.task_id)
-            .bind(&candidate.event_id)
-            .fetch_optional(&pool)
-            .await
-            .map_err(unavailable)?
-            .map(TaskWakeRow::into_wake)
-            .transpose()?;
-            if let Some(wake) = wake {
-                claimed.push(wake);
+                           dispatched_at, resolved_at"
+            );
+            let mut query = sqlx::query_as::<_, TaskWakeRow>(sqlx::AssertSqlSafe(statement)).bind(now);
+            for wake in &selected {
+                query = query.bind(&wake.task_id).bind(&wake.event_id);
+            }
+            match query.fetch_all(&pool).await {
+                Ok(rows) => {
+                    for row in rows {
+                        claimed.push(row.into_wake()?);
+                    }
+                }
+                Err(error) => {
+                    tracing::warn!(
+                        workspace_id = %workspace_id,
+                        %error,
+                        "wake claim update failed; skipping workspace"
+                    );
+                }
             }
         }
+        claimed.sort_by(|left, right| {
+            left.created_at
+                .cmp(&right.created_at)
+                .then_with(|| left.task_id.cmp(&right.task_id))
+                .then_with(|| left.event_id.cmp(&right.event_id))
+        });
         Ok(claimed)
     }
 
     pub async fn harness_recover_claimed_wakes(&self) -> Result<usize, TaskStoreError> {
         let mut affected = 0;
         for workspace_id in self.harness_workspaces().await? {
-            let pool = self.workspace_pool(&workspace_id).await.map_err(unavailable)?;
-            affected += sqlx::query(
+            let Some(pool) = self.try_workspace_pool(&workspace_id).await else {
+                continue;
+            };
+            match sqlx::query(
                 "UPDATE task_wake_outbox SET dispatched_at = NULL
                  WHERE dispatch_state = 'pending' AND dispatched_at IS NOT NULL",
             )
             .execute(&pool)
             .await
-            .map_err(unavailable)?
-            .rows_affected();
+            {
+                Ok(done) => affected += done.rows_affected(),
+                Err(error) => {
+                    tracing::warn!(
+                        workspace_id = %workspace_id,
+                        %error,
+                        "wake recovery failed; skipping workspace"
+                    );
+                }
+            }
         }
         Ok(affected as usize)
     }
@@ -998,7 +1271,7 @@ impl Db {
         event_id: &str,
         state: WakeDispatchState,
     ) -> Result<(), TaskStoreError> {
-        let Some(workspace_id) = self.wake_workspace(task_id, event_id).await? else {
+        let Some(workspace_id) = self.unique_wake_workspace(task_id, event_id).await? else {
             return Ok(());
         };
         let pool = self.workspace_pool(&workspace_id).await.map_err(unavailable)?;
@@ -1032,7 +1305,7 @@ impl Db {
         event_id: &str,
         reason: &str,
     ) -> Result<(), TaskStoreError> {
-        let Some(workspace_id) = self.wake_workspace(task_id, event_id).await? else {
+        let Some(workspace_id) = self.unique_wake_workspace(task_id, event_id).await? else {
             return Ok(());
         };
         let pool = self.workspace_pool(&workspace_id).await.map_err(unavailable)?;
@@ -1089,32 +1362,31 @@ impl Db {
         task_id: &str,
         event_id: &str,
     ) -> Result<Option<TaskFinalizeIntent>, TaskStoreError> {
-        for workspace_id in self.harness_workspaces().await? {
-            let pool = self.workspace_pool(&workspace_id).await.map_err(unavailable)?;
-            let intent = sqlx::query_as::<_, FinalizeIntentRow>(
-                "SELECT task_id, workspace_id, wake_event_id, run_id, report_json,
-                        report_persisted, report_emitted, undelivered_json, created_at
-                 FROM task_finalize_intents WHERE task_id = ? AND wake_event_id = ?",
-            )
-            .bind(task_id)
-            .bind(event_id)
-            .fetch_optional(&pool)
-            .await
-            .map_err(unavailable)?
-            .map(FinalizeIntentRow::into_intent)
-            .transpose()?;
-            if intent.is_some() {
-                return Ok(intent);
-            }
-        }
-        Ok(None)
+        let Some(workspace_id) = self.unique_task_workspace(task_id).await? else {
+            return Ok(None);
+        };
+        let pool = self.workspace_pool(&workspace_id).await.map_err(unavailable)?;
+        sqlx::query_as::<_, FinalizeIntentRow>(
+            "SELECT task_id, workspace_id, wake_event_id, run_id, report_json,
+                    report_persisted, report_emitted, undelivered_json, created_at
+             FROM task_finalize_intents WHERE task_id = ? AND wake_event_id = ?",
+        )
+        .bind(task_id)
+        .bind(event_id)
+        .fetch_optional(&pool)
+        .await
+        .map_err(unavailable)?
+        .map(FinalizeIntentRow::into_intent)
+        .transpose()
     }
 
     pub async fn harness_pending_finalize_intents(&self) -> Result<Vec<TaskFinalizeIntent>, TaskStoreError> {
         let mut intents = Vec::new();
         for workspace_id in self.harness_workspaces().await? {
-            let pool = self.workspace_pool(&workspace_id).await.map_err(unavailable)?;
-            let rows = sqlx::query_as::<_, FinalizeIntentRow>(
+            let Some(pool) = self.try_workspace_pool(&workspace_id).await else {
+                continue;
+            };
+            let rows = match sqlx::query_as::<_, FinalizeIntentRow>(
                 "SELECT i.task_id, i.workspace_id, i.wake_event_id, i.run_id, i.report_json,
                         i.report_persisted, i.report_emitted, i.undelivered_json, i.created_at
                  FROM task_finalize_intents i
@@ -1127,7 +1399,17 @@ impl Db {
             )
             .fetch_all(&pool)
             .await
-            .map_err(unavailable)?;
+            {
+                Ok(rows) => rows,
+                Err(error) => {
+                    tracing::warn!(
+                        workspace_id = %workspace_id,
+                        %error,
+                        "pending finalize-intent scan failed; skipping workspace"
+                    );
+                    continue;
+                }
+            };
             for row in rows {
                 intents.push((row.created_at, row.into_intent()?));
             }
@@ -1142,39 +1424,45 @@ impl Db {
     }
 
     pub async fn harness_complete_finalize_intent(&self, task_id: &str, event_id: &str) -> Result<(), TaskStoreError> {
-        for workspace_id in self.harness_workspaces().await? {
-            let pool = self.workspace_pool(&workspace_id).await.map_err(unavailable)?;
-            let affected = sqlx::query("DELETE FROM task_finalize_intents WHERE task_id = ? AND wake_event_id = ?")
-                .bind(task_id)
-                .bind(event_id)
-                .execute(&pool)
-                .await
-                .map_err(unavailable)?
-                .rows_affected();
-            if affected > 0 {
-                break;
-            }
-        }
+        let Some(workspace_id) = self.unique_task_workspace(task_id).await? else {
+            return Ok(());
+        };
+        let pool = self.workspace_pool(&workspace_id).await.map_err(unavailable)?;
+        sqlx::query("DELETE FROM task_finalize_intents WHERE task_id = ? AND wake_event_id = ?")
+            .bind(task_id)
+            .bind(event_id)
+            .execute(&pool)
+            .await
+            .map_err(unavailable)?;
         Ok(())
     }
 
     pub async fn harness_completed_run_report(&self, run_id: &str) -> Result<Option<RunReport>, TaskStoreError> {
-        for workspace_id in self.harness_workspaces().await? {
-            if let Some(report) = self.completed_run_in(&workspace_id, run_id).await? {
-                return Ok(Some(report));
-            }
-        }
-        Ok(None)
+        let Some(workspace_id) = self.unique_run_workspace(run_id).await? else {
+            return Ok(None);
+        };
+        self.completed_run_in(&workspace_id, run_id).await
     }
 
     pub async fn harness_count_finalize_intents(&self) -> Result<i64, TaskStoreError> {
         let mut count = 0;
         for workspace_id in self.harness_workspaces().await? {
-            let pool = self.workspace_pool(&workspace_id).await.map_err(unavailable)?;
-            count += sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM task_finalize_intents")
+            let Some(pool) = self.try_workspace_pool(&workspace_id).await else {
+                continue;
+            };
+            match sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM task_finalize_intents")
                 .fetch_one(&pool)
                 .await
-                .map_err(unavailable)?;
+            {
+                Ok(workspace_count) => count += workspace_count,
+                Err(error) => {
+                    tracing::warn!(
+                        workspace_id = %workspace_id,
+                        %error,
+                        "finalize-intent count failed; skipping workspace"
+                    );
+                }
+            }
         }
         Ok(count)
     }
@@ -1182,8 +1470,10 @@ impl Db {
     pub async fn harness_prune_finalize_intents(&self, older_than: DateTime<Utc>) -> Result<usize, TaskStoreError> {
         let mut affected = 0;
         for workspace_id in self.harness_workspaces().await? {
-            let pool = self.workspace_pool(&workspace_id).await.map_err(unavailable)?;
-            affected += sqlx::query(
+            let Some(pool) = self.try_workspace_pool(&workspace_id).await else {
+                continue;
+            };
+            match sqlx::query(
                 "DELETE FROM task_finalize_intents
                  WHERE updated_at < ?
                    AND NOT EXISTS (
@@ -1201,8 +1491,16 @@ impl Db {
             .bind(older_than)
             .execute(&pool)
             .await
-            .map_err(unavailable)?
-            .rows_affected();
+            {
+                Ok(done) => affected += done.rows_affected(),
+                Err(error) => {
+                    tracing::warn!(
+                        workspace_id = %workspace_id,
+                        %error,
+                        "finalize-intent prune failed; skipping workspace"
+                    );
+                }
+            }
         }
         Ok(affected as usize)
     }
@@ -1229,14 +1527,22 @@ impl Db {
         &self,
         workspace_id: Option<&str>,
     ) -> Result<Vec<AgentTask>, TaskStoreError> {
+        let scoped = workspace_id.is_some();
         let workspaces = match workspace_id {
             Some(workspace_id) => vec![workspace_id.to_string()],
             None => self.harness_workspaces().await?,
         };
         let mut tasks = Vec::new();
         for workspace_id in workspaces {
-            let pool = self.workspace_pool(&workspace_id).await.map_err(unavailable)?;
-            let rows = sqlx::query_as::<_, AgentTaskRow>(sqlx::AssertSqlSafe(format!(
+            let pool = if scoped {
+                self.workspace_pool(&workspace_id).await.map_err(unavailable)?
+            } else {
+                let Some(pool) = self.try_workspace_pool(&workspace_id).await else {
+                    continue;
+                };
+                pool
+            };
+            let rows = match sqlx::query_as::<_, AgentTaskRow>(sqlx::AssertSqlSafe(format!(
                 "{TASK_SELECT} FROM agent_tasks
                  WHERE execution_mode = 'production' AND {}
                  ORDER BY runtime_updated_at, id",
@@ -1244,7 +1550,18 @@ impl Db {
             )))
             .fetch_all(&pool)
             .await
-            .map_err(unavailable)?;
+            {
+                Ok(rows) => rows,
+                Err(error) if !scoped => {
+                    tracing::warn!(
+                        workspace_id = %workspace_id,
+                        %error,
+                        "nonterminal task scan failed; skipping workspace"
+                    );
+                    continue;
+                }
+                Err(error) => return Err(unavailable(error)),
+            };
             for row in rows {
                 tasks.push(row.into_task(&workspace_id)?);
             }
