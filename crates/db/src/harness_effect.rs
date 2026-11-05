@@ -669,6 +669,10 @@ async fn apply_writes(
         drain_cancelling = current_task_state == "cancelling";
         let preserve_paused = current_task_state == "paused"
             && !matches!(projection.task_state.as_str(), "completed" | "failed" | "cancelled");
+        // A terminal Task stays terminal: a late Effect write must never move it
+        // back to `cancelling`, which would resurrect a cancelled Task while its
+        // live Run and Jobs are still winding down.
+        let preserve_terminal = matches!(current_task_state.as_str(), "completed" | "failed" | "cancelled");
         let run_updated = sqlx::query("UPDATE agent_runs SET state = ? WHERE id = ? AND task_id = ?")
             .bind(&projection.run_state)
             .bind(&projection.run_id)
@@ -676,7 +680,7 @@ async fn apply_writes(
             .execute(&mut *connection)
             .await?
             .rows_affected();
-        let task_updated = if drain_cancelling || preserve_paused {
+        let task_updated = if drain_cancelling || preserve_paused || preserve_terminal {
             1
         } else {
             sqlx::query("UPDATE agent_tasks SET state = ?, state_version = state_version + 1 WHERE id = ?")

@@ -650,19 +650,30 @@ mod tests {
             connection.next_frame().await,
             Some(super::RuntimeFrame::Snapshot { .. })
         ));
-        append_versioned(&fixture.db, ws, "task-1", "event-v1", 1).await;
-        append_versioned(&fixture.db, ws, "task-1", "event-v2", 2).await;
-        sqlx::query("UPDATE agent_tasks SET state_version = 2 WHERE id = 'task-1'")
-            .execute(&fixture.db.workspace_pool_for_testing(ws).await.expect("pool"))
-            .await
-            .expect("project state version");
-        hub.notify(ws);
+        // Commit only once the tail is parked in its wait: the drift check
+        // under test runs in the post-wait path, not in the pre-wait tail read.
+        let db = Arc::new(fixture.db.clone());
+        let wake = hub.clone();
+        let writer = {
+            let db = db.clone();
+            tokio::spawn(async move {
+                tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                append_versioned(&db, ws, "task-1", "event-v1", 1).await;
+                append_versioned(&db, ws, "task-1", "event-v2", 2).await;
+                sqlx::query("UPDATE agent_tasks SET state_version = 2 WHERE id = 'task-1'")
+                    .execute(&db.workspace_pool_for_testing(ws).await.expect("pool"))
+                    .await
+                    .expect("project state version");
+                wake.notify(ws);
+            })
+        };
         for expected in ["event-v1", "event-v2"] {
             let Some(super::RuntimeFrame::Event { event, .. }) = connection.next_frame().await else {
                 panic!("expected the {expected} Event, not a resync");
             };
             assert_eq!(event.event_id, expected);
         }
+        writer.await.expect("writer");
         fixture.close().await;
     }
 

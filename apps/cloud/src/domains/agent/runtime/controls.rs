@@ -105,17 +105,21 @@ pub async fn cancel(
     let controls = WorkflowControls::new(state.db.clone(), &workspace_id);
     let result: Result<(), Response> = match state.thing_agents.as_ref() {
         Some(manager) => {
-            // Cancel Workflow-owned children and in-flight Effects first; the
-            // coordinator cancels the Task itself last, because its terminal
-            // drain depends on physical Job outcomes the workspace cascade
-            // cannot see. Never run the workspace cascade over a Task the
-            // coordinator left `cancelling`: that cascade would declare it
-            // terminal while its Jobs are still stopping.
-            if let Err(error) = controls.cancel_remaining(&task_id).await {
-                return control_error(error);
-            }
+            // The coordinator owns the Task transition, the live Run, and the
+            // Job stops, so it runs first. Cancelling an Effect before that
+            // transition would write a derived Task state (`cancelled` for a
+            // Prepared Effect, `cancelling` for a Dispatching one) into the row
+            // and make the coordinator treat the Task as already cancelled.
             match manager.cancel_task(&workspace_id, &task_id).await {
-                Ok(_) => Ok(()),
+                Ok(_) => {
+                    // The coordinator cannot see Workflow-owned Subagents or
+                    // Harness Effects; cancel those after its Task transition.
+                    if let Err(error) = controls.cancel_remaining(&task_id).await {
+                        state.harness_stream.notify(&workspace_id);
+                        return control_error(error);
+                    }
+                    Ok(())
+                }
                 Err(TaskError::NotFound) => controls.cancel(&task_id).await.map_err(control_error),
                 Err(error) => Err(coordinator_error(error)),
             }

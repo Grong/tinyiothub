@@ -540,6 +540,20 @@ async fn http_cancel_stops_the_job_owned_by_the_live_coordinator() {
         token: create_test_token("user-1", "tenant-1"),
         pool,
     };
+    // An in-flight Effect must not beat the coordinator's Task transition: if
+    // it were cancelled first, its derived state (`cancelled`) would be written
+    // into the Task row and the coordinator would skip the Job stop.
+    seed_effect_decision(
+        &fixture,
+        &task.id,
+        "effect-live-cancel",
+        "call-live-cancel",
+        "prepared",
+        "approval-live-cancel",
+        "tool_approval",
+        "requested",
+    )
+    .await;
 
     let (status, body) = post(
         &fixture,
@@ -558,14 +572,27 @@ async fn http_cancel_stops_the_job_owned_by_the_live_coordinator() {
         stopping.stop_requested_at.is_some(),
         "POST /cancel must stop the live coordinator's Job, not only write the Task row"
     );
-    assert_eq!(
-        fixture
-            .db
-            .harness_get_task(WS, "task-live-cancel")
+    let task_status = fixture
+        .db
+        .harness_get_task(WS, "task-live-cancel")
+        .await
+        .expect("read Task")
+        .expect("Task")
+        .status;
+    assert!(
+        matches!(
+            task_status,
+            tinyiothub_core::agent_task::TaskStatus::Cancelling | tinyiothub_core::agent_task::TaskStatus::Cancelled
+        ),
+        "cancel settled to {task_status:?}"
+    );
+    let effect_state: String =
+        sqlx::query_scalar("SELECT state FROM effect_intents WHERE effect_id = 'effect-live-cancel'")
+            .fetch_one(&workspace_pool(&fixture).await)
             .await
-            .expect("read Task")
-            .expect("Task")
-            .status,
-        tinyiothub_core::agent_task::TaskStatus::Cancelling
+            .expect("effect state");
+    assert_eq!(
+        effect_state, "not_applied",
+        "the Task's in-flight Effect must be settled by the cancel"
     );
 }

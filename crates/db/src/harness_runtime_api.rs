@@ -593,12 +593,13 @@ impl crate::Db {
             }
             DecisionState::Requested => {
                 if current.expires_at.is_some_and(|expires_at| expires_at <= now) {
-                    // Expiry is enforced on the write path, not only by the
-                    // background sweeper: an approval that elapsed between
-                    // sweeps must never dispatch a device action. The sweeper
+                    // Expiry is enforced on the write path: an approval that
+                    // elapsed must never dispatch a device action, and the
+                    // periodic approval loop still sweeps the legacy platform
+                    // table, not workspace decisions. This workspace-wide sweep
                     // unwinds a still-Prepared Effect atomically; when it
-                    // refuses (the Effect already moved on) the decision alone
-                    // is recorded as expired below.
+                    // refuses (an Effect already moved on) the decision alone is
+                    // recorded as expired below.
                     tx.rollback().await?;
                     if let Err(error) = self.expire_harness_decisions(workspace_id, now).await {
                         tracing::warn!(
