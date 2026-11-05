@@ -337,6 +337,26 @@ claimed as covered.
 None of the `[NOT IMPLEMENTED]` items may be cited as monitoring coverage in a
 rollout sign-off.
 
+## Performance evidence
+
+Harness storage, replay, recovery, backup and Task/stream/Job-path measurements
+are reproducible with:
+
+```bash
+cargo test -p tinyiothub-cloud --bench harness -- --nocapture
+```
+
+See [harness-performance.md](harness-performance.md) for the methodology, raw
+samples and limits. The run records machine, SQLite/WAL, binary and config
+versions, data sizes, concurrency, sample distribution and local p50/p95; the
+size buckets are inputs, not quotas or an SLA. It is a debug-profile local
+measurement, not production p99.
+
+The current `main` ref does not contain the durable Harness workspace store,
+session-event replay, Runtime Task or Device Job storage modules. The runner
+therefore records the main/branch comparison as missing with the exact absent
+paths instead of producing a fabricated baseline.
+
 ## Evidence limits
 
 - The browser suite runs in Playwright Chromium. That build ships without
