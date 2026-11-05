@@ -298,6 +298,21 @@ describe('RuntimeProjection', () => {
     expect(projection.lastPersistedSeq).toBe(8);
   });
 
+  it('marks an interrupted tail when frozen history steps are restored', () => {
+    const projection = new RuntimeProjection(snapshotWithNoDevices(), { history: true });
+    projection.restoreHistorySteps([
+      event(
+        'event_9',
+        'run.interrupted',
+        { incomplete_tail: true, last_persisted_seq: 8 },
+        { cursor: 9 },
+      ),
+    ]);
+
+    expect(projection.incompleteTail).toBe(true);
+    expect(projection.lastPersistedSeq).toBe(8);
+  });
+
   it('round-trips live deviceFacts through the projection snapshot', () => {
     const projection = new RuntimeProjection(snapshotWithNoDevices());
     projection.apply(

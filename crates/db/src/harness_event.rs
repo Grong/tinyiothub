@@ -1,6 +1,7 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use sha2::Digest;
 use sqlx::SqlSafeStr;
 use tinyiothub_core::harness::{ExecutionMode, HarnessEvent, HarnessEventInput};
 
@@ -277,6 +278,63 @@ impl Db {
         let event = row.into_event(&input.workspace_id)?;
         tx.commit().await?;
         Ok(event)
+    }
+
+    /// Startup/crash recovery for one Harness run. The run status fact and its
+    /// `run.interrupted` event commit together; the event names the last
+    /// persisted run seq so a replay never presents a lost tail as complete.
+    pub async fn interrupt_harness_run(
+        &self,
+        workspace_id: &str,
+        task_id: &str,
+        run_id: &str,
+        occurred_at: DateTime<Utc>,
+    ) -> Result<Option<HarnessEventInput>> {
+        let pool = self.workspace_pool(workspace_id).await?;
+        let mut tx = pool.begin().await?;
+        let updated = sqlx::query(
+            "UPDATE agent_runs SET state = 'interrupted'
+             WHERE id = ? AND task_id = ? AND state IN ('running', 'model_calling')",
+        )
+        .bind(run_id)
+        .bind(task_id)
+        .execute(&mut *tx)
+        .await?
+        .rows_affected();
+        if updated == 0 {
+            tx.commit().await?;
+            return Ok(None);
+        }
+        let last_persisted_seq =
+            sqlx::query_scalar::<_, i64>("SELECT COALESCE(MAX(seq), 0) FROM session_events WHERE run_id = ?")
+                .bind(run_id)
+                .fetch_one(&mut *tx)
+                .await?;
+        let payload_json = serde_json::json!({
+            "taskId": task_id,
+            "runId": run_id,
+            "state": "interrupted",
+            "incomplete_tail": true,
+            "last_persisted_seq": last_persisted_seq,
+        });
+        let payload = serde_json::to_string(&payload_json)?;
+        let input = HarnessEventInput {
+            event_id: format!("run:{run_id}:interrupted"),
+            workspace_id: workspace_id.to_string(),
+            session_id: format!("task:{task_id}"),
+            execution_mode: ExecutionMode::Production,
+            run_id: Some(run_id.to_string()),
+            task_id: Some(task_id.to_string()),
+            event_type: "run.interrupted".to_string(),
+            occurred_at,
+            cause_id: None,
+            schema_v: CURRENT_EVENT_SCHEMA,
+            payload_digest: format!("{:x}", sha2::Sha256::digest(payload.as_bytes())),
+            payload_json,
+        };
+        crate::harness_effect::insert_event(&mut tx, &input).await?;
+        tx.commit().await?;
+        Ok(Some(input))
     }
 
     pub async fn projection_tail(

@@ -153,6 +153,19 @@ export class RuntimeProjection {
     this.steps = [...events].sort(byCursor);
     this.eventIds = new Set(this.steps.map((event) => event.eventId));
     this.stepCursors = new Set(this.steps.map((event) => event.cursor));
+    this.scanInterruptedTail(this.steps);
+  }
+
+  private scanInterruptedTail(events: RuntimeEvent[]): void {
+    this.incompleteTail = false;
+    this.lastPersistedSeq = null;
+    for (const event of events) {
+      if (event.eventType !== 'run.interrupted') continue;
+      const incomplete = event.data.incompleteTail ?? event.data.incomplete_tail;
+      const lastPersisted = event.data.lastPersistedSeq ?? event.data.last_persisted_seq;
+      if (incomplete === true) this.incompleteTail = true;
+      if (typeof lastPersisted === 'number') this.lastPersistedSeq = lastPersisted;
+    }
   }
 
   /** Merge a bounded timeline page or live deltas into the shown steps. */
@@ -222,8 +235,6 @@ export class RuntimeProjection {
     this.watches = this.baseSnapshot.watches.map((watch) => ({ ...watch }));
     this.evidence = this.baseSnapshot.evidence.map((evidence) => ({ ...evidence }));
     this.devices = [];
-    this.incompleteTail = false;
-    this.lastPersistedSeq = null;
 
     for (const association of this.baseSnapshot.associations) {
       this.associate(association.deviceId);
@@ -264,12 +275,6 @@ export class RuntimeProjection {
         }
       }
       this.applyDeviceFacts(event.data.deviceFacts);
-      if (event.eventType === 'run.interrupted') {
-        const incomplete = event.data.incompleteTail ?? event.data.incomplete_tail;
-        const lastPersisted = event.data.lastPersistedSeq ?? event.data.last_persisted_seq;
-        if (incomplete === true) this.incompleteTail = true;
-        if (typeof lastPersisted === 'number') this.lastPersistedSeq = lastPersisted;
-      }
       if (event.cursor <= this.baseCursor) continue;
 
       this.applyTaskEvent(task, event);
@@ -278,6 +283,7 @@ export class RuntimeProjection {
       if (event.eventType.startsWith('watch.')) this.upsertWatch(event);
       if (event.evidenceId) this.upsertEvidence(event);
     }
+    this.scanInterruptedTail(this.steps);
     this.baseSnapshot.task = task;
   }
 

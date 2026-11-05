@@ -1260,6 +1260,98 @@ async fn stream_snapshot_tail_uses_matching_version_and_bounded_pages() {
 }
 
 #[tokio::test]
+async fn stream_crash_recovery_marks_incomplete_tail_with_run_filtered_seq() {
+    let fixture = fixture().await;
+    seed_effect(&fixture, "effect-crash-tail", EffectState::Dispatching, "running").await;
+    let run_id = "run-effect-crash-tail";
+    let task_id = "effect-crash-tail";
+    fixture
+        .db
+        .append_session_event(&HarnessEventInput {
+            event_id: "crash-last-text".to_string(),
+            workspace_id: WS.to_string(),
+            session_id: format!("task:{task_id}"),
+            execution_mode: ExecutionMode::Production,
+            run_id: Some(run_id.to_string()),
+            task_id: Some(task_id.to_string()),
+            event_type: "step.text".to_string(),
+            occurred_at: at(),
+            cause_id: None,
+            schema_v: 1,
+            payload_digest: "digest-crash-last-text".to_string(),
+            payload_json: json!({"text": "persisted before crash"}),
+        })
+        .await
+        .expect("persist last complete text");
+    let prior_seq: i64 = sqlx::query_scalar("SELECT COALESCE(MAX(seq), 0) FROM session_events WHERE run_id = ?")
+        .bind(run_id)
+        .fetch_one(&fixture.workspace_pool().await)
+        .await
+        .expect("run-filtered prior seq");
+    fixture
+        .db
+        .append_session_event(&HarnessEventInput {
+            event_id: "crash-other-run-interleave".to_string(),
+            workspace_id: WS.to_string(),
+            session_id: "session-other".to_string(),
+            execution_mode: ExecutionMode::Production,
+            run_id: Some("run-other".to_string()),
+            task_id: Some("task-other".to_string()),
+            event_type: "step.tool_result".to_string(),
+            occurred_at: at(),
+            cause_id: None,
+            schema_v: 1,
+            payload_digest: "digest-crash-other".to_string(),
+            payload_json: json!({"result": {"ok": true}}),
+        })
+        .await
+        .expect("interleaved other run event");
+
+    let interrupted = fixture
+        .db
+        .interrupt_harness_run(WS, task_id, run_id, at())
+        .await
+        .expect("harness crash recovery")
+        .expect("running run becomes interrupted");
+    assert_eq!(interrupted.payload_json["incomplete_tail"], true);
+    assert_eq!(interrupted.payload_json["last_persisted_seq"], prior_seq);
+    assert_eq!(interrupted.event_type, "run.interrupted");
+    assert!(
+        fixture
+            .db
+            .interrupt_harness_run(WS, task_id, run_id, at())
+            .await
+            .expect("idempotent crash recovery")
+            .is_none(),
+        "a terminal run must not emit a second interruption"
+    );
+
+    let page = fixture
+        .db
+        .projection_tail(
+            &ProjectionSubject {
+                workspace_id: WS.to_string(),
+                session_id: None,
+                run_id: Some(run_id.to_string()),
+                task_id: None,
+                execution_mode: ExecutionMode::Production,
+            },
+            prior_seq,
+            256,
+        )
+        .await
+        .expect("crash tail replay");
+    let replayed = page
+        .events
+        .iter()
+        .find(|event| event.event_type == "run.interrupted")
+        .expect("interruption replays in the run tail");
+    assert_eq!(replayed.payload_json["incomplete_tail"], true);
+    assert_eq!(replayed.payload_json["last_persisted_seq"], prior_seq);
+    fixture.close().await;
+}
+
+#[tokio::test]
 async fn stream_interrupted_run_marks_unclosed_text_tail_and_last_persisted_seq() {
     let fixture = fixture().await;
     seed_effect(&fixture, "effect-stream-interrupt", EffectState::Dispatching, "running").await;
@@ -1308,7 +1400,15 @@ async fn stream_interrupted_run_marks_unclosed_text_tail_and_last_persisted_seq(
     .await
     .expect("interrupted payload");
     assert!(incomplete, "an unclosed crash/interrupt tail must not look complete");
-    assert_eq!(last_seq, interrupted_seq - 1);
+    let prior_run_seq: i64 = sqlx::query_scalar(
+        "SELECT COALESCE(MAX(seq), 0) FROM session_events
+         WHERE run_id = 'run-effect-stream-interrupt' AND seq < ?",
+    )
+    .bind(interrupted_seq)
+    .fetch_one(&fixture.workspace_pool().await)
+    .await
+    .expect("run-filtered prior seq");
+    assert_eq!(last_seq, prior_run_seq);
     fixture.close().await;
 }
 
