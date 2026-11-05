@@ -71,6 +71,48 @@ fn effect_id_from_job(job_id: &str) -> Option<&str> {
     job_id.strip_prefix("effect:")
 }
 
+fn decision_outcome(decision: &Decision) -> &'static str {
+    match (decision.state, decision.answer.as_deref()) {
+        (DecisionState::Answered, Some("approved")) => "approved",
+        (DecisionState::Answered, Some("denied")) => "denied",
+        (DecisionState::Expired, _) => "expired",
+        (DecisionState::Withdrawn, _) => "withdrawn",
+        _ => "closed",
+    }
+}
+
+/// Parseable, deterministic continuation wake for an approval-linked Effect.
+/// The event id matches the answer/expiry transaction, so `ON CONFLICT` keeps
+/// exactly one wake across every path.
+fn approval_continuation_wake(
+    workspace_id: &str,
+    intent: &EffectIntent,
+    decision: Option<&Decision>,
+    now: chrono::DateTime<Utc>,
+) -> Option<WakeProjection> {
+    let decision = decision?;
+    if decision.kind != DecisionKind::ToolApproval {
+        return None;
+    }
+    let outcome = decision_outcome(decision);
+    let wake_id = format!("approval:{}:{outcome}", decision.decision_id);
+    Some(WakeProjection {
+        task_id: intent.task_id.clone(),
+        wake_id: wake_id.clone(),
+        signal_json: json!({
+            "kind":"approval_decided",
+            "workspace_id":workspace_id,
+            "task_id":intent.task_id,
+            "approval_id":decision.decision_id,
+            "effect_id":intent.effect_id,
+            "decision_event_id":wake_id,
+            "outcome":outcome,
+        })
+        .to_string(),
+        created_at: now,
+    })
+}
+
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub struct DispatchReport {
     /// Effects whose Job was submitted during this pass.
@@ -278,6 +320,9 @@ impl EffectDispatch {
         if let Some(effect) = &mut transition.effect {
             effect.result = Some(reason);
         }
+        if let Some(wake) = approval_continuation_wake(workspace_id, intent, decision, Utc::now()) {
+            transition.wake = Some(wake);
+        }
         self.apply(workspace_id, transition).await?;
         self.publish(workspace_id);
         Ok(())
@@ -314,6 +359,7 @@ impl EffectDispatch {
         &self,
         workspace_id: &str,
         intent: &EffectIntent,
+        decision: Option<&Decision>,
         reason: Value,
     ) -> Result<(), String> {
         let Some(current) = self
@@ -327,7 +373,7 @@ impl EffectDispatch {
         if current.state != EffectState::Dispatching {
             return Ok(());
         }
-        let transition = reduce(
+        let mut transition = reduce(
             &Self::harness_state(workspace_id, &current, EffectState::Dispatching, current.state_version),
             &HarnessFact {
                 transition_id: format!("dispatch:{}:not_applied", current.effect_id),
@@ -350,6 +396,9 @@ impl EffectDispatch {
             },
         )
         .map_err(|error| error.to_string())?;
+        if let Some(wake) = approval_continuation_wake(workspace_id, intent, decision, Utc::now()) {
+            transition.wake = Some(wake);
+        }
         self.apply(workspace_id, transition).await?;
         self.publish(workspace_id);
         Ok(())
@@ -453,8 +502,13 @@ impl EffectDispatch {
                     .is_some_and(|effect| effect.state == EffectState::Dispatching);
                 self.apply(workspace_id, permit).await?;
                 if dispatching {
-                    self.transition_dispatching_not_applied(workspace_id, intent, reason.clone())
-                        .await?;
+                    self.transition_dispatching_not_applied(
+                        workspace_id,
+                        intent,
+                        item.decision.as_ref(),
+                        reason.clone(),
+                    )
+                    .await?;
                 }
             } else {
                 self.transition_from_prepared_not_applied(
@@ -527,6 +581,7 @@ impl EffectDispatch {
                 self.transition_dispatching_not_applied(
                     workspace_id,
                     intent,
+                    item.decision.as_ref(),
                     json!({"reason": "dispatch_gate_error", "error": error.to_string()}),
                 )
                 .await?;
@@ -539,8 +594,13 @@ impl EffectDispatch {
             }
         };
         if !permitted {
-            self.transition_dispatching_not_applied(workspace_id, intent, json!({"reason": "dispatch_not_permitted"}))
-                .await?;
+            self.transition_dispatching_not_applied(
+                workspace_id,
+                intent,
+                item.decision.as_ref(),
+                json!({"reason": "dispatch_not_permitted"}),
+            )
+            .await?;
             return Ok(DispatchReport {
                 blocked: 1,
                 ..DispatchReport::default()
@@ -585,6 +645,7 @@ impl EffectDispatch {
                 self.transition_dispatching_not_applied(
                     workspace_id,
                     intent,
+                    item.decision.as_ref(),
                     json!({"reason": "dispatch_validation", "error": message}),
                 )
                 .await?;
@@ -594,8 +655,13 @@ impl EffectDispatch {
                 })
             }
             Err(DeviceJobError::ExecutionConflict) => {
-                self.transition_dispatching_not_applied(workspace_id, intent, json!({"reason": "execution_conflict"}))
-                    .await?;
+                self.transition_dispatching_not_applied(
+                    workspace_id,
+                    intent,
+                    item.decision.as_ref(),
+                    json!({"reason": "execution_conflict"}),
+                )
+                .await?;
                 Ok(DispatchReport {
                     not_applied: 1,
                     ..DispatchReport::default()
@@ -618,6 +684,7 @@ impl EffectDispatch {
                         self.transition_dispatching_not_applied(
                             workspace_id,
                             intent,
+                            item.decision.as_ref(),
                             json!({"reason": "dispatch_identity_conflict", "error": message}),
                         )
                         .await?;
@@ -638,6 +705,7 @@ impl EffectDispatch {
                 self.transition_dispatching_not_applied(
                     workspace_id,
                     intent,
+                    item.decision.as_ref(),
                     json!({"reason": "dispatch_storage", "error": error.to_string()}),
                 )
                 .await?;
@@ -742,6 +810,7 @@ impl EffectDispatch {
                             self.transition_dispatching_not_applied(
                                 workspace_id,
                                 &item.intent,
+                                item.decision.as_ref(),
                                 json!({"reason": "dispatch_crash_no_job"}),
                             )
                             .await?;
@@ -1520,6 +1589,40 @@ mod tests {
             assert_eq!(decision.1.as_deref(), answer);
             fixture.workspace.close().await;
         }
+    }
+
+    #[tokio::test]
+    async fn denied_approval_writes_one_parseable_continuation_wake() {
+        let fixture = Fixture::new().await;
+        fixture
+            .seed(
+                "effect-denied",
+                "running",
+                json!({"deviceId":"device-1","argsJson":{"level":7}}),
+            )
+            .await;
+        fixture.seed_decision("effect-denied", "answered", Some("denied")).await;
+        let report = fixture.dispatch.dispatch_workspace(WS).await.expect("dispatch");
+        assert_eq!(report.not_applied, 1);
+        assert_eq!(fixture.effect("effect-denied").await.0, "not_applied");
+        let event_id = "approval:approval-effect-denied:denied";
+        let signal: String = sqlx::query_scalar("SELECT signal_json FROM task_wake_outbox WHERE event_id = ?")
+            .bind(event_id)
+            .fetch_one(&fixture.workspace.workspace_pool().await)
+            .await
+            .expect("denial continuation wake");
+        let signal: Value = serde_json::from_str(&signal).expect("signal JSON");
+        assert_eq!(signal["kind"], "approval_decided");
+        assert_eq!(signal["workspace_id"], WS);
+        assert_eq!(signal["task_id"], "effect-denied");
+        assert_eq!(signal["outcome"], "denied");
+        let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM task_wake_outbox WHERE event_id = ?")
+            .bind(event_id)
+            .fetch_one(&fixture.workspace.workspace_pool().await)
+            .await
+            .expect("wake count");
+        assert_eq!(count, 1);
+        fixture.workspace.close().await;
     }
 
     #[tokio::test]

@@ -41,13 +41,53 @@ impl Default for RedactionPolicy {
     }
 }
 
+/// Split a JSON key into lowercase word tokens on separators and camelCase
+/// boundaries. Token-boundary matching keeps `hotkey`/`monkey`/`keywords`
+/// visible while still redacting a real `key` field.
+fn key_tokens(key: &str) -> Vec<String> {
+    let mut tokens = Vec::new();
+    let mut current = String::new();
+    let mut previous_was_lower_or_digit = false;
+    for ch in key.chars() {
+        if ch.is_alphanumeric() {
+            if ch.is_uppercase() && previous_was_lower_or_digit && !current.is_empty() {
+                tokens.push(std::mem::take(&mut current));
+            }
+            current.push(ch.to_ascii_lowercase());
+            previous_was_lower_or_digit = ch.is_lowercase() || ch.is_ascii_digit();
+        } else {
+            if !current.is_empty() {
+                tokens.push(std::mem::take(&mut current));
+            }
+            previous_was_lower_or_digit = false;
+        }
+    }
+    if !current.is_empty() {
+        tokens.push(current);
+    }
+    tokens
+}
+
 impl RedactionPolicy {
-    /// Whether a JSON object key holds secret material.
+    /// Whether a JSON object key holds secret material. Matching is
+    /// token-boundary-aware: `api_key`/`apiKey`/`key` match, while
+    /// `keywords`/`hotkey`/`monkey` do not.
     pub fn is_sensitive_key(&self, key: &str) -> bool {
         let normalized = key.to_ascii_lowercase();
-        self.sensitive_keys
+        if self
+            .sensitive_keys
             .iter()
-            .any(|sensitive| normalized.contains(&sensitive.to_ascii_lowercase()))
+            .any(|sensitive| normalized == sensitive.to_ascii_lowercase())
+        {
+            return true;
+        }
+        key_tokens(key).into_iter().any(|token| {
+            let singular = token.strip_suffix('s').unwrap_or(&token);
+            self.sensitive_keys.iter().any(|sensitive| {
+                let sensitive = sensitive.to_ascii_lowercase();
+                sensitive == token || sensitive == singular
+            })
+        })
     }
 
     /// Recursively redact object values (including inside arrays) while
@@ -107,15 +147,39 @@ mod tests {
             "credentials": {"password": "s3cret", "user": "operator"},
             "tokens": ["a", "b"],
             "nested": [{"clientSecret": "x"}],
+            "key": "k",
+            "apiKey": "ak",
+            "access_token": "at",
         }));
         let text = redacted.to_string();
-        assert!(!text.contains("s3cret"));
-        assert!(!text.contains("\"a\""));
-        assert!(!text.contains("\"x\""));
+        for leaked in ["s3cret", "\"a\"", "\"x\"", "\"k\"", "\"ak\"", "\"at\""] {
+            assert!(!text.contains(leaked), "leaked {leaked}: {text}");
+        }
         assert_eq!(redacted["level"], 7);
         assert_eq!(redacted["credentials"]["password"], "[REDACTED]");
         assert_eq!(redacted["credentials"]["user"], "[REDACTED]");
         assert_eq!(redacted["tokens"][0], "[REDACTED]");
         assert_eq!(redacted["nested"][0]["clientSecret"], "[REDACTED]");
+        assert_eq!(redacted["key"], "[REDACTED]");
+        assert_eq!(redacted["apiKey"], "[REDACTED]");
+        assert_eq!(redacted["access_token"], "[REDACTED]");
+    }
+
+    #[test]
+    fn benign_keys_containing_key_are_not_redacted() {
+        let policy = RedactionPolicy::default();
+        let redacted = policy.redact(&json!({
+            "keywords": ["level", "speed"],
+            "hotkey": "ctrl+k",
+            "monkey": "banana",
+            "keys": "visible",
+        }));
+        assert_eq!(redacted["keywords"][0], "level");
+        assert_eq!(redacted["hotkey"], "ctrl+k");
+        assert_eq!(redacted["monkey"], "banana");
+        assert_eq!(
+            redacted["keys"], "[REDACTED]",
+            "the plural of a real secret key is still sensitive"
+        );
     }
 }

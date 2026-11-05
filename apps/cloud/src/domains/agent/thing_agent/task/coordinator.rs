@@ -2449,7 +2449,7 @@ pub(crate) mod tests {
                 crate::domains::agent::thing_agent::approval_port::ApprovalPromptFact {
                     approval_id: "approval_9".into(),
                     status: "denied".into(),
-                    detail: "set_speed: confirm".into(),
+                    detail: "set_speed: facts-only-detail".into(),
                 },
             ])
         }
@@ -2496,8 +2496,12 @@ pub(crate) mod tests {
         ));
         wait_for(|| !fixture.provider.prompts.lock().expect("prompts").is_empty()).await;
         let prompt = fixture.provider.prompts.lock().expect("prompts")[0].clone();
+        assert!(prompt.contains("Recorded approvals"), "{prompt}");
+        assert!(
+            prompt.contains("facts-only-detail"),
+            "the facts section must be independently visible: {prompt}"
+        );
         assert!(prompt.contains("approval_9"), "{prompt}");
-        assert!(prompt.contains("denied"), "{prompt}");
     }
 
     #[tokio::test]

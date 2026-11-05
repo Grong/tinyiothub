@@ -40,45 +40,13 @@ async fn decide(
     state.harness_stream.notify(&workspace_id);
     // An approval answer is the fact that can unblock a Prepared Effect. Run
     // the bounded workspace dispatch pass now so the answer is not waiting for
-    // the recovery interval; denial settles the Effect to `not_applied` in the
-    // same pass. The continuation wake is written only after this pass so a
-    // wake router can never start the conversation while the approved Job is
-    // still in flight: an approved+dispatched answer relies on the Job's
-    // terminal wake instead.
-    let dispatched = match &state.effect_dispatch {
-        Some(dispatch) => match dispatch.dispatch_task(&workspace_id, &task_id).await {
-            Ok(report) => report.dispatched > 0,
-            Err(error) => {
-                tracing::warn!(%workspace_id, %task_id, %error, "effect dispatch after approval answer failed");
-                false
-            }
-        },
-        None => false,
-    };
-    let effect_id = outcome.decision.effect_id.clone();
-    let wake_outcome = if answer == "denied" {
-        "denied"
-    } else if dispatched {
-        "approved"
-    } else {
-        "not_applied"
-    };
-    // A deduplicated answer (already answered, or a closed expiry/withdrawal)
-    // must not append a second continuation wake.
-    if !outcome.deduplicated
-        && let Err(error) = state
-            .db
-            .harness_enqueue_approval_wake(
-                &workspace_id,
-                &task_id,
-                &approval_id,
-                effect_id.as_deref(),
-                wake_outcome,
-                Utc::now(),
-            )
-            .await
+    // the recovery interval. The continuation wake is owned by the answer
+    // transaction (denial/expiry) or by the dispatcher/Job terminal wake; the
+    // handler never infers an outcome from this pass's dispatch count.
+    if let Some(dispatch) = &state.effect_dispatch
+        && let Err(error) = dispatch.dispatch_task(&workspace_id, &task_id).await
     {
-        tracing::warn!(%workspace_id, %task_id, %error, "approval continuation wake write failed");
+        tracing::warn!(%workspace_id, %task_id, %error, "effect dispatch after approval answer failed");
     }
     let projection = match state.db.harness_runtime_projection(&workspace_id, &task_id).await {
         Ok(Some(projection)) => projection,
@@ -580,12 +548,16 @@ mod tests {
             );
             assert_eq!(body["result"]["deduplicated"], true);
             let pool = fixture.db.workspace_pool_for_testing(WS).await.expect("workspace pool");
-            let wakes: i64 =
-                sqlx::query_scalar("SELECT COUNT(*) FROM task_wake_outbox WHERE event_id LIKE 'approval:%'")
-                    .fetch_one(&pool)
-                    .await
-                    .expect("wakes");
-            assert_eq!(wakes, 0, "closed approvals must not append a decision wake");
+            // A deduplicated expired answer heals the crash window by
+            // ensuring the one idempotent expiry wake exists; a withdrawn
+            // decision (cancel owns closure) adds none.
+            let wakes: i64 = sqlx::query_scalar(
+                "SELECT COUNT(*) FROM task_wake_outbox WHERE event_id = 'approval:approval-1:expired'",
+            )
+            .fetch_one(&pool)
+            .await
+            .expect("wakes");
+            assert_eq!(wakes, i64::from(!unavailable), "{body}");
             let platform: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM task_approvals")
                 .fetch_one(fixture.db.pool())
                 .await
@@ -624,14 +596,14 @@ mod tests {
             StatusCode::CONFLICT
         );
         let pool = fixture.db.workspace_pool_for_testing(WS).await.expect("workspace pool");
-        // No live dispatcher in this fixture, so an approved answer records
-        // the not-applied outcome; exactly one continuation wake is written.
+        // Approved answers do not write a handler wake; without a live
+        // dispatcher/Job in this fixture there is no continuation wake.
         let wakes: i64 =
             sqlx::query_scalar("SELECT COUNT(*) FROM task_wake_outbox WHERE event_id LIKE 'approval:approval-1:%'")
                 .fetch_one(&pool)
                 .await
                 .expect("wakes");
-        assert_eq!(wakes, 1);
+        assert_eq!(wakes, 0);
         let detail = Request::builder()
             .method("GET")
             .uri(format!("/api/v1/workspaces/{WS}/agent/tasks/task-approval"))

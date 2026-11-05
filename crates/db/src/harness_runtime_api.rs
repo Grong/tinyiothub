@@ -9,7 +9,7 @@
 use chrono::{DateTime, Utc};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
-use sqlx::SqlitePool;
+use sqlx::{SqliteConnection, SqlitePool};
 use tinyiothub_core::agent_task::{AgentTask, TaskStatus};
 use tinyiothub_core::device_job::DeviceJob;
 use tinyiothub_core::harness::{
@@ -354,6 +354,43 @@ async fn effect_by_tool_call(
     .transpose()
 }
 
+/// Idempotent continuation wake for a closed approval. The deterministic
+/// `approval:<id>:<outcome>` event id means the answer transaction, the
+/// periodic dispatcher, and a client retry all converge on one wake.
+async fn insert_approval_continuation_wake(
+    connection: &mut SqliteConnection,
+    workspace_id: &str,
+    decision: &Decision,
+    outcome: &str,
+    now: DateTime<Utc>,
+) -> Result<(), DbError> {
+    let event_id = format!("approval:{}:{outcome}", decision.decision_id);
+    sqlx::query(
+        "INSERT INTO task_wake_outbox
+            (task_id, event_id, signal_json, dispatch_state, created_at, dispatched_at, resolved_at)
+         VALUES (?, ?, ?, 'pending', ?, NULL, NULL)
+         ON CONFLICT(task_id, event_id) DO NOTHING",
+    )
+    .bind(&decision.task_id)
+    .bind(&event_id)
+    .bind(
+        json!({
+            "kind":"approval_decided",
+            "workspace_id":workspace_id,
+            "task_id":decision.task_id,
+            "approval_id":decision.decision_id,
+            "effect_id":decision.effect_id,
+            "decision_event_id":event_id,
+            "outcome":outcome,
+        })
+        .to_string(),
+    )
+    .bind(now)
+    .execute(&mut *connection)
+    .await?;
+    Ok(())
+}
+
 impl crate::Db {
     /// Full Runtime projection backed by the workspace Harness facts. Jobs,
     /// approvals, and runs are read in one transaction with the Task so the
@@ -485,8 +522,11 @@ impl crate::Db {
         task_id: &str,
     ) -> Result<Vec<Decision>, DbError> {
         let pool = self.workspace_pool(workspace_id).await?;
+        // Bounded prompt context: only the most recent approvals matter, and a
+        // long-running Task must not accumulate prompt bloat.
         sqlx::query_as::<_, DecisionRow>(sqlx::AssertSqlSafe(format!(
-            "{DECISION_SELECT} WHERE task_id = ? AND kind = 'tool_approval' ORDER BY created_at, decision_id"
+            "{DECISION_SELECT} WHERE task_id = ? AND kind = 'tool_approval'
+             ORDER BY created_at DESC, decision_id DESC LIMIT 8"
         )))
         .bind(task_id)
         .fetch_all(&pool)
@@ -616,6 +656,11 @@ impl crate::Db {
         match current.state {
             DecisionState::Answered | DecisionState::Consumed => {
                 if current.answer.as_deref() == Some(answer) {
+                    // A retried denial must still heal a crash window that
+                    // lost the handler wake.
+                    if current.answer.as_deref() == Some("denied") {
+                        insert_approval_continuation_wake(&mut tx, workspace_id, &current, "denied", now).await?;
+                    }
                     tx.commit().await?;
                     return Ok(ApprovalAnswer {
                         decision: current,
@@ -626,7 +671,15 @@ impl crate::Db {
                     message: "approval already has a different answer".to_string(),
                 });
             }
-            DecisionState::Expired | DecisionState::Withdrawn => {
+            DecisionState::Expired => {
+                insert_approval_continuation_wake(&mut tx, workspace_id, &current, "expired", now).await?;
+                tx.commit().await?;
+                return Ok(ApprovalAnswer {
+                    decision: current,
+                    deduplicated: true,
+                });
+            }
+            DecisionState::Withdrawn => {
                 tx.commit().await?;
                 return Ok(ApprovalAnswer {
                     decision: current,
@@ -682,6 +735,7 @@ impl crate::Db {
                         .rows_affected();
                         if updated == 1 {
                             crate::harness_effect::insert_event(&mut tx, &event).await?;
+                            insert_approval_continuation_wake(&mut tx, workspace_id, &expired, "expired", now).await?;
                         }
                         tx.commit().await?;
                         if updated == 1 {
@@ -758,10 +812,14 @@ impl crate::Db {
             payload_json: payload,
         };
         crate::harness_effect::insert_event(&mut tx, &event).await?;
-        // The continuation wake is deliberately NOT written here. The HTTP
-        // handler dispatches an approved Effect first, then enqueues the
-        // approval wake with the actual outcome. Otherwise the wake router can
-        // start a continuation while the approved Job is still in flight.
+        // Denials own a continuation immediately and atomically with the
+        // answer: a crash before any HTTP handler wake must not strand the
+        // Task. Approved answers do not write here; their continuation is the
+        // approved Job's terminal wake (or the dispatcher's parseable
+        // not_applied wake if dispatch fails).
+        if answer == "denied" {
+            insert_approval_continuation_wake(&mut tx, workspace_id, &current, "denied", now).await?;
+        }
         tx.commit().await?;
         let decision =
             sqlx::query_as::<_, DecisionRow>(sqlx::AssertSqlSafe(format!("{DECISION_SELECT} WHERE decision_id = ?")))
@@ -773,47 +831,6 @@ impl crate::Db {
             decision,
             deduplicated: false,
         })
-    }
-
-    /// Enqueue the continuation wake for an answered/expired approval. The
-    /// signal is the same shape every approval path uses, so the Task
-    /// coordinator can parse it. `outcome` is `approved`, `denied`,
-    /// `not_applied`, or `expired`.
-    pub async fn harness_enqueue_approval_wake(
-        &self,
-        workspace_id: &str,
-        task_id: &str,
-        approval_id: &str,
-        effect_id: Option<&str>,
-        outcome: &str,
-        now: DateTime<Utc>,
-    ) -> Result<(), DbError> {
-        let pool = self.workspace_pool(workspace_id).await?;
-        let event_id = format!("approval:{approval_id}:{outcome}");
-        sqlx::query(
-            "INSERT INTO task_wake_outbox
-                (task_id, event_id, signal_json, dispatch_state, created_at, dispatched_at, resolved_at)
-             VALUES (?, ?, ?, 'pending', ?, NULL, NULL)
-             ON CONFLICT(task_id, event_id) DO NOTHING",
-        )
-        .bind(task_id)
-        .bind(&event_id)
-        .bind(
-            json!({
-                "kind":"approval_decided",
-                "workspace_id":workspace_id,
-                "task_id":task_id,
-                "approval_id":approval_id,
-                "effect_id":effect_id,
-                "decision_event_id":event_id,
-                "outcome":outcome,
-            })
-            .to_string(),
-        )
-        .bind(now)
-        .execute(&pool)
-        .await?;
-        Ok(())
     }
 
     /// Resolve one Device Job scoped to its Task, plus the Effect intent that

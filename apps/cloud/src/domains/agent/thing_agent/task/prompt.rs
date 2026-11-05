@@ -155,7 +155,7 @@ pub fn build_task_prompt(
     let mut pending_approvals: Vec<&TaskPromptApproval> = approvals.iter().collect();
     pending_approvals.sort_by(|a, b| a.approval_id.cmp(&b.approval_id));
     if !pending_approvals.is_empty() {
-        out.push_str("\n\nPending approvals\n<untrusted_task_context>");
+        out.push_str("\n\nRecorded approvals\n<untrusted_task_context>");
         for approval in pending_approvals {
             let _ = write!(
                 out,
@@ -311,7 +311,7 @@ mod tests {
             "Latest Run result",
             "Pending Jobs",
             "Pending watches",
-            "Pending approvals",
+            "Recorded approvals",
             "工作区实时快照",
             "Wake facts",
         ];

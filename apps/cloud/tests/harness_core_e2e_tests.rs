@@ -952,7 +952,7 @@ async fn approval_expiry_wake_is_dispatched_and_continues_with_the_outcome() {
     let (store, coordinator, router) = task_runtime(&db, prompts.clone());
     assert_eq!(router.run(64).await.expect("route expiry wake"), 1);
     let wake_state: String = sqlx::query_scalar(
-        "SELECT dispatch_state FROM task_wake_outbox WHERE event_id = 'approval-expired:decision-effect-expiry:wake'",
+        "SELECT dispatch_state FROM task_wake_outbox WHERE event_id = 'approval:decision-effect-expiry:expired'",
     )
     .fetch_one(&fixture.workspace_pool().await)
     .await
@@ -981,6 +981,60 @@ async fn approval_expiry_wake_is_dispatched_and_continues_with_the_outcome() {
     assert!(prompt.contains("decision-effect-expiry"), "{prompt}");
     assert!(prompt.contains("expired"), "{prompt}");
     drop(coordinator);
+    fixture.close().await;
+}
+
+#[tokio::test]
+async fn denied_answer_without_a_handler_wake_survives_restart_and_continues() {
+    let fixture = fixture_workspace(WS).await;
+    seed_expiry_task(&fixture, "task-deny", "effect-deny").await;
+    let db = Arc::new(fixture.db.clone());
+    // Commit the answer only (simulating a crash before any HTTP handler
+    // wake). The answer transaction itself must own the continuation wake.
+    db.harness_answer_tool_approval(WS, "task-deny", "decision-effect-deny", "denied", "user-1", at())
+        .await
+        .expect("denied answer");
+    let signal: String = sqlx::query_scalar(
+        "SELECT signal_json FROM task_wake_outbox WHERE event_id = 'approval:decision-effect-deny:denied'",
+    )
+    .fetch_one(&fixture.workspace_pool().await)
+    .await
+    .expect("atomic denial wake");
+    let signal: serde_json::Value = serde_json::from_str(&signal).expect("signal JSON");
+    assert_eq!(signal["kind"], "approval_decided");
+    assert_eq!(signal["workspace_id"], WS);
+    assert_eq!(signal["outcome"], "denied");
+    assert_eq!(signal["approval_id"], "decision-effect-deny");
+
+    // Restart/recover: the wake must dispatch, not dead-letter, and the Task
+    // must continue to completion.
+    let prompts = Arc::new(Mutex::new(Vec::new()));
+    let (store, _, router) = task_runtime(&db, prompts.clone());
+    assert_eq!(router.run(64).await.expect("route denial wake"), 1);
+    let wake_state: String = sqlx::query_scalar(
+        "SELECT dispatch_state FROM task_wake_outbox WHERE event_id = 'approval:decision-effect-deny:denied'",
+    )
+    .fetch_one(&fixture.workspace_pool().await)
+    .await
+    .expect("wake state");
+    assert_eq!(wake_state, "dispatched");
+    let mut status = None;
+    for _ in 0..300 {
+        let task = store
+            .get_task(WS, "task-deny")
+            .await
+            .expect("task read")
+            .expect("task row");
+        status = Some(task.status);
+        if task.status == tinyiothub_core::agent_task::TaskStatus::Completed {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    }
+    assert_eq!(status, Some(tinyiothub_core::agent_task::TaskStatus::Completed));
+    let prompt = prompts.lock().expect("prompts").join("\n");
+    assert!(prompt.contains("decision-effect-deny"), "{prompt}");
+    assert!(prompt.contains("denied"), "{prompt}");
     fixture.close().await;
 }
 

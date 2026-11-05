@@ -975,7 +975,9 @@ async fn expire_decision_row(
         }
     }
 
-    let wake_event_id = format!("approval-expired:{}:wake", decision.decision_id);
+    // Same deterministic id as the answer/dedup continuation wake, so every
+    // expiry path converges on one idempotent outbox row.
+    let wake_event_id = format!("approval:{}:expired", decision.decision_id);
     sqlx::query(
         "INSERT INTO task_wake_outbox
             (task_id, event_id, signal_json, dispatch_state, created_at, dispatched_at, resolved_at)

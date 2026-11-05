@@ -758,6 +758,7 @@ async fn rig_loop_forwards_tool_and_usage_events() {
         calls: Arc::clone(&tool_calls),
     };
     let dir = tempfile::tempdir().expect("tempdir");
+    let tool_call_ids: crate::port::tool::ToolCallIdSlot = Arc::new(Mutex::new(None));
     let cfg = AgentLoopConfig {
         model_name: "script-model".into(),
         prompt_builder: crate::port::prompt::SystemPromptBuilder::with_defaults(),
@@ -769,7 +770,7 @@ async fn rig_loop_forwards_tool_and_usage_events() {
         provider_factory: Arc::new(|| Ok(Box::new(ScriptModel { calls: Mutex::new(0) }))),
         conversation_memory: false,
         available_capabilities: vec![],
-        tool_call_ids: None,
+        tool_call_ids: Some(tool_call_ids.clone()),
     };
     let loop_ = rig_loop_factory(cfg).expect("factory builds loop");
 
@@ -799,6 +800,11 @@ async fn rig_loop_forwards_tool_and_usage_events() {
     });
     let (id, name, args) = tool_call.expect("a ToolCall event");
     assert_eq!(id, "call_1");
+    assert_eq!(
+        tool_call_ids.lock().unwrap().as_deref(),
+        Some("call_1"),
+        "BudgetHook::on_tool_call must fill the provider tool-call id before execution"
+    );
     assert_eq!(name, "recording_tool");
     assert_eq!(*args, serde_json::json!({"x": 1}));
 
