@@ -10,46 +10,16 @@ import type {
   HarnessWorkflowSummary,
 } from '../../types/harness.js';
 import { toHarnessTaskUrl, type HarnessRoute } from './harness-url-state.js';
+import {
+  formatHarnessTime,
+  nextAnnouncement,
+  renderHarnessStatus,
+} from './harness-status.js';
+import './harness-workflow-edit.js';
 import './harness-overview.css';
 
 const attentionPageSize = 5;
 const subagentPageSize = 20;
-
-const statusLabels: Record<string, string> = {
-  active: '进行中',
-  running: '进行中',
-  waiting_job: '等待设备',
-  waiting_watch: '等待观察',
-  needs_approval: '等待审批',
-  paused: '已暂停',
-  cancelling: '取消中',
-  completed: '已完成',
-  failed: '失败',
-  cancelled: '已取消',
-  scheduled: '计划',
-  pending: '等待调度',
-  unknown: '结果未知',
-  cancelled_unknown: '停止结果未知',
-  simulation: '模拟运行',
-};
-
-const statusTones: Record<string, string> = {
-  active: 'accent',
-  running: 'accent',
-  waiting_job: 'accent',
-  waiting_watch: 'accent',
-  needs_approval: 'warn',
-  paused: 'muted',
-  cancelling: 'warn',
-  completed: 'ok',
-  failed: 'danger',
-  cancelled: 'muted',
-  scheduled: 'accent',
-  pending: 'warn',
-  unknown: 'danger',
-  cancelled_unknown: 'danger',
-  simulation: 'muted',
-};
 
 const attentionKindLabels: Record<string, string> = {
   effect_unknown: '结果未知',
@@ -58,20 +28,8 @@ const attentionKindLabels: Record<string, string> = {
   approval: '等待审批',
 };
 
-function statusLabel(status: string): string {
-  return statusLabels[status] ?? '未知状态';
-}
-
-function statusTone(status: string): string {
-  return statusTones[status] ?? 'muted';
-}
-
 function attentionKindLabel(kind: string): string {
   return attentionKindLabels[kind] ?? '需要处理';
-}
-
-function timestamp(value: string | null): string {
-  return value ?? '暂无';
 }
 
 function mainTaskIdFromAnchor(anchor: string | null): string | null {
@@ -122,6 +80,10 @@ export class HarnessOverviewView extends LitElement {
 
   connectedCallback(): void {
     super.connectedCallback();
+    if (this.route?.name === 'workflows') {
+      this.connection = 'online';
+      return;
+    }
     const anchoredOffset = attentionOffsetFromAnchor(this.anchor);
     if (anchoredOffset !== null) this.attentionOffset = anchoredOffset;
     void this.load(this.attentionOffset);
@@ -146,15 +108,30 @@ export class HarnessOverviewView extends LitElement {
   }
 
   willUpdate(changed: PropertyValues<this>): void {
+    if (changed.has('route')) {
+      const previous = changed.get('route');
+      if (previous?.name === 'workflows' && this.route?.name !== 'workflows' && !this.overview) {
+        void this.load(this.attentionOffset);
+      }
+    }
     if (!changed.has('workspaceId')) return;
     const previous = changed.get('workspaceId');
-    if (previous !== undefined && previous !== '' && this.workspaceId !== this.loadedWorkspace) {
+    if (
+      previous !== undefined &&
+      previous !== '' &&
+      this.workspaceId !== this.loadedWorkspace &&
+      this.route?.name !== 'workflows'
+    ) {
       this.attentionOffset = 0;
       void this.load(0);
     }
   }
 
   private async load(offset: number): Promise<void> {
+    if (this.route?.name === 'workflows') {
+      this.connection = 'online';
+      return;
+    }
     if (!this.workspaceId) {
       this.connection = 'offline';
       this.error = '未选择工作空间';
@@ -227,7 +204,10 @@ export class HarnessOverviewView extends LitElement {
 
   private toggleAttention(): void {
     this.attentionCollapsed = !this.attentionCollapsed;
-    this.announcement = this.attentionCollapsed ? '已收起需要处理的事项' : '已展开需要处理的事项';
+    this.announcement = nextAnnouncement(
+      this.announcement,
+      this.attentionCollapsed ? '已收起需要处理的事项' : '已展开需要处理的事项',
+    );
   }
 
   private toggleMain(taskId: string): void {
@@ -235,9 +215,10 @@ export class HarnessOverviewView extends LitElement {
     this.expandedMains = expanded
       ? this.expandedMains.filter((id) => id !== taskId)
       : [...this.expandedMains, taskId];
-    this.announcement = expanded
-      ? `已收起 Main ${taskId} 的 Subagent`
-      : `已展开 Main ${taskId} 的 Subagent`;
+    this.announcement = nextAnnouncement(
+      this.announcement,
+      expanded ? `已收起 Main ${taskId} 的 Subagent` : `已展开 Main ${taskId} 的 Subagent`,
+    );
   }
 
   private async loadMoreChildren(main: HarnessMainTaskSummary): Promise<void> {
@@ -267,7 +248,10 @@ export class HarnessOverviewView extends LitElement {
         ...this.childTotals,
         [main.taskId]: page.total,
       };
-      this.announcement = `已加载 ${page.subagents.length} 个 Subagent`;
+      this.announcement = nextAnnouncement(
+        this.announcement,
+        `已加载 ${page.subagents.length} 个 Subagent`,
+      );
     } catch (error) {
       if (generation !== this.generation || controller.signal.aborted) return;
       this.childErrors = {
@@ -297,7 +281,7 @@ export class HarnessOverviewView extends LitElement {
         </div>
         <p class="harness-attention__detail">${item.detail}</p>
         <div class="harness-attention__meta">
-          <time datetime=${item.occurredAt}>${item.occurredAt}</time>
+          <time datetime=${item.occurredAt}>${formatHarnessTime(item.occurredAt)}</time>
           ${
             href
               ? html`<a class="harness-attention__action" href=${href}
@@ -379,22 +363,27 @@ export class HarnessOverviewView extends LitElement {
     `;
   }
 
-  private renderWorkflow(workflow: HarnessWorkflowSummary) {
+  private renderWorkflowRow(workflow: HarnessWorkflowSummary) {
     return html`
-      <li class="harness-workflow" data-workflow-id=${workflow.workflowId}>
-        <div class="harness-workflow__head">
-          <strong>工作流 ${workflow.objective}</strong>
-          <span class="harness-status harness-status--${workflow.enabled ? 'ok' : 'muted'}"
-            >${workflow.enabled ? '已启用' : '未启用'}</span
+      <tr class="harness-workflow" data-workflow-id=${workflow.workflowId}>
+        <th scope="row">工作流 ${workflow.objective}</th>
+        <td data-label="启停">
+          ${renderHarnessStatus(workflow.enabled ? 'enabled' : 'disabled')}
+        </td>
+        <td data-label="触发">触发：${workflow.triggerLabel}</td>
+        <td data-label="下一次">
+          下一次：${workflow.enabled ? formatHarnessTime(workflow.nextRunAt) : '未计划'}
+        </td>
+        <td data-label="最近结果">最近结果：${workflow.lastResult ?? '暂无'}</td>
+        <td data-label="版本">版本：${workflow.version}</td>
+        <td data-label="操作">
+          <a
+            class="harness-workflow__action"
+            href=${`#/harness/workflows/${encodeURIComponent(workflow.workflowId)}`}
+            >编辑</a
           >
-        </div>
-        <div class="harness-workflow__meta">
-          <span>触发：${workflow.triggerLabel}</span>
-          <span>版本：${workflow.version}</span>
-          <span>下一次：${workflow.enabled ? timestamp(workflow.nextRunAt) : '未计划'}</span>
-        </div>
-        <p class="harness-workflow__result">最近结果：${workflow.lastResult ?? '暂无'}</p>
-      </li>
+        </td>
+      </tr>
     `;
   }
 
@@ -420,9 +409,25 @@ export class HarnessOverviewView extends LitElement {
             ? html`<p class="harness-empty">
                 尚未配置 Workflow。新建后，Harness 会按声明自动调度。
               </p>`
-            : html`<ul class="harness-workflow__list">
-                ${workflows.map((workflow) => this.renderWorkflow(workflow))}
-              </ul>`
+            : html`<div class="harness-workflow__scroll">
+                <table class="harness-workflow-table">
+                  <caption class="harness-sr-only">当前 Workflow 配置与调度状态</caption>
+                  <thead>
+                    <tr>
+                      <th scope="col">目标</th>
+                      <th scope="col">启停</th>
+                      <th scope="col">触发</th>
+                      <th scope="col">下一次</th>
+                      <th scope="col">最近结果</th>
+                      <th scope="col">版本</th>
+                      <th scope="col">操作</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    ${workflows.map((workflow) => this.renderWorkflowRow(workflow))}
+                  </tbody>
+                </table>
+              </div>`
         }
       </section>
     `;
@@ -433,9 +438,7 @@ export class HarnessOverviewView extends LitElement {
       <li class="harness-subagent" data-task-id=${child.taskId}>
         <div class="harness-subagent__head">
           <span class="harness-subagent__id">${child.taskId}</span>
-          <span class="harness-status harness-status--${statusTone(child.status)}"
-            >${statusLabel(child.status)}</span
-          >
+          ${renderHarnessStatus(child.status)}
         </div>
         <div class="harness-subagent__facts">
           <span>等待原因：${child.waitReason ?? '无'}</span>
@@ -499,9 +502,7 @@ export class HarnessOverviewView extends LitElement {
             <span class="harness-main__chevron" aria-hidden="true">${expanded ? '▾' : '▸'}</span>
             <span class="harness-main__objective">${main.objective}</span>
           </button>
-          <span class="harness-status harness-status--${statusTone(main.status)}"
-            >${statusLabel(main.status)}</span
-          >
+          ${renderHarnessStatus(main.status)}
         </div>
         <div class="harness-main__facts">
           <span>等待原因：${main.waitReason ?? '无'}</span>
@@ -555,7 +556,12 @@ export class HarnessOverviewView extends LitElement {
   }
 
   render() {
-    const workflowPlaceholder = this.route?.name === 'workflows';
+    if (this.route?.name === 'workflows') {
+      return html`<view-harness-workflow-edit
+        .workspaceId=${this.workspaceId}
+        .workflowId=${this.route.workflowId ?? ''}
+      ></view-harness-workflow-edit>`;
+    }
     return html`
       <section class="harness-overview" aria-labelledby="harness-overview-title">
         <header class="harness-overview__header">
@@ -567,31 +573,11 @@ export class HarnessOverviewView extends LitElement {
             <button type="button" class="btn harness-overview__retry" @click=${() => this.retry()}>
               刷新
             </button>
-            ${
-              workflowPlaceholder
-                ? html`<button
-                    type="button"
-                    class="btn btn--primary harness-overview__primary"
-                    disabled
-                    aria-describedby="harness-workflow-placeholder"
-                  >
-                    新建工作流（下一步提供）
-                  </button>`
-                : html`<a
-                    class="btn btn--primary harness-overview__primary"
-                    href="#/harness/workflows/new"
-                    >新建工作流</a
-                  >`
-            }
+            <a class="btn btn--primary harness-overview__primary" href="#/harness/workflows/new"
+              >新建工作流</a
+            >
           </div>
         </header>
-        ${
-          workflowPlaceholder
-            ? html`<p id="harness-workflow-placeholder" class="harness-overview__notice">
-                工作流编辑器将在下一步提供；当前可查看已有 Workflow 与调度状态。
-              </p>`
-            : nothing
-        }
         ${this.renderStatus()}
         ${
           this.error

@@ -92,8 +92,15 @@ export interface HarnessWorkflowSummary {
   updatedAt: string | null;
 }
 
-/** Workspace Harness Tasks use `running`; platform Runtime Tasks do not. */
-export type HarnessTaskStatus = TaskStatus | 'running';
+/** Workspace Harness statuses extend the platform Runtime TaskStatus union. */
+export type HarnessTaskStatus =
+  | TaskStatus
+  | 'running'
+  | 'scheduled'
+  | 'pending'
+  | 'unknown'
+  | 'cancelled_unknown'
+  | 'simulation';
 
 /** Isolated child execution summary. It never shares the Main conversation context. */
 export interface HarnessSubagentSummary {
@@ -129,4 +136,43 @@ export interface HarnessSubagentPage {
   total: number;
   limit: number;
   offset: number;
+}
+
+/** Declarative trigger. `cron` carries the expression; watch/event only an id. */
+export type WorkflowTrigger =
+  | { type: 'cron'; triggerId: string; expression: string }
+  | { type: 'watch'; triggerId: string }
+  | { type: 'event'; triggerId: string };
+
+/**
+ * Versioned Workflow declaration. Selectors and policies stay opaque JSON so
+ * the editor can round-trip fields the UI does not interpret yet.
+ */
+export interface WorkflowDefinition {
+  objective: string;
+  trigger: WorkflowTrigger;
+  deviceSelector: unknown;
+  sourceSelector: unknown;
+  toolIds: string[];
+  skillRefs: string[];
+  requiredCapabilities: string[];
+  approvalPolicy: unknown;
+  evidencePolicy: unknown;
+}
+
+export interface WorkflowRevision {
+  workflowId: string;
+  version: number;
+  enabled: boolean;
+  definition: WorkflowDefinition;
+  createdAt: string;
+}
+
+/**
+ * Error shape accepted by the editor's field mapper. `ApiError` satisfies it;
+ * keeping this structural avoids coupling the types module to the API client.
+ */
+export interface HarnessApiError extends Error {
+  code: number;
+  data?: unknown;
 }

@@ -5,10 +5,11 @@ view-harness-overview {
 }
 
 .harness-overview {
-  max-width: 960px;
+  max-width: 1080px;
   margin: 0 auto;
   padding: var(--space-6);
   color: var(--text);
+  overflow-wrap: anywhere;
 }
 
 .harness-overview__header {
@@ -278,37 +279,47 @@ view-harness-overview {
   font-size: 12px;
 }
 
-.harness-status {
-  padding: 2px var(--space-2);
-  border-radius: var(--radius-full);
-  font-size: 12px;
-  line-height: 1.6;
-  white-space: nowrap;
+/* Workflow records use a semantic table; mobile keeps field names via data-label. */
+.harness-workflow-table {
+  width: 100%;
+  max-width: 100%;
+  border-collapse: collapse;
+  table-layout: fixed;
 }
 
-.harness-status--ok {
-  color: var(--ok);
-  background: var(--ok-subtle);
+.harness-workflow-table th,
+.harness-workflow-table td {
+  padding: var(--space-2) var(--space-2);
+  border-bottom: 1px solid var(--border);
+  text-align: left;
+  vertical-align: top;
+  overflow-wrap: anywhere;
 }
 
-.harness-status--warn {
-  color: var(--warn);
-  background: var(--warn-subtle);
-}
-
-.harness-status--danger {
-  color: var(--danger);
-  background: var(--danger-subtle);
-}
-
-.harness-status--accent {
-  color: var(--accent);
-  background: var(--accent-subtle);
-}
-
-.harness-status--muted {
+.harness-workflow-table thead th {
   color: var(--muted-foreground);
-  background: var(--bg-muted);
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.harness-workflow-table tbody th {
+  color: var(--text-strong);
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.harness-workflow-table td {
+  color: var(--muted-foreground);
+  font-size: 13px;
+}
+
+.harness-workflow__action {
+  color: var(--accent);
+  text-decoration: none;
+}
+
+.harness-workflow__action:hover {
+  text-decoration: underline;
 }
 
 .harness-empty {
@@ -335,9 +346,71 @@ view-harness-overview {
   box-shadow: var(--focus-ring);
 }
 
-@media (max-width: 600px) {
+/* Wide screens: Workflow table and coordination sit side by side. */
+@media (min-width: 980px) {
+  .harness-overview__sections {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    align-items: start;
+  }
+
+  .harness-overview__sections .harness-attention {
+    grid-column: 1 / -1;
+  }
+}
+
+/* Phones: each Workflow row becomes a record list with persistent field names. */
+@media (max-width: 599px) {
   .harness-overview {
     padding: var(--space-4);
+  }
+
+  .harness-workflow-table thead {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    margin: -1px;
+    padding: 0;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border: 0;
+  }
+
+  .harness-workflow-table,
+  .harness-workflow-table tbody,
+  .harness-workflow-table tr,
+  .harness-workflow-table th,
+  .harness-workflow-table td {
+    display: block;
+    width: 100%;
+  }
+
+  .harness-workflow-table tr {
+    margin-bottom: var(--space-2);
+    padding: var(--space-3);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    background: var(--bg-elevated);
+  }
+
+  .harness-workflow-table tbody th {
+    padding: 0 0 var(--space-2);
+    border: 0;
+    font-size: 15px;
+  }
+
+  .harness-workflow-table td {
+    display: grid;
+    grid-template-columns: 6.5em minmax(0, 1fr);
+    gap: var(--space-1);
+    padding: var(--space-1) 0;
+    border: 0;
+  }
+
+  .harness-workflow-table td::before {
+    content: attr(data-label);
+    color: var(--muted-foreground);
+    font-size: 12px;
   }
 
   .harness-overview__header {

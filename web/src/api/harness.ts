@@ -6,7 +6,12 @@
  */
 
 import { ApiClient, type ApiResponse } from './client.js';
-import type { HarnessOverview, HarnessSubagentPage } from '../types/harness.js';
+import type {
+  HarnessOverview,
+  HarnessSubagentPage,
+  WorkflowDefinition,
+  WorkflowRevision,
+} from '../types/harness.js';
 
 function harnessPath(workspaceId: string, suffix = ''): string {
   return `/workspaces/${encodeURIComponent(workspaceId)}/harness${suffix}`;
@@ -42,4 +47,55 @@ export function listHarnessSubagents(
     { limit, offset },
     signal,
   );
+}
+
+function workflowPath(workspaceId: string, workflowId?: string, suffix = ''): string {
+  const base = harnessPath(workspaceId, '/workflows');
+  return workflowId ? `${base}/${encodeURIComponent(workflowId)}${suffix}` : base;
+}
+
+/** Current revision of one Workflow. */
+export function getHarnessWorkflow(
+  workspaceId: string,
+  workflowId: string,
+  signal?: AbortSignal,
+): Promise<ApiResponse<WorkflowRevision>> {
+  return ApiClient.get(workflowPath(workspaceId, workflowId), undefined, signal);
+}
+
+/**
+ * Create a new Workflow revision. The payload deliberately carries no enabled
+ * flag: a blank create is persisted disabled and enabling is a separate action.
+ */
+export function createHarnessWorkflow(
+  workspaceId: string,
+  definition: WorkflowDefinition,
+): Promise<ApiResponse<WorkflowRevision>> {
+  return ApiClient.post(workflowPath(workspaceId), definition);
+}
+
+export interface HarnessWorkflowUpdate {
+  /** Optimistic-concurrency token; a mismatch is reported as 409/Conflict. */
+  expectedVersion: number;
+  /** Current value is echoed so editing never changes enablement (R30). */
+  enabled: boolean;
+  definition: WorkflowDefinition;
+}
+
+/** Append a new revision while preserving the current enabled/disabled state. */
+export function updateHarnessWorkflow(
+  workspaceId: string,
+  workflowId: string,
+  update: HarnessWorkflowUpdate,
+): Promise<ApiResponse<WorkflowRevision>> {
+  return ApiClient.put(workflowPath(workspaceId, workflowId), update);
+}
+
+/** Explicit enable/disable action; never called from save. */
+export function setHarnessWorkflowEnabled(
+  workspaceId: string,
+  workflowId: string,
+  enabled: boolean,
+): Promise<ApiResponse<WorkflowRevision>> {
+  return ApiClient.put(workflowPath(workspaceId, workflowId, '/enabled'), { enabled });
 }

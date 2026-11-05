@@ -688,3 +688,45 @@
 .harness-task-return a:hover {
   text-decoration: underline;
 }
+
+/* Canonical Harness status: text + icon; colour is decoration only (DR14=A). */
+.harness-status {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  padding: 2px var(--space-2);
+  border-radius: var(--radius-full);
+  font-size: 12px;
+  line-height: 1.6;
+  white-space: nowrap;
+}
+
+.harness-status__icon {
+  font-size: 0.9em;
+  line-height: 1;
+}
+
+.harness-status--ok {
+  color: var(--ok);
+  background: var(--ok-subtle);
+}
+
+.harness-status--warn {
+  color: var(--warn);
+  background: var(--warn-subtle);
+}
+
+.harness-status--danger {
+  color: var(--danger);
+  background: var(--danger-subtle);
+}
+
+.harness-status--accent {
+  color: var(--accent);
+  background: var(--accent-subtle);
+}
+
+.harness-status--muted {
+  color: var(--muted-foreground);
+  background: var(--bg-muted);
+}

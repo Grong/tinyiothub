@@ -14,7 +14,12 @@ import { parseHarnessHash, type HarnessRoute } from './harness-url-state.js';
 
 vi.mock('../../api/harness.js', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../../api/harness.js')>();
-  return { ...actual, getHarnessOverview: vi.fn(), listHarnessSubagents: vi.fn() };
+  return {
+    ...actual,
+    getHarnessOverview: vi.fn(),
+    listHarnessSubagents: vi.fn(),
+    getHarnessWorkflow: vi.fn().mockResolvedValue({ code: 0, msg: '', result: null }),
+  };
 });
 
 const overviewApi = vi.mocked(getHarnessOverview);
@@ -146,19 +151,26 @@ describe('Harness exception-first overview', () => {
     expect(h1?.textContent).toContain('Harness');
   });
 
-  it('renders an honest workflow placeholder instead of a no-op primary action', async () => {
+  it('routes workflow creation and editing to the shared editor', async () => {
     await mount(overview(), {
       route: { name: 'workflows', workflowId: null, creating: true },
     });
 
-    const primary = view.querySelector<HTMLButtonElement>('.btn--primary')!;
-    expect(primary.tagName).toBe('BUTTON');
-    expect(primary.disabled).toBe(true);
-    expect(primary.textContent).toContain('下一步提供');
-    expect(view.querySelector('#harness-workflow-placeholder')?.textContent).toContain(
-      '工作流编辑器将在下一步提供',
-    );
-    expect(view.querySelector('a[href="#/harness/workflows/new"]')).toBeNull();
+    const editor = view.querySelector('view-harness-workflow-edit') as
+      | (HTMLElement & { workflowId: string })
+      | null;
+    expect(editor).not.toBeNull();
+    expect(editor?.workflowId).toBe('');
+    expect(view.querySelector('.harness-overview')).toBeNull();
+
+    view.remove();
+    await mount(overview(), {
+      route: { name: 'workflows', workflowId: 'wf:1', creating: false },
+    });
+    const existing = view.querySelector('view-harness-workflow-edit') as
+      | (HTMLElement & { workflowId: string })
+      | null;
+    expect(existing?.workflowId).toBe('wf:1');
   });
 
   it('expands and scrolls the anchored Main when returning from a child Task', async () => {
