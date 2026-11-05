@@ -101,12 +101,15 @@ impl RedactionPolicy {
             return true;
         }
         // Whole-key compound: only multi-character secret words participate so
-        // `monkey`/`hotkey`/`keywords` never match through the bare `key`.
+        // `monkey`/`hotkey`/`keywords` never match through the bare `key`. The
+        // word may appear anywhere in the key, not only as a suffix, so
+        // `secretkey`, `passwordhash`, `tokenvalue`, and `accesskeyid` are
+        // covered without matching the benign `key` words.
         let without_digits = trim_trailing_digits(&normalized);
         if !without_digits.is_empty()
             && compact
                 .iter()
-                .any(|sensitive| sensitive.len() >= 4 && without_digits.ends_with(sensitive.as_str()))
+                .any(|sensitive| sensitive.len() >= 4 && without_digits.contains(sensitive.as_str()))
         {
             return true;
         }
@@ -218,6 +221,12 @@ mod tests {
             "PRIVATEKEY",
             "apiKey1",
             "keys",
+            // Prefix/compound secret words must match anywhere in the key, not
+            // only as a suffix.
+            "secretkey",
+            "passwordhash",
+            "tokenvalue",
+            "accesskeyid",
         ] {
             assert!(policy.is_sensitive_key(key), "{key} must be redacted");
         }
