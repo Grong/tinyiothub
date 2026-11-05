@@ -71,11 +71,15 @@ async fn judgment_eval_verdict_accuracy() {
     let provider: Box<dyn ModelProvider> =
         tinyiothub_agent::provider::minimax_provider_factory()().expect("provider build");
 
-    let scenarios: Vec<Scenario> = serde_json::from_str(
+    let document: serde_json::Value = serde_json::from_str(
         &std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/../../evals/scenarios.json"))
             .expect("scenarios.json"),
     )
     .expect("parse scenarios");
+    // `scenarios.json` also carries the same-source Harness eval scenarios; the
+    // judgment suite only consumes its own labeled slice.
+    let scenarios: Vec<Scenario> =
+        serde_json::from_value(document["judgment"].clone()).expect("parse judgment scenarios");
 
     let mut correct = 0usize;
     let mut noise_misses = 0usize; // needs_human 误判 noise —— 0 容忍
