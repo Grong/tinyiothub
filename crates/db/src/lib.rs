@@ -53,6 +53,7 @@ pub mod event;
 pub mod harness_command;
 pub mod harness_effect;
 pub mod harness_event;
+pub mod harness_runtime_api;
 pub mod harness_simulation;
 pub mod harness_snapshot;
 pub mod harness_supervisor;

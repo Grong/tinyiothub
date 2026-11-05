@@ -5,6 +5,7 @@ use axum::{
     body::Body,
     http::{Request, StatusCode},
 };
+use chrono::Utc;
 use serde_json::{Value, json};
 use tinyiothub_core::agent_task::TaskStatus;
 use tinyiothub_storage::Db;
@@ -37,9 +38,10 @@ async fn runtime_test_app() -> RuntimeFixture {
     .execute(&pool)
     .await
     .expect("grant admin");
+    let db = app_state.db.clone();
+    db.create_workspace_store(WS).await.expect("workspace store");
     let api_router = crate::api::create_router(&app_state);
     let app = Router::new().nest("/api", api_router).with_state(app_state);
-    let db = Arc::new(Db::new(pool));
     RuntimeFixture {
         app,
         db,
@@ -74,16 +76,31 @@ async fn get_json(app: &Router, token: &str, uri: &str) -> Value {
     body
 }
 
-async fn count_rows(pool: &sqlx::SqlitePool, table: &str) -> i64 {
+async fn count_rows(db: &Db, table: &str) -> i64 {
+    let pool = db.workspace_pool_for_testing(WS).await.expect("workspace pool");
     let query = match table {
-        "agent_tasks" => "SELECT COUNT(*) FROM agent_tasks",
+        "agent_tasks" => "SELECT COUNT(*) FROM agent_tasks WHERE execution_mode = 'production'",
         "task_wake_outbox" => "SELECT COUNT(*) FROM task_wake_outbox",
         "device_jobs" => "SELECT COUNT(*) FROM device_jobs",
-        "watch_rules" => "SELECT COUNT(*) FROM watch_rules",
-        "task_approvals" => "SELECT COUNT(*) FROM task_approvals",
+        "decisions" => "SELECT COUNT(*) FROM decisions",
         _ => panic!("unsupported test table"),
     };
-    sqlx::query_scalar(query).fetch_one(pool).await.expect("row count")
+    sqlx::query_scalar(query).fetch_one(&pool).await.expect("row count")
+}
+
+async fn session_events(db: &Db, task_id: &str) -> Vec<(String, String, Value)> {
+    let pool = db.workspace_pool_for_testing(WS).await.expect("workspace pool");
+    sqlx::query_as::<_, (String, String, String)>(
+        "SELECT event_id, type, payload_json FROM session_events
+         WHERE task_id = ? AND execution_mode = 'production' ORDER BY seq",
+    )
+    .bind(task_id)
+    .fetch_all(&pool)
+    .await
+    .expect("session events")
+    .into_iter()
+    .map(|(id, event_type, payload)| (id, event_type, serde_json::from_str(&payload).expect("payload")))
+    .collect()
 }
 
 async fn create_persistent(fixture: &RuntimeFixture, text: &str, key: &str) -> Value {
@@ -92,10 +109,29 @@ async fn create_persistent(fixture: &RuntimeFixture, text: &str, key: &str) -> V
     body
 }
 
+async fn seed_running_job(db: &Db, task_id: &str, job_id: &str) {
+    let pool = db.workspace_pool_for_testing(WS).await.expect("workspace pool");
+    sqlx::query(
+        "INSERT INTO device_jobs
+            (id, workspace_id, device_id, tool, args_json, state, stop_requested_at, progress_json,
+             result_json, task_id, run_id, tool_call_id, driver_call_id, timeout_ms, started_at, ended_at)
+         VALUES (?, ?, 'device-1', 'inspect', '{}', 'running', NULL, NULL, NULL, ?, NULL, NULL,
+                 NULL, 5000, ?, NULL)",
+    )
+    .bind(job_id)
+    .bind(WS)
+    .bind(task_id)
+    .bind(Utc::now())
+    .execute(&pool)
+    .await
+    .expect("job");
+}
+
 #[test]
 fn db_task_store_implements_task_store_port() {
     fn assert_task_store<T: tinyiothub_agent::port::task::TaskStore>() {}
     assert_task_store::<crate::domains::agent::runtime::DbTaskStore>();
+    assert_task_store::<crate::domains::agent::runtime::harness_store::HarnessTaskStore>();
 }
 
 #[tokio::test]
@@ -104,7 +140,7 @@ async fn persistent_create_requires_idempotency_key() {
     let (status, body) = post_task(&fixture.app, &fixture.token, "inspect pump", None).await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
     assert_eq!(body["code"], 400);
-    assert_eq!(count_rows(fixture.db.pool(), "agent_tasks").await, 0);
+    assert_eq!(count_rows(&fixture.db, "agent_tasks").await, 0);
 }
 
 #[tokio::test]
@@ -115,7 +151,7 @@ async fn persistent_create_rejects_blank_key_and_objective_without_writes() {
         assert_eq!(status, StatusCode::BAD_REQUEST, "text={text:?}, key={key:?}: {body}");
         assert_eq!(body["code"], 400, "text={text:?}, key={key:?}: {body}");
     }
-    assert_eq!(count_rows(fixture.db.pool(), "agent_tasks").await, 0);
+    assert_eq!(count_rows(&fixture.db, "agent_tasks").await, 0);
 }
 
 #[tokio::test]
@@ -127,32 +163,33 @@ async fn persistent_create_replays_task_and_wake_without_provider_call() {
     assert_eq!(second["result"]["deduplicated"], true);
     assert_eq!(first["result"]["taskId"], second["result"]["taskId"]);
     assert_eq!(second["result"]["status"], "accepted");
-    assert_eq!(count_rows(fixture.db.pool(), "agent_tasks").await, 1);
-    assert_eq!(count_rows(fixture.db.pool(), "task_wake_outbox").await, 1);
+    assert_eq!(count_rows(&fixture.db, "agent_tasks").await, 1);
+    assert_eq!(count_rows(&fixture.db, "task_wake_outbox").await, 1);
 
     let task_id = first["result"]["taskId"].as_str().expect("task id");
-    let stored = fixture.db.get_task(WS, task_id).await.expect("get task").expect("task");
+    let stored = fixture
+        .db
+        .harness_get_task(WS, task_id)
+        .await
+        .expect("get task")
+        .expect("task");
     assert_eq!(stored.objective, "inspect both pumps");
     assert_eq!(stored.created_by, "user-1");
     assert_eq!(stored.status, TaskStatus::Active);
 }
 
 #[tokio::test]
-async fn persistent_create_records_one_stable_task_runtime_event() {
+async fn persistent_create_records_one_stable_harness_event() {
     let fixture = runtime_test_app().await;
     let first = create_persistent(&fixture, "inspect", "event-key").await;
     let second = create_persistent(&fixture, "inspect", "event-key").await;
     assert_eq!(second["result"]["deduplicated"], true);
     let task_id = first["result"]["taskId"].as_str().expect("task id");
-    let events = fixture
-        .db
-        .runtime_events_after(WS, None, Some(task_id), 10)
-        .await
-        .expect("runtime events");
+    let events = session_events(&fixture.db, task_id).await;
     assert_eq!(events.len(), 1, "create replay must not append a duplicate event");
-    assert_eq!(events[0].event_id, format!("task:{task_id}:created"));
-    assert_eq!(events[0].event_type, "task.created");
-    assert_eq!(events[0].data["stateVersion"], 0);
+    assert_eq!(events[0].0, format!("task:{task_id}:created"));
+    assert_eq!(events[0].1, "task.created");
+    assert_eq!(events[0].2["stateVersion"], 0);
 }
 
 #[tokio::test]
@@ -160,25 +197,17 @@ async fn task_store_records_versioned_transition_events() {
     let fixture = runtime_test_app().await;
     let created = create_persistent(&fixture, "inspect", "transition-event").await;
     let task_id = created["result"]["taskId"].as_str().expect("task id");
-    let recorder = crate::domains::agent::runtime::stream::RuntimeRecorder::new(
-        fixture.db.clone(),
-        Arc::new(crate::domains::agent::runtime::stream::RuntimeStreamHub::default()),
-    );
-    let store = crate::domains::agent::runtime::DbTaskStore::new(fixture.db.clone()).with_recorder(recorder);
+    let store = crate::domains::agent::runtime::harness_store::HarnessTaskStore::new(fixture.db.clone());
     let paused =
         tinyiothub_agent::port::task::TaskStore::transition_task(&store, WS, task_id, 0, TaskStatus::Paused, None)
             .await
             .expect("pause");
     assert_eq!(paused.state_version, 1);
-    let events = fixture
-        .db
-        .runtime_events_after(WS, None, Some(task_id), 10)
-        .await
-        .expect("runtime events");
+    let events = session_events(&fixture.db, task_id).await;
     assert_eq!(events.len(), 2);
-    assert_eq!(events[1].event_id, format!("task:{task_id}:v1:paused"));
-    assert_eq!(events[1].event_type, "task.paused");
-    assert_eq!(events[1].data["stateVersion"], 1);
+    assert_eq!(events[1].0, format!("task:{task_id}:v1:paused"));
+    assert_eq!(events[1].1, "task.paused");
+    assert_eq!(events[1].2["stateVersion"], 1);
 }
 
 #[tokio::test]
@@ -186,25 +215,16 @@ async fn task_store_records_current_run_binding() {
     let fixture = runtime_test_app().await;
     let created = create_persistent(&fixture, "inspect", "bind-event").await;
     let task_id = created["result"]["taskId"].as_str().expect("task id");
-    let recorder = crate::domains::agent::runtime::stream::RuntimeRecorder::new(
-        fixture.db.clone(),
-        Arc::new(crate::domains::agent::runtime::stream::RuntimeStreamHub::default()),
-    );
-    let store = crate::domains::agent::runtime::DbTaskStore::new(fixture.db.clone()).with_recorder(recorder);
+    let store = crate::domains::agent::runtime::harness_store::HarnessTaskStore::new(fixture.db.clone());
     let bound = tinyiothub_agent::port::task::TaskStore::bind_current_run(&store, task_id, 0, Some("run-bound"))
         .await
         .expect("bind run");
     assert_eq!(bound.state_version, 1);
-    let events = fixture
-        .db
-        .runtime_events_after(WS, None, Some(task_id), 10)
-        .await
-        .expect("runtime events");
+    let events = session_events(&fixture.db, task_id).await;
     assert_eq!(events.len(), 2);
-    assert_eq!(events[1].event_id, format!("task:{task_id}:v1:run_bound"));
-    assert_eq!(events[1].event_type, "task.run_bound");
-    assert_eq!(events[1].run_id.as_deref(), Some("run-bound"));
-    assert_eq!(events[1].data["stateVersion"], 1);
+    assert_eq!(events[1].0, format!("task:{task_id}:v1:run_bound"));
+    assert_eq!(events[1].1, "task.run_bound");
+    assert_eq!(events[1].2["stateVersion"], 1);
 }
 
 #[tokio::test]
@@ -212,17 +232,19 @@ async fn task_store_records_run_start_and_finish_events() {
     let fixture = runtime_test_app().await;
     let created = create_persistent(&fixture, "inspect", "run-event").await;
     let task_id = created["result"]["taskId"].as_str().expect("task id");
-    let task = fixture.db.get_task(WS, task_id).await.expect("task").expect("present");
+    let task = fixture
+        .db
+        .harness_get_task(WS, task_id)
+        .await
+        .expect("task")
+        .expect("present");
+    let pool = fixture.db.workspace_pool_for_testing(WS).await.expect("pool");
     let wake_id = sqlx::query_scalar::<_, String>("SELECT event_id FROM task_wake_outbox WHERE task_id = ?")
         .bind(task_id)
-        .fetch_one(fixture.db.pool())
+        .fetch_one(&pool)
         .await
         .expect("wake id");
-    let recorder = crate::domains::agent::runtime::stream::RuntimeRecorder::new(
-        fixture.db.clone(),
-        Arc::new(crate::domains::agent::runtime::stream::RuntimeStreamHub::default()),
-    );
-    let store = crate::domains::agent::runtime::DbTaskStore::new(fixture.db.clone()).with_recorder(recorder);
+    let store = crate::domains::agent::runtime::harness_store::HarnessTaskStore::new(fixture.db.clone());
     assert!(
         tinyiothub_agent::port::task::TaskStore::begin_run(&store, &task, &wake_id, "run-event-1")
             .await
@@ -252,16 +274,12 @@ async fn task_store_records_run_start_and_finish_events() {
     )
     .await
     .expect("finish run");
-    let events = fixture
-        .db
-        .runtime_events_after(WS, None, Some(task_id), 10)
-        .await
-        .expect("runtime events");
+    let events = session_events(&fixture.db, task_id).await;
     assert_eq!(events.len(), 3);
-    assert_eq!(events[1].event_id, "run:run-event-1:started");
-    assert_eq!(events[1].event_type, "run.started");
-    assert_eq!(events[2].event_id, "run:run-event-1:finished");
-    assert_eq!(events[2].event_type, "run.finished");
+    assert_eq!(events[1].0, "run:run-event-1:started");
+    assert_eq!(events[1].1, "run.started");
+    assert_eq!(events[2].0, "run:run-event-1:finished");
+    assert_eq!(events[2].1, "run.finished");
 }
 
 #[tokio::test]
@@ -271,8 +289,8 @@ async fn persistent_create_same_key_different_objective_returns_409_without_new_
     let (status, body) = post_task(&fixture.app, &fixture.token, "inspect B", Some("key-1")).await;
     assert_eq!(status, StatusCode::CONFLICT);
     assert_eq!(body["code"], 409);
-    assert_eq!(count_rows(fixture.db.pool(), "agent_tasks").await, 1);
-    assert_eq!(count_rows(fixture.db.pool(), "task_wake_outbox").await, 1);
+    assert_eq!(count_rows(&fixture.db, "agent_tasks").await, 1);
+    assert_eq!(count_rows(&fixture.db, "task_wake_outbox").await, 1);
 }
 
 #[tokio::test]
@@ -282,90 +300,59 @@ async fn persistent_create_leaves_existing_task_state_untouched() {
     let task_id = created["result"]["taskId"].as_str().expect("task id");
     fixture
         .db
-        .transition_task(WS, task_id, 0, TaskStatus::WaitingJob, None)
+        .harness_transition_task(WS, task_id, 0, TaskStatus::WaitingJob, None)
         .await
         .expect("move existing task to waiting_job");
     fixture
         .db
-        .bind_current_run(task_id, 1, Some("run-existing"))
+        .harness_bind_current_run(task_id, 1, Some("run-existing"))
         .await
         .expect("bind existing run");
-    let now = chrono::Utc::now();
-    fixture
-        .db
-        .create_job(&tinyiothub_core::device_job::DeviceJob {
-            id: "job-existing".into(),
-            workspace_id: WS.into(),
-            device_id: "device-1".into(),
-            tool: "inspect".into(),
-            args_json: json!({}),
-            state: tinyiothub_core::device_job::DeviceJobState::Running,
-            stop_requested_at: None,
-            progress_json: None,
-            result_json: None,
-            task_id: Some(task_id.into()),
-            run_id: Some("run-existing".into()),
-            tool_call_id: Some("call-existing".into()),
-            driver_call_id: None,
-            timeout_ms: 1_000,
-            started_at: now,
-            ended_at: None,
-        })
-        .await
-        .expect("existing job");
+    seed_running_job(&fixture.db, task_id, "job-existing").await;
+    let pool = fixture.db.workspace_pool_for_testing(WS).await.expect("pool");
     sqlx::query(
-        "INSERT INTO watch_rules (id, workspace_id, kind, condition, persistent, timeout_secs, created_at, owner_task_id)
-         VALUES ('watch-existing', ?, 'property', '{\"v\":1}', 0, 600, ?, ?)",
+        "INSERT INTO decisions
+            (decision_id, kind, state, session_id, run_id, task_id, effect_id, subject_json,
+             options_json, created_at, updated_at, expires_at, answer, answer_actor,
+             answer_event_id, answer_evidence_json, consumed_at, consumed_by)
+         VALUES ('approval-existing', 'tool_approval', 'requested', 'session-1', 'run-existing',
+                 ?, NULL, '{}', '[]', ?, ?, NULL, NULL, NULL, NULL, NULL, NULL, NULL)",
     )
-    .bind(WS)
-    .bind(now.to_rfc3339())
     .bind(task_id)
-    .execute(fixture.db.pool())
-    .await
-    .expect("existing watch");
-    sqlx::query(
-        "INSERT INTO task_approvals
-             (id, workspace_id, task_id, run_id, tool_call_id, device_id, tool, args_json, reason,
-              state, decision, decider_id, requested_at, decided_at, expires_at, decision_event_id, updated_at)
-         VALUES ('approval-existing', ?, ?, 'run-existing', 'call-approval', 'device-1', 'inspect', '{}', 'why',
-                 'pending', NULL, NULL, ?, NULL, ?, 'decision-existing', ?)",
-    )
-    .bind(WS)
-    .bind(task_id)
-    .bind(now)
-    .bind(now + chrono::Duration::minutes(5))
-    .bind(now)
-    .execute(fixture.db.pool())
+    .bind(Utc::now())
+    .bind(Utc::now())
+    .execute(&pool)
     .await
     .expect("existing approval");
 
     let created = create_persistent(&fixture, "created-after", "later-key").await;
     assert_eq!(created["result"]["status"], "accepted");
-    let stored = fixture.db.get_task(WS, task_id).await.expect("get").expect("task");
+    let stored = fixture
+        .db
+        .harness_get_task(WS, task_id)
+        .await
+        .expect("get")
+        .expect("task");
     assert_eq!(stored.status, TaskStatus::WaitingJob);
     assert_eq!(stored.state_version, 2);
     assert_eq!(stored.current_run_id.as_deref(), Some("run-existing"));
-    assert_eq!(count_rows(fixture.db.pool(), "agent_tasks").await, 2);
-    assert_eq!(count_rows(fixture.db.pool(), "task_wake_outbox").await, 2);
-    assert_eq!(count_rows(fixture.db.pool(), "device_jobs").await, 1);
-    assert_eq!(count_rows(fixture.db.pool(), "watch_rules").await, 1);
-    assert_eq!(count_rows(fixture.db.pool(), "task_approvals").await, 1);
-    assert_eq!(
-        fixture
-            .db
-            .get_job(WS, "job-existing")
-            .await
-            .expect("get job")
-            .expect("job")
-            .state,
-        tinyiothub_core::device_job::DeviceJobState::Running
-    );
+    assert_eq!(count_rows(&fixture.db, "agent_tasks").await, 2);
+    assert_eq!(count_rows(&fixture.db, "task_wake_outbox").await, 2);
+    assert_eq!(count_rows(&fixture.db, "device_jobs").await, 1);
+    assert_eq!(count_rows(&fixture.db, "decisions").await, 1);
+    let job = fixture
+        .db
+        .harness_task_job(WS, task_id, "job-existing")
+        .await
+        .expect("get job")
+        .expect("job");
+    assert_eq!(job.job.state, tinyiothub_core::device_job::DeviceJobState::Running);
     let pending: i64 = sqlx::query_scalar(
         "SELECT COUNT(*) FROM task_wake_outbox
          WHERE task_id = ? AND dispatch_state = 'pending' AND resolved_at IS NULL",
     )
     .bind(task_id)
-    .fetch_one(fixture.db.pool())
+    .fetch_one(&pool)
     .await
     .expect("pending wake");
     assert_eq!(pending, 1);
@@ -394,11 +381,11 @@ async fn task_list_and_detail_return_persisted_projections_with_read_access() {
 }
 
 #[tokio::test]
-async fn persistent_task_control_routes_reach_the_runtime() {
+async fn persistent_task_control_routes_reach_the_harness_runtime() {
     let fixture = runtime_test_app().await;
     let created = create_persistent(&fixture, "inspect", "control-key").await;
     let task_id = created["result"]["taskId"].as_str().expect("task id");
-    for action in ["pause", "resume", "cancel"] {
+    for (action, expected) in [("pause", "paused"), ("resume", "active"), ("cancel", "cancelled")] {
         let request = Request::builder()
             .method("POST")
             .uri(format!("/api/v1/workspaces/{WS}/agent/tasks/{task_id}/{action}"))
@@ -406,8 +393,8 @@ async fn persistent_task_control_routes_reach_the_runtime() {
             .body(Body::empty())
             .expect("request");
         let (status, body) = response_parts(fixture.app.clone().oneshot(request).await.expect("response")).await;
-        assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{action}: {body}");
-        assert_eq!(body["code"], 503, "{action}: {body}");
+        assert_eq!(status, StatusCode::OK, "{action}: {body}");
+        assert_eq!(body["result"]["task"]["status"], expected, "{action}: {body}");
     }
 }
 
@@ -416,6 +403,7 @@ async fn runtime_controls_use_http_auth_statuses_and_expose_scoped_job_stop() {
     let fixture = runtime_test_app().await;
     let created = create_persistent(&fixture, "inspect", "control-auth").await;
     let task_id = created["result"]["taskId"].as_str().expect("task id");
+    seed_running_job(&fixture.db, task_id, "job-1").await;
     let reader = create_test_token("user-2", "tenant-1");
     let pause = Request::builder()
         .method("POST")
@@ -434,16 +422,7 @@ async fn runtime_controls_use_http_auth_statuses_and_expose_scoped_job_stop() {
         .body(Body::empty())
         .expect("request");
     let (status, body) = response_parts(fixture.app.clone().oneshot(stop).await.expect("response")).await;
-    assert_ne!(
-        status,
-        StatusCode::NOT_FOUND,
-        "single-Job stop route must exist: {body}"
-    );
-    assert_ne!(
-        status,
-        StatusCode::METHOD_NOT_ALLOWED,
-        "single-Job stop route must exist: {body}"
-    );
+    assert_eq!(status, StatusCode::OK, "scoped job stop: {body}");
 }
 
 #[tokio::test]
@@ -471,8 +450,9 @@ async fn task_detail_uses_the_single_runtime_projection_surface() {
 #[tokio::test]
 async fn persistent_create_storage_failure_returns_503() {
     let fixture = runtime_test_app().await;
+    let pool = fixture.db.workspace_pool_for_testing(WS).await.expect("pool");
     sqlx::query("ALTER TABLE agent_tasks RENAME TO agent_tasks_hidden")
-        .execute(fixture.db.pool())
+        .execute(&pool)
         .await
         .expect("hide task table");
     let (status, body) = post_task(&fixture.app, &fixture.token, "inspect", Some("key-1")).await;

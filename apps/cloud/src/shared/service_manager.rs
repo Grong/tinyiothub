@@ -686,10 +686,9 @@ impl ServiceManager {
             });
             thing_agent_manager
                 .start_task_runtime(crate::domains::agent::thing_agent::manager::TaskRuntimeDeps {
-                    store: Arc::new(
-                        crate::domains::agent::runtime::DbTaskStore::new(app_state.db.clone())
-                            .with_recorder(app_state.runtime_recorder.clone()),
-                    ),
+                    store: Arc::new(crate::domains::agent::runtime::harness_store::HarnessTaskStore::new(
+                        app_state.db.clone(),
+                    )),
                     approvals: Some(Arc::new(
                         crate::domains::agent::runtime::approvals::DbApprovalStore::new(app_state.db.clone())
                             .with_recorder(app_state.runtime_recorder.clone()),
@@ -699,6 +698,7 @@ impl ServiceManager {
                             .with_recorder(app_state.runtime_recorder.clone()),
                     ),
                     jobs: Some(task_jobs),
+                    harness_task_store: true,
                 })
                 .await
                 .map_err(|error| Error::Internal(format!("Task runtime startup failed: {error}")))?;
@@ -1004,7 +1004,14 @@ mod tests {
             dispatched_at: Some(now),
             resolved_at: Some(now),
         };
-        db.create_task_with_wake(&task, &wake).await.expect("seed Task");
+        // The production Task store is the workspace Harness generation. The
+        // legacy JobService still owns the platform `device_jobs` table, whose
+        // `task_id` FK points at the platform `agent_tasks`; keep a minimal
+        // reference row until Task 19C migrates that Job path.
+        db.create_task_with_wake(&task, &wake)
+            .await
+            .expect("seed platform Task reference");
+        db.harness_create_task_with_wake(&task, &wake).await.expect("seed Task");
     }
 
     fn job(job_id: &str, task_id: &str) -> DeviceJob {
@@ -1046,6 +1053,11 @@ mod tests {
             .await
             .expect("seed workspace");
         let mut app_state = crate::test_utils::test_app_state_on_pool(pool).await;
+        app_state
+            .db
+            .create_workspace_store("ws_1")
+            .await
+            .expect("workspace harness store");
         seed_task(&app_state.db, "task_recovery", TaskStatus::Active).await;
         seed_task(&app_state.db, "task_cancel", TaskStatus::WaitingJob).await;
         app_state
@@ -1098,7 +1110,7 @@ mod tests {
         assert_eq!(
             app_state
                 .db
-                .get_task("ws_1", "task_cancel")
+                .harness_get_task("ws_1", "task_cancel")
                 .await
                 .expect("read Task")
                 .expect("Task")
@@ -1127,7 +1139,7 @@ mod tests {
         assert_eq!(
             app_state
                 .db
-                .get_task("ws_1", "task_cancel")
+                .harness_get_task("ws_1", "task_cancel")
                 .await
                 .expect("read Task")
                 .expect("Task")

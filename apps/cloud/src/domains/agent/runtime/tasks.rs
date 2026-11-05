@@ -12,7 +12,7 @@ use tinyiothub_agent::port::task::TaskStore;
 use tinyiothub_core::agent_task::{AgentTask, TaskStatus, TaskStoreError, TaskWake, WakeDispatchState};
 use tinyiothub_web::{api_response::ApiResponse, response::ApiResponseBuilder, security::Claims};
 
-use super::DbTaskStore;
+use super::harness_store::HarnessTaskStore;
 use crate::domains::agent::AgentState;
 use crate::verify_workspace_access;
 
@@ -85,14 +85,17 @@ pub async fn create_persistent(
         dispatched_at: None,
         resolved_at: None,
     };
-    let store = DbTaskStore::new(state.db.clone()).with_recorder(state.runtime_recorder.clone());
+    let store = HarnessTaskStore::new(state.db.clone());
     match store.create_task_with_wake(&task, &wake).await {
-        Ok(outcome) => ApiResponseBuilder::success(json!({
-            "taskId": outcome.task.id,
-            "status": "accepted",
-            "deduplicated": outcome.deduplicated,
-        }))
-        .into_response(),
+        Ok(outcome) => {
+            state.harness_stream.notify(workspace_id);
+            ApiResponseBuilder::success(json!({
+                "taskId": outcome.task.id,
+                "status": "accepted",
+                "deduplicated": outcome.deduplicated,
+            }))
+            .into_response()
+        }
         Err(TaskStoreError::ObjectiveConflict) => {
             error_response(StatusCode::CONFLICT, "Idempotency-Key 已用于不同指令")
         }
@@ -120,7 +123,7 @@ pub async fn list_tasks(
     verify_workspace_access!(state, claims, workspace_id);
     let limit = i64::from(params.limit.unwrap_or(50).clamp(1, 200));
     let offset = i64::from(params.offset.unwrap_or(0));
-    let store = DbTaskStore::new(state.db.clone());
+    let store = HarnessTaskStore::new(state.db.clone());
     match store.list_tasks(&workspace_id, limit, offset).await {
         Ok(tasks) => ApiResponseBuilder::success(json!({
             "tasks": tasks,
@@ -176,7 +179,8 @@ pub async fn list_events(
     }
     // Existence check only: building the full Task projection here made the
     // bounded page cryptically unbounded. A missing Task is still a 404.
-    match state.db.get_task(&workspace_id, &task_id).await {
+    let store = HarnessTaskStore::new(state.db.clone());
+    match store.get_task(&workspace_id, &task_id).await {
         Ok(Some(_)) => {}
         Ok(None) => return error_response(StatusCode::NOT_FOUND, "Task 不存在"),
         Err(error) => {
@@ -187,15 +191,15 @@ pub async fn list_events(
     let limit = i64::from(params.limit.unwrap_or(100).clamp(1, 200));
     match state
         .db
-        .runtime_events_page(&workspace_id, &task_id, params.before, limit)
+        .harness_task_events_before(&workspace_id, &task_id, params.before, limit)
         .await
     {
-        Ok(page) => {
-            let oldest_cursor = page.events.first().map(|event| event.cursor);
+        Ok((events, has_more)) => {
+            let oldest_cursor = events.first().map(|event| event.cursor);
             ApiResponseBuilder::success(json!({
-                "events": page.events,
+                "events": events,
                 "oldestCursor": oldest_cursor,
-                "hasMore": page.has_more,
+                "hasMore": has_more,
             }))
             .into_response()
         }
@@ -215,8 +219,9 @@ mod tests {
     use chrono::Utc;
     use serde_json::{Value, json};
     use tinyiothub_core::agent_task::{AgentTask, TaskStatus, TaskWake, WakeDispatchState};
+    use tinyiothub_core::harness::{ExecutionMode, HarnessEventInput};
     use tinyiothub_storage::Db;
-    use tinyiothub_storage::runtime_event::{RuntimeEventInput, RuntimeProjectionProbe};
+    use tinyiothub_storage::runtime_event::RuntimeProjectionProbe;
     use tower::ServiceExt;
 
     use crate::test_utils::{
@@ -225,7 +230,7 @@ mod tests {
 
     async fn seed_task(db: &Db, workspace_id: &str, task_id: &str) {
         let now = Utc::now();
-        db.create_task_with_wake(
+        db.harness_create_task_with_wake(
             &AgentTask {
                 id: task_id.into(),
                 workspace_id: workspace_id.into(),
@@ -257,39 +262,40 @@ mod tests {
     /// A Task with no persisted runtime events (created outside the recorder
     /// path) exercises the empty-timeline response.
     async fn seed_bare_task(db: &Db, workspace_id: &str, task_id: &str) {
-        let now = Utc::now().to_rfc3339();
+        let now = Utc::now();
+        let pool = db
+            .workspace_pool_for_testing(workspace_id)
+            .await
+            .expect("workspace pool");
         sqlx::query(
             "INSERT INTO agent_tasks
-                 (id, workspace_id, idempotency_key, objective, session_key, created_by,
-                  status, current_run_id, state_version, created_at, updated_at, ended_at)
-             VALUES (?, ?, ?, 'bare', NULL, 'user-1', 'active', NULL, 0, ?, ?, NULL)",
+                 (id, run_id, state, state_version, execution_mode, runtime_idempotency_key,
+                  runtime_objective, runtime_created_by, runtime_created_at, runtime_updated_at)
+             VALUES (?, NULL, 'running', 0, 'production', ?, 'bare', 'user-1', ?, ?)",
         )
         .bind(task_id)
-        .bind(workspace_id)
         .bind(format!("{task_id}-key"))
-        .bind(&now)
-        .bind(&now)
-        .execute(db.pool())
+        .bind(now)
+        .bind(now)
+        .execute(&pool)
         .await
         .expect("bare task");
     }
 
-    fn event(workspace_id: &str, task_id: &str, event_id: &str) -> RuntimeEventInput {
-        RuntimeEventInput {
+    fn event(workspace_id: &str, task_id: &str, event_id: &str) -> HarnessEventInput {
+        HarnessEventInput {
             event_id: event_id.into(),
+            workspace_id: workspace_id.into(),
+            session_id: format!("task:{task_id}"),
+            execution_mode: ExecutionMode::Production,
+            run_id: None,
+            task_id: Some(task_id.into()),
             event_type: "task.updated".into(),
             occurred_at: Utc::now(),
-            workspace_id: workspace_id.into(),
-            task_id: Some(task_id.into()),
-            run_id: None,
-            tool_call_id: None,
-            job_id: None,
-            approval_id: None,
-            device_id: None,
-            source_id: None,
-            source_seq: None,
-            evidence_id: None,
-            data: json!({"stateVersion": 0}),
+            cause_id: None,
+            schema_v: 1,
+            payload_digest: format!("digest-{event_id}"),
+            payload_json: json!({"stateVersion": 0}),
         }
     }
 
@@ -297,7 +303,9 @@ mod tests {
         let (app_state, pool) = setup_test_app_with_pool().await;
         seed_test_workspace(&pool, "tenant-1", "ws-1").await;
         seed_test_workspace(&pool, "tenant-2", "ws-2").await;
-        let db = Db::new(pool);
+        let db = app_state.db.clone();
+        db.create_workspace_store("ws-1").await.expect("ws-1 store");
+        db.create_workspace_store("ws-2").await.expect("ws-2 store");
         seed_task(&db, "ws-1", "task-1").await;
         seed_task(&db, "ws-1", "task-2").await;
         seed_task(&db, "ws-2", "task-other").await;
@@ -306,14 +314,14 @@ mod tests {
             .with_state(app_state);
         (
             app,
-            db,
+            (*db).clone(),
             create_test_token("user-1", "tenant-1"),
             create_test_token("user-2", "tenant-2"),
         )
     }
 
     async fn record(db: &Db, workspace_id: &str, task_id: &str, event_id: &str) {
-        db.append_runtime_event(event(workspace_id, task_id, event_id))
+        db.append_session_event(&event(workspace_id, task_id, event_id))
             .await
             .expect("record event");
     }
@@ -526,10 +534,11 @@ mod tests {
     async fn timeline_existence_check_does_not_build_the_task_projection() {
         let (mut app_state, pool) = setup_test_app_with_pool().await;
         seed_test_workspace(&pool, "tenant-1", "ws-1").await;
-        let db = Db::new(pool.clone());
+        let db = app_state.db.clone();
+        db.create_workspace_store("ws-1").await.expect("ws-1 store");
         seed_task(&db, "ws-1", "task-1").await;
         let probe = Arc::new(RuntimeProjectionProbe::default());
-        app_state.db = Arc::new(Db::new(pool.clone()).with_runtime_projection_probe(probe.clone()));
+        app_state.db = Arc::new((*app_state.db).clone().with_runtime_projection_probe(probe.clone()));
         let app = axum::Router::new()
             .nest("/api", crate::api::create_router(&app_state))
             .with_state(app_state);

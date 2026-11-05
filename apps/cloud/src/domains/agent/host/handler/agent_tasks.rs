@@ -103,7 +103,7 @@ where
         )
         .route(
             "/{id}/agent/tasks/{task_id}/stream",
-            get(crate::domains::agent::runtime::stream::stream_task),
+            get(crate::domains::agent::runtime::harness_stream::stream_task),
         )
         .route(
             "/{id}/agent/tasks/{task_id}/pause",

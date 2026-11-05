@@ -1,0 +1,561 @@
+//! Workspace-Harness-backed Task SSE tail (Task 19B).
+//!
+//! The connection never preloads history. It starts from the Task projection's
+//! workspace high-watermark (or replays a bounded page after a caller cursor),
+//! then tails committed `session_events` by `seq`. Live rows are read after
+//! commit, so a write that happened while the connection was waking up is
+//! still delivered exactly once. Writers call [`HarnessStreamHub::notify`] to
+//! wake tails immediately; a short interval keeps tails correct even when a
+//! writer in another process cannot signal this hub.
+
+use std::collections::{HashSet, VecDeque};
+use std::convert::Infallible;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::{Duration, Instant};
+
+use axum::extract::{Extension, Path, Query, State};
+use axum::response::sse::{Event, KeepAlive, Sse};
+use axum::response::{IntoResponse, Response};
+use dashmap::DashMap;
+use serde::Deserialize;
+use tinyiothub_storage::Db;
+use tinyiothub_storage::runtime_event::RuntimeEvent;
+use tinyiothub_web::security::Claims;
+use tokio::sync::Notify;
+
+use super::stream::RuntimeFrame;
+
+const SEEN_EVENT_LIMIT: usize = 1024;
+const TAIL_PAGE: i64 = 256;
+const TAIL_INTERVAL: Duration = Duration::from_millis(500);
+
+#[derive(Default)]
+struct SeenEvents {
+    order: VecDeque<String>,
+    ids: HashSet<String>,
+}
+
+impl SeenEvents {
+    fn contains(&self, event_id: &str) -> bool {
+        self.ids.contains(event_id)
+    }
+
+    fn insert(&mut self, event_id: String) {
+        if !self.ids.insert(event_id.clone()) {
+            return;
+        }
+        self.order.push_back(event_id);
+        while self.order.len() > SEEN_EVENT_LIMIT {
+            if let Some(expired) = self.order.pop_front() {
+                self.ids.remove(&expired);
+            }
+        }
+    }
+
+    fn clear(&mut self) {
+        self.order.clear();
+        self.ids.clear();
+    }
+
+    #[cfg(test)]
+    fn len(&self) -> usize {
+        self.ids.len()
+    }
+}
+
+#[derive(Debug, Clone, Default, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HarnessStreamMetrics {
+    pub active_connections: u64,
+    pub connections_opened: u64,
+    pub connections_closed: u64,
+    pub resyncs: u64,
+    pub duplicates_dropped: u64,
+    pub first_frames: u64,
+    pub first_frame_ms_total: u64,
+}
+
+#[derive(Default)]
+pub struct HarnessStreamHub {
+    notifications: DashMap<String, Arc<Notify>>,
+    connections: DashMap<String, usize>,
+    connections_opened: AtomicU64,
+    connections_closed: AtomicU64,
+    resyncs: AtomicU64,
+    duplicates_dropped: AtomicU64,
+    first_frames: AtomicU64,
+    first_frame_ms_total: AtomicU64,
+}
+
+impl HarnessStreamHub {
+    fn notifier(&self, workspace_id: &str) -> Arc<Notify> {
+        self.notifications
+            .entry(workspace_id.to_string())
+            .or_insert_with(|| Arc::new(Notify::new()))
+            .clone()
+    }
+
+    /// Wake tails after a committed write. This carries no data; the tail
+    /// re-reads `session_events` so a lost notification can never lose a fact.
+    pub fn notify(&self, workspace_id: &str) {
+        self.notifier(workspace_id).notify_waiters();
+    }
+
+    pub fn publish(&self, event: &RuntimeEvent) {
+        self.notify(&event.workspace_id);
+    }
+
+    pub fn metrics(&self) -> HarnessStreamMetrics {
+        HarnessStreamMetrics {
+            active_connections: self.connections.iter().map(|entry| *entry.value() as u64).sum(),
+            connections_opened: self.connections_opened.load(Ordering::Relaxed),
+            connections_closed: self.connections_closed.load(Ordering::Relaxed),
+            resyncs: self.resyncs.load(Ordering::Relaxed),
+            duplicates_dropped: self.duplicates_dropped.load(Ordering::Relaxed),
+            first_frames: self.first_frames.load(Ordering::Relaxed),
+            first_frame_ms_total: self.first_frame_ms_total.load(Ordering::Relaxed),
+        }
+    }
+
+    pub fn active_connections(&self, workspace_id: &str) -> usize {
+        self.connections.get(workspace_id).map_or(0, |count| *count)
+    }
+
+    pub async fn connect(
+        self: &Arc<Self>,
+        db: Arc<Db>,
+        workspace_id: &str,
+        task_id: &str,
+        after: Option<i64>,
+    ) -> Result<HarnessConnection, String> {
+        let projection = db
+            .harness_runtime_projection(workspace_id, task_id)
+            .await
+            .map_err(|error| error.to_string())?
+            .ok_or_else(|| "task not found".to_string())?;
+        let cursor = projection.cursor;
+        let unknown = match after {
+            Some(after) => !db
+                .harness_cursor_known(workspace_id, after)
+                .await
+                .map_err(|error| error.to_string())?,
+            None => false,
+        };
+        let mut pending = VecDeque::new();
+        if unknown {
+            pending.push_back(RuntimeFrame::Resync {
+                snapshot: Box::new(projection),
+                cursor,
+                high_watermark: cursor,
+                reason: "unknown_cursor".into(),
+            });
+        } else {
+            pending.push_back(RuntimeFrame::Snapshot {
+                snapshot: Box::new(projection),
+                cursor,
+                high_watermark: cursor,
+            });
+        }
+        *self.connections.entry(workspace_id.to_string()).or_insert(0) += 1;
+        self.connections_opened.fetch_add(1, Ordering::Relaxed);
+        tracing::info!(
+            metric = "runtime_sse_connected",
+            %workspace_id,
+            %task_id,
+            active = self.active_connections(workspace_id),
+            "harness runtime stream connected"
+        );
+        Ok(HarnessConnection {
+            db,
+            workspace_id: workspace_id.to_string(),
+            task_id: task_id.to_string(),
+            pending,
+            replay_after: if unknown { None } else { after },
+            replay_page: VecDeque::new(),
+            last_cursor: cursor,
+            high_watermark: cursor,
+            seen: SeenEvents::default(),
+            notify: self.notifier(workspace_id),
+            ticker: tokio::time::interval(TAIL_INTERVAL),
+            hub: self.clone(),
+            connected_at: Instant::now(),
+            first_frame: false,
+            _connected: ConnectionGuard::new(self, workspace_id),
+        })
+    }
+}
+
+struct ConnectionGuard {
+    hub: Arc<HarnessStreamHub>,
+    workspace_id: String,
+}
+
+impl ConnectionGuard {
+    fn new(hub: &Arc<HarnessStreamHub>, workspace_id: &str) -> Self {
+        Self {
+            hub: hub.clone(),
+            workspace_id: workspace_id.to_string(),
+        }
+    }
+}
+
+impl Drop for ConnectionGuard {
+    fn drop(&mut self) {
+        if let Some(mut count) = self.hub.connections.get_mut(&self.workspace_id) {
+            *count = count.saturating_sub(1);
+        }
+        self.hub
+            .connections
+            .remove_if(&self.workspace_id, |_, count| *count == 0);
+        self.hub.connections_closed.fetch_add(1, Ordering::Relaxed);
+        tracing::info!(
+            metric = "runtime_sse_disconnected",
+            workspace_id = %self.workspace_id,
+            "harness runtime stream disconnected"
+        );
+    }
+}
+
+pub struct HarnessConnection {
+    db: Arc<Db>,
+    workspace_id: String,
+    task_id: String,
+    pending: VecDeque<RuntimeFrame>,
+    replay_after: Option<i64>,
+    replay_page: VecDeque<RuntimeEvent>,
+    last_cursor: i64,
+    high_watermark: i64,
+    seen: SeenEvents,
+    notify: Arc<Notify>,
+    ticker: tokio::time::Interval,
+    hub: Arc<HarnessStreamHub>,
+    connected_at: Instant,
+    first_frame: bool,
+    _connected: ConnectionGuard,
+}
+
+impl HarnessConnection {
+    fn record_first_frame(&mut self) {
+        if !self.first_frame {
+            self.first_frame = true;
+            self.hub
+                .record_first_frame(self.connected_at.elapsed().as_millis() as u64);
+        }
+    }
+
+    fn record_event(&mut self, event: RuntimeEvent) -> RuntimeFrame {
+        self.last_cursor = self.last_cursor.max(event.cursor);
+        self.high_watermark = self.high_watermark.max(event.cursor);
+        self.seen.insert(event.event_id.clone());
+        RuntimeFrame::Event {
+            event: Box::new(event),
+            high_watermark: self.high_watermark,
+        }
+    }
+
+    async fn page(&self, after: i64) -> Result<Vec<RuntimeEvent>, String> {
+        self.db
+            .harness_task_events_after(&self.workspace_id, &self.task_id, after, TAIL_PAGE)
+            .await
+            .map_err(|error| error.to_string())
+    }
+
+    async fn projection_mismatch(&self, event: &RuntimeEvent) -> Result<bool, String> {
+        let Some(expected) = event.data.get("stateVersion").and_then(serde_json::Value::as_i64) else {
+            return Ok(false);
+        };
+        let projection = self
+            .db
+            .harness_runtime_projection(&self.workspace_id, &self.task_id)
+            .await
+            .map_err(|error| error.to_string())?
+            .ok_or_else(|| "task projection disappeared".to_string())?;
+        Ok(projection.task.state_version != expected)
+    }
+
+    async fn resync(&mut self, reason: &str) -> Option<RuntimeFrame> {
+        self.hub.resyncs.fetch_add(1, Ordering::Relaxed);
+        tracing::warn!(metric = "runtime_sse_resync", reason, "harness runtime stream resync");
+        let projection = self
+            .db
+            .harness_runtime_projection(&self.workspace_id, &self.task_id)
+            .await
+            .ok()
+            .flatten()?;
+        self.last_cursor = projection.cursor;
+        self.high_watermark = projection.cursor;
+        self.replay_after = None;
+        self.replay_page.clear();
+        self.seen.clear();
+        Some(RuntimeFrame::Resync {
+            cursor: projection.cursor,
+            high_watermark: projection.cursor,
+            snapshot: Box::new(projection),
+            reason: reason.to_string(),
+        })
+    }
+
+    pub async fn next_frame(&mut self) -> Option<RuntimeFrame> {
+        loop {
+            if let Some(frame) = self.pending.pop_front() {
+                self.record_first_frame();
+                return Some(frame);
+            }
+            if let Some(event) = self.replay_page.pop_front() {
+                // Replay starts after the caller cursor, which may be older than
+                // the snapshot high-watermark. Only an id already emitted on
+                // this connection is a duplicate.
+                if self.seen.contains(&event.event_id) {
+                    self.hub.duplicates_dropped.fetch_add(1, Ordering::Relaxed);
+                    continue;
+                }
+                self.record_first_frame();
+                return Some(self.record_event(event));
+            }
+            if let Some(after) = self.replay_after {
+                match self.page(after).await {
+                    Ok(rows) if rows.is_empty() => self.replay_after = None,
+                    Ok(rows) => {
+                        self.replay_after = rows.last().map(|event| event.cursor);
+                        self.replay_page.extend(rows);
+                    }
+                    Err(error) => {
+                        tracing::warn!(
+                            workspace_id = %self.workspace_id,
+                            task_id = %self.task_id,
+                            %error,
+                            "harness stream replay read failed"
+                        );
+                        return None;
+                    }
+                }
+                continue;
+            }
+            // Tail committed facts first, then wait for a writer notification or
+            // the bounded retry interval. This is a post-commit read: no event is
+            // delivered before it is durable.
+            match self.page(self.last_cursor).await {
+                Ok(rows) if rows.is_empty() => {}
+                Ok(rows) => {
+                    self.replay_page.extend(rows);
+                    continue;
+                }
+                Err(error) => {
+                    tracing::warn!(
+                        workspace_id = %self.workspace_id,
+                        task_id = %self.task_id,
+                        %error,
+                        "harness stream tail read failed"
+                    );
+                    return None;
+                }
+            }
+            tokio::select! {
+                _ = self.ticker.tick() => {}
+                _ = self.notify.notified() => {}
+            }
+            // A projection drift can only come from a fact this tail has not
+            // observed yet; re-check before waiting again.
+            if let Ok(rows) = self.page(self.last_cursor).await
+                && let Some(event) = rows.first()
+                && self.projection_mismatch(event).await.ok() == Some(true)
+            {
+                let frame = self.resync("projection_mismatch").await?;
+                self.pending.push_back(frame);
+            }
+        }
+    }
+}
+
+impl HarnessStreamHub {
+    fn record_first_frame(&self, elapsed_ms: u64) {
+        self.first_frames.fetch_add(1, Ordering::Relaxed);
+        self.first_frame_ms_total.fetch_add(elapsed_ms, Ordering::Relaxed);
+        tracing::info!(
+            metric = "runtime_sse_first_frame",
+            elapsed_ms,
+            "harness runtime stream first frame"
+        );
+    }
+}
+
+#[derive(Deserialize)]
+pub struct StreamQuery {
+    pub after: Option<i64>,
+}
+
+pub async fn stream_task(
+    State(state): State<crate::domains::agent::AgentState>,
+    Extension(claims): Extension<Claims>,
+    Path((workspace_id, task_id)): Path<(String, String)>,
+    Query(query): Query<StreamQuery>,
+) -> Response {
+    match state.workspace_access.workspace_tenant_id(&workspace_id).await {
+        Ok(Some(tenant_id)) if tenant_id == claims.tenant_id => {}
+        Ok(Some(_)) => {
+            return super::tasks::error_response(axum::http::StatusCode::FORBIDDEN, "无权访问此工作空间");
+        }
+        Ok(None) => {
+            return super::tasks::error_response(axum::http::StatusCode::NOT_FOUND, "工作空间不存在");
+        }
+        Err(error) => {
+            tracing::error!(%workspace_id, %error, "check harness stream workspace failed");
+            return super::tasks::error_response(axum::http::StatusCode::INTERNAL_SERVER_ERROR, "获取工作空间失败");
+        }
+    }
+    if let Err(response) = super::projection::load(&state, &workspace_id, &task_id).await {
+        return response;
+    }
+    let mut connection = match state
+        .harness_stream
+        .connect(state.db.clone(), &workspace_id, &task_id, query.after)
+        .await
+    {
+        Ok(connection) => connection,
+        Err(error) => {
+            tracing::error!(%workspace_id, %task_id, %error, "open harness stream failed");
+            return super::tasks::error_response(axum::http::StatusCode::SERVICE_UNAVAILABLE, "Task 事件流不可用");
+        }
+    };
+    let stream = async_stream::stream! {
+        while let Some(frame) = connection.next_frame().await {
+            let data = match serde_json::to_string(&frame) {
+                Ok(data) => data,
+                Err(error) => {
+                    tracing::error!(%error, "serialize harness stream frame failed");
+                    break;
+                }
+            };
+            yield Ok::<_, Infallible>(Event::default().event(frame.name()).data(data));
+        }
+    };
+    Sse::new(stream).keep_alive(KeepAlive::default()).into_response()
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+
+    use chrono::Utc;
+    use serde_json::json;
+    use tinyiothub_core::harness::{ExecutionMode, HarnessEventInput};
+    use tinyiothub_storage::test_helpers::fixture_workspace;
+
+    use super::{HarnessStreamHub, SEEN_EVENT_LIMIT, SeenEvents};
+
+    async fn seed_task(db: &tinyiothub_storage::Db, workspace_id: &str, task_id: &str) {
+        let pool = db.workspace_pool_for_testing(workspace_id).await.expect("pool");
+        sqlx::query(
+            "INSERT INTO agent_tasks
+                (id, run_id, state, state_version, execution_mode, runtime_idempotency_key,
+                 runtime_objective, runtime_created_by, runtime_created_at, runtime_updated_at)
+             VALUES (?, NULL, 'running', 0, 'production', ?, 'inspect', 'user-1', ?, ?)",
+        )
+        .bind(task_id)
+        .bind(format!("key-{task_id}"))
+        .bind(Utc::now())
+        .bind(Utc::now())
+        .execute(&pool)
+        .await
+        .expect("task");
+    }
+
+    async fn append(db: &tinyiothub_storage::Db, workspace_id: &str, task_id: &str, id: &str) -> i64 {
+        db.append_session_event(&HarnessEventInput {
+            event_id: id.to_string(),
+            workspace_id: workspace_id.to_string(),
+            session_id: format!("task:{task_id}"),
+            execution_mode: ExecutionMode::Production,
+            run_id: None,
+            task_id: Some(task_id.to_string()),
+            event_type: "task.updated".to_string(),
+            occurred_at: Utc::now(),
+            cause_id: None,
+            schema_v: 1,
+            payload_digest: format!("digest-{id}"),
+            payload_json: json!({"stateVersion": 0}),
+        })
+        .await
+        .expect("append")
+        .seq
+    }
+
+    #[tokio::test]
+    async fn known_cursor_replay_is_bounded_and_unknown_cursor_resyncs() {
+        let fixture = fixture_workspace("ws-harness-stream").await;
+        seed_task(&fixture.db, "ws-harness-stream", "task-1").await;
+        let first = append(&fixture.db, "ws-harness-stream", "task-1", "event-1").await;
+        append(&fixture.db, "ws-harness-stream", "task-1", "event-2").await;
+        let hub = Arc::new(HarnessStreamHub::default());
+        let mut connection = hub
+            .connect(Arc::new(fixture.db.clone()), "ws-harness-stream", "task-1", Some(first))
+            .await
+            .expect("connect");
+        assert!(matches!(
+            connection.next_frame().await,
+            Some(super::RuntimeFrame::Snapshot { .. })
+        ));
+        let Some(super::RuntimeFrame::Event { event, .. }) = connection.next_frame().await else {
+            panic!("expected replay event");
+        };
+        assert_eq!(event.event_id, "event-2");
+
+        let mut connection = hub
+            .connect(Arc::new(fixture.db.clone()), "ws-harness-stream", "task-1", Some(9_999))
+            .await
+            .expect("connect");
+        let Some(super::RuntimeFrame::Resync { reason, .. }) = connection.next_frame().await else {
+            panic!("unknown cursor must resync");
+        };
+        assert_eq!(reason, "unknown_cursor");
+        fixture.close().await;
+    }
+
+    #[tokio::test]
+    async fn live_tail_reads_after_commit_without_preloading_history() {
+        let fixture = fixture_workspace("ws-harness-stream-live").await;
+        seed_task(&fixture.db, "ws-harness-stream-live", "task-1").await;
+        for number in 0..300 {
+            append(
+                &fixture.db,
+                "ws-harness-stream-live",
+                "task-1",
+                &format!("history-{number}"),
+            )
+            .await;
+        }
+        let hub = Arc::new(HarnessStreamHub::default());
+        let mut connection = hub
+            .connect(Arc::new(fixture.db.clone()), "ws-harness-stream-live", "task-1", None)
+            .await
+            .expect("connect");
+        assert!(matches!(
+            connection.next_frame().await,
+            Some(super::RuntimeFrame::Snapshot { .. })
+        ));
+        append(&fixture.db, "ws-harness-stream-live", "task-1", "live-1").await;
+        hub.notify("ws-harness-stream-live");
+        let Some(super::RuntimeFrame::Event { event, .. }) = connection.next_frame().await else {
+            panic!("expected live event");
+        };
+        assert_eq!(event.event_id, "live-1");
+        fixture.close().await;
+    }
+
+    #[test]
+    fn per_connection_dedupe_window_stays_bounded() {
+        let mut seen = SeenEvents::default();
+        for index in 0..SEEN_EVENT_LIMIT + 64 {
+            seen.insert(format!("event-{index}"));
+        }
+        assert_eq!(seen.len(), SEEN_EVENT_LIMIT);
+        assert!(!seen.contains("event-0"));
+    }
+
+    #[test]
+    fn hub_metrics_are_exposed() {
+        let hub = HarnessStreamHub::default();
+        assert_eq!(hub.metrics().active_connections, 0);
+    }
+}

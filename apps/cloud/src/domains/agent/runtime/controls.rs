@@ -1,13 +1,11 @@
 use std::sync::Arc;
 
-use crate::domains::agent::thing_agent::task::coordinator::TaskError;
 use axum::{
     extract::{Extension, Path, State},
     http::StatusCode,
     response::Response,
 };
 use chrono::{DateTime, Utc};
-use tinyiothub_core::agent_task::TaskStoreError;
 use tinyiothub_core::device_job::DeviceJobError;
 use tinyiothub_core::harness::{CommandKind, HarnessCommand};
 use tinyiothub_storage::{Db, DbError};
@@ -19,11 +17,12 @@ use crate::domains::agent::AgentState;
 use crate::domains::agent::host::handler::agent_tasks::check_agent_admin_response;
 use crate::domains::agent::runtime::{projection, tasks::error_response};
 
-fn task_error(error: TaskError) -> Response {
+fn control_error(error: DbError) -> Response {
     match error {
-        TaskError::NotFound => error_response(StatusCode::NOT_FOUND, "Task 不存在"),
-        TaskError::Store(TaskStoreError::ConcurrentUpdate) => error_response(StatusCode::CONFLICT, "Task 已并发更新"),
-        TaskError::Store(TaskStoreError::Validation(message)) => error_response(StatusCode::CONFLICT, message),
+        DbError::NotFound { .. } => error_response(StatusCode::NOT_FOUND, "Task 不存在"),
+        DbError::Conflict { .. } | DbError::CasConflict { .. } | DbError::Validation { .. } => {
+            error_response(StatusCode::CONFLICT, "Task 已并发更新")
+        }
         other => {
             tracing::warn!(%other, "runtime Task control failed");
             error_response(StatusCode::SERVICE_UNAVAILABLE, "Task 服务不可用")
@@ -41,17 +40,18 @@ async fn pause_resume(
     if let Err(response) = check_agent_admin_response(&state, &claims, &workspace_id).await {
         return response;
     }
-    let Some(manager) = state.thing_agents.as_ref() else {
-        return error_response(StatusCode::SERVICE_UNAVAILABLE, "Task 服务不可用");
-    };
+    let controls = WorkflowControls::new(state.db.clone(), &workspace_id);
     let result = if pause {
-        manager.pause_task(&workspace_id, &task_id).await
+        controls.pause(&task_id).await
     } else {
-        manager.resume_task(&workspace_id, &task_id).await
+        controls.resume(&task_id).await.map(|_| ())
     };
     match result {
-        Ok(_) => projection::response(&state, &workspace_id, &task_id).await,
-        Err(error) => task_error(error),
+        Ok(_) => {
+            state.harness_stream.notify(&workspace_id);
+            projection::response(&state, &workspace_id, &task_id).await
+        }
+        Err(error) => control_error(error),
     }
 }
 
@@ -79,12 +79,13 @@ pub async fn cancel(
     if let Err(response) = check_agent_admin_response(&state, &claims, &workspace_id).await {
         return response;
     }
-    let Some(manager) = state.thing_agents.as_ref() else {
-        return error_response(StatusCode::SERVICE_UNAVAILABLE, "Task 服务不可用");
-    };
-    match manager.cancel_task(&workspace_id, &task_id).await {
-        Ok(_) => projection::response(&state, &workspace_id, &task_id).await,
-        Err(error) => task_error(error),
+    let controls = WorkflowControls::new(state.db.clone(), &workspace_id);
+    match controls.cancel(&task_id).await {
+        Ok(_) => {
+            state.harness_stream.notify(&workspace_id);
+            projection::response(&state, &workspace_id, &task_id).await
+        }
+        Err(error) => control_error(error),
     }
 }
 
@@ -96,20 +97,35 @@ pub async fn stop_job(
     if let Err(response) = check_agent_admin_response(&state, &claims, &workspace_id).await {
         return response;
     }
-    let Some(manager) = state.thing_agents.as_ref() else {
-        return error_response(StatusCode::SERVICE_UNAVAILABLE, "Task 服务不可用");
+    let job_effect = match state.db.harness_task_job(&workspace_id, &task_id, &job_id).await {
+        Ok(Some(job_effect)) => job_effect,
+        Ok(None) => return error_response(StatusCode::NOT_FOUND, "Device Job 不存在"),
+        Err(error) => return control_error(error),
     };
-    match manager.stop_task_job(&workspace_id, &task_id, &job_id).await {
-        Ok(_) => projection::response(&state, &workspace_id, &task_id).await,
-        Err(DeviceJobError::NotFound) => error_response(StatusCode::NOT_FOUND, "Device Job 不存在"),
-        Err(DeviceJobError::Conflict(message)) | Err(DeviceJobError::Validation(message)) => {
-            error_response(StatusCode::CONFLICT, message)
-        }
-        Err(error) => {
-            tracing::warn!(%error, "single Device Job stop failed");
-            error_response(StatusCode::SERVICE_UNAVAILABLE, "Device Job 服务不可用")
+    if let Some(effect) = &job_effect.effect {
+        let recovery = super::EffectRecovery::new(state.db.clone());
+        if let Err(error) = recovery.request_cancellation(&workspace_id, &effect.effect_id).await {
+            tracing::warn!(%workspace_id, %job_id, %error, "single Device Job effect stop failed");
+            return error_response(StatusCode::SERVICE_UNAVAILABLE, "Device Job 服务不可用");
         }
     }
+    // The Harness job is authoritative. When the in-process worker manager is
+    // wired, ask it to stop the same Job identity; a manager that no longer
+    // knows this workspace job must not turn a committed Harness stop into 404.
+    if let Some(manager) = state.thing_agents.as_ref() {
+        match manager.stop_task_job(&workspace_id, &task_id, &job_id).await {
+            Ok(_) | Err(DeviceJobError::NotFound) => {}
+            Err(DeviceJobError::Conflict(message)) | Err(DeviceJobError::Validation(message)) => {
+                return error_response(StatusCode::CONFLICT, message);
+            }
+            Err(error) => {
+                tracing::warn!(%error, "single Device Job stop failed");
+                return error_response(StatusCode::SERVICE_UNAVAILABLE, "Device Job 服务不可用");
+            }
+        }
+    }
+    state.harness_stream.notify(&workspace_id);
+    projection::response(&state, &workspace_id, &task_id).await
 }
 
 #[derive(Clone)]

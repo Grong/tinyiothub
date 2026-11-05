@@ -79,7 +79,7 @@ pub enum RuntimeFrame {
 }
 
 impl RuntimeFrame {
-    fn name(&self) -> &'static str {
+    pub(crate) fn name(&self) -> &'static str {
         match self {
             Self::Snapshot { .. } => "snapshot",
             Self::Event { .. } => "event",
@@ -1148,9 +1148,10 @@ mod tests {
         let (app_state, pool) = setup_test_app_with_pool().await;
         seed_test_workspace(&pool, "tenant-1", "ws-1").await;
         seed_admin_role(&pool, "user-1").await;
-        let db = Arc::new(Db::new(pool));
+        let db = app_state.db.clone();
+        db.create_workspace_store("ws-1").await.expect("workspace store");
         let now = Utc::now();
-        db.create_task_with_wake(
+        db.harness_create_task_with_wake(
             &AgentTask {
                 id: "task-1".into(),
                 workspace_id: "ws-1".into(),

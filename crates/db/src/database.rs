@@ -34,9 +34,8 @@ impl Db {
         }
     }
 
-    /// Test-only: point at an isolated workspace root while sharing the
-    /// platform pool. Used to simulate a process restart (fresh store map).
-    #[cfg(any(test, feature = "testing"))]
+    /// Point at an isolated workspace root while sharing the platform pool.
+    /// Embedders and tests use this to keep Harness generations separate.
     pub fn with_workspace_store_root(mut self, root: std::path::PathBuf) -> Self {
         self.workspace_store_root = root;
         self

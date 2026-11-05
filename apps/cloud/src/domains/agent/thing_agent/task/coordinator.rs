@@ -60,6 +60,10 @@ const FINALIZE_STAGE_RETRY_DELAY_MS: u64 = 10;
 pub struct TaskCoordinator {
     store: Arc<dyn TaskStore>,
     approvals: Option<Arc<dyn TaskApprovalStore>>,
+    /// When the Task facts live in the workspace Harness store, cancellation
+    /// moves Task state through the port instead of the legacy platform
+    /// approval transaction, so the two stores cannot disagree.
+    harness_task_store: bool,
     jobs: Option<JobService>,
     watches: Arc<dyn WatchRuleStore>,
     watch_cmds: Arc<DashMap<String, tokio::sync::mpsc::Sender<WatchCommand>>>,
@@ -89,6 +93,7 @@ impl TaskCoordinator {
         Self {
             store,
             approvals: None,
+            harness_task_store: false,
             jobs,
             watches,
             watch_cmds,
@@ -103,6 +108,11 @@ impl TaskCoordinator {
 
     pub fn with_approvals(mut self, approvals: Arc<dyn TaskApprovalStore>) -> Self {
         self.approvals = Some(approvals);
+        self
+    }
+
+    pub fn with_harness_task_store(mut self) -> Self {
+        self.harness_task_store = true;
         self
     }
 
@@ -199,7 +209,9 @@ impl TaskCoordinator {
         }
         validate_transition(task.status, TaskStatus::Cancelling)
             .map_err(|error| TaskStoreError::Validation(error.to_string()))?;
-        let task = if let Some(approvals) = &self.approvals {
+        let task = if !self.harness_task_store
+            && let Some(approvals) = &self.approvals
+        {
             approvals
                 .cancel(workspace_id, task_id, task.state_version, chrono::Utc::now())
                 .await
@@ -212,7 +224,7 @@ impl TaskCoordinator {
         if let Some(run_id) = task.current_run_id.as_deref() {
             self.active_runs.cancel(run_id);
         }
-        if self.approvals.is_none() {
+        if self.harness_task_store || self.approvals.is_none() {
             self.store.resolve_task_wakes(task_id).await?;
         }
         // Only now are the `Cancelling` transition and wake resolution both

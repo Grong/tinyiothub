@@ -104,6 +104,8 @@ pub struct AppState {
 
     /// Durable Task runtime stream hub.
     pub runtime_stream: Arc<crate::domains::agent::runtime::stream::RuntimeStreamHub>,
+    /// Workspace-Harness Task SSE tail (Task 19B cutover).
+    pub harness_stream: Arc<crate::domains::agent::runtime::harness_stream::HarnessStreamHub>,
     /// Shared runtime event recorder for Task/Run/Job/watch facts.
     pub runtime_recorder: crate::domains::agent::runtime::stream::RuntimeRecorder,
 
@@ -291,6 +293,7 @@ impl AppState {
         // 创建事件总线
         let event_bus = Arc::new(EventBus::new());
         let runtime_stream = Arc::new(crate::domains::agent::runtime::stream::RuntimeStreamHub::default());
+        let harness_stream = Arc::new(crate::domains::agent::runtime::harness_stream::HarnessStreamHub::default());
         let runtime_recorder =
             crate::domains::agent::runtime::stream::RuntimeRecorder::new(database.clone(), runtime_stream.clone());
 
@@ -554,6 +557,7 @@ impl AppState {
             redis,
             event_bus,
             runtime_stream,
+            harness_stream,
             runtime_recorder,
             sse_manager,
             sse_token_manager,
@@ -1089,6 +1093,7 @@ impl axum::extract::FromRef<AppState> for crate::domains::agent::AgentState {
             data_server: state.data_server.clone(),
             event_bus: state.event_bus.clone(),
             runtime_stream: state.runtime_stream.clone(),
+            harness_stream: state.harness_stream.clone(),
             runtime_recorder: state.runtime_recorder.clone(),
         }
     }

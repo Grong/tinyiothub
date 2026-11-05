@@ -81,6 +81,8 @@ pub struct AgentState {
     pub event_bus: Arc<tinyiothub_runtime::event_bus::EventBus>,
     /// Ledger-backed Task runtime deltas for cursor SSE.
     pub runtime_stream: Arc<runtime::stream::RuntimeStreamHub>,
+    /// Workspace-Harness Task SSE tail (Task 19B cutover).
+    pub harness_stream: Arc<runtime::harness_stream::HarnessStreamHub>,
     /// Shared durable recorder used by the existing runtime stores.
     pub runtime_recorder: runtime::stream::RuntimeRecorder,
 }

@@ -89,6 +89,10 @@ pub struct TaskRuntimeDeps {
     pub approvals: Option<Arc<dyn crate::domains::agent::thing_agent::approval_port::TaskApprovalStore>>,
     pub watches: Arc<dyn tinyiothub_runtime::ports::WatchRuleStore>,
     pub jobs: Option<tinyiothub_runtime::job::service::JobService>,
+    /// True when `store` is the workspace Harness adapter. Cancellation then
+    /// moves Task state through the port instead of the legacy platform
+    /// approval transaction.
+    pub harness_task_store: bool,
 }
 
 /// Tunables for [`ThingAgentManager`].
@@ -294,6 +298,9 @@ impl ThingAgentManager {
         );
         if let Some(approvals) = &deps.approvals {
             coordinator = coordinator.with_approvals(approvals.clone());
+        }
+        if deps.harness_task_store {
+            coordinator = coordinator.with_harness_task_store();
         }
         let coordinator = Arc::new(coordinator);
         coordinator.recover().await?;
@@ -2572,6 +2579,7 @@ pub(crate) mod tests {
                 approvals: None,
                 watches: Arc::new(StubWatchRuleStore { rules: vec![] }),
                 jobs: None,
+                harness_task_store: false,
             })
             .await
             .expect("start production task runtime");
@@ -2599,6 +2607,7 @@ pub(crate) mod tests {
                 approvals: None,
                 watches: Arc::new(StubWatchRuleStore { rules: vec![] }),
                 jobs: None,
+                harness_task_store: false,
             })
             .await
             .expect("start task runtime");
@@ -2959,6 +2968,7 @@ pub(crate) mod tests {
                 approvals: None,
                 watches,
                 jobs: None,
+                harness_task_store: false,
             })
             .await
             .expect("task runtime");

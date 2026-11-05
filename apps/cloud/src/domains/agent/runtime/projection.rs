@@ -8,7 +8,7 @@ pub async fn load(
     workspace_id: &str,
     task_id: &str,
 ) -> Result<TaskProjection, axum::response::Response> {
-    match state.db.runtime_projection(workspace_id, task_id).await {
+    match state.db.harness_runtime_projection(workspace_id, task_id).await {
         Ok(Some(projection)) => Ok(projection),
         Ok(None) => Err(error_response(axum::http::StatusCode::NOT_FOUND, "Task 不存在")),
         Err(error) => {

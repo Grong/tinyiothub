@@ -13,9 +13,12 @@ use tinyiothub_storage::Db;
 use tinyiothub_storage::harness_effect::EffectRecoveryItem;
 
 pub mod admin;
+#[cfg(test)]
+mod api_cutover_tests;
 pub mod approvals;
 pub mod controls;
 pub mod harness_store;
+pub mod harness_stream;
 pub mod projection;
 pub mod stream;
 pub mod tasks;

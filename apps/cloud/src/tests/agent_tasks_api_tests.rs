@@ -49,22 +49,26 @@ async fn grant_admin(pool: &sqlx::SqlitePool, user_id: &str) {
 }
 
 /// 构造注入 stub sink 的完整路由（生产同款路由树）。
-async fn app_with_sink(sink: Arc<StubDirectiveSink>) -> (Router, sqlx::SqlitePool) {
+async fn app_with_sink(sink: Arc<StubDirectiveSink>) -> (Router, sqlx::SqlitePool, Arc<tinyiothub_storage::Db>) {
     let (mut app_state, pool) = setup_test_app_with_pool().await;
     app_state.set_directive_sink(sink);
     seed_test_workspace(&pool, "tenant-1", WS).await;
     grant_admin(&pool, "user-1").await;
+    let db = app_state.db.clone();
+    db.create_workspace_store(WS).await.expect("workspace store");
     let api_router = crate::api::create_router(&app_state);
-    (Router::new().nest("/api", api_router).with_state(app_state), pool)
+    (Router::new().nest("/api", api_router).with_state(app_state), pool, db)
 }
 
 /// 无 sink（生产未接线状态）的路由。
-async fn app_without_sink() -> (Router, sqlx::SqlitePool) {
+async fn app_without_sink() -> (Router, sqlx::SqlitePool, Arc<tinyiothub_storage::Db>) {
     let (app_state, pool) = setup_test_app_with_pool().await;
     seed_test_workspace(&pool, "tenant-1", WS).await;
     grant_admin(&pool, "user-1").await;
+    let db = app_state.db.clone();
+    db.create_workspace_store(WS).await.expect("workspace store");
     let api_router = crate::api::create_router(&app_state);
-    (Router::new().nest("/api", api_router).with_state(app_state), pool)
+    (Router::new().nest("/api", api_router).with_state(app_state), pool, db)
 }
 
 fn create_task_request(token: &str, body: Value, key: Option<&str>) -> Request<Body> {
@@ -97,7 +101,7 @@ async fn insert_run(pool: &sqlx::SqlitePool, id: &str, workspace_id: &str, summa
 #[tokio::test]
 async fn create_task_creates_persistent_task_without_directive() {
     let stub = Arc::new(StubDirectiveSink::default());
-    let (app, pool) = app_with_sink(stub.clone()).await;
+    let (app, _pool, db) = app_with_sink(stub.clone()).await;
     let token = create_test_token("user-1", "tenant-1");
 
     let (status, json) = response_parts(
@@ -119,9 +123,10 @@ async fn create_task_creates_persistent_task_without_directive() {
         "persistent create must not dispatch a UserDirective"
     );
 
-    let objective: String = sqlx::query_scalar("SELECT objective FROM agent_tasks WHERE id = ?")
+    let workspace_pool = db.workspace_pool_for_testing(WS).await.expect("workspace pool");
+    let objective: String = sqlx::query_scalar("SELECT runtime_objective FROM agent_tasks WHERE id = ?")
         .bind(task_id)
-        .fetch_one(&pool)
+        .fetch_one(&workspace_pool)
         .await
         .expect("persisted task");
     assert_eq!(
@@ -132,7 +137,7 @@ async fn create_task_creates_persistent_task_without_directive() {
 
 #[tokio::test]
 async fn create_task_requires_idempotency_key() {
-    let (app, pool) = app_with_sink(Arc::new(StubDirectiveSink::default())).await;
+    let (app, pool, _db) = app_with_sink(Arc::new(StubDirectiveSink::default())).await;
     let token = create_test_token("user-1", "tenant-1");
 
     let (_status, json) = response_parts(
@@ -151,7 +156,7 @@ async fn create_task_requires_idempotency_key() {
 
 #[tokio::test]
 async fn create_task_empty_text_400() {
-    let (app, _pool) = app_with_sink(Arc::new(StubDirectiveSink::default())).await;
+    let (app, _pool, _db) = app_with_sink(Arc::new(StubDirectiveSink::default())).await;
     let token = create_test_token("user-1", "tenant-1");
 
     let (_status, json) = response_parts(
@@ -169,7 +174,7 @@ async fn create_task_empty_text_400() {
 
 #[tokio::test]
 async fn create_task_works_without_directive_sink() {
-    let (app, _pool) = app_without_sink().await;
+    let (app, _pool, _db) = app_without_sink().await;
     let token = create_test_token("user-1", "tenant-1");
 
     let (_status, json) = response_parts(
@@ -190,7 +195,7 @@ async fn create_task_works_without_directive_sink() {
 
 #[tokio::test]
 async fn endpoints_require_admin_role() {
-    let (app, pool) = app_with_sink(Arc::new(StubDirectiveSink::default())).await;
+    let (app, pool, _db) = app_with_sink(Arc::new(StubDirectiveSink::default())).await;
     insert_run(&pool, "run-1", WS, "s").await;
     let non_admin = create_test_token("user-2", "tenant-1");
 
@@ -218,7 +223,7 @@ async fn endpoints_require_admin_role() {
 
 #[tokio::test]
 async fn endpoints_enforce_workspace_isolation() {
-    let (app, pool) = app_with_sink(Arc::new(StubDirectiveSink::default())).await;
+    let (app, pool, _db) = app_with_sink(Arc::new(StubDirectiveSink::default())).await;
     let token = create_test_token("user-1", "tenant-1");
 
     // 工作空间属于 tenant-2，token 属于 tenant-1 → 403 越权
@@ -257,7 +262,7 @@ async fn endpoints_enforce_workspace_isolation() {
 
 #[tokio::test]
 async fn list_runs_paginates_clamps_and_isolates_workspace() {
-    let (app, pool) = app_with_sink(Arc::new(StubDirectiveSink::default())).await;
+    let (app, pool, _db) = app_with_sink(Arc::new(StubDirectiveSink::default())).await;
     let token = create_test_token("user-1", "tenant-1");
 
     for i in 1..=3 {
@@ -320,7 +325,7 @@ async fn list_runs_paginates_clamps_and_isolates_workspace() {
 
 #[tokio::test]
 async fn ack_run_is_idempotent_and_workspace_scoped() {
-    let (app, pool) = app_with_sink(Arc::new(StubDirectiveSink::default())).await;
+    let (app, pool, _db) = app_with_sink(Arc::new(StubDirectiveSink::default())).await;
     let token = create_test_token("user-1", "tenant-1");
     insert_run(&pool, "run-1", WS, "s").await;
     insert_run(&pool, "run-foreign", "ws-other", "s").await;
@@ -385,7 +390,7 @@ async fn ack_run_is_idempotent_and_workspace_scoped() {
 
 #[tokio::test]
 async fn policy_round_trip_with_updated_by() {
-    let (app, pool) = app_with_sink(Arc::new(StubDirectiveSink::default())).await;
+    let (app, pool, _db) = app_with_sink(Arc::new(StubDirectiveSink::default())).await;
     let token = create_test_token("user-1", "tenant-1");
 
     // 默认策略（无行）：mode=off
@@ -488,7 +493,7 @@ async fn policy_mode_to_off_drains_pending_queue() {
     }
 
     let stub = Arc::new(StubDirectiveSink::default());
-    let (app, _pool) = app_with_sink(stub.clone()).await;
+    let (app, _pool, _db) = app_with_sink(stub.clone()).await;
     let token = create_test_token("user-1", "tenant-1");
 
     // act / diagnose：不 drain。
@@ -512,7 +517,7 @@ async fn policy_mode_to_off_drains_pending_queue() {
 /// 不得塌缩为 404（事故响应时"运行记录不存在"会主动误导）。
 #[tokio::test]
 async fn ack_run_db_error_returns_500_not_fake_404() {
-    let (app, pool) = app_with_sink(Arc::new(StubDirectiveSink::default())).await;
+    let (app, pool, _db) = app_with_sink(Arc::new(StubDirectiveSink::default())).await;
     // user-1 已由 app_with_sink 夹具授予 admin。
     let token = create_test_token("user-1", "tenant-1");
 

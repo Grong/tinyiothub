@@ -9,7 +9,7 @@ use axum::{
 };
 use chrono::{DateTime, Utc};
 use serde_json::json;
-use tinyiothub_core::agent_task::{AgentTask, TaskWake, WakeDispatchState};
+use tinyiothub_core::agent_task::{AgentTask, TaskWake};
 use tinyiothub_core::task_approval::{ApprovalDecision, DecisionOutcome, TaskApproval, TaskApprovalStoreError};
 use tinyiothub_storage::Db;
 use tinyiothub_web::response::ApiResponseBuilder;
@@ -154,53 +154,51 @@ async fn decide(
     if let Err(response) = check_agent_admin_response(&state, &claims, &workspace_id).await {
         return response;
     }
-    let store = DbApprovalStore::new(state.db.clone()).with_recorder(state.runtime_recorder.clone());
-    let approval = match store.get_scoped(&workspace_id, &task_id, &approval_id).await {
-        Ok(Some(approval)) => approval,
-        Ok(None) => return error_response(StatusCode::NOT_FOUND, "Approval 不存在"),
-        Err(error) => return approval_error(error),
+    let answer = match decision {
+        ApprovalDecision::Approve => "approved",
+        ApprovalDecision::Reject => "denied",
     };
     let now = Utc::now();
-    let wake = TaskWake {
-        task_id: task_id.clone(),
-        event_id: approval.decision_event_id.clone(),
-        signal_json: json!({
-            "kind":"approval_decided",
-            "workspace_id":workspace_id,
-            "task_id":task_id,
-            "approval_id":approval_id,
-        })
-        .to_string(),
-        dispatch_state: WakeDispatchState::Pending,
-        created_at: now,
-        dispatched_at: None,
-        resolved_at: None,
-    };
-    match store
-        .decide(
-            &workspace_id,
-            &task_id,
-            &approval_id,
-            decision,
-            &claims.user_id,
-            now,
-            &wake,
-        )
+    let outcome = match state
+        .db
+        .harness_answer_tool_approval(&workspace_id, &task_id, &approval_id, answer, &claims.user_id, now)
         .await
     {
-        Ok(outcome) => ApiResponseBuilder::success(json!({
-            "approval": outcome.approval,
+        Ok(outcome) => outcome,
+        Err(error) => return harness_approval_error(error),
+    };
+    state.harness_stream.notify(&workspace_id);
+    let projection = match state.db.harness_runtime_projection(&workspace_id, &task_id).await {
+        Ok(Some(projection)) => projection,
+        Ok(None) => return error_response(StatusCode::NOT_FOUND, "Task 不存在"),
+        Err(error) => return harness_approval_error(error),
+    };
+    let approval = projection
+        .approvals
+        .into_iter()
+        .find(|approval| approval.id == approval_id)
+        .ok_or_else(|| "approval projection disappeared".to_string());
+    match approval {
+        Ok(approval) => ApiResponseBuilder::success(json!({
+            "approval": approval,
             "deduplicated": outcome.deduplicated,
         }))
         .into_response(),
-        Err(error) => approval_error(error),
+        Err(error) => {
+            tracing::error!(%workspace_id, %approval_id, %error, "approval projection missing after answer");
+            error_response(StatusCode::SERVICE_UNAVAILABLE, "Approval 服务不可用")
+        }
     }
 }
 
-fn approval_error(error: ApprovalError) -> Response {
+fn harness_approval_error(error: tinyiothub_storage::error::DbError) -> Response {
+    use tinyiothub_storage::error::DbError;
     match error {
-        ApprovalError::NotFound => error_response(StatusCode::NOT_FOUND, "Approval 不存在"),
-        ApprovalError::DecisionConflict => error_response(StatusCode::CONFLICT, "Approval 决策冲突"),
+        DbError::NotFound { .. } => error_response(StatusCode::NOT_FOUND, "Approval 不存在"),
+        DbError::Conflict { .. } | DbError::CasConflict { .. } => {
+            error_response(StatusCode::CONFLICT, "Approval 决策冲突")
+        }
+        DbError::Validation { message } => error_response(StatusCode::BAD_REQUEST, message),
         other => {
             tracing::warn!(%other, "Task approval decision failed");
             error_response(StatusCode::SERVICE_UNAVAILABLE, "Approval 服务不可用")
@@ -266,7 +264,10 @@ pub async fn reconcile_effect(
         )
         .await
     {
-        Ok(()) => ApiResponseBuilder::success(json!({"accepted": true})).into_response(),
+        Ok(()) => {
+            state.harness_stream.notify(&workspace_id);
+            ApiResponseBuilder::success(json!({"accepted": true})).into_response()
+        }
         Err(error) => error_response(StatusCode::CONFLICT, error),
     }
 }
@@ -329,12 +330,14 @@ mod tests {
             .execute(&pool).await.expect("role");
         sqlx::query("INSERT OR IGNORE INTO user_roles (id, user_id, role_id) VALUES ('ur-approval-admin', 'user-1', 'role-admin')")
             .execute(&pool).await.expect("admin");
+        let db = app_state.db.clone();
+        db.create_workspace_store(WS).await.expect("workspace store");
         let app = Router::new()
             .nest("/api", crate::api::create_router(&app_state))
             .with_state(app_state);
         Fixture {
             app,
-            db: Arc::new(Db::new(pool)),
+            db,
             token: create_test_token("user-1", "tenant-1"),
             _dir: dir,
         }
@@ -613,6 +616,65 @@ mod tests {
             .await
             .expect("approval");
         approval
+    }
+
+    /// Seed the workspace Harness facts the HTTP approval routes now read.
+    async fn seed_harness_approval(fixture: &Fixture, task_id: &str, approval_id: &str, state: &str) {
+        let now = Utc::now();
+        let task = AgentTask {
+            id: task_id.into(),
+            workspace_id: WS.into(),
+            idempotency_key: format!("{task_id}-key"),
+            objective: "exercise approval".into(),
+            session_key: None,
+            created_by: "user-1".into(),
+            status: TaskStatus::Active,
+            current_run_id: Some("run-1".into()),
+            state_version: 0,
+            created_at: now,
+            updated_at: now,
+            ended_at: None,
+        };
+        let wake = TaskWake {
+            task_id: task.id.clone(),
+            event_id: format!("create-{task_id}"),
+            signal_json: json!({"workspace_id":WS}).to_string(),
+            dispatch_state: WakeDispatchState::Dispatched,
+            created_at: now,
+            dispatched_at: Some(now),
+            resolved_at: Some(now),
+        };
+        fixture
+            .db
+            .harness_create_task_with_wake(&task, &wake)
+            .await
+            .expect("harness task");
+        let pool = fixture.db.workspace_pool_for_testing(WS).await.expect("workspace pool");
+        sqlx::query(
+            "INSERT INTO decisions
+                (decision_id, kind, state, session_id, run_id, task_id, effect_id, subject_json,
+                 options_json, created_at, updated_at, expires_at, answer, answer_actor,
+                 answer_event_id, answer_evidence_json, consumed_at, consumed_by)
+             VALUES (?, 'tool_approval', ?, 'session-1', 'run-1', ?, NULL, ?, '[\"approved\",\"denied\"]',
+                     ?, ?, NULL, NULL, NULL, NULL, NULL, NULL, NULL)",
+        )
+        .bind(approval_id)
+        .bind(state)
+        .bind(task_id)
+        .bind(
+            json!({
+                "deviceId":"device-1",
+                "tool":"set_level",
+                "argsJson":{"level":7},
+                "reason":"confirm",
+            })
+            .to_string(),
+        )
+        .bind(now)
+        .bind(now)
+        .execute(&pool)
+        .await
+        .expect("harness decision");
     }
 
     async fn post(fixture: &Fixture, token: &str, workspace: &str, action: &str, body: Value) -> (StatusCode, Value) {
@@ -1058,20 +1120,13 @@ mod tests {
     async fn expired_and_unavailable_decisions_return_current_projection_without_new_wake() {
         for unavailable in [false, true] {
             let fixture = fixture().await;
-            let pending = pending(&fixture).await;
-            if unavailable {
-                fixture
-                    .db
-                    .cancel_task_approvals_and_events(WS, &pending.task_id, 1, Utc::now())
-                    .await
-                    .expect("cancel");
-            } else {
-                fixture
-                    .db
-                    .expire_task_approvals_and_events(Utc::now() + chrono::Duration::hours(2))
-                    .await
-                    .expect("expire");
-            }
+            seed_harness_approval(
+                &fixture,
+                "task-approval",
+                "approval-1",
+                if unavailable { "withdrawn" } else { "expired" },
+            )
+            .await;
             let (status, body) = post(&fixture, &fixture.token, WS, "approve", json!({})).await;
             assert_eq!(status, StatusCode::OK, "{body}");
             assert_eq!(
@@ -1079,19 +1134,25 @@ mod tests {
                 if unavailable { "unavailable" } else { "expired" }
             );
             assert_eq!(body["result"]["deduplicated"], true);
+            let pool = fixture.db.workspace_pool_for_testing(WS).await.expect("workspace pool");
             let wakes: i64 =
-                sqlx::query_scalar("SELECT COUNT(*) FROM task_wake_outbox WHERE event_id = 'decision-server-1'")
-                    .fetch_one(fixture.db.pool())
+                sqlx::query_scalar("SELECT COUNT(*) FROM task_wake_outbox WHERE event_id LIKE 'approval:%'")
+                    .fetch_one(&pool)
                     .await
                     .expect("wakes");
-            assert_eq!(wakes, 1);
+            assert_eq!(wakes, 0, "closed approvals must not append a decision wake");
+            let platform: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM task_approvals")
+                .fetch_one(fixture.db.pool())
+                .await
+                .expect("platform approvals");
+            assert_eq!(platform, 0, "HTTP approvals never write the platform table");
         }
     }
 
     #[tokio::test]
     async fn approval_routes_enforce_scope_admin_conflict_and_frozen_body_fields() {
         let fixture = fixture().await;
-        let pending = pending(&fixture).await;
+        seed_harness_approval(&fixture, "task-approval", "approval-1", "requested").await;
         let reader = create_test_token("user-2", "tenant-1");
         assert_eq!(
             post(&fixture, &reader, WS, "approve", json!({})).await.0,
@@ -1104,20 +1165,23 @@ mod tests {
         let malicious = json!({"args_json":{"speed":999},"decider_id":"attacker","decision_event_id":"attacker-event"});
         let (status, first) = post(&fixture, &fixture.token, WS, "approve", malicious.clone()).await;
         assert_eq!(status, StatusCode::OK, "{first}");
-        assert_eq!(first["result"]["approval"]["argsJson"], pending.args_json);
+        assert_eq!(first["result"]["approval"]["argsJson"], json!({"level":7}));
         assert_eq!(first["result"]["approval"]["deciderId"], "user-1");
-        assert_eq!(first["result"]["approval"]["decisionEventId"], "decision-server-1");
         assert_eq!(
-            post(&fixture, &fixture.token, WS, "approve", malicious).await.0,
-            StatusCode::OK
+            first["result"]["approval"]["decisionEventId"],
+            "approval:approval-1:approved"
         );
+        let (status, repeated) = post(&fixture, &fixture.token, WS, "approve", malicious).await;
+        assert_eq!(status, StatusCode::OK, "{repeated}");
+        assert_eq!(repeated["result"]["deduplicated"], true);
         assert_eq!(
             post(&fixture, &fixture.token, WS, "reject", json!({})).await.0,
             StatusCode::CONFLICT
         );
+        let pool = fixture.db.workspace_pool_for_testing(WS).await.expect("workspace pool");
         let wakes: i64 =
-            sqlx::query_scalar("SELECT COUNT(*) FROM task_wake_outbox WHERE event_id = 'decision-server-1'")
-                .fetch_one(fixture.db.pool())
+            sqlx::query_scalar("SELECT COUNT(*) FROM task_wake_outbox WHERE event_id = 'approval:approval-1:approved'")
+                .fetch_one(&pool)
                 .await
                 .expect("wakes");
         assert_eq!(wakes, 1);
@@ -1128,20 +1192,26 @@ mod tests {
             .body(Body::empty())
             .expect("detail");
         let (_, detail) = response_parts(fixture.app.clone().oneshot(detail).await.expect("response")).await;
-        assert_eq!(detail["result"]["approvals"][0]["argsJson"], pending.args_json);
+        assert_eq!(detail["result"]["approvals"][0]["argsJson"], json!({"level":7}));
         assert_eq!(detail["result"]["approvals"][0]["state"], "approved");
-        let events = fixture
-            .db
-            .runtime_events_after(WS, None, Some("task-approval"), 20)
-            .await
-            .expect("events");
-        let types = events.iter().map(|event| event.event_type.as_str()).collect::<Vec<_>>();
-        assert!(
+        let types: Vec<String> =
+            sqlx::query_scalar("SELECT type FROM session_events WHERE task_id = 'task-approval' ORDER BY seq")
+                .fetch_all(&pool)
+                .await
+                .expect("events");
+        assert_eq!(
             types
-                .windows(2)
-                .any(|pair| pair == ["approval.requested", "approval.approved"]),
+                .iter()
+                .filter(|event_type| event_type.as_str() == "approval.approved")
+                .count(),
+            1,
             "{types:?}"
         );
+        let platform: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM task_approvals")
+            .fetch_one(fixture.db.pool())
+            .await
+            .expect("platform approvals");
+        assert_eq!(platform, 0, "HTTP approvals never write the platform table");
     }
 
     async fn wait_for_task_status(
