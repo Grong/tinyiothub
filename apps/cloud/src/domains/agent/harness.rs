@@ -31,6 +31,7 @@ use tinyiothub_web::response::{ApiResponse, ApiResponseBuilder};
 use tinyiothub_web::security::Claims;
 
 use crate::domains::agent::AgentState;
+use crate::domains::agent::host::handler::agent_tasks::check_agent_admin_response;
 use crate::domains::agent::runtime::tasks::error_response;
 use crate::domains::agent::workflows::{TemplateInput, WorkflowService, builtin_templates, next_wake_at};
 
@@ -242,7 +243,7 @@ pub async fn create_workflow(
     Path(workspace_id): Path<String>,
     Json(payload): Json<WorkflowDefinitionRequest>,
 ) -> Response {
-    if let Err(response) = verify_workspace_read(&state, &claims, &workspace_id).await {
+    if let Err(response) = check_agent_admin_response(&state, &claims, &workspace_id).await {
         return response;
     }
     let service = WorkflowService::new(state.db.clone(), workspace_id.as_str());
@@ -263,7 +264,7 @@ pub async fn update_workflow(
     Path((workspace_id, workflow_id)): Path<(String, String)>,
     Json(payload): Json<WorkflowUpdateRequest>,
 ) -> Response {
-    if let Err(response) = verify_workspace_read(&state, &claims, &workspace_id).await {
+    if let Err(response) = check_agent_admin_response(&state, &claims, &workspace_id).await {
         return response;
     }
     let service = WorkflowService::new(state.db.clone(), workspace_id.as_str());
@@ -296,7 +297,7 @@ pub async fn set_workflow_enabled(
     Path((workspace_id, workflow_id)): Path<(String, String)>,
     Json(payload): Json<WorkflowEnabledRequest>,
 ) -> Response {
-    if let Err(response) = verify_workspace_read(&state, &claims, &workspace_id).await {
+    if let Err(response) = check_agent_admin_response(&state, &claims, &workspace_id).await {
         return response;
     }
     let service = WorkflowService::new(state.db.clone(), workspace_id.as_str());
@@ -332,7 +333,7 @@ pub async fn instantiate_workflow_template(
     Path((workspace_id, template_id)): Path<(String, String)>,
     Json(payload): Json<TemplateInput>,
 ) -> Response {
-    if let Err(response) = verify_workspace_read(&state, &claims, &workspace_id).await {
+    if let Err(response) = check_agent_admin_response(&state, &claims, &workspace_id).await {
         return response;
     }
     let service = WorkflowService::new(state.db.clone(), workspace_id.as_str());
@@ -791,7 +792,7 @@ mod tests {
     #[tokio::test]
     async fn workflow_create_edit_conflict_and_enable_disable_follow_r30() {
         let (app, fixture) = workflow_test_app("ws-workflow-http").await;
-        let token = create_test_token("user-1", "tenant-1");
+        let token = create_test_token("admin-user-001", "tenant-1");
         let base = "/api/v1/workspaces/ws-workflow-http/harness/workflows";
 
         let (status, created) = send(&app, "POST", Some(&token), base, Some(workflow_body("初始目标"))).await;
@@ -872,7 +873,7 @@ mod tests {
     #[tokio::test]
     async fn workflow_create_ignores_supplied_enabled_and_missing_get_is_not_found() {
         let (app, fixture) = workflow_test_app("ws-workflow-create").await;
-        let token = create_test_token("user-1", "tenant-1");
+        let token = create_test_token("admin-user-001", "tenant-1");
         let base = "/api/v1/workspaces/ws-workflow-create/harness/workflows";
         let mut body = workflow_body("强制启用尝试");
         body["enabled"] = json!(true);
@@ -925,6 +926,78 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn workflow_write_routes_require_agent_admin() {
+        let workspace_id = "ws-workflow-admin";
+        let (app, fixture) = workflow_test_app(workspace_id).await;
+        let base = format!("/api/v1/workspaces/{workspace_id}/harness");
+        let member = create_test_token("user-2", "tenant-1");
+        let admin = create_test_token("admin-user-001", "tenant-1");
+
+        let instantiate = json!({
+            "device_selector": {"device_ids": ["pump-1"]},
+            "source_selector": {"sources": ["telemetry"]},
+            "approval_policy": {},
+        });
+        for (method, uri, body) in [
+            ("POST", format!("{base}/workflows"), Some(workflow_body("成员尝试"))),
+            (
+                "POST",
+                format!("{base}/workflow-templates/inspection/instantiate"),
+                Some(instantiate.clone()),
+            ),
+        ] {
+            let (status, response) = send(&app, method, Some(&member), &uri, body).await;
+            assert_eq!(status, StatusCode::FORBIDDEN, "member must not write: {response}");
+        }
+        let (_, listed) = get(&app, Some(&admin), &format!("{base}/workflows")).await;
+        assert_eq!(listed["result"]["workflows"].as_array().unwrap().len(), 0);
+
+        let (status, created) = send(
+            &app,
+            "POST",
+            Some(&admin),
+            &format!("{base}/workflows"),
+            Some(workflow_body("管理员创建")),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{created}");
+        let workflow_id = created["result"]["workflowId"].as_str().expect("workflow id");
+        let item = format!("{base}/workflows/{}", workflow_id.replace(':', "%3A"));
+
+        let (status, response) = send(
+            &app,
+            "PUT",
+            Some(&member),
+            &item,
+            Some(update_body("成员编辑", 1, false)),
+        )
+        .await;
+        assert_eq!(status, StatusCode::FORBIDDEN, "{response}");
+        let (status, response) = send(
+            &app,
+            "PUT",
+            Some(&member),
+            &format!("{item}/enabled"),
+            Some(json!({"enabled": true})),
+        )
+        .await;
+        assert_eq!(status, StatusCode::FORBIDDEN, "{response}");
+        let (status, enabled) = send(
+            &app,
+            "PUT",
+            Some(&admin),
+            &format!("{item}/enabled"),
+            Some(json!({"enabled": true})),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{enabled}");
+        assert_eq!(enabled["result"]["enabled"], true);
+
+        drop(app);
+        fixture.close().await;
+    }
+
+    #[tokio::test]
     async fn workflow_template_routes_list_and_instantiate_enabled_with_permission_checks() {
         let workspace_id = "ws-template-http";
         let fixture = fixture_workspace(workspace_id).await;
@@ -936,7 +1009,7 @@ mod tests {
         let app = axum::Router::new()
             .nest("/api", crate::api::create_router(&app_state))
             .with_state(app_state);
-        let token = create_test_token("user-1", "tenant-1");
+        let token = create_test_token("admin-user-001", "tenant-1");
 
         let base = format!("/api/v1/workspaces/{workspace_id}/harness");
         let (status, _) = get(&app, None, &format!("{base}/workflow-templates")).await;

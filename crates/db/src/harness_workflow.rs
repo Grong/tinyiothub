@@ -291,7 +291,6 @@ pub struct WorkflowDeviceSource {
 pub struct WorkflowDeviceReference {
     pub found: bool,
     pub sources: Vec<WorkflowDeviceSource>,
-    pub dangerous_tool_ids: Vec<String>,
 }
 
 pub struct CronWindow<'a> {
@@ -313,7 +312,7 @@ impl Db {
     ) -> Result<WorkflowRevision> {
         let pool = self.workspace_pool(workspace_id).await?;
         let mut tx = pool.begin().await?;
-        sqlx::query(
+        let inserted = sqlx::query(
             "INSERT INTO agent_workflows (workflow_id, enabled, current_version, updated_at)
              VALUES (?, ?, ?, ?)",
         )
@@ -322,7 +321,16 @@ impl Db {
         .bind(revision.version)
         .bind(revision.created_at)
         .execute(&mut *tx)
-        .await?;
+        .await;
+        match inserted {
+            Ok(_) => {}
+            Err(sqlx::Error::Database(database)) if database.is_unique_violation() => {
+                return Err(DbError::Conflict {
+                    message: format!("workflow already exists: {}", revision.workflow_id),
+                });
+            }
+            Err(error) => return Err(error.into()),
+        }
         sqlx::query(
             "INSERT INTO workflow_revisions (workflow_id, version, definition_json, created_at)
              VALUES (?, ?, ?, ?)",
@@ -346,34 +354,43 @@ impl Db {
     }
 
     /// Template instantiation (DR4=B): a validated template creates its first
-    /// revision directly enabled. No occurrence or wake is queued here; the
-    /// normal trigger scheduler owns all future wakes.
+    /// revision directly enabled. The enabled bit is fixed by this entry point
+    /// so a caller cannot accidentally invert the template contract. No
+    /// occurrence or wake is queued here; the normal trigger scheduler owns all
+    /// future wakes.
     pub async fn create_enabled_workflow(
         &self,
         workspace_id: &str,
         revision: &WorkflowRevision,
     ) -> Result<WorkflowRevision> {
-        self.insert_workflow(workspace_id, revision, revision.enabled).await
+        self.insert_workflow(workspace_id, revision, true).await
     }
 
     /// Resolve a Thing plus its active driver manifest inside one workspace.
-    /// Template instantiation uses this to reject unknown devices, sources, and
-    /// device-control tools before any Workflow row is written.
+    /// Template instantiation uses this to reject unknown devices and sources
+    /// before any Workflow row is written.
+    ///
+    /// Selectors may name a Thing by ID or display name. The canonical
+    /// `things.id` is resolved first; declarations and manifests are keyed by
+    /// that ID, never by the raw selector.
     pub async fn workflow_device_reference(
         &self,
         workspace_id: &str,
         device_id: &str,
     ) -> Result<WorkflowDeviceReference> {
-        let found: i64 =
-            sqlx::query_scalar("SELECT COUNT(*) FROM things WHERE workspace_id = ? AND (id = ? OR name = ?)")
-                .bind(workspace_id)
-                .bind(device_id)
-                .bind(device_id)
-                .fetch_one(self.pool())
-                .await?;
-        if found == 0 {
+        let thing_id: Option<String> = sqlx::query_scalar(
+            "SELECT id FROM things WHERE workspace_id = ? AND (id = ? OR name = ?)
+             ORDER BY CASE WHEN id = ? THEN 0 ELSE 1 END LIMIT 1",
+        )
+        .bind(workspace_id)
+        .bind(device_id)
+        .bind(device_id)
+        .bind(device_id)
+        .fetch_optional(self.pool())
+        .await?;
+        let Some(thing_id) = thing_id else {
             return Ok(WorkflowDeviceReference::default());
-        }
+        };
 
         let manifest_json: Option<String> = sqlx::query_scalar(
             "SELECT m.manifest_json FROM device_declarations d
@@ -386,7 +403,7 @@ impl Db {
              ORDER BY d.id DESC LIMIT 1",
         )
         .bind(workspace_id)
-        .bind(device_id)
+        .bind(&thing_id)
         .fetch_optional(self.pool())
         .await?;
 
@@ -410,14 +427,6 @@ impl Db {
                     .unwrap_or("values")
                     .to_string(),
             });
-        }
-        for tool in manifest.get("tools").and_then(Value::as_array).into_iter().flatten() {
-            let Some(name) = tool.get("name").and_then(Value::as_str) else {
-                continue;
-            };
-            if tool.get("safety").and_then(Value::as_str) == Some("dangerous") {
-                reference.dangerous_tool_ids.push(name.to_string());
-            }
         }
         Ok(reference)
     }

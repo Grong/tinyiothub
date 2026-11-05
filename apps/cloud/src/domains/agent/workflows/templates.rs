@@ -203,10 +203,50 @@ fn validate_capabilities(template_id: &str, definition: &WorkflowDefinition) -> 
     Ok(())
 }
 
-fn validate_approval_policy(definition: &WorkflowDefinition) -> Result<(), DbError> {
-    if !definition.approval_policy.is_object() {
-        return Err(validation("workflow approval policy must be a JSON object"));
+/// Strict policy typing. JSON booleans/numbers are checked explicitly instead
+/// of letting `from_workflow_value` treat a malformed value as "no policy" and
+/// silently drop a mandatory approval requirement.
+fn validate_approval_value(value: &Value, context: &str) -> Result<(), DbError> {
+    if value.is_null() {
+        return Ok(());
     }
+    let Some(object) = value.as_object() else {
+        return Err(validation(format!("{context} must be a JSON object")));
+    };
+    const REQUIRED_KEYS: &[&str] = &["requiresApproval", "requires_approval", "mandatory", "approvalRequired"];
+    const TIMEOUT_KEYS: &[&str] = &["timeoutSecs", "timeout_secs", "timeout"];
+    let mut mandatory: Option<bool> = None;
+    let mut timeout: Option<u64> = None;
+    for (key, value) in object {
+        if REQUIRED_KEYS.contains(&key.as_str()) {
+            let Some(flag) = value.as_bool() else {
+                return Err(validation(format!("{context}.{key} must be a boolean")));
+            };
+            if mandatory.is_some_and(|existing| existing != flag) {
+                return Err(validation(format!("{context} has conflicting mandatory values")));
+            }
+            mandatory = Some(flag);
+        } else if TIMEOUT_KEYS.contains(&key.as_str()) {
+            let Some(seconds) = value.as_u64() else {
+                return Err(validation(format!("{context}.{key} must be a non-negative integer")));
+            };
+            if timeout.is_some_and(|existing| existing != seconds) {
+                return Err(validation(format!("{context} has conflicting timeout values")));
+            }
+            timeout = Some(seconds);
+        } else if key == "reason" {
+            if !value.is_string() {
+                return Err(validation(format!("{context}.reason must be a string")));
+            }
+        } else {
+            return Err(validation(format!("{context} has unknown key: {key}")));
+        }
+    }
+    Ok(())
+}
+
+fn validate_approval_policy(definition: &WorkflowDefinition) -> Result<(), DbError> {
+    validate_approval_value(&definition.approval_policy, "workflow template approval policy")?;
     if policy_declares_no_approval(&definition.approval_policy)
         && definition
             .tool_ids
@@ -270,7 +310,9 @@ pub(crate) async fn validate_workspace_references(
         return Err(validation("workflow source selector must name at least one source"));
     }
 
-    let mut dangerous_tools = HashSet::new();
+    // Built-in templates may only reference the stable tool surface, so the
+    // mandatory-approval baseline is fully determined by the static check in
+    // `validate_template`; device manifests contribute sources only.
     for device_id in &device_ids {
         let reference = db.workflow_device_reference(workspace_id, device_id).await?;
         if !reference.found {
@@ -288,18 +330,6 @@ pub(crate) async fn validate_workspace_references(
                 )));
             }
         }
-        dangerous_tools.extend(reference.dangerous_tool_ids.iter().cloned());
-    }
-
-    if policy_declares_no_approval(&definition.approval_policy)
-        && definition
-            .tool_ids
-            .iter()
-            .any(|tool| dangerous_tools.contains(tool) || classify_tool_safety(tool) == ToolSafety::Destructive)
-    {
-        return Err(validation(
-            "workflow template must not disable mandatory approval for a device control tool",
-        ));
     }
 
     // Skills resolve through the workspace layer first (workspace → global →
@@ -434,8 +464,11 @@ fn validation(message: impl Into<String>) -> DbError {
 }
 
 /// Effective approval policy: template defaults may be tightened by the
-/// user's input, never loosened.
+/// user's input, never loosened. Malformed values are rejected before parsing
+/// so a type error can never degrade into `none()`.
 pub(crate) fn effective_approval_policy(template: &WorkflowDefinition, input: &Value) -> Result<Value, DbError> {
+    validate_approval_value(&template.approval_policy, "workflow template approval policy")?;
+    validate_approval_value(input, "workflow approval policy")?;
     let template_policy =
         ApprovalPolicy::from_workflow_value(&template.approval_policy).unwrap_or_else(ApprovalPolicy::none);
     let input_policy = ApprovalPolicy::from_workflow_value(input);

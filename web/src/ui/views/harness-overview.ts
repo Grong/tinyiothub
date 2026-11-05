@@ -584,6 +584,9 @@ export class HarnessOverviewView extends LitElement {
         .workspaceId=${this.workspaceId}
       ></view-harness-templates>`;
     }
+    // DR10 keeps exactly one primary CTA per view: the empty state owns
+    // "从模板新建"; once Workflows exist the header owns it instead.
+    const hasWorkflows = (this.overview?.workflows.length ?? 0) > 0;
     return html`
       <section class="harness-overview" aria-labelledby="harness-overview-title">
         <header class="harness-overview__header">
@@ -595,11 +598,15 @@ export class HarnessOverviewView extends LitElement {
             <button type="button" class="btn harness-overview__retry" @click=${() => this.retry()}>
               刷新
             </button>
-            <a
-              class="btn btn--primary harness-overview__primary"
-              href="#/harness/workflows/templates"
-              >从模板新建</a
-            >
+            ${
+              hasWorkflows
+                ? html`<a
+                    class="btn btn--primary harness-overview__primary"
+                    href="#/harness/workflows/templates"
+                    >从模板新建</a
+                  >`
+                : nothing
+            }
             <a class="btn" href="#/harness/workflows/new">空白新建</a>
           </div>
         </header>

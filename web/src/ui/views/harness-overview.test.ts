@@ -436,6 +436,9 @@ describe('Harness exception-first overview', () => {
     expect(view.textContent).toContain('当前没有需要处理的事项');
     expect(view.textContent).toContain('尚未配置 Workflow');
     expect(view.textContent).toContain('当前没有 Main 任务');
+    const primaries = [...view.querySelectorAll<HTMLElement>('.btn--primary')];
+    expect(primaries).toHaveLength(1);
+    expect(primaries[0].textContent?.trim()).toBe('从模板新建');
     const emptyActions = view.querySelector<HTMLElement>('.harness-empty__actions');
     expect(emptyActions?.querySelector('.btn--primary')?.textContent?.trim()).toBe('从模板新建');
     expect(
