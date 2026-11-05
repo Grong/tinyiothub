@@ -398,6 +398,23 @@ impl Db {
         Ok(revision)
     }
 
+    /// Current revision plus the authoritative enabled pointer.
+    pub async fn current_workflow(&self, workspace_id: &str, workflow_id: &str) -> Result<Option<WorkflowRevision>> {
+        let pool = self.workspace_pool(workspace_id).await?;
+        sqlx::query_as::<_, WorkflowRevisionRow>(
+            "SELECT r.workflow_id, r.version, w.enabled, r.definition_json, r.created_at
+             FROM agent_workflows w
+             JOIN workflow_revisions r
+               ON r.workflow_id = w.workflow_id AND r.version = w.current_version
+             WHERE w.workflow_id = ?",
+        )
+        .bind(workflow_id)
+        .fetch_optional(&pool)
+        .await?
+        .map(WorkflowRevision::try_from)
+        .transpose()
+    }
+
     pub async fn workflow_revision(
         &self,
         workspace_id: &str,

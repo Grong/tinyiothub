@@ -65,10 +65,19 @@ impl WorkflowService {
         input: WorkflowDefinition,
     ) -> Result<WorkflowRevision, DbError> {
         Self::validate(&input)?;
+        let current = self
+            .db
+            .current_workflow(&self.workspace_id, workflow_id)
+            .await?
+            .ok_or_else(|| DbError::NotFound {
+                id: workflow_id.to_string(),
+            })?;
         let revision = WorkflowRevision {
             workflow_id: workflow_id.to_string(),
             version: expected_version + 1,
-            enabled: false,
+            // R30: content edits append a revision; the enabled pointer is
+            // preserved and only an explicit enable/disable action changes it.
+            enabled: current.enabled,
             definition: input,
             created_at: Utc::now(),
         };

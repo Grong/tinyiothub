@@ -179,7 +179,11 @@ view-harness-overview {
 
 .harness-attention__action,
 .harness-main__task,
-.harness-subagent__task {
+.harness-subagent__task,
+.harness-workflow__action {
+  display: inline-flex;
+  align-items: center;
+  min-height: 44px;
   color: var(--accent);
   font-size: 13px;
   text-decoration: none;
@@ -311,6 +315,19 @@ view-harness-overview {
 .harness-workflow-table td {
   color: var(--muted-foreground);
   font-size: 13px;
+}
+
+/* Field names remain in the accessibility tree even when rows reflow. */
+.harness-workflow-table__field {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
 }
 
 .harness-workflow__action {

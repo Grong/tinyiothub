@@ -140,6 +140,22 @@ function objectValue(value: unknown): Record<string, unknown> | null {
     : null;
 }
 
+function messageText(value: unknown): string | null {
+  if (typeof value === 'string') return value.trim() || null;
+  const record = objectValue(value);
+  if (!record) return null;
+  for (const key of ['message', 'msg', 'detail', 'error']) {
+    const candidate = record[key];
+    if (typeof candidate === 'string' && candidate.trim()) return candidate;
+  }
+  return null;
+}
+
+function normalizeFieldKey(rawField: string): string {
+  const field = rawField.replace(/^definition\./, '');
+  return TRIGGER_FIELD_MAP[field] ?? field;
+}
+
 function conflictVersion(error: HarnessApiError): number | null {
   const data = objectValue(error.data);
   const result = objectValue(data?.result);
@@ -183,8 +199,8 @@ export function workflowFieldErrors(
   const fields = objectValue(data?.fields) ?? objectValue(result?.fields);
   if (fields) {
     for (const [rawField, rawMessage] of Object.entries(fields)) {
-      const field = TRIGGER_FIELD_MAP[rawField] ?? rawField;
-      if (typeof rawMessage === 'string' && rawMessage.trim()) messages[field] = rawMessage;
+      const message = messageText(rawMessage);
+      if (message) messages[normalizeFieldKey(rawField)] = message;
     }
   }
   const details = data?.details ?? result?.details;
@@ -193,10 +209,9 @@ export function workflowFieldErrors(
       const detail = objectValue(item);
       if (!detail) continue;
       const rawField = detail.field;
-      const rawMessage = detail.message;
       if (typeof rawField !== 'string') continue;
-      const field = TRIGGER_FIELD_MAP[rawField] ?? rawField;
-      if (typeof rawMessage === 'string' && rawMessage.trim()) messages[field] = rawMessage;
+      const message = messageText(detail.message) ?? messageText(detail);
+      if (message) messages[normalizeFieldKey(rawField)] = message;
     }
   }
   if (Object.keys(messages).length > 0) return messages;
@@ -306,6 +321,8 @@ export class HarnessWorkflowEditView extends LitElement {
   private leaveHref: string | null = null;
   private allowLeave = false;
   private focusTrap: DialogFocusTrap | null = null;
+  private lastHash = '';
+  private lastPath = '';
 
   createRenderRoot() {
     return this;
@@ -314,7 +331,10 @@ export class HarnessWorkflowEditView extends LitElement {
   connectedCallback(): void {
     super.connectedCallback();
     window.addEventListener('beforeunload', this.onBeforeUnload);
+    window.addEventListener('popstate', this.onHistoryNavigation, true);
+    window.addEventListener('hashchange', this.onHistoryNavigation, true);
     document.addEventListener('click', this.onDocumentClick, true);
+    this.captureLocation();
     if (this.workflowId) {
       void this.load(false);
     } else {
@@ -325,6 +345,8 @@ export class HarnessWorkflowEditView extends LitElement {
   disconnectedCallback(): void {
     this.loadGeneration += 1;
     window.removeEventListener('beforeunload', this.onBeforeUnload);
+    window.removeEventListener('popstate', this.onHistoryNavigation, true);
+    window.removeEventListener('hashchange', this.onHistoryNavigation, true);
     document.removeEventListener('click', this.onDocumentClick, true);
     this.focusTrap?.detach();
     this.focusTrap = null;
@@ -335,6 +357,7 @@ export class HarnessWorkflowEditView extends LitElement {
     if (!changed.has('workflowId')) return;
     const previous = changed.get('workflowId');
     if (previous === undefined || previous === this.workflowId) return;
+    if (this.workflowId && this.workflowId === this.revision?.workflowId) return;
     if (this.workflowId) {
       void this.load(false);
     } else {
@@ -372,7 +395,43 @@ export class HarnessWorkflowEditView extends LitElement {
     this.pendingFocus = 'harness-editor-title';
   }
 
+  private captureLocation(): void {
+    this.lastHash = window.location.hash;
+    this.lastPath = `${window.location.pathname}${window.location.search}`;
+  }
+
+  /**
+   * Back/Forward (popstate) and hash navigation bypass link clicks. While the
+   * form is dirty, stop the router, put the editor URL back and ask the user.
+   */
+  private onHistoryNavigation = (event: Event): void => {
+    if (this.allowLeave) return;
+    if (!this.dirty) {
+      this.captureLocation();
+      return;
+    }
+    event.stopImmediatePropagation();
+    const attemptedHash = window.location.hash;
+    const attemptedPath = `${window.location.pathname}${window.location.search}`;
+    if (attemptedHash === this.lastHash && attemptedPath === this.lastPath) return;
+    const shouldRestoreHash = attemptedHash !== this.lastHash;
+    const restore = shouldRestoreHash
+      ? `${this.lastPath}${this.lastHash}`
+      : `${this.lastPath}${attemptedHash}`;
+    window.history.replaceState({}, '', restore);
+    const attempted = attemptedHash || attemptedPath;
+    if (attempted && attempted !== `${this.lastPath}${this.lastHash}`) {
+      this.leaveHref = attempted;
+    }
+    if (!this.dialog) {
+      this.returnFocus =
+        document.activeElement instanceof HTMLElement ? document.activeElement : null;
+      this.dialog = { kind: 'leave' };
+    }
+  };
+
   private async load(manual: boolean): Promise<void> {
+    if (this.saving) return;
     if (!this.workflowId) {
       this.resetCreate();
       return;
@@ -467,8 +526,9 @@ export class HarnessWorkflowEditView extends LitElement {
 
   private focusField(field: string): void {
     const id = FIELD_INPUT_IDS[field];
-    if (!id) return;
-    const element = this.querySelector<HTMLElement>(`#${id}`);
+    const element =
+      this.querySelector<HTMLElement>(id ? `#${id}` : '#harness-error-summary') ??
+      this.querySelector<HTMLElement>('#harness-error-summary');
     element?.scrollIntoView?.({ block: 'center' });
     element?.focus();
   }
@@ -522,7 +582,7 @@ export class HarnessWorkflowEditView extends LitElement {
   }
 
   private async save(): Promise<void> {
-    if (this.saving) return;
+    if (this.saving || this.loading) return;
     const { definition, errors } = this.collectDefinition();
     if (!definition) {
       this.applyFieldErrors(errors);
@@ -568,6 +628,8 @@ export class HarnessWorkflowEditView extends LitElement {
           '',
           `#/harness/workflows/${encodeURIComponent(revision.workflowId)}`,
         );
+        this.captureLocation();
+        window.dispatchEvent(new PopStateEvent('popstate'));
       }
     } catch (error) {
       this.saving = false;
@@ -654,7 +716,9 @@ export class HarnessWorkflowEditView extends LitElement {
       );
       const revision = response.result;
       if (!revision) throw new Error('空响应');
-      this.applyRevision(revision);
+      // Only status metadata changes; unsaved local form edits stay intact.
+      this.revision = revision;
+      this.version = revision.version;
       this.enabled = revision.enabled;
       this.togglePending = false;
       this.closeDialog();
@@ -1088,7 +1152,7 @@ export class HarnessWorkflowEditView extends LitElement {
         id="harness-feedback"
         data-feedback=${this.feedback.kind}
         role=${alert ? 'alert' : 'group'}
-        aria-live="off"
+        aria-live=${alert ? 'assertive' : 'off'}
         tabindex="-1"
       >
         <strong>${this.feedback.title}</strong>
@@ -1096,7 +1160,13 @@ export class HarnessWorkflowEditView extends LitElement {
         <p class="harness-editor__next">${this.feedback.next}</p>
         ${
           this.feedback.kind === 'conflict'
-            ? html`<button type="button" class="btn" data-action="reload" @click=${() => this.load(true)}>
+            ? html`<button
+                type="button"
+                class="btn"
+                data-action="reload"
+                ?disabled=${this.saving || this.loading}
+                @click=${() => this.load(true)}
+              >
                 重新加载
               </button>`
             : nothing
@@ -1156,6 +1226,7 @@ export class HarnessWorkflowEditView extends LitElement {
                     role="menuitem"
                     id="harness-menu-reload"
                     data-action="menu-reload"
+                    ?disabled=${this.dirty || this.saving || this.loading}
                     @click=${() => {
                       this.closeMenu(false);
                       void this.load(true);

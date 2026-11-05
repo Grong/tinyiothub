@@ -165,6 +165,24 @@ describe('Harness overview accessibility', () => {
     expect(
       host.querySelector('.harness-workflow-table tbody th')?.getAttribute('scope'),
     ).toBe('row');
+    expect(host.querySelector('.harness-workflow-table thead')?.getAttribute('role')).toBe(
+      'rowgroup',
+    );
+    expect(host.querySelector('.harness-workflow-table tbody')?.getAttribute('role')).toBe(
+      'rowgroup',
+    );
+    expect(host.querySelectorAll('.harness-workflow-table__field')).toHaveLength(6);
+    // Explicit roles keep the table contract even when narrow CSS reflows rows.
+    expect(host.querySelector('.harness-workflow-table')?.getAttribute('role')).toBe('table');
+    expect(host.querySelector('.harness-workflow-table tbody tr')?.getAttribute('role')).toBe(
+      'row',
+    );
+    expect(host.querySelector('.harness-workflow-table tbody td')?.getAttribute('role')).toBe(
+      'cell',
+    );
+    expect(host.querySelector('.harness-workflow-table tbody th')?.getAttribute('role')).toBe(
+      'rowheader',
+    );
 
     const status = host.querySelector<HTMLElement>('.harness-workflow .harness-status')!;
     expect(status.textContent).toContain('已启用');
@@ -188,7 +206,7 @@ describe('Harness overview accessibility', () => {
 });
 
 describe('Harness workflow editor accessibility', () => {
-  it('keeps one polite announcer and uses role=alert for errors', async () => {
+  it('keeps exactly one persistent polite announcer alongside transient status text', async () => {
     workflowApi.mockResolvedValue(response(revision()));
     const host = (view = document.createElement(
       'view-harness-workflow-edit',
@@ -255,8 +273,12 @@ describe('Harness responsive and design-system contracts', () => {
     expect(overviewCss).toContain('@media (min-width: 980px)');
     expect(overviewCss).toContain('@media (max-width: 599px)');
     expect(overviewCss).toContain('.harness-workflow-table');
+    expect(overviewCss).toContain('.harness-workflow-table__field');
     expect(overviewCss).not.toContain('overflow-x: scroll');
     expect(overviewCss).not.toContain('overflow-x: auto');
+    expect(overviewCss).toMatch(
+      /\.harness-attention__action,[\s\S]*?\.harness-workflow__action[\s\S]*?min-height: 44px;/,
+    );
 
     for (const source of [editorCss, overviewCss]) {
       expect(source).not.toContain('width: 100vw');

@@ -174,7 +174,7 @@ describe('Harness workflow editor form', () => {
     expect(summary.textContent).toContain('保存不会改变启停状态');
   });
 
-  it('saves a new blank workflow as disabled and never sends enabled', async () => {
+  it('saves a new blank workflow as disabled, never sends enabled, and notifies the router', async () => {
     await mount();
     type('workflow-objective', '新建巡检');
     type('workflow-trigger-id', 't-new');
@@ -189,6 +189,8 @@ describe('Harness workflow editor form', () => {
         }),
       ),
     );
+    const popstate = vi.fn();
+    window.addEventListener('popstate', popstate);
 
     click('button[data-action="save"]');
     await settle();
@@ -200,6 +202,9 @@ describe('Harness workflow editor form', () => {
     expect(view.textContent).toContain('已保存版本 v1');
     expect(view.textContent).toContain('未启用');
     expect(window.location.hash).toBe('#/harness/workflows/wf%3Anew');
+    expect(popstate).toHaveBeenCalledOnce();
+    expect(getWorkflow).not.toHaveBeenCalled();
+    window.removeEventListener('popstate', popstate);
   });
 
   it('preserves enabled when editing and never toggles it implicitly', async () => {
@@ -316,8 +321,37 @@ describe('Harness workflow editor form', () => {
 
     const feedback = view.querySelector<HTMLElement>('[data-feedback="error"]')!;
     expect(feedback.getAttribute('role')).toBe('alert');
+    expect(feedback.getAttribute('aria-live')).toBe('assertive');
     expect(feedback.textContent).toContain('服务暂不可用');
     expect(feedback.textContent).toContain('下一步');
+  });
+
+  it('maps unknown structured server fields to a focusable summary entry', async () => {
+    const mapped = workflowFieldErrors(
+      definition(),
+      new ApiError(400, 'invalid', {
+        code: 400,
+        fields: { mystery_field: '未知字段错误', 'trigger.expression': { message: '表达式错误' } },
+      }),
+    );
+    expect(mapped).toMatchObject({
+      mystery_field: '未知字段错误',
+      'trigger.expression': '表达式错误',
+    });
+
+    await mount({ workflowId: 'wf:1', loaded: revision() });
+    updateWorkflow.mockRejectedValueOnce(
+      new ApiError(400, 'invalid', { code: 400, fields: { mystery_field: '未知字段错误' } }),
+    );
+    click('button[data-action="save"]');
+    await settle();
+
+    const entry = view.querySelector<HTMLElement>('[data-error-field="mystery_field"]')!;
+    expect(entry).not.toBeNull();
+    expect(view.querySelector('#harness-error-summary')?.textContent).toContain('未知字段错误');
+    entry.click();
+    await settle();
+    expect(document.activeElement).toBe(view.querySelector('#harness-error-summary'));
   });
 
   it('warns before leaving with unsaved edits and restores focus on cancel', async () => {
@@ -349,6 +383,67 @@ describe('Harness workflow editor form', () => {
     click('button[data-action="leave-confirm"]');
     await settle();
     expect(window.location.hash).toBe('#/harness');
+  });
+
+  it('prompts, re-arms the editor URL and blocks the router on Back/hash navigation while dirty', async () => {
+    window.history.replaceState({}, '', '/dashboard#/harness/workflows/wf%3A1');
+    const routerListener = vi.fn();
+    window.addEventListener('hashchange', routerListener);
+    await mount({ workflowId: 'wf:1', loaded: revision() });
+    type('workflow-objective', '未保存的历史更改');
+
+    window.location.hash = '#/harness';
+    window.dispatchEvent(new HashChangeEvent('hashchange'));
+    await settle();
+
+    expect(routerListener).not.toHaveBeenCalled();
+    expect(window.location.hash).toBe('#/harness/workflows/wf%3A1');
+    const dialog = view.querySelector<HTMLElement>('[role="dialog"][data-dialog="leave"]');
+    expect(dialog).not.toBeNull();
+    window.removeEventListener('hashchange', routerListener);
+    click('button[data-action="leave-confirm"]');
+    await settle();
+    expect(window.location.hash).toBe('#/harness');
+  });
+
+  it('keeps unsaved form edits when an explicit enable/disable action succeeds', async () => {
+    await mount({ workflowId: 'wf:1', loaded: revision() });
+    type('workflow-objective', '尚未保存但也要保留');
+    setEnabled.mockResolvedValueOnce(response(revision({ enabled: false })));
+
+    click('button[data-action="toggle-enabled"]');
+    await settle();
+    click('button[data-action="toggle-confirm"]');
+    await settle();
+
+    expect(field('workflow-objective').value).toBe('尚未保存但也要保留');
+    expect(view.querySelector('[data-status="disabled"]')).not.toBeNull();
+    expect(view.textContent).toContain('已停用计划');
+  });
+
+  it('disables reload while dirty or while a save is in flight', async () => {
+    await mount({ workflowId: 'wf:1', loaded: revision() });
+    const pending = deferred<ApiResponse<WorkflowRevision>>();
+    updateWorkflow.mockReturnValueOnce(pending.promise);
+
+    click('button[data-action="save"]');
+    await settle();
+    click('button[data-action="more"]');
+    await settle();
+    expect(
+      view.querySelector<HTMLButtonElement>('button[data-action="menu-reload"]')?.disabled,
+    ).toBe(true);
+    click('button[data-action="more"]');
+    await settle();
+
+    pending.resolve(response({ ...revision(), version: 4, enabled: true }));
+    await settle();
+    type('workflow-objective', '未保存更改');
+    click('button[data-action="more"]');
+    await settle();
+    expect(
+      view.querySelector<HTMLButtonElement>('button[data-action="menu-reload"]')?.disabled,
+    ).toBe(true);
   });
 
   it('disables scheduling only through an explicit confirmed action', async () => {

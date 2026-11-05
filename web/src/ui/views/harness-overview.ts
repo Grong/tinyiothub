@@ -365,18 +365,27 @@ export class HarnessOverviewView extends LitElement {
 
   private renderWorkflowRow(workflow: HarnessWorkflowSummary) {
     return html`
-      <tr class="harness-workflow" data-workflow-id=${workflow.workflowId}>
-        <th scope="row">工作流 ${workflow.objective}</th>
-        <td data-label="启停">
+      <tr class="harness-workflow" role="row" data-workflow-id=${workflow.workflowId}>
+        <th scope="row" role="rowheader">工作流 ${workflow.objective}</th>
+        <td role="cell" data-label="启停">
+          <span class="harness-workflow-table__field">启停：</span>
           ${renderHarnessStatus(workflow.enabled ? 'enabled' : 'disabled')}
         </td>
-        <td data-label="触发">触发：${workflow.triggerLabel}</td>
-        <td data-label="下一次">
-          下一次：${workflow.enabled ? formatHarnessTime(workflow.nextRunAt) : '未计划'}
+        <td role="cell" data-label="触发">
+          <span class="harness-workflow-table__field">触发：</span>${workflow.triggerLabel}
         </td>
-        <td data-label="最近结果">最近结果：${workflow.lastResult ?? '暂无'}</td>
-        <td data-label="版本">版本：${workflow.version}</td>
-        <td data-label="操作">
+        <td role="cell" data-label="下一次">
+          <span class="harness-workflow-table__field">下一次：</span>
+          ${workflow.enabled ? formatHarnessTime(workflow.nextRunAt) : '未计划'}
+        </td>
+        <td role="cell" data-label="最近结果">
+          <span class="harness-workflow-table__field">最近结果：</span>${workflow.lastResult ?? '暂无'}
+        </td>
+        <td role="cell" data-label="版本">
+          <span class="harness-workflow-table__field">版本：</span>${workflow.version}
+        </td>
+        <td role="cell" data-label="操作">
+          <span class="harness-workflow-table__field">操作：</span>
           <a
             class="harness-workflow__action"
             href=${`#/harness/workflows/${encodeURIComponent(workflow.workflowId)}`}
@@ -410,20 +419,20 @@ export class HarnessOverviewView extends LitElement {
                 尚未配置 Workflow。新建后，Harness 会按声明自动调度。
               </p>`
             : html`<div class="harness-workflow__scroll">
-                <table class="harness-workflow-table">
+                <table class="harness-workflow-table" role="table">
                   <caption class="harness-sr-only">当前 Workflow 配置与调度状态</caption>
-                  <thead>
-                    <tr>
-                      <th scope="col">目标</th>
-                      <th scope="col">启停</th>
-                      <th scope="col">触发</th>
-                      <th scope="col">下一次</th>
-                      <th scope="col">最近结果</th>
-                      <th scope="col">版本</th>
-                      <th scope="col">操作</th>
+                  <thead role="rowgroup">
+                    <tr role="row">
+                      <th scope="col" role="columnheader">目标</th>
+                      <th scope="col" role="columnheader">启停</th>
+                      <th scope="col" role="columnheader">触发</th>
+                      <th scope="col" role="columnheader">下一次</th>
+                      <th scope="col" role="columnheader">最近结果</th>
+                      <th scope="col" role="columnheader">版本</th>
+                      <th scope="col" role="columnheader">操作</th>
                     </tr>
                   </thead>
-                  <tbody>
+                  <tbody role="rowgroup">
                     ${workflows.map((workflow) => this.renderWorkflowRow(workflow))}
                   </tbody>
                 </table>
