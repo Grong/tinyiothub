@@ -38,6 +38,16 @@ const MAX_TURN_DURATION: Duration = Duration::from_secs(300);
 /// seed_history 改为注入内部缓冲、turn_streamed/run_single 经
 /// `.history(...)` 逐轮传入；`true`（thing_agent 自治路径）时照旧走
 /// port Memory 承载的会话内存。
+/// Public tool arguments must fail closed: an unknown or hidden tool name gets
+/// the default redaction policy rather than passing raw arguments through.
+fn redact_public_args(
+    redactions: &std::collections::HashMap<String, tinyiothub_skills::registry::RedactionPolicy>,
+    tool_name: &str,
+    args: &serde_json::Value,
+) -> serde_json::Value {
+    redactions.get(tool_name).cloned().unwrap_or_default().redact(args)
+}
+
 pub struct RigAgentLoop {
     agent: Agent,
     memory: Option<Arc<PortMemoryAsConversation>>,
@@ -67,9 +77,7 @@ impl RigAgentLoop {
     }
 
     fn public_tool_args(&self, tool_name: &str, args: &serde_json::Value) -> serde_json::Value {
-        self.redactions
-            .get(tool_name)
-            .map_or_else(|| args.clone(), |policy| policy.redact(args))
+        redact_public_args(&self.redactions, tool_name, args)
     }
 
     /// conversation_memory=false 时的每轮重建历史（seed_history 注入）。
@@ -588,5 +596,24 @@ mod tests {
         };
         assert_eq!(hook.action(), ToolCallAction::Stop("run cancelled".into()));
         assert_eq!(hook.count.load(Ordering::SeqCst), 0);
+    }
+
+    #[test]
+    fn unknown_tool_names_fail_closed_to_default_redaction() {
+        let redactions = std::collections::HashMap::new();
+        let public = redact_public_args(
+            &redactions,
+            "not_registered",
+            &serde_json::json!({
+                "thingId": "camera-1",
+                "credentials": {"value": "hunter2"},
+                "tokens": ["abc", "def"]
+            }),
+        );
+        let serialized = public.to_string();
+        assert!(!serialized.contains("hunter2"), "{serialized}");
+        assert!(!serialized.contains("abc"), "{serialized}");
+        assert!(!serialized.contains("def"), "{serialized}");
+        assert!(serialized.contains("[REDACTED]"), "{serialized}");
     }
 }

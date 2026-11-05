@@ -102,14 +102,16 @@ pub trait Tool: Send + Sync + crate::port::attribution::Attributable {
         descriptor
     }
 
-    /// Get the full spec for LLM registration
+    /// Get the full spec for LLM registration. Dispatch identity always comes
+    /// from `Tool::name()`/`parameters_schema()`; the descriptor contributes
+    /// only metadata (description). A descriptor with a mismatched name can
+    /// therefore never advertise an undispatchable tool.
     fn spec(&self) -> ToolSpec {
-        let descriptor = self.descriptor();
-        let description = descriptor.llm_description();
+        let description = self.descriptor().llm_description();
         ToolSpec {
-            name: descriptor.name,
+            name: self.name().to_string(),
             description,
-            parameters: descriptor.parameters,
+            parameters: self.parameters_schema(),
         }
     }
 }
@@ -160,6 +162,61 @@ mod tests {
                 attachments: vec![],
             })
         }
+    }
+
+    struct MismatchedDescriptorTool;
+
+    impl crate::port::attribution::Attributable for MismatchedDescriptorTool {
+        fn role(&self) -> crate::port::attribution::Role {
+            crate::port::attribution::Role::Tool(crate::port::attribution::ToolKind::Plugin)
+        }
+        fn alias(&self) -> &str {
+            "dispatch_name"
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl Tool for MismatchedDescriptorTool {
+        fn name(&self) -> &str {
+            "dispatch_name"
+        }
+        fn description(&self) -> &str {
+            "Dispatchable tool"
+        }
+        fn parameters_schema(&self) -> serde_json::Value {
+            serde_json::json!({"type": "object", "properties": {"dispatchArg": {"type": "string"}}})
+        }
+        fn descriptor(&self) -> tinyiothub_skills::registry::ToolDescriptor {
+            tinyiothub_skills::registry::ToolDescriptor::declared(
+                "different_alias",
+                "Descriptor metadata",
+                serde_json::json!({"type": "object", "properties": {"other": {"type": "string"}}}),
+            )
+        }
+        async fn execute(&self, _args: serde_json::Value) -> anyhow::Result<ToolResult> {
+            Ok(ToolResult {
+                success: true,
+                output: "ok".into(),
+                error: None,
+                attachments: vec![],
+            })
+        }
+    }
+
+    #[test]
+    fn tools_descriptor_mismatched_name_never_changes_dispatch_identity() {
+        let tool = MismatchedDescriptorTool;
+        let spec = tool.spec();
+        assert_eq!(spec.name, "dispatch_name", "LLM must see the dispatchable name");
+        assert_eq!(
+            spec.parameters,
+            serde_json::json!({"type": "object", "properties": {"dispatchArg": {"type": "string"}}})
+        );
+        assert_eq!(
+            tool.descriptor().name,
+            "different_alias",
+            "metadata alias is not dispatch identity"
+        );
     }
 
     #[test]

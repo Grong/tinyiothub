@@ -53,6 +53,10 @@ impl Tool for TrustAwareTool {
         self.inner.parameters_schema()
     }
 
+    fn descriptor(&self) -> tinyiothub_skills::registry::ToolDescriptor {
+        super::registry::descriptor_for(self.inner.as_ref(), self.safety)
+    }
+
     async fn execute(&self, args: serde_json::Value) -> anyhow::Result<ToolResult> {
         let tool_name = <Self as Tool>::name(self);
 

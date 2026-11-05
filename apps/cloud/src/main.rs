@@ -134,6 +134,7 @@ async fn main_impl() -> std::io::Result<()> {
             .set_runtime_context(crate::domains::agent::tools::ToolRuntimeContext {
                 data_server: app_state.data_server.clone(),
                 directive_sink: app_state.directive_sink.clone(),
+                tool_policy: None,
             })
             .await;
         // Refresh agent tools after MCP registration

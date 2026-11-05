@@ -41,6 +41,12 @@ use super::tools::{
 };
 use crate::domains::event::{bus::ThingEventBus, router::ThrottleState};
 
+/// Additional declared tools appended to the fixed autonomous tool set.
+/// Composition roots can register tools without editing core or a frontend
+/// allowlist; the provider returns the tool plus its declared safety.
+pub type ExtraToolProvider =
+    Arc<dyn Fn(&str) -> Vec<(Box<dyn Tool>, tinyiothub_skills::trust::ToolSafety)> + Send + Sync>;
+
 pub(crate) struct AutonomousEntry {
     pub handle: AgentHandle,
     pub run_ctx_slot: RunContextSlot,
@@ -62,6 +68,8 @@ pub struct AutonomousAgentFactory {
     /// (e.g. a configured video source). The loop derives vision from the
     /// provider itself.
     available_capabilities: Vec<tinyiothub_skills::registry::Capability>,
+    /// Additional declared tools appended to the fixed autonomous set.
+    extra_tools: Option<ExtraToolProvider>,
     pub(crate) agents: DashMap<String, AutonomousEntry>,
 }
 
@@ -90,6 +98,7 @@ impl AutonomousAgentFactory {
             runtime,
             tool_exec: Arc::new(crate::domains::agent::thing_agent::seams::tool_exec::DefaultToolExec),
             available_capabilities: Vec::new(),
+            extra_tools: None,
             agents: DashMap::new(),
         }
     }
@@ -98,6 +107,13 @@ impl AutonomousAgentFactory {
     /// example an enabled video source).
     pub fn with_available_capabilities(mut self, capabilities: Vec<tinyiothub_skills::registry::Capability>) -> Self {
         self.available_capabilities = capabilities;
+        self
+    }
+
+    /// Append declared tools to the fixed autonomous set. Adding a tool is a
+    /// descriptor/provider change, never a core or frontend allowlist edit.
+    pub fn with_extra_tools(mut self, provider: ExtraToolProvider) -> Self {
+        self.extra_tools = Some(provider);
         self
     }
 
@@ -130,7 +146,7 @@ impl AutonomousAgentFactory {
         }
 
         let slot = new_run_context_slot(Arc::clone(&ctx));
-        let tools: Vec<Box<dyn tinyiothub_agent::port::tool::Tool>> = build_autonomous_tools(
+        let mut autonomous_tools = build_autonomous_tools(
             &self.db_pool,
             workspace_id,
             Arc::clone(&self.policy_repo),
@@ -138,16 +154,20 @@ impl AutonomousAgentFactory {
             Arc::clone(&self.event_bus),
             Arc::clone(&self.throttle),
             &self.runtime,
-        )
-        .into_iter()
-        .map(|t| {
-            Box::new(crate::domains::agent::thing_agent::seams::tool_exec::SeamTool::new(
-                t,
-                Arc::clone(&self.tool_exec),
-                workspace_id,
-            )) as Box<dyn tinyiothub_agent::port::tool::Tool>
-        })
-        .collect();
+        );
+        if let Some(provider) = &self.extra_tools {
+            autonomous_tools.extend(provider(workspace_id).into_iter().map(|(tool, _safety)| tool));
+        }
+        let tools: Vec<Box<dyn tinyiothub_agent::port::tool::Tool>> = autonomous_tools
+            .into_iter()
+            .map(|t| {
+                Box::new(crate::domains::agent::thing_agent::seams::tool_exec::SeamTool::new(
+                    t,
+                    Arc::clone(&self.tool_exec),
+                    workspace_id,
+                )) as Box<dyn tinyiothub_agent::port::tool::Tool>
+            })
+            .collect();
 
         let memory: Arc<dyn Memory> = Arc::new(WorkspaceScopedMemory::new(
             Arc::clone(&self.memory),

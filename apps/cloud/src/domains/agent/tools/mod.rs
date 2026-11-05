@@ -11,7 +11,7 @@ pub mod types;
 
 pub use capabilities::{emit_capability_unavailable, resolve_capabilities};
 pub use catalog::build_tools_catalog_json;
-pub use context::ToolRuntimeContext;
+pub use context::{ToolPolicyContext, ToolRuntimeContext};
 pub use external::{ExternalToolContext, ExternalToolHandler, ExternalToolMeta, ExternalToolRegistry, IoTToolAdapter};
 pub use registry::{ExternalToolFactory, ToolProvider, ToolRegistry, filter_by_denylist};
 pub use trust::TrustAwareTool;

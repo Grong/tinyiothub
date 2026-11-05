@@ -153,15 +153,24 @@ impl ApprovalPolicy {
         }
     }
 
-    /// Parse the Workflow/persisted JSON shape. Unknown or absent fields yield
-    /// `None` so persistence compatibility does not invent a policy.
+    /// Parse the Workflow/persisted JSON shape. Shapes without at least one
+    /// recognized policy key yield `None` so persistence compatibility does not
+    /// invent a policy (an empty object must not silently mean "no approval").
     pub fn from_workflow_value(value: &serde_json::Value) -> Option<Self> {
         let object = value.as_object()?;
-        let mandatory = ["requiresApproval", "requires_approval", "mandatory", "approvalRequired"]
+        let required_keys = ["requiresApproval", "requires_approval", "mandatory", "approvalRequired"];
+        let timeout_keys = ["timeoutSecs", "timeout_secs", "timeout"];
+        let recognized = required_keys.iter().any(|key| object.contains_key(*key))
+            || timeout_keys.iter().any(|key| object.contains_key(*key))
+            || object.contains_key("reason");
+        if !recognized {
+            return None;
+        }
+        let mandatory = required_keys
             .iter()
             .find_map(|key| object.get(*key).and_then(serde_json::Value::as_bool))
             .unwrap_or(false);
-        let timeout_secs = ["timeoutSecs", "timeout_secs", "timeout"]
+        let timeout_secs = timeout_keys
             .iter()
             .find_map(|key| object.get(*key).and_then(serde_json::Value::as_u64))
             .unwrap_or(60);
@@ -264,12 +273,12 @@ impl RedactionPolicy {
             serde_json::Value::Object(map) => {
                 let mut redacted = serde_json::Map::with_capacity(map.len());
                 for (key, item) in map {
-                    // Container keys such as `credentials` keep their shape so
-                    // display can show which nested fields were present; the
-                    // secret leaves are still replaced. Scalar matches are
-                    // redacted wholesale.
-                    if self.is_sensitive_key(key) && !item.is_object() && !item.is_array() {
-                        redacted.insert(key.clone(), serde_json::Value::String(self.replacement.clone()));
+                    if self.is_sensitive_key(key) {
+                        // A sensitive container must never leak descendant
+                        // scalars (e.g. {"credentials":{"value":"hunter2"}} or
+                        // {"tokens":["abc","def"]}). Preserve the shape but
+                        // replace every scalar leaf.
+                        redacted.insert(key.clone(), self.redact_all_scalars(item));
                     } else {
                         redacted.insert(key.clone(), self.redact(item));
                     }
@@ -280,6 +289,22 @@ impl RedactionPolicy {
                 serde_json::Value::Array(items.iter().map(|item| self.redact(item)).collect())
             }
             other => other.clone(),
+        }
+    }
+
+    /// Replace every scalar descendant of a sensitive container with the
+    /// redaction marker while retaining object keys and array length.
+    fn redact_all_scalars(&self, value: &serde_json::Value) -> serde_json::Value {
+        match value {
+            serde_json::Value::Object(map) => serde_json::Value::Object(
+                map.iter()
+                    .map(|(key, item)| (key.clone(), self.redact_all_scalars(item)))
+                    .collect(),
+            ),
+            serde_json::Value::Array(items) => {
+                serde_json::Value::Array(items.iter().map(|item| self.redact_all_scalars(item)).collect())
+            }
+            _ => serde_json::Value::String(self.replacement.clone()),
         }
     }
 }
@@ -947,5 +972,32 @@ mod tests {
         assert!(!Capability::Video.is_satisfied_by(&[Capability::Video]));
         assert!(Capability::Video.is_satisfied_by(&[Capability::Vision, Capability::Video]));
         assert!(!Capability::Vision.is_satisfied_by(&[Capability::Video]));
+    }
+
+    #[test]
+    fn sensitive_containers_never_leak_scalar_descendants() {
+        let descriptor = new_tool();
+        for (arguments, leaked) in [
+            (
+                json!({"thingId": "camera-1", "credentials": {"value": "hunter2"}}),
+                "hunter2",
+            ),
+            (json!({"thingId": "camera-1", "tokens": ["abc", "def"]}), "abc"),
+            (json!({"thingId": "camera-1", "secrets": [{"key1": "x"}]}), "x"),
+        ] {
+            let summary = descriptor.arguments_summary(&arguments).expect("valid argument shape");
+            assert!(!summary.contains(leaked), "redacted summary leaked {leaked}: {summary}");
+            assert!(summary.contains("[REDACTED]"), "{summary}");
+        }
+    }
+
+    #[test]
+    fn unrecognized_workflow_policy_shapes_are_rejected() {
+        assert_eq!(ApprovalPolicy::from_workflow_value(&json!({})), None);
+        assert_eq!(
+            ApprovalPolicy::from_workflow_value(&json!({"unknownKey": true, "note": "nope"})),
+            None
+        );
+        assert!(ApprovalPolicy::from_workflow_value(&json!({"requiresApproval": false})).is_some());
     }
 }

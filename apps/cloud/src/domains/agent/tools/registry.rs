@@ -12,7 +12,7 @@ use tinyiothub_agent::port::tool::Tool;
 use tinyiothub_core::heartbeat::TrustConfig;
 use tinyiothub_skills::registry::{
     Capability, DeclaredToolRegistry, PresentationDescriptor, ToolDescriptor, ToolEffectKind, ToolRegistry as _,
-    ToolRegistryError,
+    ToolRegistryError, verify_revision_policy,
 };
 use tinyiothub_skills::trust::ToolSafety;
 
@@ -45,6 +45,48 @@ pub struct ToolRegistry {
     inner: Arc<RwLock<RegistryInner>>,
 }
 
+fn safety_rank(safety: ToolSafety) -> u8 {
+    match safety {
+        ToolSafety::ReadOnly => 0,
+        ToolSafety::Write => 1,
+        ToolSafety::Destructive => 2,
+    }
+}
+
+fn max_safety(left: ToolSafety, right: ToolSafety) -> ToolSafety {
+    if safety_rank(left) >= safety_rank(right) {
+        left
+    } else {
+        right
+    }
+}
+
+fn effect_kind_rank(kind: ToolEffectKind) -> u8 {
+    match kind {
+        ToolEffectKind::Read => 0,
+        ToolEffectKind::Write => 1,
+        ToolEffectKind::External => 2,
+        ToolEffectKind::Destructive => 3,
+    }
+}
+
+fn max_effect_kind(declared: ToolEffectKind, safety: ToolSafety) -> ToolEffectKind {
+    let inferred = ToolEffectKind::from_safety(safety);
+    if effect_kind_rank(declared) >= effect_kind_rank(inferred) {
+        declared
+    } else {
+        inferred
+    }
+}
+
+fn safety_from_effect_kind(kind: ToolEffectKind) -> ToolSafety {
+    match kind {
+        ToolEffectKind::Read => ToolSafety::ReadOnly,
+        ToolEffectKind::Write | ToolEffectKind::External => ToolSafety::Write,
+        ToolEffectKind::Destructive => ToolSafety::Destructive,
+    }
+}
+
 /// Adapt a runtime tool plus its registry-declared safety into the single
 /// `ToolDescriptor` used by exposure, policy, redaction, and display.
 ///
@@ -54,9 +96,14 @@ pub struct ToolRegistry {
 /// presentation override.
 pub fn descriptor_for(tool: &dyn Tool, safety: ToolSafety) -> ToolDescriptor {
     let mut descriptor = tool.descriptor();
-    descriptor.safety = safety;
-    descriptor.effect_kind = ToolEffectKind::from_safety(safety);
-    if matches!(safety, ToolSafety::Destructive) {
+    // Precedence is monotonic: neither declaration nor registry safety may
+    // downgrade the other. A tool that declares Destructive/External stays at
+    // least that strong; a registry-declared Destructive can never be masked by
+    // an optimistic descriptor.
+    let declared_safety = safety_from_effect_kind(descriptor.effect_kind);
+    descriptor.safety = max_safety(max_safety(descriptor.safety, safety), declared_safety);
+    descriptor.effect_kind = max_effect_kind(descriptor.effect_kind, safety);
+    if matches!(descriptor.safety, ToolSafety::Destructive) {
         descriptor.approval_policy.mandatory = true;
         if descriptor.approval_policy.reason.is_none() {
             descriptor.approval_policy.reason = Some("destructive tool".to_string());
@@ -64,7 +111,7 @@ pub fn descriptor_for(tool: &dyn Tool, safety: ToolSafety) -> ToolDescriptor {
         descriptor.requires_approval = true;
     }
 
-    let danger = matches!(safety, ToolSafety::Destructive) || catalog::name_infers_destructive(tool.name());
+    let danger = matches!(descriptor.safety, ToolSafety::Destructive) || catalog::name_infers_destructive(tool.name());
     let inferred = PresentationDescriptor::inferred(tool.name(), danger);
     let mut presentation = descriptor.presentation.clone();
     // An explicit label/group (different from the safe fallback) wins.
@@ -222,6 +269,30 @@ impl ToolRegistry {
                 let name = tool.name();
                 name == "canvas" || !config.tool_denylist.contains(&name.to_string())
             })
+            .filter(|(tool, safety)| {
+                // Production policy gate: a Workflow revision may tighten the
+                // descriptor, but the current effective policy must equal the
+                // pinned revision policy. Any mismatch fails closed by not
+                // exposing the tool for dispatch.
+                let Some(policy) = &runtime.tool_policy else {
+                    return true;
+                };
+                let descriptor = descriptor_for(tool.as_ref(), *safety);
+                let effective = descriptor.effective_approval(policy.workflow_approval_policy.as_ref());
+                let Some(pinned) = policy.pinned_tool_policies.get(tool.name()) else {
+                    return true;
+                };
+                if let Err(error) = verify_revision_policy(pinned, &effective) {
+                    tracing::error!(
+                        workspace_id,
+                        tool = %tool.name(),
+                        %error,
+                        "tool policy revision mismatch — tool not exposed"
+                    );
+                    return false;
+                }
+                true
+            })
             .collect();
 
         match trust_config {
@@ -378,5 +449,142 @@ mod tests {
         assert_eq!(names, vec!["get_thing", "alarm_list"]);
         // Built-in wins: the surviving "get_thing" is the provider's stub.
         assert_eq!(tools[0].description(), "stub");
+    }
+
+    struct DescriptorStub {
+        descriptor: ToolDescriptor,
+    }
+
+    impl Attributable for DescriptorStub {
+        fn role(&self) -> Role {
+            Role::Tool(ToolKind::Plugin)
+        }
+        fn alias(&self) -> &str {
+            "infosync"
+        }
+    }
+
+    #[async_trait]
+    impl Tool for DescriptorStub {
+        fn name(&self) -> &str {
+            "infosync"
+        }
+        fn description(&self) -> &str {
+            "declared tool"
+        }
+        fn parameters_schema(&self) -> serde_json::Value {
+            serde_json::json!({"type": "object"})
+        }
+        fn descriptor(&self) -> ToolDescriptor {
+            self.descriptor.clone()
+        }
+        async fn execute(&self, _args: serde_json::Value) -> anyhow::Result<ToolResult> {
+            Ok(ToolResult {
+                success: true,
+                output: "ran".into(),
+                error: None,
+                attachments: vec![],
+            })
+        }
+    }
+
+    #[test]
+    fn registry_safety_and_effect_kind_never_downgrade_declarations() {
+        use tinyiothub_skills::registry::ToolEffectKind;
+
+        let mut declared_external = ToolDescriptor::declared("infosync", "sync", serde_json::json!({}));
+        declared_external.effect_kind = ToolEffectKind::External;
+        declared_external.safety = ToolSafety::Write;
+        let descriptor = descriptor_for(
+            &DescriptorStub {
+                descriptor: declared_external,
+            },
+            ToolSafety::ReadOnly,
+        );
+        assert_eq!(
+            descriptor.effect_kind,
+            ToolEffectKind::External,
+            "registry read-only must not downgrade a declared external effect"
+        );
+        assert_eq!(descriptor.safety, ToolSafety::Write);
+
+        let mut declared_destructive = ToolDescriptor::declared("infosync", "sync", serde_json::json!({}));
+        declared_destructive.effect_kind = ToolEffectKind::Destructive;
+        declared_destructive.safety = ToolSafety::ReadOnly;
+        let descriptor = descriptor_for(
+            &DescriptorStub {
+                descriptor: declared_destructive,
+            },
+            ToolSafety::ReadOnly,
+        );
+        assert_eq!(descriptor.effect_kind, ToolEffectKind::Destructive);
+        assert!(descriptor.approval_policy.mandatory);
+
+        let declared_read = ToolDescriptor::declared("infosync", "sync", serde_json::json!({}));
+        let descriptor = descriptor_for(
+            &DescriptorStub {
+                descriptor: declared_read,
+            },
+            ToolSafety::Destructive,
+        );
+        assert_eq!(
+            descriptor.effect_kind,
+            ToolEffectKind::Destructive,
+            "registry destructive must not be downgraded by the declaration"
+        );
+        assert_eq!(descriptor.safety, ToolSafety::Destructive);
+        assert!(descriptor.approval_policy.mandatory);
+    }
+
+    #[tokio::test]
+    async fn resolve_tools_fails_closed_when_pinned_policy_mismatches() {
+        use tinyiothub_skills::registry::ApprovalPolicy;
+
+        use crate::domains::agent::tools::context::ToolPolicyContext;
+
+        let registry = ToolRegistry::default();
+        registry.register_provider(Arc::new(|_ws, _rt| {
+            vec![(
+                Box::new(NamedStubTool { name: "stub_tool" }) as Box<dyn Tool>,
+                ToolSafety::Write,
+            )]
+        }));
+
+        let pinned_mismatch = ToolPolicyContext {
+            workflow_approval_policy: None,
+            pinned_tool_policies: [(
+                "stub_tool".to_string(),
+                ApprovalPolicy {
+                    mandatory: true,
+                    timeout_secs: 60,
+                    reason: Some("pinned".into()),
+                },
+            )]
+            .into_iter()
+            .collect(),
+        };
+        let runtime = ToolRuntimeContext {
+            tool_policy: Some(pinned_mismatch),
+            ..ToolRuntimeContext::default()
+        };
+        let tools = registry
+            .resolve_tools_for_agent(&AgentRuntimeConfig::default(), "ws", None, &runtime)
+            .await;
+        assert!(tools.is_empty(), "a revision policy mismatch must fail closed");
+
+        let pinned_match = ToolPolicyContext {
+            workflow_approval_policy: None,
+            pinned_tool_policies: [("stub_tool".to_string(), ApprovalPolicy::none())]
+                .into_iter()
+                .collect(),
+        };
+        let runtime = ToolRuntimeContext {
+            tool_policy: Some(pinned_match),
+            ..ToolRuntimeContext::default()
+        };
+        let tools = registry
+            .resolve_tools_for_agent(&AgentRuntimeConfig::default(), "ws", None, &runtime)
+            .await;
+        assert_eq!(tools.len(), 1, "matching pinned policy resolves normally");
     }
 }

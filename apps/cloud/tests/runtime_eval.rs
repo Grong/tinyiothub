@@ -1018,66 +1018,65 @@ impl ModelProvider for SilentNonVisionProvider {
     }
 }
 
+/// Drives the real `AutonomousAgentFactory` (not the emit helper): a declared
+/// video tool on a non-vision provider must fail before the model call, write
+/// `capability.unavailable`, and create zero Effects.
 #[tokio::test]
-async fn tool_descriptor_non_vision_provider_fails_before_model_and_creates_zero_effects() {
-    use tinyiothub_agent::adapters::rig::loop_::rig_loop_factory;
-    use tinyiothub_agent::port::runtime::AgentLoopConfig;
+async fn tool_descriptor_factory_capability_gate_emits_event_and_creates_zero_effects() {
+    use tinyiothub_cloud::domains::agent::host::autonomous_factory::AutonomousAgentFactory;
+    use tinyiothub_cloud::domains::agent::host::tools::ThingToolContext;
+    use tinyiothub_cloud::domains::agent::runtime::stream::{RuntimeRecorder, RuntimeStreamHub};
+    use tinyiothub_cloud::domains::agent::thing_agent::RunContextInner;
+    use tinyiothub_cloud::domains::event::bus::ThingEventBus;
+    use tinyiothub_cloud::domains::event::router::ThrottleState;
     use tinyiothub_storage::test_helpers::fixture_workspace;
+    use tokio::sync::RwLock;
 
     let fixture = fixture_workspace("ws-tool-descriptor-capability").await;
-    let before: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM effect_intents")
-        .fetch_one(&fixture.workspace_pool().await)
-        .await
-        .expect("effect count");
+    let db = Arc::new(fixture.db.clone());
+    let recorder = RuntimeRecorder::new(db.clone(), Arc::new(RuntimeStreamHub::default()));
 
     let calls = Arc::new(Mutex::new(0));
     let provider_calls = Arc::clone(&calls);
-    let dir = tempfile::tempdir().expect("tempdir");
-    let result = rig_loop_factory(AgentLoopConfig {
-        model_name: "non-vision".into(),
-        prompt_builder: tinyiothub_agent::port::prompt::SystemPromptBuilder::with_defaults(),
-        tools: vec![Box::new(VisionCaptureTool)],
-        memory: Arc::new(tinyiothub_agent::port::memory::NoopMemory),
-        observer: Arc::new(tinyiothub_agent::port::observer::NoopObserver),
-        workspace_dir: dir.path().to_path_buf(),
-        security_summary: None,
-        provider_factory: Arc::new(move || {
+    let factory = AutonomousAgentFactory::new(
+        fixture.db.pool().clone(),
+        db,
+        Arc::new(ThingEventBus::new()),
+        Arc::new(ThrottleState::new(60)),
+        Arc::new(tinyiothub_agent::port::memory::NoopMemory),
+        Arc::new(tinyiothub_agent::port::observer::NoopObserver),
+        Arc::new(move || {
             Ok(Box::new(SilentNonVisionProvider {
                 calls: Arc::clone(&provider_calls),
             }))
         }),
-        conversation_memory: false,
-        available_capabilities: vec![],
-    });
-    let error = match result {
+        "non-vision".into(),
+        ThingToolContext {
+            pending_actions: Some(Arc::new(dashmap::DashMap::new())),
+            runtime_recorder: Some(recorder),
+            ..Default::default()
+        },
+    )
+    .with_extra_tools(Arc::new(|_workspace: &str| {
+        vec![(
+            Box::new(VisionCaptureTool) as Box<dyn tinyiothub_agent::port::tool::Tool>,
+            tinyiothub_skills::trust::ToolSafety::ReadOnly,
+        )]
+    }));
+
+    let ctx = Arc::new(RwLock::new(RunContextInner {
+        run_id: "run-capability".into(),
+        workspace_id: "ws-tool-descriptor-capability".into(),
+        task_id: Some("task-capability".into()),
+        ..Default::default()
+    }));
+    let error = match factory.get_or_create("ws-tool-descriptor-capability", ctx).await {
         Ok(_) => panic!("video capability must fail closed on a non-vision provider"),
         Err(error) => error,
     };
     assert!(error.to_string().contains("capability.unavailable"), "{error}");
     assert_eq!(*calls.lock().expect("calls"), 0, "model must not be called");
 
-    let after: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM effect_intents")
-        .fetch_one(&fixture.workspace_pool().await)
-        .await
-        .expect("effect count");
-    assert_eq!(before, after, "a capability failure must create zero Effects");
-    assert_eq!(after, 0);
-
-    // The composition-level capability event is written through the same
-    // recorder used by Run/Effect SSE, before any model call.
-    let hub = Arc::new(tinyiothub_cloud::domains::agent::runtime::stream::RuntimeStreamHub::default());
-    let recorder =
-        tinyiothub_cloud::domains::agent::runtime::stream::RuntimeRecorder::new(Arc::new(fixture.db.clone()), hub);
-    tinyiothub_cloud::domains::agent::tools::emit_capability_unavailable(
-        Some(&recorder),
-        "ws-tool-descriptor-capability",
-        "run-capability",
-        Some("task-capability"),
-        &[tinyiothub_skills::registry::Capability::Video],
-        "capture_video_frame",
-    )
-    .await
-    .expect("capability event");
     let events = fixture
         .db
         .runtime_events_after("ws-tool-descriptor-capability", None, Some("task-capability"), 10)
@@ -1088,8 +1087,20 @@ async fn tool_descriptor_non_vision_provider_fails_before_model_and_creates_zero
         .find(|event| event.run_id.as_deref() == Some("run-capability"))
         .expect("capability event persisted");
     assert_eq!(event.event_type, "capability.unavailable");
-    assert_eq!(event.data["missingCapabilities"][0], "video");
+    assert!(
+        event.data["missingCapabilities"]
+            .as_array()
+            .is_some_and(|missing| missing.iter().any(|value| value == "video")),
+        "{:?}",
+        event.data
+    );
     assert!(event.data["recovery"].as_str().is_some_and(|text| !text.is_empty()));
+
+    let effects: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM effect_intents")
+        .fetch_one(&fixture.workspace_pool().await)
+        .await
+        .expect("effect count");
+    assert_eq!(effects, 0, "a capability failure must create zero Effects");
 }
 
 /// `request_json` is an internal dispatch/reconcile field. Public DTO

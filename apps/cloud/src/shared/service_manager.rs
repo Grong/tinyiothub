@@ -459,7 +459,17 @@ impl ServiceManager {
                                 jobs: Some(task_jobs.clone()),
                                 runtime_recorder: Some(app_state.runtime_recorder.clone()),
                             },
-                        ),
+                        )
+                        // Resolve capabilities from the same provider port used
+                        // for model calls. Invoking the factory only constructs
+                        // the provider (no network call); failure fails closed
+                        // to an empty capability set.
+                        .with_available_capabilities(crate::domains::agent::tools::resolve_capabilities(
+                            tinyiothub_agent::provider::minimax_provider_factory()()
+                                .map(|provider| provider.supports_vision())
+                                .unwrap_or(false),
+                            Vec::<tinyiothub_skills::registry::Capability>::new(),
+                        )),
                     ),
                     thing_agent_config: crate::domains::agent::thing_agent::ThingAgentManagerConfig {
                         heartbeat_default_interval,

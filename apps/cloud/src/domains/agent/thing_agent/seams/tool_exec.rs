@@ -74,6 +74,9 @@ impl Tool for SeamTool {
     fn exposed(&self) -> bool {
         self.inner.exposed()
     }
+    fn descriptor(&self) -> tinyiothub_skills::registry::ToolDescriptor {
+        self.inner.descriptor()
+    }
     async fn execute(&self, args: serde_json::Value) -> anyhow::Result<ToolResult> {
         self.seam
             .execute(ToolInvocation {

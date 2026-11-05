@@ -49,6 +49,11 @@ impl Tool for HiddenTool {
     fn exposed(&self) -> bool {
         false
     }
+    fn descriptor(&self) -> tinyiothub_skills::registry::ToolDescriptor {
+        let mut descriptor = self.0.descriptor();
+        descriptor.exposed = false;
+        descriptor
+    }
     async fn execute(&self, args: Value) -> anyhow::Result<ToolResult> {
         self.0.execute(args).await
     }
@@ -97,6 +102,14 @@ impl Tool for ToolAlias {
     }
     fn parameters_schema(&self) -> Value {
         (self.schema)()
+    }
+    fn descriptor(&self) -> tinyiothub_skills::registry::ToolDescriptor {
+        let mut descriptor = self.inner.descriptor();
+        descriptor.name = self.name.to_string();
+        descriptor.description = self.description.to_string();
+        descriptor.parameters = (self.schema)();
+        descriptor.exposed = self.exposed();
+        descriptor
     }
     async fn execute(&self, args: Value) -> anyhow::Result<ToolResult> {
         self.inner.execute(args).await
