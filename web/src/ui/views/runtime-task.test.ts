@@ -1121,7 +1121,7 @@ describe('Runtime Task detail shell', () => {
     expect(connection).not.toBeNull();
     expect(connection?.textContent?.toLowerCase()).toContain('offline');
     expect(view.textContent).not.toContain('History · read-only');
-    expect(view.querySelector('.runtime-task__status')?.textContent).toContain('Active');
+    expect(view.querySelector('.runtime-task__status')?.textContent).toContain('进行中');
     expect(view.textContent).not.toContain('All stopped');
     expect(view.querySelector('[data-history-banner]')).toBeNull();
   });
@@ -1178,7 +1178,7 @@ describe('Runtime Task detail shell', () => {
 
     expect(pause).toHaveBeenCalledOnce();
     expect(view.querySelector('h1')?.textContent).toBe('Objective task_1');
-    expect(view.querySelector('.runtime-task__status')?.textContent).toContain('Paused');
+    expect(view.querySelector('.runtime-task__status')?.textContent).toContain('已暂停');
     expect(view.querySelector('runtime-task-controls button[data-action="resume"]')).not.toBeNull();
     expect(connect).toHaveBeenCalledOnce();
   });
@@ -1196,7 +1196,7 @@ describe('Runtime Task detail shell', () => {
     await Promise.resolve();
     await view.updateComplete;
 
-    expect(view.querySelector('.runtime-task__status')?.textContent).toContain('Completed');
+    expect(view.querySelector('.runtime-task__status')?.textContent).toContain('已完成');
     expect(view.querySelector('runtime-task-controls button[data-action="pause"]')).toBeNull();
     expect(view.querySelector('runtime-task-controls button[data-action="overflow"]')).toBeNull();
   });

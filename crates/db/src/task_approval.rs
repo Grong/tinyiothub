@@ -645,25 +645,7 @@ impl Db {
                 return Ok((None, false, Vec::new()));
             }
             let now = Utc::now();
-            sqlx::query(
-                "INSERT INTO device_jobs
-                    (id, workspace_id, device_id, tool, args_json, state, stop_requested_at,
-                     progress_json, result_json, task_id, run_id, tool_call_id, driver_call_id, timeout_ms, started_at, ended_at)
-                 VALUES (?, ?, ?, ?, ?, 'accepted', NULL, NULL, NULL, ?, ?, ?, NULL, ?, ?, NULL)",
-            )
-            .bind(&job.id)
-            .bind(&job.workspace_id)
-            .bind(&job.device_id)
-            .bind(&job.tool)
-            .bind(serde_json::to_string(&job.args_json).map_err(crate::device_job::storage)?)
-            .bind(task_id)
-            .bind(run_id)
-            .bind(tool_call_id)
-            .bind(i64::try_from(job.timeout_ms).map_err(|_| DeviceJobError::Validation("timeout is too large".into()))?)
-            .bind(job.started_at)
-            .execute(&mut connection)
-            .await
-            .map_err(crate::device_job::storage)?;
+            crate::device_job::insert_job_projection(&mut connection, job).await?;
             let changed = sqlx::query(
                 "UPDATE agent_tasks SET status = 'waiting_job', state_version = state_version + 1, updated_at = ?
                  WHERE workspace_id = ? AND id = ? AND status = 'needs_approval' AND state_version = ?",

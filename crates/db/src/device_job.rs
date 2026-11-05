@@ -121,6 +121,53 @@ fn validate_job_wake(job: &DeviceJob, wake: &TaskWake) -> Result<(), DeviceJobEr
     Ok(())
 }
 
+/// Single owner of platform `device_jobs` writes. Legacy approval flows call
+/// this helper inside their own transaction instead of repeating the INSERT,
+/// so Job state can only enter the table through this module.
+pub(crate) async fn insert_job_projection(
+    connection: &mut sqlx::SqliteConnection,
+    job: &DeviceJob,
+) -> Result<(), DeviceJobError> {
+    sqlx::query(
+        "INSERT INTO device_jobs
+             (id, workspace_id, device_id, tool, args_json, state, stop_requested_at,
+              progress_json, result_json, task_id, run_id, tool_call_id, driver_call_id, timeout_ms, started_at, ended_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+    )
+    .bind(&job.id)
+    .bind(&job.workspace_id)
+    .bind(&job.device_id)
+    .bind(&job.tool)
+    .bind(serde_json::to_string(&job.args_json).map_err(storage)?)
+    .bind(job.state.as_str())
+    .bind(job.stop_requested_at)
+    .bind(
+        job.progress_json
+            .as_ref()
+            .map(serde_json::to_string)
+            .transpose()
+            .map_err(storage)?,
+    )
+    .bind(
+        job.result_json
+            .as_ref()
+            .map(serde_json::to_string)
+            .transpose()
+            .map_err(storage)?,
+    )
+    .bind(&job.task_id)
+    .bind(&job.run_id)
+    .bind(&job.tool_call_id)
+    .bind(&job.driver_call_id)
+    .bind(i64::try_from(job.timeout_ms).map_err(|_| DeviceJobError::Validation("timeout is too large".to_string()))?)
+    .bind(job.started_at)
+    .bind(job.ended_at)
+    .execute(&mut *connection)
+    .await
+    .map_err(create_error)?;
+    Ok(())
+}
+
 impl Db {
     pub async fn create_job(&self, job: &DeviceJob) -> Result<(), DeviceJobError> {
         self.create_job_and_event(job).await.map(|_| ())
@@ -131,43 +178,7 @@ impl Db {
         job: &DeviceJob,
     ) -> Result<crate::runtime_event::RuntimeEvent, DeviceJobError> {
         let mut tx = self.pool().begin().await.map_err(storage)?;
-        sqlx::query(
-            "INSERT INTO device_jobs
-                 (id, workspace_id, device_id, tool, args_json, state, stop_requested_at,
-                  progress_json, result_json, task_id, run_id, tool_call_id, driver_call_id, timeout_ms, started_at, ended_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-        )
-        .bind(&job.id)
-        .bind(&job.workspace_id)
-        .bind(&job.device_id)
-        .bind(&job.tool)
-        .bind(serde_json::to_string(&job.args_json).map_err(storage)?)
-        .bind(job.state.as_str())
-        .bind(job.stop_requested_at)
-        .bind(
-            job.progress_json
-                .as_ref()
-                .map(serde_json::to_string)
-                .transpose()
-                .map_err(storage)?,
-        )
-        .bind(
-            job.result_json
-                .as_ref()
-                .map(serde_json::to_string)
-                .transpose()
-                .map_err(storage)?,
-        )
-        .bind(&job.task_id)
-        .bind(&job.run_id)
-        .bind(&job.tool_call_id)
-        .bind(&job.driver_call_id)
-        .bind(i64::try_from(job.timeout_ms).map_err(|_| DeviceJobError::Validation("timeout is too large".to_string()))?)
-        .bind(job.started_at)
-        .bind(job.ended_at)
-        .execute(&mut *tx)
-        .await
-        .map_err(create_error)?;
+        insert_job_projection(&mut tx, job).await?;
         let event = append_runtime_event_tx(
             &mut tx,
             job_event(

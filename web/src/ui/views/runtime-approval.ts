@@ -6,8 +6,6 @@ import type { RuntimeApprovalDecisionResult } from '../../types/runtime.js';
 import type { RuntimeProjectedApproval } from './runtime-projection.js';
 import { safeJson } from './runtime-json.js';
 
-const readOnlyTools = new Set(['read_device', 'list_devices']);
-
 function isRenderable(
   approval: RuntimeProjectedApproval | null | undefined,
 ): approval is RuntimeProjectedApproval {
@@ -177,9 +175,7 @@ export class RuntimeApprovalView extends LitElement {
     const approval = this.displayApproval;
     if (!approval || !isRenderable(approval)) return nothing;
     const state = approval.state ?? 'pending';
-    const risk = readOnlyTools.has(approval.tool ?? '')
-      ? 'Read-only device access'
-      : 'Device state change';
+    const risk = state === 'pending' ? 'Approval required' : 'Decision recorded';
     const stateLabel = state === 'pending' ? 'Approval required'
       : state === 'approved' ? 'Approval approved'
         : state === 'rejected' ? 'Approval rejected'

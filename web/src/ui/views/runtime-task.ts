@@ -13,6 +13,7 @@ import type {
   TaskStatus,
 } from '../../types/runtime.js';
 import { RuntimeProjection, type RuntimeConnection } from './runtime-projection.js';
+import { taskStatusLabel, taskStatusTone } from './runtime-status.js';
 import { createDialogFocusTrap, type DialogFocusTrap } from './runtime-dialog-focus.js';
 import {
   isHistoryState,
@@ -48,40 +49,6 @@ function sameHistory(a: RuntimeHistory | null, b: RuntimeHistory | null): boolea
 
 function statusLabel(status: string): string {
   return status.replaceAll('_', ' ');
-}
-
-const taskStatusLabels: Record<TaskStatus, string> = {
-  active: 'Active',
-  waiting_job: 'Waiting for device',
-  waiting_watch: 'Waiting for watch',
-  needs_approval: 'Needs approval',
-  paused: 'Paused',
-  cancelling: 'Cancelling',
-  completed: 'Completed',
-  failed: 'Failed',
-  cancelled: 'Cancelled',
-};
-
-type StatusTone = 'ok' | 'warn' | 'danger' | 'accent' | 'muted';
-
-const taskStatusTones: Record<TaskStatus, StatusTone> = {
-  active: 'accent',
-  waiting_job: 'accent',
-  waiting_watch: 'accent',
-  needs_approval: 'warn',
-  paused: 'muted',
-  cancelling: 'warn',
-  completed: 'ok',
-  failed: 'danger',
-  cancelled: 'muted',
-};
-
-function statusDisplay(status: TaskStatus): string {
-  return taskStatusLabels[status] ?? statusLabel(status);
-}
-
-function statusTone(status: TaskStatus): StatusTone {
-  return taskStatusTones[status] ?? 'muted';
 }
 
 /** The stored summary can include the model's internal <think> block.
@@ -695,7 +662,7 @@ export class RuntimeTaskView extends LitElement {
     const previousTask = this.lastTaskStatus;
     const nextTask = projection.task.status;
     if (previousTask !== null && previousTask !== nextTask) {
-      messages.push(`Task ${statusLabel(nextTask)}`);
+      messages.push(`Task ${taskStatusLabel(nextTask)}`);
     }
     this.lastTaskStatus = nextTask;
 
@@ -1310,7 +1277,7 @@ export class RuntimeTaskView extends LitElement {
     const projection = this.projection;
     const task = projection?.task;
     const status = task?.status;
-    const tone: StatusTone = status ? statusTone(status) : 'muted';
+    const tone = status ? taskStatusTone(status) : 'muted';
     const summary = summaryBody(projection?.snapshot.summary ?? '');
     const longSummary = summary.length > 280 || summary.split('\n').length > 4;
     const pendingApprovals =
@@ -1348,7 +1315,7 @@ export class RuntimeTaskView extends LitElement {
               >
                 <span class="runtime-status__dot" aria-hidden="true"></span>
                 <span class="runtime-status__label"
-                  >${status ? statusDisplay(status) : this.connection}</span
+                  >${status ? taskStatusLabel(status) : this.connection}</span
                 >
               </span>
             </div>
@@ -1476,7 +1443,7 @@ export class RuntimeTaskView extends LitElement {
                           @click=${() => this.chooseTask(task.id)}
                         >
                           <strong>${task.objective}</strong>
-                          <span>${task.id} · ${statusLabel(task.status)}</span>
+                          <span>${task.id} · ${taskStatusLabel(task.status)}</span>
                         </button>`,
                     )}
                   </div>

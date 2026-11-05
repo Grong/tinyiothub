@@ -429,7 +429,7 @@ describe('Runtime workbench accessibility contracts', () => {
 
     streamCallbacks.event(taskStatusEvent('task.completed'));
     await flush();
-    expect(workbench.announcer.textContent).toContain('Task completed');
+    expect(workbench.announcer.textContent).toContain('Task 已完成');
   });
 
   it('exposes same-level Loop, Flow and Devices tabs with keyboard activation', async () => {

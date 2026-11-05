@@ -149,6 +149,27 @@ Hard rules:
 - DB rows and query functions live in `crates/db/src/<domain>.rs`; domains never redefine them.
 - Cross-domain calls are plain module calls (`crate::domains::alarm::...`) — no hooks, no ports, no edges.
 
+### Harness write ownership
+
+Each Harness fact has exactly one writer. New code must use these paths:
+
+| Fact | Owner |
+|------|-------|
+| Session events | `Db::append_session_event` / `Db::apply_workspace_transition` |
+| Effects | Harness transitions in `crates/db/src/harness_effect.rs` |
+| Device jobs | Projection written by the Harness effect transition; `crates/db/src/device_job.rs` owns the legacy platform projection SQL |
+| Approvals / decisions | `decisions` (workspace DB) |
+| Commands / wakes | `commands` and `task_wake_outbox` |
+
+`hub_ledger` remains device telemetry. The pre-Harness platform Runtime writers
+(`runtime.v1` events, platform `task_approvals`, platform `device_jobs`, and
+platform Task/Run writes) are retained only behind the legacy adapters in
+`apps/cloud/src/domains/agent/runtime/` and
+`apps/cloud/src/shared/runtime_ports.rs`; they must not gain new callers.
+`scripts/guards/legacy-writers.sh` enforces that boundary and rejects new
+frontend tool/event/status allowlists (status copy is single-sourced in
+`web/src/ui/views/harness-status.ts`).
+
 ### Thing Ontology Module
 
 The `thing` domain module (`apps/cloud/src/domains/thing/`) manages the thing (物) management plane:

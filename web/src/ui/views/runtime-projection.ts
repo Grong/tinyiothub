@@ -12,43 +12,12 @@ import type {
   TaskProjection,
   TaskStatus,
 } from '../../types/runtime.js';
-
-const associatedTools = new Set([
-  'read_device',
-  'call_device',
-  'set_device',
-  'stop_device',
-  'watch_device',
-]);
-const terminalTasks = new Set<TaskStatus>(['completed', 'failed', 'cancelled']);
-const taskStatuses = new Set<TaskStatus>([
-  'active',
-  'waiting_job',
-  'waiting_watch',
-  'needs_approval',
-  'paused',
-  'cancelling',
-  'completed',
-  'failed',
-  'cancelled',
-]);
-const jobStates = new Set<DeviceJobState>([
-  'accepted',
-  'running',
-  'done',
-  'failed',
-  'rejected',
-  'cancelled',
-  'cancelled_unknown',
-  'interrupted',
-]);
-const approvalStates = new Set<ApprovalState>([
-  'pending',
-  'approved',
-  'rejected',
-  'expired',
-  'unavailable',
-]);
+import {
+  TERMINAL_TASK_STATUSES,
+  isApprovalState,
+  isJobState,
+  isTaskStatus,
+} from './runtime-status.js';
 
 export type RuntimeDeviceRef = RuntimeDeviceAssociation &
   Partial<Omit<RuntimeDeviceFacts, 'deviceId'>>;
@@ -75,8 +44,8 @@ export function groupRuntimeTasks(tasks: RuntimeTask[]): {
   const byActivity = (a: RuntimeTask, b: RuntimeTask) =>
     b.updatedAt.localeCompare(a.updatedAt) || a.id.localeCompare(b.id);
   return {
-    current: tasks.filter((task) => !terminalTasks.has(task.status)).sort(byActivity),
-    recent: tasks.filter((task) => terminalTasks.has(task.status)).sort(byActivity),
+    current: tasks.filter((task) => !TERMINAL_TASK_STATUSES.has(task.status)).sort(byActivity),
+    recent: tasks.filter((task) => TERMINAL_TASK_STATUSES.has(task.status)).sort(byActivity),
   };
 }
 
@@ -256,11 +225,9 @@ export class RuntimeProjection {
     for (const event of this.steps) {
       const deviceId =
         event.deviceId ??
-        (associatedTools.has(event.eventType) && typeof event.data.deviceId === 'string'
-          ? event.data.deviceId
-          : null);
+        (typeof event.data.deviceId === 'string' ? event.data.deviceId : null);
       if (
-        associatedTools.has(event.eventType) ||
+        deviceId !== null ||
         event.jobId ||
         event.approvalId ||
         event.eventType.startsWith('watch.') ||
@@ -292,11 +259,11 @@ export class RuntimeProjection {
       const status = event.eventType.slice('task.'.length) as TaskStatus;
       const version =
         typeof event.data.stateVersion === 'number' ? event.data.stateVersion : task.stateVersion;
-      if (taskStatuses.has(status) && version >= task.stateVersion) {
+      if (isTaskStatus(status) && version >= task.stateVersion) {
         task.status = status;
         task.stateVersion = version;
         task.updatedAt = event.occurredAt;
-        if (terminalTasks.has(status)) task.endedAt = event.occurredAt;
+        if (TERMINAL_TASK_STATUSES.has(status)) task.endedAt = event.occurredAt;
       }
     }
     if (
@@ -312,12 +279,12 @@ export class RuntimeProjection {
     const state =
       typeof event.data.state === 'string' ? (event.data.state as DeviceJobState) : null;
     let job = this.jobs.find((item) => item.id === id);
-    if (!job && state && jobStates.has(state)) {
+    if (!job && state && isJobState(state)) {
       job = { id, state };
       this.jobs.push(job);
     }
     if (!job) return;
-    if (state && jobStates.has(state)) job.state = state;
+    if (state && isJobState(state)) job.state = state;
     job.workspaceId = event.workspaceId;
     if (event.deviceId) job.deviceId = event.deviceId;
     job.taskId = event.taskId;
@@ -339,7 +306,7 @@ export class RuntimeProjection {
     if (typeof event.data.endedAt === 'string' || event.data.endedAt === null) {
       job.endedAt = event.data.endedAt as string | null;
     }
-    if (jobStates.has(job.state) && !['accepted', 'running'].includes(job.state) && !job.endedAt) {
+    if (isJobState(job.state) && !['accepted', 'running'].includes(job.state) && !job.endedAt) {
       job.endedAt = event.occurredAt;
     }
   }
@@ -348,12 +315,12 @@ export class RuntimeProjection {
     const id = event.approvalId!;
     const state = typeof event.data.state === 'string' ? (event.data.state as ApprovalState) : null;
     let approval = this.approvals.find((item) => item.id === id);
-    if (!approval && state && approvalStates.has(state)) {
+    if (!approval && state && isApprovalState(state)) {
       approval = { id, state };
       this.approvals.push(approval);
     }
     if (!approval) return;
-    if (state && approvalStates.has(state)) approval.state = state;
+    if (state && isApprovalState(state)) approval.state = state;
     if (event.deviceId) approval.deviceId = event.deviceId;
     if (event.taskId) approval.taskId = event.taskId;
     if (event.runId) approval.runId = event.runId;

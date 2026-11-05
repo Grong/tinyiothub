@@ -4,22 +4,12 @@ import { ApiError } from '../../api/client.js';
 import { cancelRuntimeTask, pauseRuntimeTask, resumeRuntimeTask } from '../../api/runtime.js';
 import type { TaskProjection, TaskStatus } from '../../types/runtime.js';
 import type { RuntimeProjectedJob, RuntimeProjection } from './runtime-projection.js';
+import {
+  CANCELLABLE_TASK_STATUSES,
+  PAUSABLE_TASK_STATUSES,
+  TERMINAL_TASK_STATUSES,
+} from './runtime-status.js';
 import './runtime-confirm-dialog.js';
-
-const pausableStatuses = new Set<TaskStatus>([
-  'active',
-  'waiting_job',
-  'waiting_watch',
-  'needs_approval',
-]);
-const cancellableStatuses = new Set<TaskStatus>([
-  'active',
-  'waiting_job',
-  'waiting_watch',
-  'needs_approval',
-  'paused',
-]);
-const terminalStatuses = new Set<TaskStatus>(['completed', 'failed', 'cancelled']);
 
 function watchDeviceId(condition: unknown): string | null {
   if (!condition || typeof condition !== 'object') return null;
@@ -85,11 +75,11 @@ export class RuntimeTaskControls extends LitElement {
   }
 
   private get isTerminal(): boolean {
-    return this.status !== null && terminalStatuses.has(this.status);
+    return this.status !== null && TERMINAL_TASK_STATUSES.has(this.status);
   }
 
   private get canPause(): boolean {
-    return this.status !== null && pausableStatuses.has(this.status);
+    return this.status !== null && PAUSABLE_TASK_STATUSES.has(this.status);
   }
 
   private get canResume(): boolean {
@@ -97,7 +87,7 @@ export class RuntimeTaskControls extends LitElement {
   }
 
   private get canCancel(): boolean {
-    return this.status !== null && cancellableStatuses.has(this.status) && !this.isTerminal;
+    return this.status !== null && CANCELLABLE_TASK_STATUSES.has(this.status) && !this.isTerminal;
   }
 
   private get activeJobs(): RuntimeProjectedJob[] {

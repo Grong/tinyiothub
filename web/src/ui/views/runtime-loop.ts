@@ -2,42 +2,24 @@ import { LitElement, html, nothing, type PropertyValues, type TemplateResult } f
 import { customElement, property, state } from 'lit/decorators.js';
 import { ApiError } from '../../api/client.js';
 import { stopRuntimeJob } from '../../api/runtime.js';
-import type { EvidenceRef, RuntimeEvent, TaskProjection, TaskStatus } from '../../types/runtime.js';
+import type { EvidenceRef, RuntimeEvent, TaskProjection } from '../../types/runtime.js';
 import type { RuntimeProjectedApproval, RuntimeProjectedJob } from './runtime-projection.js';
 import { RuntimeProjection } from './runtime-projection.js';
+import { TERMINAL_TASK_STATUSES } from './runtime-status.js';
 import { safeJson } from './runtime-json.js';
 import './runtime-approval.js';
 import './runtime-loop.css';
 
-const toolEvents = new Set([
-  'read_device',
-  'call_device',
-  'set_device',
-  'stop_device',
-  'watch_device',
-]);
 const stopStates = new Set(['accepted', 'running']);
-const terminalStatuses = new Set<TaskStatus>(['completed', 'failed', 'cancelled']);
 
-const eventTitles: Record<string, string> = {
-  'task.created': 'Task created',
-  'task.completed': 'Task completed',
-  'task.failed': 'Task failed',
-  'task.cancelled': 'Task cancelled',
-  'task.run_bound': 'Run bound',
-  'run.started': 'Agent started',
-  'run.finished': 'Agent finished',
-  read_device: 'Read device',
-  set_device: 'Set device',
-  call_device: 'Call device',
-  stop_device: 'Stop device',
-  watch_device: 'Watch device',
-};
+/** Tool events are the generic `tool_name` facts; lifecycle facts use dots. */
+function isToolEvent(eventType: string): boolean {
+  return !eventType.includes('.');
+}
 
 function eventTitle(event: RuntimeEvent): string {
-  return (
-    eventTitles[event.eventType] ?? event.eventType.replaceAll('_', ' ').replaceAll('.', ' · ')
-  );
+  const label = event.eventType.replaceAll('_', ' ').replaceAll('.', ' · ');
+  return label.charAt(0).toUpperCase() + label.slice(1);
 }
 
 function clockLabel(iso: string): string {
@@ -62,7 +44,7 @@ function hasMeaningfulPayload(event: RuntimeEvent): boolean {
 
 /** Surface the values a read returned instead of hiding them behind Details. */
 function eventFacts(event: RuntimeEvent): [string, string][] {
-  if (!toolEvents.has(event.eventType)) return [];
+  if (!isToolEvent(event.eventType)) return [];
   const state = event.data.state;
   if (!state || typeof state !== 'object' || Array.isArray(state)) return [];
   return Object.entries(state as Record<string, unknown>)
@@ -141,7 +123,7 @@ export class RuntimeLoop extends LitElement {
 
   private stepKind(event: RuntimeEvent): string {
     if (event.evidenceId || /result|done|completed|failed/.test(event.eventType)) return 'Result';
-    if (toolEvents.has(event.eventType) || event.jobId || event.approvalId) return 'Tool';
+    if (isToolEvent(event.eventType) || event.jobId || event.approvalId) return 'Tool';
     if (event.eventType.startsWith('reason.') || event.eventType === 'run.started') return 'Reason';
     return 'Act';
   }
@@ -215,7 +197,7 @@ export class RuntimeLoop extends LitElement {
     return (
       !this.readOnly &&
       status !== undefined &&
-      !terminalStatuses.has(status) &&
+      !TERMINAL_TASK_STATUSES.has(status) &&
       this.ownsJob(job) &&
       stopStates.has(job.state) &&
       !this.stopUnknown.has(job.id)
