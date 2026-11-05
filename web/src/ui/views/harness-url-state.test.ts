@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { parseHarnessHash, runtimeToHarnessUrl, toHarnessTaskUrl } from './harness-url-state.js';
+import {
+  parseHarnessHash,
+  runtimeToHarnessUrl,
+  toHarnessDryRunUrl,
+  toHarnessTaskUrl,
+} from './harness-url-state.js';
 
 describe('Harness canonical URL state', () => {
   it('parses exactly the canonical Harness routes', () => {
@@ -40,6 +45,29 @@ describe('Harness canonical URL state', () => {
     });
   });
 
+  it('pins the dry-run route to a revision, snapshot and optional simulation task', () => {
+    expect(parseHarnessHash('#/harness/workflows/wf%3A1/dry-run?version=3')).toEqual({
+      name: 'dry-run',
+      workflowId: 'wf:1',
+      version: 3,
+      snapshotSeq: null,
+      taskId: null,
+    });
+    expect(
+      parseHarnessHash('#/harness/workflows/wf%3A1/dry-run?version=3&snapshot=12&task=task%3A9'),
+    ).toEqual({
+      name: 'dry-run',
+      workflowId: 'wf:1',
+      version: 3,
+      snapshotSeq: 12,
+      taskId: 'task:9',
+    });
+    expect(toHarnessDryRunUrl('wf:1', 3)).toBe('#/harness/workflows/wf%3A1/dry-run?version=3');
+    expect(toHarnessDryRunUrl('wf:1', 3, { snapshotSeq: 12, taskId: 'task:9' })).toBe(
+      '#/harness/workflows/wf%3A1/dry-run?version=3&snapshot=12&task=task%3A9',
+    );
+  });
+
   it('returns null for invalid Harness routes', () => {
     expect(parseHarnessHash('#/harness/unknown')).toBeNull();
     expect(parseHarnessHash('#/harness/')).toBeNull();
@@ -47,6 +75,9 @@ describe('Harness canonical URL state', () => {
     expect(parseHarnessHash('#/runtime')).toBeNull();
     expect(parseHarnessHash('#/harness/tasks/')).toBeNull();
     expect(parseHarnessHash('#/harness/workflows/')).toBeNull();
+    expect(parseHarnessHash('#/harness/workflows/wf%3A1/dry-run')).toBeNull();
+    expect(parseHarnessHash('#/harness/workflows/wf%3A1/dry-run?version=0')).toBeNull();
+    expect(parseHarnessHash('#/harness/workflows/wf%3A1/dry-run?version=nope')).toBeNull();
   });
 
   it('round-trips encoded Task IDs, view, device and history state', () => {

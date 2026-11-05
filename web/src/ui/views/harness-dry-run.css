@@ -1,0 +1,263 @@
+/* Isolated simulation Run page: persistent banner, snapshot picker, read-only result. */
+
+view-harness-dry-run {
+  display: block;
+  color: var(--text);
+}
+
+.harness-dry-run {
+  max-width: 1040px;
+  margin: 0 auto;
+  padding: var(--space-6);
+  overflow-wrap: anywhere;
+}
+
+.harness-dry-run__back {
+  display: inline-flex;
+  align-items: center;
+  min-height: 44px;
+  color: var(--accent);
+  font-size: 13px;
+  text-decoration: none;
+}
+
+.harness-dry-run__back:hover {
+  text-decoration: underline;
+}
+
+/* Persistent for the entire page, including after results load. */
+.harness-dry-run__banner {
+  display: flex;
+  gap: var(--space-3);
+  align-items: flex-start;
+  margin: var(--space-2) 0 var(--space-4);
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid var(--warn);
+  border-radius: var(--radius-md);
+  background: var(--warn-subtle);
+  color: var(--text);
+}
+
+.harness-dry-run__banner p {
+  display: grid;
+  gap: var(--space-1);
+  margin: 0;
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+.harness-dry-run__banner-icon {
+  color: var(--warn);
+  font-size: 16px;
+  line-height: 1.4;
+}
+
+.harness-dry-run__header {
+  display: flex;
+  gap: var(--space-4);
+  align-items: flex-start;
+  justify-content: space-between;
+  margin: var(--space-4) 0;
+}
+
+.harness-dry-run__header h1 {
+  margin: 0 0 var(--space-2);
+  color: var(--text-strong);
+  font-family: var(--font-display);
+  font-size: 24px;
+  line-height: 1.2;
+}
+
+.harness-dry-run__header h1:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+.harness-dry-run__header p {
+  max-width: 62ch;
+  margin: 0;
+  color: var(--muted-foreground);
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+.harness-dry-run__picker,
+.harness-dry-run__result {
+  padding: var(--space-4);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--card);
+}
+
+.harness-dry-run__picker h2,
+.harness-dry-run__result h2 {
+  margin: 0 0 var(--space-2);
+  color: var(--text-strong);
+  font-family: var(--font-display);
+  font-size: 18px;
+}
+
+.harness-dry-run__hint,
+.harness-dry-run__meta,
+.harness-dry-run__objective {
+  margin: 0 0 var(--space-3);
+  color: var(--muted-foreground);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.harness-dry-run__field {
+  display: grid;
+  gap: var(--space-2);
+  margin: var(--space-3) 0;
+}
+
+.harness-dry-run__field label {
+  color: var(--text-strong);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.harness-dry-run__field select {
+  min-height: 44px;
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-elevated);
+  color: var(--text);
+  font: inherit;
+}
+
+.harness-dry-run__field select:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+.harness-dry-run__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+  align-items: center;
+  margin-top: var(--space-4);
+}
+
+.harness-dry-run__actions .btn,
+.harness-dry-run__actions a {
+  display: inline-flex;
+  align-items: center;
+  min-height: 44px;
+}
+
+.harness-dry-run__error {
+  padding: var(--space-3);
+  border: 1px solid var(--danger);
+  border-radius: var(--radius-sm);
+  background: var(--danger-subtle);
+  color: var(--danger);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.harness-dry-run__empty {
+  color: var(--muted-foreground);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.harness-dry-run__summary {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 180px), 1fr));
+  gap: var(--space-3);
+  margin: var(--space-4) 0;
+}
+
+.harness-dry-run__summary div {
+  padding: var(--space-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-elevated);
+}
+
+.harness-dry-run__summary dt {
+  color: var(--muted-foreground);
+  font-size: 12px;
+}
+
+.harness-dry-run__summary dd {
+  margin: var(--space-1) 0 0;
+  color: var(--text-strong);
+  font-size: 13px;
+}
+
+.harness-dry-run__result-header {
+  display: flex;
+  gap: var(--space-3);
+  align-items: center;
+  justify-content: space-between;
+}
+
+.harness-dry-run__readonly {
+  padding: 2px var(--space-2);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  color: var(--muted-foreground);
+  font-size: 12px;
+}
+
+.harness-dry-run__steps,
+.harness-dry-run__outcome,
+.harness-dry-run__evidence {
+  margin-top: var(--space-4);
+}
+
+.harness-dry-run__steps h3,
+.harness-dry-run__outcome h3,
+.harness-dry-run__evidence h3 {
+  margin: 0 0 var(--space-2);
+  color: var(--text-strong);
+  font-size: 15px;
+}
+
+.harness-dry-run__outcome h4 {
+  margin: var(--space-3) 0 var(--space-1);
+  color: var(--text-strong);
+  font-size: 13px;
+}
+
+.harness-dry-run__outcome ul,
+.harness-dry-run__evidence ul {
+  margin: 0;
+  padding-inline-start: var(--space-5);
+  color: var(--text);
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.harness-dry-run__errors p {
+  margin: 0 0 var(--space-2);
+  color: var(--danger);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.harness-dry-run__sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+@media (max-width: 640px) {
+  .harness-dry-run {
+    padding: var(--space-4);
+  }
+
+  .harness-dry-run__header {
+    flex-direction: column;
+  }
+}

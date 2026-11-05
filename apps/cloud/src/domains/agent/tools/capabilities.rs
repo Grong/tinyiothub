@@ -12,6 +12,11 @@ use tinyiothub_storage::runtime_event::RuntimeEventInput;
 
 use crate::domains::agent::runtime::stream::RuntimeRecorder;
 
+/// Shared recovery copy for production and simulation so a capability failure
+/// reads identically in both compositions.
+pub const CAPABILITY_UNAVAILABLE_RECOVERY: &str =
+    "配置具备相应视觉/视频能力的 provider 或来源后创建新的 Run；历史失败记录不会改写";
+
 /// Resolve the available capability set from the provider/model port plus
 /// explicit configuration (for example a configured video source). Video is
 /// not inferred from `supports_vision` alone: a video source must be
@@ -60,7 +65,7 @@ pub async fn emit_capability_unavailable(
             data: json!({
                 "missingCapabilities": missing_names,
                 "tool": tool_name,
-                "recovery": "配置具备相应视觉/视频能力的 provider 或来源后创建新的 Run；历史失败记录不会改写",
+                "recovery": CAPABILITY_UNAVAILABLE_RECOVERY,
             }),
         })
         .await

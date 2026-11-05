@@ -1439,6 +1439,7 @@ impl Db {
              LEFT JOIN workflow_revisions r
                ON r.workflow_id = t.workflow_id AND r.version = t.workflow_version
              WHERE t.parent_task_id IS NULL
+               AND t.execution_mode = 'production'
                AND t.state NOT IN ('completed', 'failed', 'cancelled')
              ORDER BY t.id",
         )
@@ -1457,19 +1458,23 @@ impl Db {
         offset: i64,
     ) -> DbResult<(Vec<HarnessTaskRow>, i64)> {
         let pool = self.workspace_pool(workspace_id).await?;
-        let exists = sqlx::query_scalar::<_, String>("SELECT id FROM agent_tasks WHERE id = ?")
-            .bind(parent_task_id)
-            .fetch_optional(&pool)
-            .await?;
+        let exists = sqlx::query_scalar::<_, String>(
+            "SELECT id FROM agent_tasks WHERE id = ? AND execution_mode = 'production'",
+        )
+        .bind(parent_task_id)
+        .fetch_optional(&pool)
+        .await?;
         if exists.is_none() {
             return Err(DbError::NotFound {
                 id: parent_task_id.to_string(),
             });
         }
-        let total = sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM agent_tasks WHERE parent_task_id = ?")
-            .bind(parent_task_id)
-            .fetch_one(&pool)
-            .await?;
+        let total = sqlx::query_scalar::<_, i64>(
+            "SELECT COUNT(*) FROM agent_tasks WHERE parent_task_id = ? AND execution_mode = 'production'",
+        )
+        .bind(parent_task_id)
+        .fetch_one(&pool)
+        .await?;
         let rows = sqlx::query_as::<_, HarnessTaskDbRow>(
             "SELECT t.id, t.run_id, t.state,
                     json_extract(r.definition_json, '$.objective') AS objective,
@@ -1483,6 +1488,7 @@ impl Db {
              LEFT JOIN workflow_revisions r
                ON r.workflow_id = t.workflow_id AND r.version = t.workflow_version
              WHERE t.parent_task_id = ?
+               AND t.execution_mode = 'production'
              ORDER BY t.id LIMIT ? OFFSET ?",
         )
         .bind(parent_task_id)

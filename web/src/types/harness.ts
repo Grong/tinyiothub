@@ -202,3 +202,66 @@ export interface HarnessApiError extends Error {
   code: number;
   data?: unknown;
 }
+
+/** One historical stamped snapshot selectable for an isolated dry-run. */
+export interface HarnessWorkflowSnapshot {
+  seq: number;
+  observedAt: string;
+  declarationHash: string;
+  driverVersion: string;
+}
+
+export interface HarnessWorkflowSnapshotList {
+  workflowId: string;
+  version: number;
+  snapshots: HarnessWorkflowSnapshot[];
+}
+
+/** Isolated simulation Task/Run pair; never a production Run. */
+export interface HarnessDryRunResult {
+  taskId: string;
+  runId: string;
+}
+
+/** Generic read-only Run projection reused by the simulation page. */
+export interface HarnessSimulationStep {
+  id: string;
+  name: string;
+  args: unknown;
+  output: string | null;
+}
+
+export interface HarnessSimulationError {
+  type: string;
+  message: string;
+  occurredAt: string;
+}
+
+export interface HarnessSimulationOutcome {
+  status: string;
+  summary: string;
+  observations: string[];
+  evidenceRefs: string[];
+  recommendedActions: string[];
+}
+
+export interface HarnessSimulationProjection {
+  executionMode: 'simulation';
+  readOnly: true;
+  taskId: string;
+  runId: string | null;
+  status: HarnessTaskStatus;
+  workflowId: string | null;
+  workflowVersion: number | null;
+  objective: string | null;
+  snapshot: {
+    seq: number | null;
+    observedAt: string | null;
+    declarationHash: string | null;
+    driverVersion: string | null;
+  };
+  steps: HarnessSimulationStep[];
+  evidence: string[];
+  errors: HarnessSimulationError[];
+  outcome: HarnessSimulationOutcome | null;
+}

@@ -2935,3 +2935,545 @@ mod workflow_template_tests {
         }
     }
 }
+
+mod dry_run_tests {
+    use std::sync::{Arc, Mutex};
+
+    use async_trait::async_trait;
+    use chrono::{DateTime, Utc};
+    use serde_json::json;
+    use tinyiothub_agent::harness::{SubagentExecutor, SubagentInput, TaskOutcome};
+    use tinyiothub_cloud::domains::agent::workflows::{
+        DryRunInput, WorkflowDryRun, WorkflowService, builtin_templates,
+    };
+    use tinyiothub_core::harness::{
+        DeviceFactsSnapshot, ExecutionMode, HarnessEventInput, WorkflowDefinition, WorkflowRevision, WorkflowTrigger,
+    };
+    use tinyiothub_skills::registry::Capability;
+    use tinyiothub_storage::test_helpers::{WorkspaceFixture, fixture_workspace};
+
+    const WS: &str = "ws-dry-run";
+
+    fn at() -> DateTime<Utc> {
+        DateTime::parse_from_rfc3339("2026-11-03T00:00:00Z")
+            .expect("timestamp")
+            .with_timezone(&Utc)
+    }
+
+    fn observed_at() -> DateTime<Utc> {
+        DateTime::parse_from_rfc3339("2026-11-02T08:30:00Z")
+            .expect("timestamp")
+            .with_timezone(&Utc)
+    }
+
+    #[derive(Default)]
+    struct RecordingExecutor {
+        calls: Mutex<Vec<SubagentInput>>,
+    }
+
+    #[async_trait]
+    impl SubagentExecutor for RecordingExecutor {
+        async fn execute(&self, input: SubagentInput) -> anyhow::Result<TaskOutcome> {
+            self.calls.lock().expect("calls").push(input.clone());
+            Ok(TaskOutcome {
+                status: "completed".to_string(),
+                summary: "simulation complete".to_string(),
+                observations: vec!["temperature 20 from snapshot".to_string()],
+                evidence_refs: vec!["evidence-sim-1".to_string()],
+                recommended_actions: input.workflow.definition.tool_ids.clone(),
+            })
+        }
+    }
+
+    fn definition(objective: &str, required: &[&str], tools: &[&str]) -> WorkflowDefinition {
+        WorkflowDefinition {
+            objective: objective.to_string(),
+            trigger: WorkflowTrigger::Watch {
+                trigger_id: "manual-dry-run".to_string(),
+            },
+            device_selector: json!({"device_ids":["pump-1"]}),
+            source_selector: json!({"sources":["telemetry"]}),
+            tool_ids: tools.iter().map(|tool| tool.to_string()).collect(),
+            skill_refs: vec!["inspection".to_string()],
+            required_capabilities: required.iter().map(|capability| capability.to_string()).collect(),
+            approval_policy: json!({}),
+            evidence_policy: json!({}),
+        }
+    }
+
+    async fn create_workflow(fixture: &WorkspaceFixture, required: &[&str], tools: &[&str]) -> WorkflowRevision {
+        WorkflowService::new(Arc::new(fixture.db.clone()), fixture.workspace_id.clone())
+            .create(definition("巡检一号泵", required, tools))
+            .await
+            .expect("create workflow")
+    }
+
+    async fn seed_snapshot(
+        fixture: &WorkspaceFixture,
+        event_id: &str,
+        execution_mode: ExecutionMode,
+        observed: DateTime<Utc>,
+        temperature: i64,
+    ) -> (i64, DeviceFactsSnapshot) {
+        let snapshot = DeviceFactsSnapshot {
+            observed_at: observed,
+            declaration_hash: "declaration-hash-1".to_string(),
+            driver_version: "driver-1.0.0".to_string(),
+            facts: json!({"temperature": temperature}),
+        };
+        let event = fixture
+            .db
+            .append_session_event(&HarnessEventInput {
+                event_id: event_id.to_string(),
+                workspace_id: fixture.workspace_id.clone(),
+                session_id: format!("supervisor:{}", fixture.workspace_id),
+                execution_mode,
+                run_id: None,
+                task_id: None,
+                event_type: "run.started".to_string(),
+                occurred_at: observed,
+                cause_id: None,
+                schema_v: 1,
+                payload_digest: format!("digest-{event_id}"),
+                payload_json: json!({"deviceFacts": snapshot}),
+            })
+            .await
+            .expect("seed stamped snapshot event");
+        (event.seq, snapshot)
+    }
+
+    async fn count(fixture: &WorkspaceFixture, table: &str) -> i64 {
+        let sql = match table {
+            "agent_runs" => "SELECT COUNT(*) FROM agent_runs",
+            "agent_tasks" => "SELECT COUNT(*) FROM agent_tasks",
+            "session_events" => "SELECT COUNT(*) FROM session_events",
+            "task_wake_outbox" => "SELECT COUNT(*) FROM task_wake_outbox",
+            "effect_intents" => "SELECT COUNT(*) FROM effect_intents",
+            "decisions" => "SELECT COUNT(*) FROM decisions",
+            "workflow_occurrences" => "SELECT COUNT(*) FROM workflow_occurrences",
+            other => panic!("unsupported count table: {other}"),
+        };
+        sqlx::query_scalar(sql)
+            .fetch_one(&fixture.workspace_pool().await)
+            .await
+            .expect("count")
+    }
+
+    async fn simulation_task_count(fixture: &WorkspaceFixture) -> i64 {
+        sqlx::query_scalar("SELECT COUNT(*) FROM agent_tasks WHERE execution_mode = 'simulation'")
+            .fetch_one(&fixture.workspace_pool().await)
+            .await
+            .expect("simulation task count")
+    }
+
+    fn dry_run(
+        fixture: &WorkspaceFixture,
+        executor: Arc<RecordingExecutor>,
+        capabilities: Vec<Capability>,
+    ) -> WorkflowDryRun {
+        WorkflowDryRun::new(
+            Arc::new(fixture.db.clone()),
+            fixture.workspace_id.clone(),
+            executor,
+            capabilities,
+        )
+    }
+
+    #[tokio::test]
+    async fn dry_run_missing_and_unreadable_snapshots_fail_loudly_without_a_task() {
+        let fixture = fixture_workspace(WS).await;
+        let revision = create_workflow(&fixture, &[], &["read_property"]).await;
+        let service = dry_run(&fixture, Arc::new(RecordingExecutor::default()), vec![Capability::Text]);
+
+        let missing = service
+            .start(DryRunInput {
+                workflow_id: revision.workflow_id.clone(),
+                workflow_version: revision.version,
+                snapshot_seq: 424242,
+            })
+            .await
+            .expect_err("missing snapshot must fail");
+        assert!(missing.to_string().contains("snapshot"), "{missing}");
+
+        let unreadable = fixture
+            .db
+            .append_session_event(&HarnessEventInput {
+                event_id: "snapshot-unreadable".to_string(),
+                workspace_id: fixture.workspace_id.clone(),
+                session_id: format!("supervisor:{}", fixture.workspace_id),
+                execution_mode: ExecutionMode::Production,
+                run_id: None,
+                task_id: None,
+                event_type: "run.started".to_string(),
+                occurred_at: at(),
+                cause_id: None,
+                schema_v: 1,
+                payload_digest: "digest-unreadable".to_string(),
+                payload_json: json!({"deviceFacts": {"observedAt": "not-a-date"}}),
+            })
+            .await
+            .expect("unreadable snapshot event");
+        let error = service
+            .start(DryRunInput {
+                workflow_id: revision.workflow_id.clone(),
+                workflow_version: revision.version,
+                snapshot_seq: unreadable.seq,
+            })
+            .await
+            .expect_err("unreadable snapshot must fail");
+        assert!(error.to_string().contains("unreadable"), "{error}");
+
+        assert_eq!(simulation_task_count(&fixture).await, 0);
+        assert_eq!(count(&fixture, "agent_runs").await, 0);
+        assert_eq!(count(&fixture, "session_events").await, 1);
+        fixture.close().await;
+    }
+
+    #[tokio::test]
+    async fn dry_run_pins_revision_and_snapshot_and_stays_out_of_production_views() {
+        let fixture = fixture_workspace(WS).await;
+        let revision = create_workflow(&fixture, &[], &["read_property", "set_speed"]).await;
+        let (snapshot_seq, snapshot) = seed_snapshot(
+            &fixture,
+            "production-snapshot",
+            ExecutionMode::Production,
+            observed_at(),
+            20,
+        )
+        .await;
+        // A simulation snapshot can never be used to seed another dry run.
+        let (simulation_snapshot_seq, _) = seed_snapshot(
+            &fixture,
+            "simulation-snapshot",
+            ExecutionMode::Simulation,
+            observed_at(),
+            99,
+        )
+        .await;
+
+        let executor = Arc::new(RecordingExecutor::default());
+        let service = dry_run(&fixture, executor.clone(), vec![Capability::Text]);
+        let snapshots = service
+            .list_snapshots(&revision.workflow_id, revision.version, 20)
+            .await
+            .expect("snapshot picker");
+        assert_eq!(snapshots.len(), 1);
+        assert_eq!(snapshots[0].seq, snapshot_seq);
+        assert_eq!(snapshots[0].observed_at, observed_at());
+
+        let result = service
+            .start(DryRunInput {
+                workflow_id: revision.workflow_id.clone(),
+                workflow_version: revision.version,
+                snapshot_seq,
+            })
+            .await
+            .expect("start dry run");
+        assert!(!result.task_id.is_empty());
+        assert!(!result.run_id.is_empty());
+        assert_eq!(executor.calls.lock().expect("calls").len(), 1);
+        {
+            let calls = executor.calls.lock().expect("calls");
+            assert_eq!(calls[0].workflow.version, revision.version);
+            assert_eq!(calls[0].facts, snapshot);
+            assert!(calls[0].transcript.is_empty());
+        }
+
+        let (task_mode, task_state): (String, String) =
+            sqlx::query_as("SELECT execution_mode, state FROM agent_tasks WHERE id = ?")
+                .bind(&result.task_id)
+                .fetch_one(&fixture.workspace_pool().await)
+                .await
+                .expect("simulation task");
+        assert_eq!(task_mode, "simulation");
+        assert_eq!(task_state, "completed");
+        let (run_mode, run_state): (String, String) =
+            sqlx::query_as("SELECT execution_mode, state FROM agent_runs WHERE id = ?")
+                .bind(&result.run_id)
+                .fetch_one(&fixture.workspace_pool().await)
+                .await
+                .expect("simulation run");
+        assert_eq!(run_mode, "simulation");
+        assert_eq!(run_state, "completed");
+
+        let modes: Vec<String> =
+            sqlx::query_scalar("SELECT DISTINCT execution_mode FROM session_events WHERE task_id = ?")
+                .bind(&result.task_id)
+                .fetch_all(&fixture.workspace_pool().await)
+                .await
+                .expect("simulation event modes");
+        assert_eq!(modes, vec!["simulation".to_string()]);
+        let started: String =
+            sqlx::query_scalar("SELECT payload_json FROM session_events WHERE task_id = ? AND type = 'run.started'")
+                .bind(&result.task_id)
+                .fetch_one(&fixture.workspace_pool().await)
+                .await
+                .expect("started event");
+        let started: serde_json::Value = serde_json::from_str(&started).expect("payload");
+        assert_eq!(started["snapshotSeq"], snapshot_seq);
+        assert_eq!(
+            DateTime::parse_from_rfc3339(started["snapshotObservedAt"].as_str().expect("observed at"))
+                .expect("timestamp")
+                .with_timezone(&Utc),
+            observed_at()
+        );
+        assert_eq!(started["workflowVersion"], revision.version);
+
+        // No production wake/outbox/effect/decision/recovery artifact.
+        assert_eq!(count(&fixture, "task_wake_outbox").await, 0);
+        assert_eq!(count(&fixture, "effect_intents").await, 0);
+        assert_eq!(count(&fixture, "decisions").await, 0);
+        assert_eq!(count(&fixture, "workflow_occurrences").await, 0);
+        let mains = fixture
+            .db
+            .harness_main_tasks(&fixture.workspace_id)
+            .await
+            .expect("production main tasks");
+        assert!(mains.is_empty(), "simulation must not appear as a production Main");
+        assert!(matches!(
+            fixture
+                .db
+                .harness_subagents(&fixture.workspace_id, &result.task_id, 20, 0)
+                .await,
+            Err(tinyiothub_storage::DbError::NotFound { .. })
+        ));
+        assert!(
+            fixture
+                .db
+                .list_effect_recovery(&fixture.workspace_id)
+                .await
+                .expect("recovery")
+                .is_empty()
+        );
+        let main_projection = fixture
+            .db
+            .workflow_main_projection(&fixture.workspace_id)
+            .await
+            .expect("main projection");
+        assert_eq!(main_projection["recent_occurrences"].as_array().unwrap().len(), 0);
+
+        // A simulated TaskOutcome recommending a real tool creates no
+        // follow-up production Task or Effect.
+        let tasks_after = count(&fixture, "agent_tasks").await;
+        assert_eq!(tasks_after, 1);
+        assert_eq!(count(&fixture, "effect_intents").await, 0);
+
+        // The simulation projection is read-only and carries its snapshot.
+        let projection = service
+            .projection(&result.task_id)
+            .await
+            .expect("projection")
+            .expect("simulation projection");
+        assert_eq!(projection["executionMode"], "simulation");
+        assert_eq!(projection["readOnly"], true);
+        assert_eq!(projection["snapshot"]["seq"], snapshot_seq);
+        assert_eq!(projection["outcome"]["status"], "completed");
+
+        // Simulation snapshots are not valid production inputs.
+        let rejected = service
+            .start(DryRunInput {
+                workflow_id: revision.workflow_id.clone(),
+                workflow_version: revision.version,
+                snapshot_seq: simulation_snapshot_seq,
+            })
+            .await
+            .expect_err("simulation snapshot cannot seed a dry run");
+        assert!(rejected.to_string().contains("snapshot"), "{rejected}");
+        fixture.close().await;
+    }
+
+    #[tokio::test]
+    async fn dry_run_rejects_effect_and_decision_writes_before_a_prepared_effect_exists() {
+        let fixture = fixture_workspace(WS).await;
+        let revision = create_workflow(&fixture, &[], &["set_speed"]).await;
+        let (snapshot_seq, _) = seed_snapshot(
+            &fixture,
+            "production-snapshot-write-guard",
+            ExecutionMode::Production,
+            observed_at(),
+            20,
+        )
+        .await;
+        let service = dry_run(&fixture, Arc::new(RecordingExecutor::default()), vec![Capability::Text]);
+        let result = service
+            .start(DryRunInput {
+                workflow_id: revision.workflow_id,
+                workflow_version: revision.version,
+                snapshot_seq,
+            })
+            .await
+            .expect("start");
+
+        let effect_error = sqlx::query(
+            "INSERT INTO effect_intents
+                (effect_id, session_id, task_id, run_id, tool_call_id, tool_name, request_json,
+                 request_digest, idempotency_key, external_ref, state, recovery_from, state_version,
+                 result_json, created_at, updated_at)
+             VALUES ('effect-sim', 'session-sim', ?, ?, 'call-sim', 'set_speed', '{}', 'digest',
+                     'effect-sim', NULL, 'prepared', NULL, 1, NULL, '2026-11-03T00:00:00Z',
+                     '2026-11-03T00:00:00Z')",
+        )
+        .bind(&result.task_id)
+        .bind(&result.run_id)
+        .execute(&fixture.workspace_pool().await)
+        .await
+        .expect_err("simulation effect insert must abort");
+        assert!(
+            effect_error.to_string().contains("SimulationDispatchBlocked"),
+            "{effect_error}"
+        );
+
+        let decision_error = sqlx::query(
+            "INSERT INTO decisions
+                (decision_id, kind, state, session_id, run_id, task_id, effect_id, subject_json,
+                 options_json, created_at, updated_at, expires_at, answer, answer_actor,
+                 answer_event_id, consumed_at, consumed_by)
+             VALUES ('decision-sim', 'tool_approval', 'requested', 'session-sim', ?, ?,
+                     NULL, '{}', '[]', '2026-11-03T00:00:00Z', '2026-11-03T00:00:00Z', NULL,
+                     NULL, NULL, NULL, NULL, NULL)",
+        )
+        .bind(&result.run_id)
+        .bind(&result.task_id)
+        .execute(&fixture.workspace_pool().await)
+        .await
+        .expect_err("simulation decision insert must abort");
+        assert!(
+            decision_error.to_string().contains("SimulationDispatchBlocked"),
+            "{decision_error}"
+        );
+
+        let wake_error = sqlx::query(
+            "INSERT INTO task_wake_outbox
+                (task_id, event_id, signal_json, dispatch_state, created_at, dispatched_at, resolved_at)
+             VALUES (?, 'simulation-wake', '{}', 'pending', '2026-11-03T00:00:00Z', NULL, NULL)",
+        )
+        .bind(&result.task_id)
+        .execute(&fixture.workspace_pool().await)
+        .await
+        .expect_err("simulation wake insert must abort");
+        assert!(
+            wake_error.to_string().contains("SimulationDispatchBlocked"),
+            "{wake_error}"
+        );
+
+        assert_eq!(count(&fixture, "effect_intents").await, 0);
+        assert_eq!(count(&fixture, "decisions").await, 0);
+        assert_eq!(count(&fixture, "task_wake_outbox").await, 0);
+        fixture.close().await;
+    }
+
+    #[tokio::test]
+    async fn dry_run_capability_matches_production_and_non_vision_invents_nothing() {
+        let fixture = fixture_workspace(WS).await;
+        let revision = create_workflow(&fixture, &["vision"], &["read_camera"]).await;
+        let (snapshot_seq, _) = seed_snapshot(
+            &fixture,
+            "production-snapshot-vision",
+            ExecutionMode::Production,
+            observed_at(),
+            20,
+        )
+        .await;
+        let executor = Arc::new(RecordingExecutor::default());
+        let service = dry_run(&fixture, executor.clone(), vec![Capability::Text]);
+
+        let failed = service
+            .start(DryRunInput {
+                workflow_id: revision.workflow_id.clone(),
+                workflow_version: revision.version,
+                snapshot_seq,
+            })
+            .await
+            .expect("capability failure is a recorded simulation");
+        assert_eq!(executor.calls.lock().expect("calls").len(), 0);
+        let projection = service
+            .projection(&failed.task_id)
+            .await
+            .expect("projection")
+            .expect("failed projection");
+        assert_eq!(projection["status"], "failed");
+        assert_eq!(projection["outcome"]["status"], "failed");
+        assert_eq!(projection["outcome"]["observations"].as_array().unwrap().len(), 0);
+        assert_eq!(projection["errors"][0]["type"], "capability.unavailable");
+        assert!(
+            projection["errors"][0]["message"]
+                .as_str()
+                .unwrap_or_default()
+                .contains("vision")
+        );
+
+        // A capable provider creates a new Run; the failed history is not rewritten.
+        let capable = dry_run(&fixture, executor.clone(), vec![Capability::Vision]);
+        let completed = capable
+            .start(DryRunInput {
+                workflow_id: revision.workflow_id,
+                workflow_version: revision.version,
+                snapshot_seq,
+            })
+            .await
+            .expect("capable dry run");
+        assert_ne!(failed.task_id, completed.task_id);
+        assert_eq!(executor.calls.lock().expect("calls").len(), 1);
+        let failed_after = service
+            .projection(&failed.task_id)
+            .await
+            .expect("projection")
+            .expect("failed projection");
+        assert_eq!(failed_after["status"], "failed");
+        assert_eq!(failed_after["outcome"]["observations"].as_array().unwrap().len(), 0);
+        fixture.close().await;
+    }
+
+    #[tokio::test]
+    async fn dry_run_projection_uses_scripted_executor_for_template_video_without_inventing_vision() {
+        let fixture = fixture_workspace(WS).await;
+        let revision = create_workflow(&fixture, &["vision", "video"], &["read_camera"]).await;
+        let (snapshot_seq, _) = seed_snapshot(
+            &fixture,
+            "production-snapshot-video",
+            ExecutionMode::Production,
+            observed_at(),
+            20,
+        )
+        .await;
+
+        // The shipped video template itself carries the same capability
+        // declaration, so a non-vision provider must fail identically.
+        let video_template = builtin_templates()
+            .into_iter()
+            .find(|template| template.id == "video")
+            .expect("video template");
+        assert!(
+            video_template
+                .definition
+                .required_capabilities
+                .iter()
+                .any(|cap| cap == "vision")
+        );
+
+        let service = dry_run(&fixture, Arc::new(RecordingExecutor::default()), vec![Capability::Text]);
+        let result = service
+            .start(DryRunInput {
+                workflow_id: revision.workflow_id,
+                workflow_version: revision.version,
+                snapshot_seq,
+            })
+            .await
+            .expect("start");
+        let projection = service
+            .projection(&result.task_id)
+            .await
+            .expect("projection")
+            .expect("projection");
+        assert_eq!(projection["status"], "failed");
+        assert_eq!(projection["outcome"]["observations"].as_array().unwrap().len(), 0);
+        assert!(
+            projection["errors"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|error| error["type"] == "capability.unavailable")
+        );
+        fixture.close().await;
+    }
+}

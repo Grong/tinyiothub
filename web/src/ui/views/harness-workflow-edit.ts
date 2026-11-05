@@ -14,6 +14,7 @@ import type {
   WorkflowTrigger,
 } from '../../types/harness.js';
 import { createDialogFocusTrap, type DialogFocusTrap } from './runtime-dialog-focus.js';
+import { toHarnessDryRunUrl } from './harness-url-state.js';
 import {
   currentTimeZone,
   formatHarnessTime,
@@ -1200,6 +1201,22 @@ export class HarnessWorkflowEditView extends LitElement {
             : html`<button type="button" class="btn" data-action="toggle-enabled" disabled>
                 保存后可启用
               </button>`
+        }
+        ${
+          this.revision
+            ? html`<a
+                class="btn"
+                data-action="dry-run"
+                href=${toHarnessDryRunUrl(this.revision.workflowId, this.version)}
+                @click=${(event: Event) => {
+                  event.preventDefault();
+                  if (this.revision) {
+                    this.requestLeave(toHarnessDryRunUrl(this.revision.workflowId, this.version));
+                  }
+                }}
+                >模拟运行</a
+              >`
+            : nothing
         }
         <div class="harness-editor__more">
           <button

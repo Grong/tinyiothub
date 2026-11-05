@@ -658,6 +658,7 @@ impl Db {
                  SELECT 1 FROM effect_intents effect
                  JOIN agent_tasks task ON task.id = effect.task_id
                  WHERE effect.effect_id = ? AND effect.state = 'dispatching'
+                   AND task.execution_mode = 'production'
                    AND task.state NOT IN ('paused', 'cancelling', 'completed', 'failed', 'cancelled')
              )",
         )
@@ -690,8 +691,11 @@ impl Db {
 
     pub async fn list_effect_recovery(&self, workspace_id: &str) -> Result<Vec<EffectRecoveryItem>> {
         let pool = self.workspace_pool(workspace_id).await?;
-        let intents = sqlx::query_as::<_, EffectIntentRow>("SELECT effect_id, session_id, task_id, run_id, tool_call_id, tool_name, request_json, request_digest, idempotency_key, external_ref, state, recovery_from, state_version, result_json, created_at, updated_at FROM effect_intents
-             WHERE state IN ('prepared', 'dispatching', 'cancelling', 'unknown') ORDER BY created_at, effect_id")
+        let intents = sqlx::query_as::<_, EffectIntentRow>("SELECT e.effect_id, e.session_id, e.task_id, e.run_id, e.tool_call_id, e.tool_name, e.request_json, e.request_digest, e.idempotency_key, e.external_ref, e.state, e.recovery_from, e.state_version, e.result_json, e.created_at, e.updated_at FROM effect_intents e
+             JOIN agent_tasks task ON task.id = e.task_id
+             WHERE e.state IN ('prepared', 'dispatching', 'cancelling', 'unknown')
+               AND task.execution_mode = 'production'
+             ORDER BY e.created_at, e.effect_id")
         .fetch_all(&pool)
         .await?
         .into_iter()

@@ -7,8 +7,11 @@
 
 import { ApiClient, type ApiResponse } from './client.js';
 import type {
+  HarnessDryRunResult,
   HarnessOverview,
+  HarnessSimulationProjection,
   HarnessSubagentPage,
+  HarnessWorkflowSnapshotList,
   HarnessWorkflowTemplateInput,
   HarnessWorkflowTemplateList,
   WorkflowDefinition,
@@ -122,5 +125,50 @@ export function instantiateHarnessWorkflowTemplate(
   return ApiClient.post(
     harnessPath(workspaceId, `/workflow-templates/${encodeURIComponent(templateId)}/instantiate`),
     input,
+  );
+}
+
+function workflowVersionPath(workspaceId: string, workflowId: string, version: number, suffix: string): string {
+  return harnessPath(
+    workspaceId,
+    `/workflows/${encodeURIComponent(workflowId)}/versions/${version}${suffix}`,
+  );
+}
+
+/** Historical production snapshots for the fixed-revision dry-run picker. */
+export function listHarnessWorkflowSnapshots(
+  workspaceId: string,
+  workflowId: string,
+  version: number,
+  signal?: AbortSignal,
+): Promise<ApiResponse<HarnessWorkflowSnapshotList>> {
+  return ApiClient.get(workflowVersionPath(workspaceId, workflowId, version, '/snapshots'), undefined, signal);
+}
+
+/**
+ * Start an isolated simulation. The caller must have Agent management
+ * permission; the chosen snapshot is fixed for the whole Run.
+ */
+export function startHarnessDryRun(
+  workspaceId: string,
+  workflowId: string,
+  version: number,
+  snapshotSeq: number,
+): Promise<ApiResponse<HarnessDryRunResult>> {
+  return ApiClient.post(workflowVersionPath(workspaceId, workflowId, version, '/dry-run'), {
+    snapshotSeq,
+  });
+}
+
+/** Read-only simulation Run projection; production Task IDs are rejected. */
+export function getHarnessSimulation(
+  workspaceId: string,
+  taskId: string,
+  signal?: AbortSignal,
+): Promise<ApiResponse<HarnessSimulationProjection>> {
+  return ApiClient.get(
+    harnessPath(workspaceId, `/simulations/${encodeURIComponent(taskId)}`),
+    undefined,
+    signal,
   );
 }

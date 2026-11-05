@@ -12,6 +12,8 @@
 //! Every handler verifies tenant/workspace access before opening the workspace
 //! Harness store. Task controls stay on the shared Runtime handlers.
 
+use std::sync::Arc;
+
 use axum::{
     Extension, Json, Router,
     extract::{Path, Query, State},
@@ -23,6 +25,7 @@ use chrono::Utc;
 use serde::Deserialize;
 use serde_json::{Value, json};
 use tinyiothub_core::harness::{WorkflowDefinition, WorkflowRevision, WorkflowTrigger};
+use tinyiothub_skills::registry::Capability;
 use tinyiothub_storage::Db;
 use tinyiothub_storage::error::DbError;
 use tinyiothub_storage::harness_effect::EffectRecoveryItem;
@@ -33,7 +36,11 @@ use tinyiothub_web::security::Claims;
 use crate::domains::agent::AgentState;
 use crate::domains::agent::host::handler::agent_tasks::check_agent_admin_response;
 use crate::domains::agent::runtime::tasks::error_response;
-use crate::domains::agent::workflows::{TemplateInput, WorkflowService, builtin_templates, next_wake_at};
+use crate::domains::agent::tools::resolve_capabilities;
+use crate::domains::agent::workflows::{
+    DryRunInput, ScriptedDryRunExecutor, TemplateInput, WorkflowDryRun, WorkflowService, builtin_templates,
+    next_wake_at,
+};
 
 const DEFAULT_ATTENTION_LIMIT: i64 = 5;
 const MAX_ATTENTION_LIMIT: i64 = 50;
@@ -67,6 +74,15 @@ where
             "/{workspace_id}/harness/workflow-templates/{template_id}/instantiate",
             post(instantiate_workflow_template),
         )
+        .route(
+            "/{workspace_id}/harness/workflows/{workflow_id}/versions/{version}/snapshots",
+            get(list_workflow_snapshots),
+        )
+        .route(
+            "/{workspace_id}/harness/workflows/{workflow_id}/versions/{version}/dry-run",
+            post(start_workflow_dry_run),
+        )
+        .route("/{workspace_id}/harness/simulations/{task_id}", get(get_simulation))
 }
 
 /// Request DTOs accept the snake_case bodies produced by the web ApiClient.
@@ -142,6 +158,16 @@ pub struct OverviewQuery {
 pub struct SubagentsQuery {
     pub limit: Option<u32>,
     pub offset: Option<u32>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct SnapshotsQuery {
+    pub limit: Option<u32>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct DryRunStartRequest {
+    pub snapshot_seq: i64,
 }
 
 async fn verify_workspace_read(state: &AgentState, claims: &Claims, workspace_id: &str) -> Result<(), Response> {
@@ -343,6 +369,105 @@ pub async fn instantiate_workflow_template(
             tracing::warn!(%workspace_id, %template_id, %error, "instantiate Harness workflow template failed");
             workflow_db_error_response(error, None)
         }
+    }
+}
+
+/// Snapshot picker for one fixed revision. The sequence and observed time are
+/// the only selection inputs; the picker never reads current platform state.
+pub async fn list_workflow_snapshots(
+    State(state): State<AgentState>,
+    Extension(claims): Extension<Claims>,
+    Path((workspace_id, workflow_id, version)): Path<(String, String, i64)>,
+    Query(query): Query<SnapshotsQuery>,
+) -> Response {
+    if let Err(response) = verify_workspace_read(&state, &claims, &workspace_id).await {
+        return response;
+    }
+    let limit = i64::from(query.limit.unwrap_or(50)).clamp(1, 200);
+    let service = dry_run_service(&state, &workspace_id);
+    match service.list_snapshots(&workflow_id, version, limit).await {
+        Ok(snapshots) => ApiResponseBuilder::success(json!({
+            "workflowId": workflow_id,
+            "version": version,
+            "snapshots": snapshots,
+        }))
+        .into_response(),
+        Err(error) => {
+            tracing::warn!(%workspace_id, %workflow_id, version, %error, "list dry-run snapshots failed");
+            dry_run_error_response(error)
+        }
+    }
+}
+
+/// Start an isolated simulation. This is an Agent-management write surface,
+/// exactly like the other Harness configuration writes.
+pub async fn start_workflow_dry_run(
+    State(state): State<AgentState>,
+    Extension(claims): Extension<Claims>,
+    Path((workspace_id, workflow_id, version)): Path<(String, String, i64)>,
+    Json(payload): Json<DryRunStartRequest>,
+) -> Response {
+    if let Err(response) = check_agent_admin_response(&state, &claims, &workspace_id).await {
+        return response;
+    }
+    let service = dry_run_service(&state, &workspace_id);
+    match service
+        .start(DryRunInput {
+            workflow_id,
+            workflow_version: version,
+            snapshot_seq: payload.snapshot_seq,
+        })
+        .await
+    {
+        Ok(result) => ApiResponseBuilder::success(result).into_response(),
+        Err(error) => {
+            tracing::warn!(%workspace_id, version, %error, "start Workflow dry-run failed");
+            dry_run_error_response(error)
+        }
+    }
+}
+
+/// Read-only simulation Run projection. Production Task IDs are not readable
+/// through this route, and no control or approval entry exists here.
+pub async fn get_simulation(
+    State(state): State<AgentState>,
+    Extension(claims): Extension<Claims>,
+    Path((workspace_id, task_id)): Path<(String, String)>,
+) -> Response {
+    if let Err(response) = verify_workspace_read(&state, &claims, &workspace_id).await {
+        return response;
+    }
+    let service = dry_run_service(&state, &workspace_id);
+    match service.projection(&task_id).await {
+        Ok(Some(projection)) => ApiResponseBuilder::success(projection).into_response(),
+        Ok(None) => error_response(StatusCode::NOT_FOUND, "模拟运行不存在"),
+        Err(error) => {
+            tracing::error!(%workspace_id, %task_id, %error, "load simulation projection failed");
+            error_response(StatusCode::SERVICE_UNAVAILABLE, "Harness 存储不可用")
+        }
+    }
+}
+
+fn dry_run_service(state: &AgentState, workspace_id: &str) -> WorkflowDryRun {
+    WorkflowDryRun::new(
+        state.db.clone(),
+        workspace_id,
+        Arc::new(ScriptedDryRunExecutor),
+        // The scripted provider is text-only. A Workflow that declares vision
+        // or video fails explicitly with capability.unavailable rather than
+        // inventing observations.
+        resolve_capabilities(false, [Capability::Text]),
+    )
+}
+
+fn dry_run_error_response(error: DbError) -> Response {
+    match error {
+        DbError::NotFound { id } if id.starts_with("snapshot:") => {
+            error_response(StatusCode::NOT_FOUND, format!("快照不存在: {id}"))
+        }
+        DbError::NotFound { id } => error_response(StatusCode::NOT_FOUND, format!("Workflow 版本不存在: {id}")),
+        DbError::Validation { message } => error_response(StatusCode::BAD_REQUEST, message),
+        _ => error_response(StatusCode::SERVICE_UNAVAILABLE, "Harness 存储不可用"),
     }
 }
 
@@ -578,6 +703,8 @@ mod tests {
 
     use axum::body::Body;
     use axum::http::Request;
+    use chrono::DateTime;
+    use tinyiothub_core::harness::{DeviceFactsSnapshot, ExecutionMode, HarnessEventInput};
     use tinyiothub_storage::test_helpers::{WorkspaceFixture, fixture_workspace};
     use tower::ServiceExt;
 
@@ -992,6 +1119,127 @@ mod tests {
         .await;
         assert_eq!(status, StatusCode::OK, "{enabled}");
         assert_eq!(enabled["result"]["enabled"], true);
+
+        drop(app);
+        fixture.close().await;
+    }
+
+    #[tokio::test]
+    async fn workflow_dry_run_is_admin_only_and_reads_only_a_fixed_revision_snapshot() {
+        let workspace_id = "ws-dry-run-http";
+        let (app, fixture) = workflow_test_app(workspace_id).await;
+        let admin = create_test_token("admin-user-001", "tenant-1");
+        let member = create_test_token("user-2", "tenant-1");
+        let base = format!("/api/v1/workspaces/{workspace_id}/harness");
+
+        let (status, created) = send(
+            &app,
+            "POST",
+            Some(&admin),
+            &format!("{base}/workflows"),
+            Some(workflow_body("dry-run 巡检")),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{created}");
+        let workflow_id = created["result"]["workflowId"]
+            .as_str()
+            .expect("workflow id")
+            .to_string();
+        let version = created["result"]["version"].as_i64().expect("version");
+
+        let observed_at = DateTime::parse_from_rfc3339("2026-11-02T08:30:00Z")
+            .expect("timestamp")
+            .with_timezone(&Utc);
+        let snapshot_event = fixture
+            .db
+            .append_session_event(&HarnessEventInput {
+                event_id: "production-snapshot-http".to_string(),
+                workspace_id: workspace_id.to_string(),
+                session_id: format!("supervisor:{workspace_id}"),
+                execution_mode: ExecutionMode::Production,
+                run_id: None,
+                task_id: None,
+                event_type: "run.started".to_string(),
+                occurred_at: observed_at,
+                cause_id: None,
+                schema_v: 1,
+                payload_digest: "digest-production-snapshot-http".to_string(),
+                payload_json: json!({
+                    "deviceFacts": DeviceFactsSnapshot {
+                        observed_at,
+                        declaration_hash: "declaration-http".to_string(),
+                        driver_version: "driver-http".to_string(),
+                        facts: json!({"temperature": 20}),
+                    }
+                }),
+            })
+            .await
+            .expect("seed production snapshot");
+
+        let snapshots_uri = format!("{base}/workflows/{workflow_id}/versions/{version}/snapshots");
+        let (status, snapshots) = get(&app, Some(&member), &snapshots_uri).await;
+        assert_eq!(status, StatusCode::OK, "{snapshots}");
+        assert_eq!(snapshots["result"]["snapshots"][0]["seq"], snapshot_event.seq);
+        assert_eq!(
+            snapshots["result"]["snapshots"][0]["observedAt"],
+            "2026-11-02T08:30:00Z"
+        );
+
+        let dry_run_uri = format!("{base}/workflows/{workflow_id}/versions/{version}/dry-run");
+        let (status, forbidden) = send(
+            &app,
+            "POST",
+            Some(&member),
+            &dry_run_uri,
+            Some(json!({"snapshot_seq": snapshot_event.seq})),
+        )
+        .await;
+        assert_eq!(status, StatusCode::FORBIDDEN, "{forbidden}");
+
+        let (status, missing) = send(
+            &app,
+            "POST",
+            Some(&admin),
+            &dry_run_uri,
+            Some(json!({"snapshot_seq": 999999})),
+        )
+        .await;
+        assert_eq!(status, StatusCode::NOT_FOUND, "{missing}");
+        assert!(missing["msg"].as_str().unwrap_or_default().contains("快照不存在"));
+
+        let (status, started) = send(
+            &app,
+            "POST",
+            Some(&admin),
+            &dry_run_uri,
+            Some(json!({"snapshot_seq": snapshot_event.seq})),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{started}");
+        let task_id = started["result"]["taskId"].as_str().expect("task id").to_string();
+        let run_id = started["result"]["runId"].as_str().expect("run id").to_string();
+
+        let simulation_uri = format!("{base}/simulations/{task_id}");
+        let (status, simulation) = get(&app, Some(&member), &simulation_uri).await;
+        assert_eq!(status, StatusCode::OK, "{simulation}");
+        assert_eq!(simulation["result"]["executionMode"], "simulation");
+        assert_eq!(simulation["result"]["readOnly"], true);
+        assert_eq!(simulation["result"]["status"], "completed");
+        assert_eq!(simulation["result"]["runId"], run_id);
+        assert_eq!(simulation["result"]["snapshot"]["seq"], snapshot_event.seq);
+
+        // No production approval/execution entry is exposed on the simulation.
+        let request = Request::builder()
+            .method("POST")
+            .uri(format!(
+                "/api/v1/workspaces/{workspace_id}/harness/simulations/{task_id}/approve"
+            ))
+            .header("Authorization", auth_header(&admin))
+            .header("Content-Type", "application/json")
+            .body(Body::from("{}"))
+            .expect("approval request");
+        let response = app.clone().oneshot(request).await.expect("approval response");
+        assert!(!response.status().is_success());
 
         drop(app);
         fixture.close().await;

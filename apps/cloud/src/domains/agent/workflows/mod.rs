@@ -1,3 +1,4 @@
+mod dry_run;
 mod runner;
 mod supervisor;
 mod templates;
@@ -10,6 +11,7 @@ use cron::Schedule;
 use tinyiothub_core::harness::{WorkflowDefinition, WorkflowRevision, WorkflowTrigger};
 use tinyiothub_storage::{Db, DbError};
 
+pub use dry_run::{DryRunInput, DryRunResult, ScriptedDryRunExecutor, WorkflowDryRun};
 pub use runner::{MainCoordinator, SubagentRunner};
 pub use supervisor::WorkflowScheduler;
 pub use templates::{

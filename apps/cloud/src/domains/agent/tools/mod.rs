@@ -9,7 +9,7 @@ pub mod registry;
 pub mod trust;
 pub mod types;
 
-pub use capabilities::{emit_capability_unavailable, resolve_capabilities};
+pub use capabilities::{CAPABILITY_UNAVAILABLE_RECOVERY, emit_capability_unavailable, resolve_capabilities};
 pub use catalog::build_tools_catalog_json;
 pub use context::{ToolPolicyContext, ToolRuntimeContext};
 pub use external::{ExternalToolContext, ExternalToolHandler, ExternalToolMeta, ExternalToolRegistry, IoTToolAdapter};

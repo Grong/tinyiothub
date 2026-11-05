@@ -17,6 +17,7 @@ import {
 } from './harness-status.js';
 import './harness-workflow-edit.js';
 import './harness-templates.js';
+import './harness-dry-run.js';
 import './harness-overview.css';
 
 const attentionPageSize = 5;
@@ -81,7 +82,7 @@ export class HarnessOverviewView extends LitElement {
 
   connectedCallback(): void {
     super.connectedCallback();
-    if (this.route?.name === 'workflows') {
+    if (this.route?.name === 'workflows' || this.route?.name === 'dry-run') {
       this.connection = 'online';
       return;
     }
@@ -583,6 +584,15 @@ export class HarnessOverviewView extends LitElement {
       return html`<view-harness-templates
         .workspaceId=${this.workspaceId}
       ></view-harness-templates>`;
+    }
+    if (this.route?.name === 'dry-run') {
+      return html`<view-harness-dry-run
+        .workspaceId=${this.workspaceId}
+        .workflowId=${this.route.workflowId}
+        .version=${this.route.version}
+        .snapshotSeq=${this.route.snapshotSeq}
+        .taskId=${this.route.taskId ?? ''}
+      ></view-harness-dry-run>`;
     }
     // DR10 keeps exactly one primary CTA per view: the empty state owns
     // "从模板新建"; once Workflows exist the header owns it instead.
