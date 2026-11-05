@@ -229,6 +229,7 @@ impl AgentPool {
             provider_factory: Arc::clone(&self.provider_factory),
             // chat/heartbeat：历史由 cloud DB 每轮重建，不经 agent 内存。
             conversation_memory: false,
+            available_capabilities: vec![],
         };
 
         let agent = tinyiothub_agent::adapters::rig::loop_::rig_loop_factory(cfg)

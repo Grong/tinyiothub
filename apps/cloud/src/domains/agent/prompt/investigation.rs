@@ -61,7 +61,7 @@ mod tests {
         let text = alarm_investigation_text(&alarm);
         assert!(text.contains("触发条件：阈值 > 10。"), "条件段缺失: {text}");
         assert!(text.contains("全部输出必须使用中文"), "宪法单行缺失: {text}");
-        assert!(text.contains("dispatch_thing_task"), "工具名禁令缺失: {text}");
+        assert!(text.contains("禁止编造"), "工具名禁令缺失: {text}");
         // 2026-09-28 eval 质量修复：判据区分点 + fail-safe。
         assert!(
             text.contains("已自行恢复的是 noise 不是 self_healable"),

@@ -10,10 +10,15 @@ use std::sync::Arc;
 
 use tinyiothub_agent::port::tool::Tool;
 use tinyiothub_core::heartbeat::TrustConfig;
+use tinyiothub_skills::registry::{
+    Capability, DeclaredToolRegistry, PresentationDescriptor, ToolDescriptor, ToolEffectKind, ToolRegistry as _,
+    ToolRegistryError,
+};
 use tinyiothub_skills::trust::ToolSafety;
 
 use tinyiothub_agent::config::AgentRuntimeConfig;
 
+use super::catalog;
 use super::context::ToolRuntimeContext;
 use super::external::{ExternalToolRegistry, IoTToolAdapter};
 use super::trust::TrustAwareTool;
@@ -38,6 +43,43 @@ struct RegistryInner {
 #[derive(Clone, Default)]
 pub struct ToolRegistry {
     inner: Arc<RwLock<RegistryInner>>,
+}
+
+/// Adapt a runtime tool plus its registry-declared safety into the single
+/// `ToolDescriptor` used by exposure, policy, redaction, and display.
+///
+/// The tool's own declaration is the source of truth. The registry-declared
+/// safety only strengthens it (declared destructive cannot be downgraded), and
+/// existing display labels/groups are applied when the tool did not declare a
+/// presentation override.
+pub fn descriptor_for(tool: &dyn Tool, safety: ToolSafety) -> ToolDescriptor {
+    let mut descriptor = tool.descriptor();
+    descriptor.safety = safety;
+    descriptor.effect_kind = ToolEffectKind::from_safety(safety);
+    if matches!(safety, ToolSafety::Destructive) {
+        descriptor.approval_policy.mandatory = true;
+        if descriptor.approval_policy.reason.is_none() {
+            descriptor.approval_policy.reason = Some("destructive tool".to_string());
+        }
+        descriptor.requires_approval = true;
+    }
+
+    let danger = matches!(safety, ToolSafety::Destructive) || catalog::name_infers_destructive(tool.name());
+    let inferred = PresentationDescriptor::inferred(tool.name(), danger);
+    let mut presentation = descriptor.presentation.clone();
+    // An explicit label/group (different from the safe fallback) wins.
+    if presentation.label == inferred.label {
+        presentation.label = catalog::tool_label(tool.name()).to_string();
+    }
+    if presentation.group == inferred.group {
+        let (group, group_label) = catalog::tool_group(tool.name());
+        presentation.group = group.to_string();
+        presentation.group_label = group_label.to_string();
+    }
+    presentation.danger = danger;
+    presentation.enabled = !danger;
+    descriptor.presentation = presentation;
+    descriptor
 }
 
 impl ToolRegistry {
@@ -115,6 +157,52 @@ impl ToolRegistry {
         }
 
         tools
+    }
+
+    /// Build the single descriptor source for every loaded tool (built-in and
+    /// external). All exposure surfaces derive from this list.
+    pub async fn descriptors(&self, workspace_id: &str, runtime: &ToolRuntimeContext) -> Vec<ToolDescriptor> {
+        self.load_with_safety(workspace_id, runtime)
+            .await
+            .into_iter()
+            .map(|(tool, safety)| descriptor_for(tool.as_ref(), safety))
+            .collect()
+    }
+
+    /// LLM tool subset generated from declarations for the capabilities the
+    /// composition root resolved. Hidden aliases never appear.
+    pub async fn llm_tool_schema(
+        &self,
+        workspace_id: &str,
+        runtime: &ToolRuntimeContext,
+        available: &[Capability],
+    ) -> serde_json::Value {
+        DeclaredToolRegistry::new(self.descriptors(workspace_id, runtime).await)
+            .generate_llm_schema_for(available, None)
+    }
+
+    /// Redacted public argument summary. Raw argument JSON is internal; this is
+    /// the only argument representation exposed by DTO/SSE metadata.
+    pub async fn public_arguments_summary(
+        &self,
+        workspace_id: &str,
+        runtime: &ToolRuntimeContext,
+        name: &str,
+        arguments: &serde_json::Value,
+    ) -> Result<String, ToolRegistryError> {
+        DeclaredToolRegistry::new(self.descriptors(workspace_id, runtime).await).redacted_arguments(name, arguments)
+    }
+
+    /// Effective approval policy for a tool with optional Workflow tightening.
+    /// Workflow policy can only tighten the declared mandatory policy.
+    pub async fn effective_approval_for(
+        &self,
+        workspace_id: &str,
+        runtime: &ToolRuntimeContext,
+        name: &str,
+        workflow: Option<&tinyiothub_skills::registry::ApprovalPolicy>,
+    ) -> Result<tinyiothub_skills::registry::ApprovalPolicy, ToolRegistryError> {
+        DeclaredToolRegistry::new(self.descriptors(workspace_id, runtime).await).effective_approval(name, workflow)
     }
 
     /// Load and filter tools for an agent based on its runtime config.

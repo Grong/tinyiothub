@@ -29,6 +29,12 @@ pub struct AgentLoopConfig {
     /// `true`：保留跨轮 recall 行为。zeroclaw 适配器接受并忽略该字段
     /// （其 auto-save 是无害旁路，见 Task 7 报告）。
     pub conversation_memory: bool,
+    /// Capabilities the composition root resolved from configuration beyond
+    /// the provider port (for example a configured video source). The loop
+    /// derives model capabilities such as vision from the provider itself and
+    /// fails closed before the first model call if an exposed tool requires a
+    /// capability that is missing.
+    pub available_capabilities: Vec<tinyiothub_skills::registry::Capability>,
 }
 
 /// zeroclaw Agent::turn_streamed 的 port 形状（返回去掉 ConversationMessage，
@@ -66,6 +72,17 @@ pub trait AgentLoop: Send + Sync {
 
 pub type AgentLoopHandle = Arc<tokio::sync::Mutex<dyn AgentLoop>>;
 pub type AgentLoopFactory = Arc<dyn Fn(AgentLoopConfig) -> anyhow::Result<AgentLoopHandle> + Send + Sync>;
+
+/// A tool required a capability the resolved provider/model does not offer.
+/// Composition roots downcast this to write `capability.unavailable` before
+/// any model call; the run fails with zero Effects.
+#[derive(Debug, Clone, thiserror::Error)]
+#[error("capability.unavailable: tool `{tool}` requires missing capability [{}]", missing.iter().map(|capability| capability.as_str()).collect::<Vec<_>>().join(", "))]
+pub struct CapabilityUnavailableError {
+    pub tool: String,
+    pub missing: Vec<tinyiothub_skills::registry::Capability>,
+    pub recovery: String,
+}
 
 #[cfg(test)]
 mod tests {
@@ -126,6 +143,7 @@ mod tests {
             security_summary: None,
             provider_factory: stub_provider_factory(),
             conversation_memory: false,
+            available_capabilities: vec![],
         };
         assert_eq!(config.model_name, "test-model");
         assert_eq!(config.tools.len(), 1);

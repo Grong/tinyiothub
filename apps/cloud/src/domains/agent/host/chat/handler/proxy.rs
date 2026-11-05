@@ -280,12 +280,17 @@ pub async fn set_agent_config(
 pub async fn tools_catalog(
     State(state): State<AgentState>,
     Query(params): Query<HashMap<String, String>>,
-    _claims: Claims,
+    claims: Claims,
 ) -> Json<ApiResponse<serde_json::Value>> {
     let _ = params;
-    // Catalog snapshot from the pool's tool registry (external MCP tools
-    // resolved on demand; static fallback when none registered).
-    let data = state.agent_pool.tool_registry().build_catalog().await;
+    // Catalog snapshot from the pool's tool registry, generated from the same
+    // ToolDescriptor declarations as LLM exposure and policy.
+    let runtime = state.agent_pool.runtime_context().await;
+    let data = state
+        .agent_pool
+        .tool_registry()
+        .build_catalog(&claims.workspace_id, &runtime)
+        .await;
     ApiResponseBuilder::success(data)
 }
 

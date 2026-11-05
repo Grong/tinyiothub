@@ -768,6 +768,7 @@ async fn rig_loop_forwards_tool_and_usage_events() {
         security_summary: None,
         provider_factory: Arc::new(|| Ok(Box::new(ScriptModel { calls: Mutex::new(0) }))),
         conversation_memory: false,
+        available_capabilities: vec![],
     };
     let loop_ = rig_loop_factory(cfg).expect("factory builds loop");
 
@@ -941,6 +942,7 @@ fn invalid_tool_loop(
             }))
         }),
         conversation_memory: false,
+        available_capabilities: vec![],
     })
     .expect("factory builds loop")
 }
@@ -1107,6 +1109,7 @@ async fn run_budget_rejects_fifth_distinct_image_before_provider_delivery() {
             }))
         }),
         conversation_memory: false,
+        available_capabilities: vec![],
     })
     .expect("loop");
     let (tx, _rx) = tokio::sync::mpsc::channel(64);
@@ -1220,6 +1223,7 @@ async fn failing_tool_result_is_delivered_as_text_not_retried() {
         security_summary: None,
         provider_factory: Arc::new(|| Ok(Box::new(AssertModel { calls: Mutex::new(0) }))),
         conversation_memory: false,
+        available_capabilities: vec![],
     };
     let loop_ = rig_loop_factory(cfg).expect("factory builds loop");
 
@@ -1507,6 +1511,7 @@ async fn cancelled_after_stream_end_is_tool_loop_cancelled() {
             }))
         }),
         conversation_memory: false,
+        available_capabilities: vec![],
     };
     let loop_ = rig_loop_factory(cfg).expect("factory builds loop");
 
@@ -1522,4 +1527,262 @@ async fn cancelled_after_stream_end_is_tool_loop_cancelled() {
         crate::port::outcome::is_tool_loop_cancelled(&err),
         "cancellation after stream end must normalize to ToolLoopCancelled, got {err:?}"
     );
+}
+
+// ── ToolDescriptor capability gate ───────────────────────────────────────────
+
+struct VisionTool;
+
+impl Attributable for VisionTool {
+    fn role(&self) -> Role {
+        Role::Tool(ToolKind::Plugin)
+    }
+    fn alias(&self) -> &str {
+        "VisionTool"
+    }
+}
+
+#[async_trait::async_trait]
+impl Tool for VisionTool {
+    fn name(&self) -> &str {
+        "capture_frame"
+    }
+
+    fn description(&self) -> &str {
+        "Capture a frame"
+    }
+
+    fn parameters_schema(&self) -> serde_json::Value {
+        serde_json::json!({"type": "object", "properties": {}})
+    }
+
+    fn descriptor(&self) -> tinyiothub_skills::registry::ToolDescriptor {
+        let mut descriptor = tinyiothub_skills::registry::ToolDescriptor::declared(
+            self.name(),
+            self.description(),
+            self.parameters_schema(),
+        );
+        descriptor.required_capabilities = vec![tinyiothub_skills::registry::Capability::Video];
+        descriptor
+    }
+
+    async fn execute(&self, _args: serde_json::Value) -> anyhow::Result<ToolResult> {
+        Ok(ToolResult {
+            success: true,
+            output: "frame".into(),
+            error: None,
+            attachments: vec![],
+        })
+    }
+}
+
+struct NonVisionModel {
+    calls: Arc<Mutex<usize>>,
+}
+
+impl Attributable for NonVisionModel {
+    fn role(&self) -> Role {
+        Role::Tool(ToolKind::Plugin)
+    }
+    fn alias(&self) -> &str {
+        "NonVisionModel"
+    }
+}
+
+#[async_trait::async_trait]
+impl crate::port::provider::ModelProvider for NonVisionModel {
+    fn supports_vision(&self) -> bool {
+        false
+    }
+
+    async fn chat(
+        &self,
+        _request: crate::port::provider::ChatRequest<'_>,
+        _model: &str,
+        _temperature: Option<f64>,
+    ) -> anyhow::Result<crate::port::provider::ChatResponse> {
+        *self.calls.lock().unwrap() += 1;
+        Ok(crate::port::provider::ChatResponse::default())
+    }
+}
+
+/// A tool requiring a vision capability must fail before the model is called;
+/// the composition gate is driven by the same descriptor that produces the
+/// LLM tool subset.
+#[test]
+fn tools_descriptor_capability_gate_fails_before_model_call() {
+    use crate::adapters::rig::loop_::rig_loop_factory;
+    use crate::port::runtime::AgentLoopConfig;
+
+    let calls = Arc::new(Mutex::new(0));
+    let provider_calls = Arc::clone(&calls);
+    let dir = tempfile::tempdir().expect("tempdir");
+    let result = rig_loop_factory(AgentLoopConfig {
+        model_name: "non-vision-model".into(),
+        prompt_builder: crate::port::prompt::SystemPromptBuilder::with_defaults(),
+        tools: vec![Box::new(VisionTool)],
+        memory: Arc::new(crate::port::memory::NoopMemory),
+        observer: Arc::new(crate::port::observer::NoopObserver),
+        workspace_dir: dir.path().to_path_buf(),
+        security_summary: None,
+        provider_factory: Arc::new(move || {
+            Ok(Box::new(NonVisionModel {
+                calls: Arc::clone(&provider_calls),
+            }))
+        }),
+        conversation_memory: false,
+        available_capabilities: vec![],
+    });
+    let error = match result {
+        Ok(_) => panic!("missing video/vision capability must fail closed"),
+        Err(error) => error,
+    };
+
+    assert!(
+        error.to_string().contains("capability.unavailable"),
+        "error must name capability.unavailable: {error}"
+    );
+    assert_eq!(*calls.lock().unwrap(), 0, "the model must not be called");
+}
+
+// ── ToolDescriptor redaction at the public event boundary ────────────────────
+
+struct SecretTool {
+    received: Arc<Mutex<Vec<serde_json::Value>>>,
+}
+
+impl Attributable for SecretTool {
+    fn role(&self) -> Role {
+        Role::Tool(ToolKind::Plugin)
+    }
+    fn alias(&self) -> &str {
+        "SecretTool"
+    }
+}
+
+#[async_trait::async_trait]
+impl Tool for SecretTool {
+    fn name(&self) -> &str {
+        "secret_tool"
+    }
+    fn description(&self) -> &str {
+        "Handles credentials"
+    }
+    fn parameters_schema(&self) -> serde_json::Value {
+        serde_json::json!({"type": "object"})
+    }
+    async fn execute(&self, args: serde_json::Value) -> anyhow::Result<ToolResult> {
+        self.received.lock().unwrap().push(args);
+        Ok(ToolResult {
+            success: true,
+            output: "ok".into(),
+            error: None,
+            attachments: vec![],
+        })
+    }
+}
+
+struct SecretArgsModel {
+    calls: Mutex<usize>,
+}
+
+impl Attributable for SecretArgsModel {
+    fn role(&self) -> Role {
+        Role::Tool(ToolKind::Plugin)
+    }
+    fn alias(&self) -> &str {
+        "SecretArgsModel"
+    }
+}
+
+#[async_trait::async_trait]
+impl crate::port::provider::ModelProvider for SecretArgsModel {
+    async fn chat(
+        &self,
+        _request: crate::port::provider::ChatRequest<'_>,
+        _model: &str,
+        _temperature: Option<f64>,
+    ) -> anyhow::Result<crate::port::provider::ChatResponse> {
+        let mut calls = self.calls.lock().unwrap();
+        *calls += 1;
+        if *calls == 1 {
+            return Ok(crate::port::provider::ChatResponse {
+                text: None,
+                tool_calls: vec![crate::port::provider::ToolCall {
+                    id: "call_secret".into(),
+                    name: "secret_tool".into(),
+                    arguments: serde_json::json!({
+                        "thingId": "camera-1",
+                        "credentials": {
+                            "password": "nested-password",
+                            "access_token": "nested-token"
+                        }
+                    })
+                    .to_string(),
+                }],
+                usage: None,
+                reasoning_content: None,
+            });
+        }
+        Ok(crate::port::provider::ChatResponse {
+            text: Some("done".into()),
+            ..crate::port::provider::ChatResponse::default()
+        })
+    }
+}
+
+/// The tool receives raw arguments, but anything observable (TurnEvent/SSE)
+/// carries only the descriptor-redacted view. This is the public boundary that
+/// must never expose nested password/token/secret fields.
+#[tokio::test]
+async fn tools_descriptor_redacts_nested_secrets_in_public_events() {
+    use crate::adapters::rig::loop_::rig_loop_factory;
+    use crate::port::events::TurnEvent;
+    use crate::port::runtime::AgentLoopConfig;
+
+    let received = Arc::new(Mutex::new(Vec::new()));
+    let dir = tempfile::tempdir().expect("tempdir");
+    let loop_ = rig_loop_factory(AgentLoopConfig {
+        model_name: "secret-model".into(),
+        prompt_builder: crate::port::prompt::SystemPromptBuilder::with_defaults(),
+        tools: vec![Box::new(SecretTool {
+            received: Arc::clone(&received),
+        })],
+        memory: Arc::new(crate::port::memory::NoopMemory),
+        observer: Arc::new(crate::port::observer::NoopObserver),
+        workspace_dir: dir.path().to_path_buf(),
+        security_summary: None,
+        provider_factory: Arc::new(|| Ok(Box::new(SecretArgsModel { calls: Mutex::new(0) }))),
+        conversation_memory: false,
+        available_capabilities: vec![],
+    })
+    .expect("loop");
+
+    let (event_tx, mut event_rx) = tokio::sync::mpsc::channel::<TurnEvent>(64);
+    loop_
+        .lock()
+        .await
+        .turn_streamed("go", event_tx, None)
+        .await
+        .expect("turn");
+
+    let raw = received.lock().unwrap().clone();
+    assert_eq!(raw.len(), 1);
+    assert_eq!(
+        raw[0]["credentials"]["password"], "nested-password",
+        "the tool itself must receive the raw arguments"
+    );
+
+    let mut public_args = None;
+    while let Some(event) = event_rx.recv().await {
+        if let TurnEvent::ToolCall { args, .. } = event {
+            public_args = Some(args);
+        }
+    }
+    let public_args = public_args.expect("ToolCall event");
+    let serialized = public_args.to_string();
+    assert!(!serialized.contains("nested-password"), "{serialized}");
+    assert!(!serialized.contains("nested-token"), "{serialized}");
+    assert_eq!(public_args["credentials"]["password"], "[REDACTED]");
+    assert_eq!(public_args["thingId"], "camera-1");
 }

@@ -88,8 +88,12 @@ mod tests {
         assert!(prompt.contains("行动纪律"), "constitution must be injected");
         assert!(prompt.contains("必须使用中文"), "Chinese rule from constitution");
         assert!(
-            prompt.contains("dispatch_thing_task"),
-            "tool-name ban from constitution"
+            prompt.contains("禁止编造工具名"),
+            "generic tool-name ban from constitution"
+        );
+        assert!(
+            !prompt.contains("read_device"),
+            "constitution must not hardcode tool names"
         );
     }
 }

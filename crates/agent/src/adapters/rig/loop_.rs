@@ -42,6 +42,10 @@ pub struct RigAgentLoop {
     agent: Agent,
     memory: Option<Arc<PortMemoryAsConversation>>,
     seeded: tokio::sync::Mutex<Vec<rig_core::message::Message>>,
+    /// Per-tool redaction policies for public `TurnEvent` arguments. Raw
+    /// arguments are still what the tool receives; only the observable event
+    /// carries the redacted summary.
+    redactions: std::collections::HashMap<String, tinyiothub_skills::registry::RedactionPolicy>,
 }
 
 impl RigAgentLoop {
@@ -50,7 +54,22 @@ impl RigAgentLoop {
             agent,
             memory,
             seeded: tokio::sync::Mutex::new(Vec::new()),
+            redactions: std::collections::HashMap::new(),
         }
+    }
+
+    pub fn with_redactions(
+        mut self,
+        redactions: std::collections::HashMap<String, tinyiothub_skills::registry::RedactionPolicy>,
+    ) -> Self {
+        self.redactions = redactions;
+        self
+    }
+
+    fn public_tool_args(&self, tool_name: &str, args: &serde_json::Value) -> serde_json::Value {
+        self.redactions
+            .get(tool_name)
+            .map_or_else(|| args.clone(), |policy| policy.redact(args))
     }
 
     /// conversation_memory=false 时的每轮重建历史（seed_history 注入）。
@@ -318,10 +337,15 @@ impl AgentLoop for RigAgentLoop {
                         // 工具调用事件取自 ToolExecutionCommitted（hook 后、每调用恰一次），
                         // 避免与 StreamAssistantItem::ToolCall 双计（runner 按 ToolCall 计数做预算）。
                         MultiTurnStreamItem::ToolExecutionCommitted { tool_call, .. } => {
+                            // The tool receives the raw arguments; the public
+                            // stream only ever sees the descriptor-redacted view
+                            // (nested password/token/secret fields included).
+                            let public_args =
+                                self.public_tool_args(&tool_call.function.name, &tool_call.function.arguments);
                             let _ = event_tx.send(TurnEvent::ToolCall {
                                 id: tool_call.id.to_string(),
                                 name: tool_call.function.name.clone(),
-                                args: tool_call.function.arguments.clone(),
+                                args: public_args,
                             }).await;
                         }
                         MultiTurnStreamItem::StreamUserItem(StreamedUserContent::ToolResult {
@@ -415,11 +439,40 @@ impl AgentLoop for RigAgentLoop {
 /// `adapters::zeroclaw::loop_::zeroclaw_loop_factory`）。
 pub fn rig_loop_factory(cfg: AgentLoopConfig) -> anyhow::Result<AgentLoopHandle> {
     let provider = (cfg.provider_factory)()?;
+    let provider_supports_vision = provider.supports_vision();
     let model = PortModelAsRig::new(Arc::from(provider), cfg.model_name.clone());
+
+    // Resolve the capabilities actually available at composition time. Vision
+    // comes from the provider port; callers add configuration-derived
+    // capabilities (for example a configured video source) explicitly.
+    let mut available_capabilities = cfg.available_capabilities.clone();
+    if provider_supports_vision && !available_capabilities.contains(&tinyiothub_skills::registry::Capability::Vision) {
+        available_capabilities.push(tinyiothub_skills::registry::Capability::Vision);
+    }
 
     // E2：隐藏别名（旧设备工具等）保留注册但绝不进模型工具列表/提示词。
     let exposed_tools: Vec<Box<dyn crate::port::tool::Tool>> = cfg.tools.into_iter().filter(|t| t.exposed()).collect();
+    // Missing capability is a hard gate before any model call: never drop the
+    // tool silently and never let a non-vision provider invent observations.
+    for tool in &exposed_tools {
+        let descriptor = tool.descriptor();
+        let missing = descriptor.missing_capabilities(&available_capabilities);
+        if !missing.is_empty() {
+            return Err(anyhow::Error::new(crate::port::runtime::CapabilityUnavailableError {
+                tool: descriptor.name,
+                missing,
+                recovery: "configure a provider/model with those capabilities and start a new run".to_string(),
+            }));
+        }
+    }
     let tool_specs: Vec<crate::port::tool::ToolSpec> = exposed_tools.iter().map(|t| t.spec()).collect();
+    let redactions: std::collections::HashMap<String, tinyiothub_skills::registry::RedactionPolicy> = exposed_tools
+        .iter()
+        .filter_map(|tool| {
+            let descriptor = tool.descriptor();
+            descriptor.exposed.then_some((descriptor.name, descriptor.redaction))
+        })
+        .collect();
 
     let preamble = cfg.prompt_builder.build(&crate::port::prompt::PromptContext {
         workspace_dir: &cfg.workspace_dir,
@@ -457,7 +510,9 @@ pub fn rig_loop_factory(cfg: AgentLoopConfig) -> anyhow::Result<AgentLoopHandle>
             .build()
     };
 
-    let handle: AgentLoopHandle = Arc::new(tokio::sync::Mutex::new(RigAgentLoop::new(agent, memory)));
+    let handle: AgentLoopHandle = Arc::new(tokio::sync::Mutex::new(
+        RigAgentLoop::new(agent, memory).with_redactions(redactions),
+    ));
     Ok(handle)
 }
 

@@ -1,13 +1,13 @@
 //! 工具目录 — 分组/标签/危险推断 + 动态目录构建 + 静态兜底目录
 //!（Task 14 自 apps/cloud `host/tools/service.rs` 与 `host/shared/mod.rs` 迁入）。
 
-use std::collections::HashMap;
+use tinyiothub_skills::registry::ToolRegistry as _;
 
 use super::registry::ToolRegistry;
 
 /// 根据工具名称推断是否危险操作 (mirrored from cloud's `mcp::tool_metadata`
 /// until the MCP plane is reclaimed — keep the patterns in sync).
-fn name_infers_destructive(name: &str) -> bool {
+pub(crate) fn name_infers_destructive(name: &str) -> bool {
     name.starts_with("delete_")
         || name.starts_with("remove_")
         || name.starts_with("unload_")
@@ -18,7 +18,7 @@ fn name_infers_destructive(name: &str) -> bool {
 }
 
 /// Label mapping for known tools (display name in Chinese).
-fn tool_label(name: &str) -> &str {
+pub(crate) fn tool_label(name: &str) -> &str {
     match name {
         // Device-runtime tools (MCP)
         // E2 fixed device tools
@@ -66,7 +66,7 @@ fn tool_label(name: &str) -> &str {
 }
 
 /// Infer group (id, label) from tool name.
-fn tool_group(name: &str) -> (&str, &str) {
+pub(crate) fn tool_group(name: &str) -> (&str, &str) {
     if name == "search_workspace_resources" {
         ("workspace", "工作空间")
     } else if matches!(
@@ -114,63 +114,22 @@ fn tool_group(name: &str) -> (&str, &str) {
 }
 
 impl ToolRegistry {
-    /// Build the tool catalog dynamically from the external (MCP) registry.
+    /// Build the tool catalog from the same descriptors that drive LLM
+    /// exposure, policy, and redaction. Built-in and external tools are both
+    /// included; hidden approval-only aliases are excluded by the descriptor.
     ///
-    /// Falls back to the static catalog ([`build_tools_catalog_json`]) when
-    /// the external registry is empty or unavailable.
-    pub async fn build_catalog(&self) -> serde_json::Value {
-        let mut groups: HashMap<String, Vec<serde_json::Value>> = HashMap::new();
-
-        if let Some(registry) = self.external_registry() {
-            for meta in registry.list_tools().await {
-                let name = meta.name.clone();
-                let (group_id, _) = tool_group(&name);
-                let label = tool_label(&name);
-                let danger = name_infers_destructive(&name);
-
-                let tool_json = serde_json::json!({
-                    "id": name,
-                    "name": name,
-                    "label": label,
-                    "description": meta.description,
-                    "danger": danger,
-                    "enabled": !danger,
-                });
-
-                groups.entry(group_id.to_string()).or_default().push(tool_json);
-            }
-        }
-
-        if groups.is_empty() {
+    /// Falls back to the static catalog ([`build_tools_catalog_json`]) only
+    /// when no providers/external tools are registered.
+    pub async fn build_catalog(
+        &self,
+        workspace_id: &str,
+        runtime: &super::context::ToolRuntimeContext,
+    ) -> serde_json::Value {
+        let descriptors = self.descriptors(workspace_id, runtime).await;
+        if descriptors.is_empty() {
             return build_tools_catalog_json();
         }
-
-        let group_order = [
-            ("thing", "物本体"),
-            ("device", "设备管理"),
-            ("alarm", "告警管理"),
-            ("monitoring", "系统监控"),
-            ("driver", "驱动管理"),
-            ("workspace", "工作空间"),
-            ("job", "任务管理"),
-            ("other", "其他"),
-        ];
-
-        let groups_vec: Vec<serde_json::Value> = group_order
-            .into_iter()
-            .filter_map(|(id, label)| {
-                groups.get(id).map(|tools| {
-                    serde_json::json!({
-                        "id": id,
-                        "label": label,
-                        "source": "core",
-                        "tools": tools,
-                    })
-                })
-            })
-            .collect();
-
-        serde_json::json!({ "groups": groups_vec })
+        tinyiothub_skills::registry::DeclaredToolRegistry::new(descriptors).catalog()
     }
 }
 
@@ -267,7 +226,9 @@ mod tests {
     async fn test_build_catalog_fallback() {
         // When no external registry is wired, should return static catalog
         let registry = ToolRegistry::default();
-        let catalog = registry.build_catalog().await;
+        let catalog = registry
+            .build_catalog("ws", &crate::domains::agent::tools::ToolRuntimeContext::default())
+            .await;
         let groups = catalog["groups"].as_array().unwrap();
         assert!(!groups.is_empty(), "Static catalog should have groups");
         let group_ids: Vec<&str> = groups.iter().filter_map(|g| g["id"].as_str()).collect();

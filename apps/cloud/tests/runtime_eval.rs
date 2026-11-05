@@ -793,3 +793,336 @@ async fn live_provider_eval_opt_in() {
         "staging provider reply did not match the eval contract (content not printed)"
     );
 }
+
+// ── Step 2e: ToolDescriptor single declaration source ───────────────────────
+
+struct DeclaredCameraTool;
+
+impl Attributable for DeclaredCameraTool {
+    fn role(&self) -> Role {
+        Role::Tool(ToolKind::Plugin)
+    }
+    fn alias(&self) -> &str {
+        "DeclaredCameraTool"
+    }
+}
+
+#[async_trait]
+impl tinyiothub_agent::port::tool::Tool for DeclaredCameraTool {
+    fn name(&self) -> &str {
+        "inspect_camera"
+    }
+    fn description(&self) -> &str {
+        "Inspect the current camera frame"
+    }
+    fn parameters_schema(&self) -> serde_json::Value {
+        json!({
+            "type": "object",
+            "properties": {
+                "thingId": { "type": "string" },
+                "credentials": { "type": "object" }
+            },
+            "required": ["thingId"]
+        })
+    }
+    fn descriptor(&self) -> tinyiothub_skills::registry::ToolDescriptor {
+        let mut descriptor = tinyiothub_skills::registry::ToolDescriptor::declared(
+            self.name(),
+            self.description(),
+            self.parameters_schema(),
+        );
+        descriptor.prompt_summary = "Use when the current visual state matters.".into();
+        descriptor.effect_kind = tinyiothub_skills::registry::ToolEffectKind::Read;
+        descriptor.required_capabilities = vec![tinyiothub_skills::registry::Capability::Vision];
+        descriptor.presentation.label = "查看画面".into();
+        descriptor.presentation.group = "device".into();
+        descriptor.presentation.group_label = "设备管理".into();
+        descriptor
+    }
+    async fn execute(&self, _args: serde_json::Value) -> anyhow::Result<tinyiothub_agent::port::tool::ToolResult> {
+        Ok(tinyiothub_agent::port::tool::ToolResult {
+            success: true,
+            output: "{}".into(),
+            error: None,
+            attachments: vec![],
+        })
+    }
+}
+
+fn declared_tool_registry() -> tinyiothub_cloud::domains::agent::tools::ToolRegistry {
+    let registry = tinyiothub_cloud::domains::agent::tools::ToolRegistry::default();
+    registry.register_provider(Arc::new(|_workspace: &str, _runtime| {
+        vec![(
+            Box::new(DeclaredCameraTool) as Box<dyn tinyiothub_agent::port::tool::Tool>,
+            tinyiothub_skills::trust::ToolSafety::ReadOnly,
+        )]
+    }));
+    registry
+}
+
+#[tokio::test]
+async fn tool_descriptor_alone_drives_llm_subset_catalog_and_redacted_summary() {
+    let registry = declared_tool_registry();
+    let runtime = tinyiothub_cloud::domains::agent::tools::ToolRuntimeContext::default();
+
+    let llm = registry
+        .llm_tool_schema("ws_eval", &runtime, &[tinyiothub_skills::registry::Capability::Vision])
+        .await;
+    let tool = llm["tools"]
+        .as_array()
+        .expect("tools")
+        .iter()
+        .find(|tool| tool["name"] == "inspect_camera")
+        .expect("new declared tool enters the LLM subset without an allowlist edit");
+    assert_eq!(
+        tool["description"],
+        "Inspect the current camera frame\n\nUse when the current visual state matters."
+    );
+
+    let catalog = registry.build_catalog("ws_eval", &runtime).await;
+    let group = catalog["groups"]
+        .as_array()
+        .expect("groups")
+        .iter()
+        .find(|group| group["id"] == "device")
+        .expect("declared group");
+    assert!(
+        group["tools"]
+            .as_array()
+            .expect("tools")
+            .iter()
+            .any(|tool| tool["id"] == "inspect_camera" && tool["label"] == "查看画面")
+    );
+
+    let summary = registry
+        .public_arguments_summary(
+            "ws_eval",
+            &runtime,
+            "inspect_camera",
+            &json!({
+                "thingId": "camera-1",
+                "credentials": {
+                    "password": "nested-password",
+                    "token": "nested-token"
+                }
+            }),
+        )
+        .await
+        .expect("declared tool summary");
+    assert!(!summary.contains("nested-password"), "{summary}");
+    assert!(!summary.contains("nested-token"), "{summary}");
+    assert!(summary.contains("[REDACTED]"), "{summary}");
+
+    assert!(matches!(
+        registry
+            .public_arguments_summary("ws_eval", &runtime, "not_declared", &json!({}))
+            .await,
+        Err(tinyiothub_skills::registry::ToolRegistryError::UnknownTool { .. })
+    ));
+    assert!(matches!(
+        registry
+            .public_arguments_summary("ws_eval", &runtime, "inspect_camera", &json!({}))
+            .await,
+        Err(tinyiothub_skills::registry::ToolRegistryError::InvalidArguments { .. })
+    ));
+}
+
+#[test]
+fn tool_descriptor_workflow_policy_only_tightens_and_revision_mismatch_fails_closed() {
+    use tinyiothub_skills::registry::{ApprovalPolicy, ToolDescriptor, verify_revision_policy};
+
+    let mut descriptor = ToolDescriptor::declared("set_device", "Write a property", json!({"type": "object"}));
+    descriptor.approval_policy = ApprovalPolicy::mandatory("device safety");
+    let workflow = ApprovalPolicy::from_workflow_value(&json!({
+        "requiresApproval": false,
+        "timeoutSecs": 1
+    }))
+    .expect("workflow policy shape");
+    let effective = descriptor.effective_approval(Some(&workflow));
+    assert!(effective.mandatory, "a template must not disable mandatory approval");
+    assert_eq!(
+        effective.timeout_secs, 60,
+        "a template must not shorten the approval window"
+    );
+
+    assert!(verify_revision_policy(&effective, &ApprovalPolicy::none()).is_err());
+}
+
+struct VisionCaptureTool;
+
+impl Attributable for VisionCaptureTool {
+    fn role(&self) -> Role {
+        Role::Tool(ToolKind::Plugin)
+    }
+    fn alias(&self) -> &str {
+        "VisionCaptureTool"
+    }
+}
+
+#[async_trait]
+impl tinyiothub_agent::port::tool::Tool for VisionCaptureTool {
+    fn name(&self) -> &str {
+        "capture_video_frame"
+    }
+    fn description(&self) -> &str {
+        "Capture a video frame"
+    }
+    fn parameters_schema(&self) -> serde_json::Value {
+        json!({"type": "object", "properties": {}})
+    }
+    fn descriptor(&self) -> tinyiothub_skills::registry::ToolDescriptor {
+        let mut descriptor = tinyiothub_skills::registry::ToolDescriptor::declared(
+            self.name(),
+            self.description(),
+            self.parameters_schema(),
+        );
+        descriptor.required_capabilities = vec![tinyiothub_skills::registry::Capability::Video];
+        descriptor
+    }
+    async fn execute(&self, _args: serde_json::Value) -> anyhow::Result<tinyiothub_agent::port::tool::ToolResult> {
+        Ok(tinyiothub_agent::port::tool::ToolResult {
+            success: true,
+            output: "{}".into(),
+            error: None,
+            attachments: vec![],
+        })
+    }
+}
+
+struct SilentNonVisionProvider {
+    calls: Arc<Mutex<usize>>,
+}
+
+impl Attributable for SilentNonVisionProvider {
+    fn role(&self) -> Role {
+        Role::Tool(ToolKind::Plugin)
+    }
+    fn alias(&self) -> &str {
+        "SilentNonVisionProvider"
+    }
+}
+
+#[async_trait]
+impl ModelProvider for SilentNonVisionProvider {
+    fn supports_vision(&self) -> bool {
+        false
+    }
+    async fn chat(
+        &self,
+        _request: ChatRequest<'_>,
+        _model: &str,
+        _temperature: Option<f64>,
+    ) -> anyhow::Result<ChatResponse> {
+        *self.calls.lock().expect("calls") += 1;
+        Ok(ChatResponse::default())
+    }
+}
+
+#[tokio::test]
+async fn tool_descriptor_non_vision_provider_fails_before_model_and_creates_zero_effects() {
+    use tinyiothub_agent::adapters::rig::loop_::rig_loop_factory;
+    use tinyiothub_agent::port::runtime::AgentLoopConfig;
+    use tinyiothub_storage::test_helpers::fixture_workspace;
+
+    let fixture = fixture_workspace("ws-tool-descriptor-capability").await;
+    let before: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM effect_intents")
+        .fetch_one(&fixture.workspace_pool().await)
+        .await
+        .expect("effect count");
+
+    let calls = Arc::new(Mutex::new(0));
+    let provider_calls = Arc::clone(&calls);
+    let dir = tempfile::tempdir().expect("tempdir");
+    let result = rig_loop_factory(AgentLoopConfig {
+        model_name: "non-vision".into(),
+        prompt_builder: tinyiothub_agent::port::prompt::SystemPromptBuilder::with_defaults(),
+        tools: vec![Box::new(VisionCaptureTool)],
+        memory: Arc::new(tinyiothub_agent::port::memory::NoopMemory),
+        observer: Arc::new(tinyiothub_agent::port::observer::NoopObserver),
+        workspace_dir: dir.path().to_path_buf(),
+        security_summary: None,
+        provider_factory: Arc::new(move || {
+            Ok(Box::new(SilentNonVisionProvider {
+                calls: Arc::clone(&provider_calls),
+            }))
+        }),
+        conversation_memory: false,
+        available_capabilities: vec![],
+    });
+    let error = match result {
+        Ok(_) => panic!("video capability must fail closed on a non-vision provider"),
+        Err(error) => error,
+    };
+    assert!(error.to_string().contains("capability.unavailable"), "{error}");
+    assert_eq!(*calls.lock().expect("calls"), 0, "model must not be called");
+
+    let after: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM effect_intents")
+        .fetch_one(&fixture.workspace_pool().await)
+        .await
+        .expect("effect count");
+    assert_eq!(before, after, "a capability failure must create zero Effects");
+    assert_eq!(after, 0);
+
+    // The composition-level capability event is written through the same
+    // recorder used by Run/Effect SSE, before any model call.
+    let hub = Arc::new(tinyiothub_cloud::domains::agent::runtime::stream::RuntimeStreamHub::default());
+    let recorder =
+        tinyiothub_cloud::domains::agent::runtime::stream::RuntimeRecorder::new(Arc::new(fixture.db.clone()), hub);
+    tinyiothub_cloud::domains::agent::tools::emit_capability_unavailable(
+        Some(&recorder),
+        "ws-tool-descriptor-capability",
+        "run-capability",
+        Some("task-capability"),
+        &[tinyiothub_skills::registry::Capability::Video],
+        "capture_video_frame",
+    )
+    .await
+    .expect("capability event");
+    let events = fixture
+        .db
+        .runtime_events_after("ws-tool-descriptor-capability", None, Some("task-capability"), 10)
+        .await
+        .expect("runtime events");
+    let event = events
+        .iter()
+        .find(|event| event.run_id.as_deref() == Some("run-capability"))
+        .expect("capability event persisted");
+    assert_eq!(event.event_type, "capability.unavailable");
+    assert_eq!(event.data["missingCapabilities"][0], "video");
+    assert!(event.data["recovery"].as_str().is_some_and(|text| !text.is_empty()));
+}
+
+/// `request_json` is an internal dispatch/reconcile field. Public DTO
+/// serialization and Debug output must not carry it (or its secrets); only the
+/// descriptor-redacted summary may be exposed.
+#[test]
+fn tool_descriptor_public_dto_and_debug_never_expose_request_json() {
+    let now = Utc::now();
+    let intent = tinyiothub_core::harness::EffectIntent {
+        effect_id: "effect-eval".into(),
+        session_id: "session-eval".into(),
+        task_id: "task-eval".into(),
+        run_id: "run-eval".into(),
+        tool_call_id: "call-eval".into(),
+        tool_name: "set_device".into(),
+        request_json: json!({"password": "internal-secret", "token": "internal-token"}),
+        request_digest: "digest".into(),
+        idempotency_key: "key".into(),
+        external_ref: None,
+        state: tinyiothub_core::harness::EffectState::Prepared,
+        recovery_from: None,
+        state_version: 1,
+        result_json: None,
+        created_at: now,
+        updated_at: now,
+    };
+
+    let public = serde_json::to_string(&intent).expect("serialize");
+    assert!(!public.contains("request_json"), "{public}");
+    assert!(!public.contains("internal-secret"), "{public}");
+    assert!(!public.contains("internal-token"), "{public}");
+
+    let debug = format!("{intent:?}");
+    assert!(!debug.contains("request_json"), "{debug}");
+    assert!(!debug.contains("internal-secret"), "{debug}");
+}

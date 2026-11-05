@@ -87,12 +87,103 @@ pub trait Tool: Send + Sync + crate::port::attribution::Attributable {
         true
     }
 
+    /// The single declaration source for exposure, prompt, policy, redaction,
+    /// and display. The default derives safe values from the name, description,
+    /// and argument schema; tools override only the fields they declare
+    /// differently. Adding a tool therefore never requires editing core or a
+    /// frontend event allowlist.
+    fn descriptor(&self) -> tinyiothub_skills::registry::ToolDescriptor {
+        let mut descriptor = tinyiothub_skills::registry::ToolDescriptor::declared(
+            self.name(),
+            self.description(),
+            self.parameters_schema(),
+        );
+        descriptor.exposed = self.exposed();
+        descriptor
+    }
+
     /// Get the full spec for LLM registration
     fn spec(&self) -> ToolSpec {
+        let descriptor = self.descriptor();
+        let description = descriptor.llm_description();
         ToolSpec {
-            name: self.name().to_string(),
-            description: self.description().to_string(),
-            parameters: self.parameters_schema(),
+            name: descriptor.name,
+            description,
+            parameters: descriptor.parameters,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tinyiothub_skills::registry::{ToolEffectKind, ToolRegistry};
+
+    struct DeclaredTestTool;
+
+    impl crate::port::attribution::Attributable for DeclaredTestTool {
+        fn role(&self) -> crate::port::attribution::Role {
+            crate::port::attribution::Role::Tool(crate::port::attribution::ToolKind::Plugin)
+        }
+        fn alias(&self) -> &str {
+            "declare_test"
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl Tool for DeclaredTestTool {
+        fn name(&self) -> &str {
+            "declare_test"
+        }
+        fn description(&self) -> &str {
+            "A declared test tool"
+        }
+        fn parameters_schema(&self) -> serde_json::Value {
+            serde_json::json!({"type": "object", "properties": {"value": {"type": "string"}}})
+        }
+        fn descriptor(&self) -> tinyiothub_skills::registry::ToolDescriptor {
+            let mut descriptor = tinyiothub_skills::registry::ToolDescriptor::declared(
+                self.name(),
+                self.description(),
+                self.parameters_schema(),
+            );
+            descriptor.prompt_summary = "Prefer this for declaration tests.".into();
+            descriptor.required_capabilities = vec![tinyiothub_skills::registry::Capability::Vision];
+            descriptor.presentation.label = "声明测试".into();
+            descriptor
+        }
+        async fn execute(&self, _args: serde_json::Value) -> anyhow::Result<ToolResult> {
+            Ok(ToolResult {
+                success: true,
+                output: "ok".into(),
+                error: None,
+                attachments: vec![],
+            })
+        }
+    }
+
+    #[test]
+    fn tools_descriptor_drives_spec_and_safe_defaults() {
+        let tool = DeclaredTestTool;
+        let descriptor = tool.descriptor();
+        assert_eq!(descriptor.effect_kind, ToolEffectKind::Write);
+        assert!(
+            descriptor
+                .missing_capabilities(&[])
+                .contains(&tinyiothub_skills::registry::Capability::Vision)
+        );
+        assert_eq!(descriptor.presentation.label, "声明测试");
+
+        let spec = tool.spec();
+        assert_eq!(spec.name, "declare_test");
+        assert!(
+            spec.description.contains("Prefer this for declaration tests."),
+            "prompt summary must be part of the LLM spec"
+        );
+
+        // A declaration alone is enough to expose the tool through a registry.
+        let registry = tinyiothub_skills::registry::DeclaredToolRegistry::new(vec![descriptor]);
+        let llm = registry.generate_llm_schema_for(&[tinyiothub_skills::registry::Capability::Vision], None);
+        assert_eq!(llm["tools"][0]["name"], "declare_test");
     }
 }

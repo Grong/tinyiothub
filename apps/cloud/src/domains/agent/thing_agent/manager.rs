@@ -1182,6 +1182,7 @@ pub(crate) mod tests {
                 provider_factory: Arc::new(move || Ok(Box::new(llm_for_factory.as_ref().clone()))),
                 // 自治语义的测试夹具：对齐真实 autonomous_factory 的 true。
                 conversation_memory: true,
+                available_capabilities: vec![],
             };
             let handle = tinyiothub_agent::adapters::rig::loop_::rig_loop_factory(cfg).expect("build stub loop");
             Self {

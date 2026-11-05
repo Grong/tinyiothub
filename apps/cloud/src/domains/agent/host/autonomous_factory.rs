@@ -58,6 +58,10 @@ pub struct AutonomousAgentFactory {
     runtime: ThingToolContext,
     /// E2 ToolExec 接缝（默认直通；组合根可替换证明可换）。
     tool_exec: Arc<dyn crate::domains::agent::thing_agent::seams::tool_exec::ToolExecSeam>,
+    /// Capabilities resolved by the composition root beyond the provider port
+    /// (e.g. a configured video source). The loop derives vision from the
+    /// provider itself.
+    available_capabilities: Vec<tinyiothub_skills::registry::Capability>,
     pub(crate) agents: DashMap<String, AutonomousEntry>,
 }
 
@@ -85,8 +89,16 @@ impl AutonomousAgentFactory {
             model,
             runtime,
             tool_exec: Arc::new(crate::domains::agent::thing_agent::seams::tool_exec::DefaultToolExec),
+            available_capabilities: Vec::new(),
             agents: DashMap::new(),
         }
+    }
+
+    /// Declare capabilities resolved from composition configuration (for
+    /// example an enabled video source).
+    pub fn with_available_capabilities(mut self, capabilities: Vec<tinyiothub_skills::registry::Capability>) -> Self {
+        self.available_capabilities = capabilities;
+        self
     }
 
     /// E2：注入 ToolExec 接缝替换实现（组合根调用）。
@@ -159,8 +171,35 @@ impl AutonomousAgentFactory {
             provider_factory: Arc::clone(&self.provider_factory),
             // thing_agent 自治路径：保留 zeroclaw 时代的跨轮 recall 行为。
             conversation_memory: true,
+            available_capabilities: self.available_capabilities.clone(),
         };
-        let agent = rig_loop_factory(cfg).map_err(|e| anyhow!("Autonomous agent build failed: {}", e))?;
+        let agent = match rig_loop_factory(cfg) {
+            Ok(agent) => agent,
+            Err(error) => {
+                if let Some(capability) =
+                    error.downcast_ref::<tinyiothub_agent::port::runtime::CapabilityUnavailableError>()
+                {
+                    let inner = ctx.read().await;
+                    if let Err(record_error) = crate::domains::agent::tools::emit_capability_unavailable(
+                        self.runtime.runtime_recorder.as_ref(),
+                        workspace_id,
+                        &inner.run_id,
+                        inner.task_id.as_deref(),
+                        &capability.missing,
+                        &capability.tool,
+                    )
+                    .await
+                    {
+                        tracing::warn!(
+                            workspace_id,
+                            %record_error,
+                            "capability.unavailable event write failed"
+                        );
+                    }
+                }
+                return Err(anyhow!("Autonomous agent build failed: {}", error));
+            }
+        };
 
         // Double-checked insert: a concurrent creator may have won the race
         // while we were building. The loser's agent is dropped unstarted —
