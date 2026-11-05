@@ -315,3 +315,66 @@ export interface HarnessSimulationProjection {
   errors: HarnessSimulationError[];
   outcome: HarnessSimulationOutcome | null;
 }
+
+export type HarnessCompactionStatus =
+  | 'matched'
+  | 'hash_mismatch'
+  | 'snapshot_missing'
+  | 'snapshot_advanced'
+  | 'boundary_mismatch'
+  | 'boundary_unavailable'
+  | 'stale_append';
+
+/** One immutable event fact covered by the fixed boundary. */
+export interface HarnessCompactionEvidence {
+  seq: number;
+  eventId: string;
+  eventType: string;
+  reference: string;
+}
+
+/** One locatable canonical difference; paths use JSON Pointer syntax. */
+export interface HarnessCompactionDifference {
+  path: string;
+  rebuilt: unknown;
+  snapshot: unknown;
+}
+
+/**
+ * Read-only fixed-boundary comparison. `canonicalHash` is the temporary
+ * rebuild; `snapshotCanonicalHash` is the snapshot at the same boundary.
+ * `canReplace`/`readOnly` are per-caller permission facts.
+ */
+export interface HarnessCompactionComparison {
+  projectionName: string;
+  subjectId: string;
+  projectionVersion: number;
+  boundaryLastSeq: number;
+  snapshotLastSeq: number | null;
+  snapshotStateVersion: number | null;
+  seqFirst: number | null;
+  seqLast: number | null;
+  lastCompleteSeq: number;
+  observedHighWatermark: number;
+  appendedDuringCompare: boolean;
+  status: HarnessCompactionStatus;
+  matched: boolean;
+  canonicalHash: string;
+  snapshotCanonicalHash: string | null;
+  canonicalState: unknown;
+  differences: HarnessCompactionDifference[];
+  evidenceRefs: HarnessCompactionEvidence[];
+  canReplace: boolean;
+  readOnly: boolean;
+}
+
+/** The projection snapshot row after an explicit CAS replacement. */
+export interface HarnessProjectionSnapshot {
+  projectionName: string;
+  subjectId: string;
+  lastSeq: number;
+  projectionVersion: number;
+  stateVersion: number;
+  stateJson: unknown;
+  updatedAt: string;
+}

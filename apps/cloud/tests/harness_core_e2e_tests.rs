@@ -4492,3 +4492,323 @@ mod supervisor_health_tests {
         fixture.close().await;
     }
 }
+
+mod compaction_tests {
+    use std::sync::Arc;
+
+    use super::{WS, at, effect_state, fixture, run_task_states, seed_effect};
+    use serde_json::json;
+    use tinyiothub_cloud::domains::agent::workflows::{
+        ProjectionComparison, ProjectionComparisonStatus, ProjectionInspector,
+    };
+    use tinyiothub_core::harness::{EffectState, ExecutionMode, HarnessEventInput};
+    use tinyiothub_storage::DbError;
+    use tinyiothub_storage::test_helpers::WorkspaceFixture;
+
+    const PROJECTION: &str = "supervisor";
+    const SUBJECT: &str = "supervisor:ws-recovery";
+
+    fn event_input(event_id: &str, text: &str) -> HarnessEventInput {
+        HarnessEventInput {
+            event_id: event_id.to_string(),
+            workspace_id: WS.to_string(),
+            session_id: SUBJECT.to_string(),
+            execution_mode: ExecutionMode::Production,
+            run_id: Some("run-compaction".to_string()),
+            task_id: Some("task-compaction".to_string()),
+            event_type: "step.text".to_string(),
+            occurred_at: at(),
+            cause_id: None,
+            schema_v: 1,
+            payload_digest: format!("digest-{event_id}"),
+            payload_json: json!({ "text": text }),
+        }
+    }
+
+    async fn append_text(fixture: &WorkspaceFixture, event_id: &str, text: &str) -> i64 {
+        fixture
+            .db
+            .append_session_event(&event_input(event_id, text))
+            .await
+            .expect("append compaction event")
+            .seq
+    }
+
+    async fn seed_snapshot(fixture: &WorkspaceFixture, last_seq: i64, state_version: i64, state: &serde_json::Value) {
+        sqlx::query(
+            "INSERT INTO projection_snapshots
+                (projection_name, subject_id, last_seq, projection_version, state_version, state_json, updated_at)
+             VALUES (?, ?, ?, 1, ?, ?, ?)
+             ON CONFLICT(projection_name, subject_id) DO UPDATE SET
+                last_seq = excluded.last_seq,
+                projection_version = excluded.projection_version,
+                state_version = excluded.state_version,
+                state_json = excluded.state_json,
+                updated_at = excluded.updated_at",
+        )
+        .bind(PROJECTION)
+        .bind(SUBJECT)
+        .bind(last_seq)
+        .bind(state_version)
+        .bind(state.to_string())
+        .bind(at().to_rfc3339())
+        .execute(&fixture.workspace_pool().await)
+        .await
+        .expect("seed projection snapshot");
+    }
+
+    async fn snapshot_row(fixture: &WorkspaceFixture) -> (String, i64, i64) {
+        sqlx::query_as(
+            "SELECT state_json, last_seq, state_version FROM projection_snapshots
+             WHERE projection_name = ? AND subject_id = ?",
+        )
+        .bind(PROJECTION)
+        .bind(SUBJECT)
+        .fetch_one(&fixture.workspace_pool().await)
+        .await
+        .expect("projection snapshot row")
+    }
+
+    async fn total_events(fixture: &WorkspaceFixture) -> i64 {
+        sqlx::query_scalar("SELECT COUNT(*) FROM session_events")
+            .fetch_one(&fixture.workspace_pool().await)
+            .await
+            .expect("event count")
+    }
+
+    async fn matched_inspector(
+        fixture: &WorkspaceFixture,
+        last_seq: i64,
+    ) -> (ProjectionInspector, ProjectionComparison) {
+        let inspector = ProjectionInspector::new(fixture.db.clone(), WS);
+        let missing = inspector
+            .compare(WS, PROJECTION, SUBJECT, last_seq, 1)
+            .await
+            .expect("compare without snapshot");
+        assert_eq!(missing.status, ProjectionComparisonStatus::SnapshotMissing);
+        assert!(!missing.matched);
+        seed_snapshot(fixture, last_seq, 3, &missing.canonical_state).await;
+        let comparison = inspector
+            .compare(WS, PROJECTION, SUBJECT, last_seq, 1)
+            .await
+            .expect("compare matching snapshot");
+        assert_eq!(comparison.status, ProjectionComparisonStatus::Matched);
+        assert!(comparison.matched);
+        (inspector, comparison)
+    }
+
+    #[tokio::test]
+    async fn compaction_fixed_boundary_match_replaces_snapshot_with_zero_dispatch() {
+        let fixture = fixture().await;
+        seed_effect(&fixture, "effect-compaction-match", EffectState::Prepared, "running").await;
+        let first = append_text(&fixture, "compaction-1", "one").await;
+        let last = append_text(&fixture, "compaction-2", "two").await;
+        // Simulation facts from the same session must never enter this
+        // production projection comparison.
+        fixture
+            .db
+            .append_session_event(&HarnessEventInput {
+                execution_mode: ExecutionMode::Simulation,
+                ..event_input("compaction-simulation", "simulated")
+            })
+            .await
+            .expect("append simulation event");
+
+        let events_before = total_events(&fixture).await;
+        let effect_before = effect_state(&fixture, "effect-compaction-match").await;
+        let task_before = run_task_states(&fixture, "effect-compaction-match").await;
+        let transitions_before: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM harness_transitions")
+            .fetch_one(&fixture.workspace_pool().await)
+            .await
+            .expect("transition count");
+
+        let (inspector, comparison) = matched_inspector(&fixture, last).await;
+        assert_eq!(comparison.boundary_last_seq, last);
+        assert_eq!(comparison.projection_version, 1);
+        assert_eq!(comparison.seq_first, Some(first));
+        assert_eq!(comparison.seq_last, Some(last));
+        assert_eq!(comparison.last_complete_seq, last);
+        assert_eq!(comparison.evidence_refs.len(), 2);
+        assert!(
+            comparison
+                .evidence_refs
+                .iter()
+                .all(|evidence| !evidence.reference.contains("simulation"))
+        );
+        assert_eq!(
+            comparison.canonical_hash,
+            comparison.snapshot_canonical_hash.clone().expect("snapshot hash")
+        );
+
+        let state_version = comparison.snapshot_state_version.expect("snapshot state version");
+        let replaced = inspector
+            .replace_snapshot(&comparison, last, state_version)
+            .await
+            .expect("CAS replace matched boundary");
+        assert_eq!(replaced.last_seq, last);
+        assert_eq!(replaced.projection_version, 1);
+        assert_eq!(replaced.state_version, state_version + 1);
+        assert_eq!(replaced.state_json, comparison.canonical_state);
+
+        // Session facts, Task/Run, Decision/Effect and external dispatch stay
+        // untouched; only the projection snapshot row is replaced.
+        assert_eq!(total_events(&fixture).await, events_before);
+        assert_eq!(effect_state(&fixture, "effect-compaction-match").await, effect_before);
+        assert_eq!(run_task_states(&fixture, "effect-compaction-match").await, task_before);
+        let transitions_after: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM harness_transitions")
+            .fetch_one(&fixture.workspace_pool().await)
+            .await
+            .expect("transition count");
+        assert_eq!(transitions_after, transitions_before);
+
+        fixture.close().await;
+    }
+
+    #[tokio::test]
+    async fn compaction_hash_mismatch_keeps_latest_snapshot_and_reports_differences() {
+        let fixture = fixture().await;
+        let first = append_text(&fixture, "compaction-1", "one").await;
+        let last = append_text(&fixture, "compaction-2", "two").await;
+        let (inspector, _) = matched_inspector(&fixture, last).await;
+
+        let tampered = json!({
+            "projectionName": PROJECTION,
+            "subjectId": SUBJECT,
+            "lastSeq": last,
+            "events": [{
+                "seq": first,
+                "eventId": "compaction-1",
+                "type": "step.text",
+                "occurredAt": at().to_rfc3339(),
+                "causeId": null,
+                "payloadDigest": "digest-compaction-1",
+                "payload": { "text": "tampered" }
+            }]
+        });
+        seed_snapshot(&fixture, last, 3, &tampered).await;
+        let before = snapshot_row(&fixture).await;
+
+        let comparison = inspector
+            .compare(WS, PROJECTION, SUBJECT, last, 1)
+            .await
+            .expect("compare mismatch");
+        assert_eq!(comparison.status, ProjectionComparisonStatus::HashMismatch);
+        assert!(!comparison.matched);
+        assert!(!comparison.differences.is_empty());
+        assert!(
+            comparison
+                .differences
+                .iter()
+                .any(|difference| difference.path.contains("/payload/text"))
+        );
+        assert_ne!(
+            comparison.canonical_hash,
+            comparison.snapshot_canonical_hash.clone().unwrap()
+        );
+
+        let error = inspector
+            .replace_snapshot(&comparison, last, 3)
+            .await
+            .expect_err("mismatch must never replace the snapshot");
+        assert!(matches!(error, DbError::Conflict { .. } | DbError::Validation { .. }));
+        assert_eq!(snapshot_row(&fixture).await, before);
+        fixture.close().await;
+    }
+
+    #[tokio::test]
+    async fn compaction_append_during_compare_keeps_latest_snapshot() {
+        let fixture = fixture().await;
+        append_text(&fixture, "compaction-1", "one").await;
+        let last = append_text(&fixture, "compaction-2", "two").await;
+        let (inspector, _) = matched_inspector(&fixture, last).await;
+        let before = snapshot_row(&fixture).await;
+
+        let db = fixture.db.clone();
+        let inspector = inspector.with_compare_barrier(Arc::new(move || {
+            let db = db.clone();
+            Box::pin(async move {
+                db.append_session_event(&event_input("compaction-during", "arrived during rebuild"))
+                    .await
+                    .expect("append during compare");
+            })
+        }));
+
+        let comparison = inspector
+            .compare(WS, PROJECTION, SUBJECT, last, 1)
+            .await
+            .expect("compare with concurrent append");
+        assert!(comparison.appended_during_compare);
+        assert_eq!(comparison.status, ProjectionComparisonStatus::StaleAppend);
+        assert!(!comparison.matched);
+        assert!(comparison.observed_high_watermark > last);
+
+        let error = inspector
+            .replace_snapshot(&comparison, last, 3)
+            .await
+            .expect_err("a stale comparison must never replace");
+        assert!(matches!(error, DbError::Conflict { .. } | DbError::Validation { .. }));
+        assert_eq!(snapshot_row(&fixture).await, before);
+        fixture.close().await;
+    }
+
+    #[tokio::test]
+    async fn compaction_state_version_change_after_compare_never_overwrites_newer_snapshot() {
+        let fixture = fixture().await;
+        append_text(&fixture, "compaction-1", "one").await;
+        let last = append_text(&fixture, "compaction-2", "two").await;
+        let (inspector, comparison) = matched_inspector(&fixture, last).await;
+        let expected_state_version = comparison.snapshot_state_version.expect("snapshot version");
+
+        // A newer writer bumps state_version after the comparison was built.
+        sqlx::query(
+            "UPDATE projection_snapshots SET state_version = state_version + 1
+             WHERE projection_name = ? AND subject_id = ?",
+        )
+        .bind(PROJECTION)
+        .bind(SUBJECT)
+        .execute(&fixture.workspace_pool().await)
+        .await
+        .expect("bump state version");
+        let bumped = snapshot_row(&fixture).await;
+
+        let error = inspector
+            .replace_snapshot(&comparison, last, expected_state_version)
+            .await
+            .expect_err("state_version CAS must fail");
+        assert!(matches!(error, DbError::CasConflict { .. }));
+        assert_eq!(snapshot_row(&fixture).await, bumped);
+
+        // A newer append advances the snapshot boundary; the old comparison
+        // must not overwrite newer state with older state.
+        let newer_state = json!({
+            "projectionName": PROJECTION,
+            "subjectId": SUBJECT,
+            "lastSeq": last + 1,
+            "events": [],
+            "newer": true
+        });
+        sqlx::query(
+            "UPDATE projection_snapshots
+             SET last_seq = ?, state_version = state_version + 1, state_json = ?, updated_at = ?
+             WHERE projection_name = ? AND subject_id = ?",
+        )
+        .bind(last + 1)
+        .bind(newer_state.to_string())
+        .bind(at().to_rfc3339())
+        .bind(PROJECTION)
+        .bind(SUBJECT)
+        .execute(&fixture.workspace_pool().await)
+        .await
+        .expect("advance snapshot");
+        let advanced = snapshot_row(&fixture).await;
+
+        let error = inspector
+            .replace_snapshot(&comparison, last, expected_state_version)
+            .await
+            .expect_err("older boundary must never replace a newer snapshot");
+        assert!(matches!(error, DbError::CasConflict { .. }));
+        assert_eq!(snapshot_row(&fixture).await, advanced);
+        assert_eq!(advanced.1, last + 1);
+        fixture.close().await;
+    }
+}

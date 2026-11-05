@@ -7,8 +7,10 @@
 
 import { ApiClient, type ApiResponse } from './client.js';
 import type {
+  HarnessCompactionComparison,
   HarnessDryRunResult,
   HarnessOverview,
+  HarnessProjectionSnapshot,
   HarnessSimulationProjection,
   HarnessSubagentPage,
   HarnessSupervisor,
@@ -211,4 +213,42 @@ export function getHarnessSimulation(
     undefined,
     signal,
   );
+}
+
+/** Fixed boundary shared by the temporary rebuild and the current snapshot. */
+export interface HarnessCompactionQuery {
+  projectionName: string;
+  subjectId: string;
+  lastSeq: number;
+  projectionVersion: number;
+}
+
+/**
+ * Rebuild a temporary projection at the fixed boundary and compare canonical
+ * hashes. Read-only; `canReplace` is true only for an exact match *and* an
+ * Agent-management caller.
+ */
+export function compareHarnessCompaction(
+  workspaceId: string,
+  query: HarnessCompactionQuery,
+  signal?: AbortSignal,
+): Promise<ApiResponse<HarnessCompactionComparison>> {
+  return ApiClient.get(harnessPath(workspaceId, '/compaction'), query, signal);
+}
+
+export interface HarnessCompactionReplace extends HarnessCompactionQuery {
+  /** Observed boundary and state version used as the CAS precondition. */
+  expectedLastSeq: number;
+  expectedStateVersion: number;
+}
+
+/**
+ * Explicit CAS replacement. The server re-runs the comparison; a mismatch or
+ * concurrent version change is a 409 and keeps the latest snapshot.
+ */
+export function replaceHarnessCompactionSnapshot(
+  workspaceId: string,
+  request: HarnessCompactionReplace,
+): Promise<ApiResponse<HarnessProjectionSnapshot>> {
+  return ApiClient.post(harnessPath(workspaceId, '/compaction/replace'), request);
 }

@@ -9,6 +9,7 @@
  *   #/harness/workflows/{workflow_id}/dry-run?version=…&snapshot=…&task=…
  *   #/harness/workflows/new
  *   #/harness/supervisor
+ *   #/harness/compaction
  *   #/harness/tasks
  *   #/harness/tasks/new
  *   #/harness/tasks/{task_id}?view=flow&device=…&at=…&event=…&from=…
@@ -44,6 +45,7 @@ export type HarnessRoute =
     }
   | { name: 'templates' }
   | { name: 'supervisor' }
+  | { name: 'compaction' }
   | { name: 'tasks' }
   | { name: 'new' }
   | {
@@ -107,6 +109,9 @@ export function parseHarnessHash(hash: string): HarnessRoute | null {
   }
   if (path === '#/harness/supervisor') {
     return { name: 'supervisor' };
+  }
+  if (path === '#/harness/compaction') {
+    return { name: 'compaction' };
   }
 
   const dryRunMatch = path.match(/^#\/harness\/workflows\/([^/]+)\/dry-run$/);

@@ -39,8 +39,8 @@ use crate::domains::agent::host::handler::is_admin;
 use crate::domains::agent::runtime::tasks::error_response;
 use crate::domains::agent::tools::resolve_capabilities;
 use crate::domains::agent::workflows::{
-    DryRunInput, RetryOutcome, ScriptedDryRunExecutor, SupervisorHealth, TemplateInput, WorkflowDryRun,
-    WorkflowService, builtin_templates, next_wake_at,
+    DryRunInput, ProjectionComparison, ProjectionInspector, RetryOutcome, ScriptedDryRunExecutor, SupervisorHealth,
+    TemplateInput, WorkflowDryRun, WorkflowService, builtin_templates, next_wake_at,
 };
 
 const DEFAULT_ATTENTION_LIMIT: i64 = 5;
@@ -92,6 +92,11 @@ where
         .route(
             "/{workspace_id}/harness/supervisor/dead-wakes/{task_id}/{event_id}/retry",
             post(retry_supervisor_dead_wake),
+        )
+        .route("/{workspace_id}/harness/compaction", get(compare_compaction))
+        .route(
+            "/{workspace_id}/harness/compaction/replace",
+            post(replace_compaction_snapshot),
         )
 }
 
@@ -178,6 +183,27 @@ pub struct SnapshotsQuery {
 #[derive(Debug, Deserialize)]
 pub struct DryRunStartRequest {
     pub snapshot_seq: i64,
+}
+
+/// Fixed boundary for one projection comparison.
+#[derive(Debug, Deserialize)]
+pub struct CompactionQuery {
+    pub projection_name: String,
+    pub subject_id: String,
+    pub last_seq: i64,
+    pub projection_version: i64,
+}
+
+/// Explicit CAS replacement. The server re-runs the comparison before the
+/// write, so a client-supplied hash or match flag is never trusted.
+#[derive(Debug, Deserialize)]
+pub struct CompactionReplaceRequest {
+    pub projection_name: String,
+    pub subject_id: String,
+    pub last_seq: i64,
+    pub projection_version: i64,
+    pub expected_last_seq: i64,
+    pub expected_state_version: i64,
 }
 
 async fn verify_workspace_read(state: &AgentState, claims: &Claims, workspace_id: &str) -> Result<(), Response> {
@@ -548,6 +574,108 @@ pub async fn retry_supervisor_dead_wake(
             error_response(StatusCode::SERVICE_UNAVAILABLE, "Wake retry 失败")
         }
     }
+}
+
+/// Rebuild and compare one projection at a fixed boundary. Read-only for
+/// every durable fact; replacement permission is reported per caller.
+pub async fn compare_compaction(
+    State(state): State<AgentState>,
+    Extension(claims): Extension<Claims>,
+    Path(workspace_id): Path<String>,
+    Query(query): Query<CompactionQuery>,
+) -> Response {
+    if let Err(response) = verify_workspace_read(&state, &claims, &workspace_id).await {
+        return response;
+    }
+    let inspector = ProjectionInspector::new(state.db.as_ref().clone(), workspace_id.as_str());
+    let comparison = match inspector
+        .compare(
+            &workspace_id,
+            &query.projection_name,
+            &query.subject_id,
+            query.last_seq,
+            query.projection_version,
+        )
+        .await
+    {
+        Ok(comparison) => comparison,
+        Err(error) => return compaction_error_response(error),
+    };
+    let admin = is_admin(&state.db, &claims.user_id).await;
+    let mut body = match serde_json::to_value(&comparison) {
+        Ok(value) => value,
+        Err(error) => {
+            tracing::error!(%workspace_id, %error, "serialize projection comparison failed");
+            return error_response(StatusCode::INTERNAL_SERVER_ERROR, "比较结果序列化失败");
+        }
+    };
+    body["canReplace"] = json!(admin && comparison.matched);
+    // Read-only reflects the caller's permission, not whether this boundary
+    // happened to match; a mismatch independently disables replacement.
+    body["readOnly"] = json!(!admin);
+    ApiResponseBuilder::success(body).into_response()
+}
+
+/// Explicit CAS replacement. Agent-management permission and the tenant
+/// workspace check run before the workspace store is opened; the comparison
+/// is recomputed so only a fresh exact match can write.
+pub async fn replace_compaction_snapshot(
+    State(state): State<AgentState>,
+    Extension(claims): Extension<Claims>,
+    Path(workspace_id): Path<String>,
+    Json(payload): Json<CompactionReplaceRequest>,
+) -> Response {
+    if let Err(response) = check_agent_admin_response(&state, &claims, &workspace_id).await {
+        return response;
+    }
+    let inspector = ProjectionInspector::new(state.db.as_ref().clone(), workspace_id.as_str());
+    let comparison = match inspector
+        .compare(
+            &workspace_id,
+            &payload.projection_name,
+            &payload.subject_id,
+            payload.last_seq,
+            payload.projection_version,
+        )
+        .await
+    {
+        Ok(comparison) => comparison,
+        Err(error) => return compaction_error_response(error),
+    };
+    if !comparison.matched {
+        return compaction_conflict_response("比较结果不再匹配，保留最新快照", &comparison);
+    }
+    match inspector
+        .replace_snapshot(&comparison, payload.expected_last_seq, payload.expected_state_version)
+        .await
+    {
+        Ok(snapshot) => ApiResponseBuilder::success(snapshot).into_response(),
+        Err(DbError::CasConflict { message }) => compaction_conflict_response(&message, &comparison),
+        Err(error) => compaction_error_response(error),
+    }
+}
+
+fn compaction_error_response(error: DbError) -> Response {
+    match error {
+        DbError::Validation { message } => error_response(StatusCode::BAD_REQUEST, message),
+        DbError::Conflict { message } | DbError::CasConflict { message } => {
+            error_response(StatusCode::CONFLICT, message)
+        }
+        DbError::NotFound { id } => error_response(StatusCode::NOT_FOUND, format!("投影快照不存在: {id}")),
+        _ => {
+            tracing::error!(%error, "Harness compaction failed");
+            error_response(StatusCode::SERVICE_UNAVAILABLE, "Harness 存储不可用")
+        }
+    }
+}
+
+fn compaction_conflict_response(message: &str, comparison: &ProjectionComparison) -> Response {
+    let body: ApiResponse<Value> = ApiResponse {
+        code: i32::from(StatusCode::CONFLICT.as_u16()),
+        msg: format!("{message}；保留最新快照，请重新比较"),
+        result: serde_json::to_value(comparison).ok(),
+    };
+    (StatusCode::CONFLICT, Json(body)).into_response()
 }
 
 fn dry_run_service(state: &AgentState, workspace_id: &str) -> WorkflowDryRun {
@@ -1541,6 +1669,173 @@ mod tests {
         let (_, workflows) = get(&app, Some(&token), &format!("{base}/workflows")).await;
         assert_eq!(workflows["result"]["workflows"].as_array().unwrap().len(), 1);
         assert_eq!(workflows["result"]["workflows"][0]["enabled"], true);
+
+        drop(app);
+        fixture.close().await;
+    }
+
+    #[tokio::test]
+    async fn compaction_http_compare_member_readable_replace_admin_and_cas_conflict() {
+        let workspace_id = "ws-compaction-http";
+        let subject = format!("supervisor:{workspace_id}");
+        let fixture = fixture_workspace(workspace_id).await;
+        let (mut app_state, pool) = setup_test_app_with_pool().await;
+        seed_test_workspace(&pool, "tenant-1", workspace_id).await;
+        seed_test_workspace(&pool, "tenant-1", "ws-compaction-member-nostore").await;
+        seed_test_workspace(&pool, "tenant-2", "ws-compaction-other").await;
+        app_state.db = Arc::new(fixture.db.clone());
+
+        for (event_id, text) in [("compact-http-1", "one"), ("compact-http-2", "two")] {
+            fixture
+                .db
+                .append_session_event(&HarnessEventInput {
+                    event_id: event_id.to_string(),
+                    workspace_id: workspace_id.to_string(),
+                    session_id: subject.clone(),
+                    execution_mode: ExecutionMode::Production,
+                    run_id: Some("run-compact-http".to_string()),
+                    task_id: Some("task-compact-http".to_string()),
+                    event_type: "step.text".to_string(),
+                    occurred_at: DateTime::parse_from_rfc3339("2026-11-03T00:00:00Z")
+                        .expect("timestamp")
+                        .with_timezone(&Utc),
+                    cause_id: None,
+                    schema_v: 1,
+                    payload_digest: format!("digest-{event_id}"),
+                    payload_json: json!({ "text": text }),
+                })
+                .await
+                .expect("append compaction event");
+        }
+        let last_seq: i64 = sqlx::query_scalar("SELECT COALESCE(MAX(seq), 0) FROM session_events WHERE session_id = ?")
+            .bind(&subject)
+            .fetch_one(&fixture.workspace_pool().await)
+            .await
+            .expect("boundary seq");
+        let inspector = crate::domains::agent::workflows::ProjectionInspector::new(fixture.db.clone(), workspace_id);
+        let missing = inspector
+            .compare(workspace_id, "supervisor", &subject, last_seq, 1)
+            .await
+            .expect("compare without snapshot");
+        sqlx::query(
+            "INSERT INTO projection_snapshots
+                (projection_name, subject_id, last_seq, projection_version, state_version, state_json, updated_at)
+             VALUES ('supervisor', ?, ?, 1, 3, ?, ?)",
+        )
+        .bind(&subject)
+        .bind(last_seq)
+        .bind(missing.canonical_state.to_string())
+        .bind(
+            DateTime::parse_from_rfc3339("2026-11-03T00:00:00Z")
+                .expect("timestamp")
+                .with_timezone(&Utc)
+                .to_rfc3339(),
+        )
+        .execute(&fixture.workspace_pool().await)
+        .await
+        .expect("seed snapshot");
+
+        let app = axum::Router::new()
+            .nest("/api", crate::api::create_router(&app_state))
+            .with_state(app_state);
+        let admin = create_test_token("admin-user-001", "tenant-1");
+        let member = create_test_token("user-2", "tenant-1");
+        let encoded_subject = subject.replace(':', "%3A");
+        let query_uri = format!(
+            "/api/v1/workspaces/{workspace_id}/harness/compaction?projection_name=supervisor&subject_id={encoded_subject}&last_seq={last_seq}&projection_version=1"
+        );
+        let replace_uri = format!("/api/v1/workspaces/{workspace_id}/harness/compaction/replace");
+        let replace_body = json!({
+            "projection_name": "supervisor",
+            "subject_id": subject,
+            "last_seq": last_seq,
+            "projection_version": 1,
+            "expected_last_seq": last_seq,
+            "expected_state_version": 3,
+        });
+
+        let (status, body) = get(&app, Some(&member), &query_uri).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(body["result"]["status"], "matched");
+        assert_eq!(body["result"]["matched"], true);
+        assert_eq!(body["result"]["canReplace"], false);
+        assert_eq!(body["result"]["readOnly"], true);
+        assert!(
+            body["result"]["canonicalHash"]
+                .as_str()
+                .is_some_and(|hash| !hash.is_empty())
+        );
+        assert!(body["result"]["snapshotCanonicalHash"].as_str().is_some());
+        assert_eq!(body["result"]["boundaryLastSeq"], last_seq);
+        assert_eq!(body["result"]["evidenceRefs"].as_array().unwrap().len(), 2);
+
+        let (status, body) = send(&app, "POST", Some(&member), &replace_uri, Some(replace_body.clone())).await;
+        assert_eq!(status, StatusCode::FORBIDDEN, "{body}");
+
+        // A member is rejected before a same-tenant workspace store is opened.
+        let no_store_uri = "/api/v1/workspaces/ws-compaction-member-nostore/harness/compaction/replace";
+        let (status, body) = send(&app, "POST", Some(&member), no_store_uri, Some(replace_body.clone())).await;
+        assert_eq!(status, StatusCode::FORBIDDEN, "{body}");
+        assert!(
+            !fixture
+                .root
+                .join("data/agents/ws-compaction-member-nostore/harness/harness.db")
+                .exists(),
+            "a member replace must be rejected before the workspace store is opened"
+        );
+
+        let (status, body) = get(&app, Some(&admin), &query_uri).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(body["result"]["canReplace"], true);
+        assert_eq!(body["result"]["readOnly"], false);
+
+        let (status, body) = send(&app, "POST", Some(&admin), &replace_uri, Some(replace_body.clone())).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(body["result"]["stateVersion"], 4);
+        assert_eq!(body["result"]["lastSeq"], last_seq);
+
+        // Replaying the old comparison must fail CAS and keep the replacement.
+        let (status, body) = send(&app, "POST", Some(&admin), &replace_uri, Some(replace_body)).await;
+        assert_eq!(status, StatusCode::CONFLICT, "{body}");
+        let (state_version, state_json): (i64, String) = sqlx::query_as(
+            "SELECT state_version, state_json FROM projection_snapshots
+             WHERE projection_name = 'supervisor' AND subject_id = ?",
+        )
+        .bind(&subject)
+        .fetch_one(&fixture.workspace_pool().await)
+        .await
+        .expect("snapshot after CAS conflict");
+        assert_eq!(state_version, 4);
+        assert_eq!(state_json, missing.canonical_state.to_string());
+
+        // Cross-tenant requests fail before opening or creating another store.
+        let other_uri = "/api/v1/workspaces/ws-compaction-other/harness/compaction?projection_name=supervisor&subject_id=supervisor%3Aws-compaction-other&last_seq=0&projection_version=1";
+        let (status, body) = get(&app, Some(&admin), other_uri).await;
+        assert_eq!(status, StatusCode::FORBIDDEN, "{body}");
+        let other_replace_uri = "/api/v1/workspaces/ws-compaction-other/harness/compaction/replace";
+        let (status, body) = send(
+            &app,
+            "POST",
+            Some(&admin),
+            other_replace_uri,
+            Some(json!({
+                "projection_name": "supervisor",
+                "subject_id": "supervisor:ws-compaction-other",
+                "last_seq": 0,
+                "projection_version": 1,
+                "expected_last_seq": 0,
+                "expected_state_version": 1,
+            })),
+        )
+        .await;
+        assert_eq!(status, StatusCode::FORBIDDEN, "{body}");
+        assert!(
+            !fixture
+                .root
+                .join("data/agents/ws-compaction-other/harness/harness.db")
+                .exists(),
+            "cross-tenant requests must not open the workspace store"
+        );
 
         drop(app);
         fixture.close().await;
