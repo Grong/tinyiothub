@@ -578,6 +578,7 @@ export class HarnessOverviewView extends LitElement {
       return html`<view-harness-workflow-edit
         .workspaceId=${this.workspaceId}
         .workflowId=${this.route.workflowId ?? ''}
+        .fixedVersion=${this.route.version ?? 0}
       ></view-harness-workflow-edit>`;
     }
     if (this.route?.name === 'templates') {

@@ -173,7 +173,7 @@ describe('Harness isolated simulation Run page', () => {
 
     expect(view.textContent).toContain('返回此版本');
     expect(view.querySelector('[data-action="return-revision"]')?.getAttribute('href')).toBe(
-      '#/harness/workflows/wf%3A1',
+      '#/harness/workflows/wf%3A1?version=3',
     );
     // No real execution or production approval entry on the simulation page.
     expect(view.textContent).not.toContain('批准真实执行');
@@ -211,7 +211,7 @@ describe('Harness isolated simulation Run page', () => {
     // Banner remains for the whole page after results load.
     expect(view.querySelector('[data-simulation-banner]')).not.toBeNull();
     expect(view.querySelector('[data-action="return-revision"]')?.getAttribute('href')).toBe(
-      '#/harness/workflows/wf%3A1',
+      '#/harness/workflows/wf%3A1?version=3',
     );
   });
 

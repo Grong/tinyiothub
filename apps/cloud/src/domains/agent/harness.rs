@@ -75,6 +75,10 @@ where
             post(instantiate_workflow_template),
         )
         .route(
+            "/{workspace_id}/harness/workflows/{workflow_id}/versions/{version}",
+            get(get_workflow_version),
+        )
+        .route(
             "/{workspace_id}/harness/workflows/{workflow_id}/versions/{version}/snapshots",
             get(list_workflow_snapshots),
         )
@@ -372,6 +376,27 @@ pub async fn instantiate_workflow_template(
     }
 }
 
+/// One fixed historical revision for the dry-run return path. This never
+/// follows the current revision; `nextWakeAt` is omitted because scheduling
+/// belongs to the current revision, not the historical content.
+pub async fn get_workflow_version(
+    State(state): State<AgentState>,
+    Extension(claims): Extension<Claims>,
+    Path((workspace_id, workflow_id, version)): Path<(String, String, i64)>,
+) -> Response {
+    if let Err(response) = verify_workspace_read(&state, &claims, &workspace_id).await {
+        return response;
+    }
+    let service = WorkflowService::new(state.db.clone(), workspace_id.as_str());
+    match service.revision(&workflow_id, version).await {
+        Ok(revision) => ApiResponseBuilder::success(workflow_fixed_revision_json(&revision)).into_response(),
+        Err(error) => {
+            tracing::warn!(%workspace_id, %workflow_id, version, %error, "get fixed Workflow revision failed");
+            dry_run_error_response(error)
+        }
+    }
+}
+
 /// Snapshot picker for one fixed revision. The sequence and observed time are
 /// the only selection inputs; the picker never reads current platform state.
 pub async fn list_workflow_snapshots(
@@ -469,6 +494,18 @@ fn dry_run_error_response(error: DbError) -> Response {
         DbError::Validation { message } => error_response(StatusCode::BAD_REQUEST, message),
         _ => error_response(StatusCode::SERVICE_UNAVAILABLE, "Harness 存储不可用"),
     }
+}
+
+fn workflow_fixed_revision_json(revision: &WorkflowRevision) -> Value {
+    json!({
+        "workflowId": revision.workflow_id,
+        "version": revision.version,
+        "enabled": revision.enabled,
+        "definition": revision.definition,
+        "createdAt": revision.created_at.to_rfc3339(),
+        "nextWakeAt": Value::Null,
+        "fixedRevision": true,
+    })
 }
 
 fn workflow_revision_json(revision: &WorkflowRevision) -> Value {
@@ -1147,6 +1184,27 @@ mod tests {
             .to_string();
         let version = created["result"]["version"].as_i64().expect("version");
 
+        // F6: the dry-run return path must be able to pin this revision even
+        // after a newer current revision exists.
+        let item = format!("{base}/workflows/{workflow_id}");
+        let (status, edited) = send(
+            &app,
+            "PUT",
+            Some(&admin),
+            &item,
+            Some(update_body("dry-run 巡检 v2", version, false)),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{edited}");
+        assert_eq!(edited["result"]["version"], 2);
+        let fixed_uri = format!("{base}/workflows/{workflow_id}/versions/{version}");
+        let (status, fixed) = get(&app, Some(&member), &fixed_uri).await;
+        assert_eq!(status, StatusCode::OK, "{fixed}");
+        assert_eq!(fixed["result"]["version"], version);
+        assert_eq!(fixed["result"]["definition"]["objective"], "dry-run 巡检");
+        assert_eq!(fixed["result"]["fixedRevision"], true);
+        assert!(fixed["result"]["nextWakeAt"].is_null());
+
         let observed_at = DateTime::parse_from_rfc3339("2026-11-02T08:30:00Z")
             .expect("timestamp")
             .with_timezone(&Utc);
@@ -1227,6 +1285,21 @@ mod tests {
         assert_eq!(simulation["result"]["status"], "completed");
         assert_eq!(simulation["result"]["runId"], run_id);
         assert_eq!(simulation["result"]["snapshot"]["seq"], snapshot_event.seq);
+        assert_eq!(
+            simulation["result"]["outcome"]["evidenceRefs"],
+            json!([format!("snapshot:{}", snapshot_event.seq)])
+        );
+        assert_eq!(
+            simulation["result"]["outcome"]["recommendedActions"],
+            json!(["read_device"])
+        );
+        assert!(
+            simulation["result"]["evidence"]
+                .as_array()
+                .expect("evidence")
+                .iter()
+                .any(|value| value == &format!("snapshot:{}", snapshot_event.seq))
+        );
 
         // No production approval/execution entry is exposed on the simulation.
         let request = Request::builder()

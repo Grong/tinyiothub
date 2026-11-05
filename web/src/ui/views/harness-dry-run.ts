@@ -92,7 +92,9 @@ export class HarnessDryRunView extends LitElement {
   }
 
   private get returnHref(): string {
-    return `#/harness/workflows/${encodeURIComponent(this.workflowId)}`;
+    // Return to the same fixed revision; the editor loads that version
+    // read-only instead of silently following a newer current revision.
+    return `#/harness/workflows/${encodeURIComponent(this.workflowId)}?version=${this.version}`;
   }
 
   private async loadSnapshots(): Promise<void> {

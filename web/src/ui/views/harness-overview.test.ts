@@ -170,7 +170,7 @@ describe('Harness exception-first overview', () => {
 
   it('routes workflow creation and editing to the shared editor', async () => {
     await mount(overview(), {
-      route: { name: 'workflows', workflowId: null, creating: true },
+      route: { name: 'workflows', workflowId: null, creating: true, version: null },
     });
 
     const editor = view.querySelector('view-harness-workflow-edit') as
@@ -182,7 +182,7 @@ describe('Harness exception-first overview', () => {
 
     view.remove();
     await mount(overview(), {
-      route: { name: 'workflows', workflowId: 'wf:1', creating: false },
+      route: { name: 'workflows', workflowId: 'wf:1', creating: false, version: null },
     });
     const existing = view.querySelector('view-harness-workflow-edit') as
       | (HTMLElement & { workflowId: string })

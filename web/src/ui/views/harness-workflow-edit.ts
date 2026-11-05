@@ -4,6 +4,7 @@ import { ApiError, getWorkspaceId } from '../../api/client.js';
 import {
   createHarnessWorkflow,
   getHarnessWorkflow,
+  getHarnessWorkflowRevision,
   setHarnessWorkflowEnabled,
   updateHarnessWorkflow,
 } from '../../api/harness.js';
@@ -297,10 +298,13 @@ function parseJson(value: string, field: string, errors: Record<string, string>)
 export class HarnessWorkflowEditView extends LitElement {
   @property() workspaceId = getWorkspaceId() ?? '';
   @property() workflowId = '';
+  /** Non-zero pins this detail page to one historical revision (read-only). */
+  @property({ type: Number }) fixedVersion = 0;
 
   @state() private form: EditorForm = blankForm();
   @state() private revision: WorkflowRevision | null = null;
   @state() private version = 0;
+  @state() private fixed = false;
   @state() private enabled = false;
   @state() private fieldErrors: Record<string, string> = {};
   @state() private feedback: EditorFeedback | null = null;
@@ -355,15 +359,21 @@ export class HarnessWorkflowEditView extends LitElement {
   }
 
   willUpdate(changed: PropertyValues<this>): void {
-    if (!changed.has('workflowId')) return;
-    const previous = changed.get('workflowId');
-    if (previous === undefined || previous === this.workflowId) return;
-    if (this.workflowId && this.workflowId === this.revision?.workflowId) return;
-    if (this.workflowId) {
-      void this.load(false);
-    } else {
+    const workflowChanged = changed.has('workflowId');
+    const fixedChanged = changed.has('fixedVersion');
+    if (!workflowChanged && !fixedChanged) return;
+    if (!this.workflowId) {
       this.resetCreate();
+      return;
     }
+    if (workflowChanged) {
+      const previous = changed.get('workflowId');
+      if (previous === undefined || previous === this.workflowId) return;
+      if (this.fixedVersion <= 0 && this.workflowId === this.revision?.workflowId) return;
+    } else if ((changed.get('fixedVersion') ?? 0) === this.fixedVersion) {
+      return;
+    }
+    void this.load(false);
   }
 
   protected updated(): void {
@@ -384,6 +394,7 @@ export class HarnessWorkflowEditView extends LitElement {
     this.form = blankForm();
     this.revision = null;
     this.version = 0;
+    this.fixed = false;
     this.enabled = false;
     this.fieldErrors = {};
     this.feedback = null;
@@ -441,7 +452,10 @@ export class HarnessWorkflowEditView extends LitElement {
     this.loading = true;
     this.loadError = '';
     try {
-      const response = await getHarnessWorkflow(this.workspaceId, this.workflowId);
+      const response =
+        this.fixedVersion > 0
+          ? await getHarnessWorkflowRevision(this.workspaceId, this.workflowId, this.fixedVersion)
+          : await getHarnessWorkflow(this.workspaceId, this.workflowId);
       if (generation !== this.loadGeneration) return;
       const revision = response.result;
       if (!revision) throw new Error('空响应');
@@ -468,6 +482,7 @@ export class HarnessWorkflowEditView extends LitElement {
   private applyRevision(revision: WorkflowRevision): void {
     this.revision = revision;
     this.version = revision.version;
+    this.fixed = this.fixedVersion > 0;
     this.enabled = revision.enabled;
     this.form = formFromDefinition(revision.definition);
     this.fieldErrors = {};
@@ -1129,16 +1144,37 @@ export class HarnessWorkflowEditView extends LitElement {
           <div>
             <dt>启停</dt>
             <dd>
-              ${this.revision ? renderHarnessStatus(this.enabled ? 'enabled' : 'disabled') : '保存后为未启用'}
-              <span class="harness-editor__summary-note">保存不会改变启停状态。</span>
+              ${
+                this.fixed
+                  ? html`固定版本 <span class="harness-editor__summary-note">只读，不会保存。</span>`
+                  : this.revision
+                    ? html`${renderHarnessStatus(this.enabled ? 'enabled' : 'disabled')}
+                        <span class="harness-editor__summary-note">保存不会改变启停状态。</span>`
+                    : '保存后为未启用'
+              }
             </dd>
           </div>
-          <div><dt>版本</dt><dd>${this.revision ? `v${this.version} → 保存后 v${nextVersion}` : '首次保存为 v1'}</dd></div>
+          <div>
+            <dt>版本</dt>
+            <dd>
+              ${
+                this.revision
+                  ? this.fixed
+                    ? `v${this.version}`
+                    : `v${this.version} → 保存后 v${nextVersion}`
+                  : '首次保存为 v1'
+              }
+            </dd>
+          </div>
           <div><dt>时区</dt><dd>${currentTimeZone()}</dd></div>
           <div><dt>更新时间</dt><dd>${formatHarnessTime(this.revision?.createdAt ?? null)}</dd></div>
         </dl>
         <p class="harness-editor__hint">
-          新建空白 Workflow 保存为未启用；编辑已有 Workflow 时保留当前 enabled/disabled。禁用只通过显式动作发生。
+          ${
+            this.fixed
+              ? '固定版本只读展示；返回当前版本后可继续编辑。'
+              : '新建空白 Workflow 保存为未启用；编辑已有 Workflow 时保留当前 enabled/disabled。禁用只通过显式动作发生。'
+          }
         </p>
       </section>
     `;
@@ -1386,21 +1422,37 @@ export class HarnessWorkflowEditView extends LitElement {
         <header class="harness-editor__header">
           <div>
             <h1 id="harness-editor-title" tabindex="-1">
-              ${this.revision ? '编辑工作流' : '新建工作流'}
+              ${this.fixed ? `工作流版本 v${this.version}` : this.revision ? '编辑工作流' : '新建工作流'}
             </h1>
             <p>
-              单页分组配置。保存只写入新 revision；启停是单独动作，不会因保存而隐式改变。
+              ${
+                this.fixed
+                  ? '固定 revision 只读展示；返回当前版本后可继续编辑。'
+                  : '单页分组配置。保存只写入新 revision；启停是单独动作，不会因保存而隐式改变。'
+              }
             </p>
           </div>
           <div class="harness-editor__state">
             ${
               this.revision
                 ? html`<span class="harness-editor__version">版本 v${this.version}</span>
-                    ${renderHarnessStatus(this.enabled ? 'enabled' : 'disabled')}`
+                    ${this.fixed ? html`<span class="harness-editor__fixed-badge">只读</span>` : renderHarnessStatus(this.enabled ? 'enabled' : 'disabled')}`
                 : html`<span class="harness-editor__version">新配置 · 保存后为未启用</span>`
             }
           </div>
         </header>
+        ${
+          this.fixed
+            ? html`<div class="harness-editor__fixed" role="note" data-fixed-revision>
+                <p>
+                  正在查看固定版本 v${this.version}。该版本不会被编辑、替换或自动跟随最新 revision。
+                </p>
+                <a data-action="return-current" href=${`#/harness/workflows/${encodeURIComponent(this.workflowId)}`}
+                  >返回当前版本</a
+                >
+              </div>`
+            : nothing
+        }
         ${
           this.loading
             ? html`<p class="harness-editor__status" role="status">正在加载配置…</p>`
@@ -1421,13 +1473,15 @@ export class HarnessWorkflowEditView extends LitElement {
             ? html`${this.renderGroupsNav()}
                 <form class="harness-editor__form" novalidate @submit=${this.onSubmit}>
                   ${this.renderErrorSummary()}
-                  ${this.renderObjectiveGroup()}
-                  ${this.renderTriggerGroup()}
-                  ${this.renderToolsGroup()}
-                  ${this.renderPolicyGroup()}
-                  ${this.renderSummaryGroup()}
-                  ${this.renderFeedback()}
-                  ${this.renderActions()}
+                  <fieldset class="harness-editor__fieldset" ?disabled=${this.fixed}>
+                    ${this.renderObjectiveGroup()}
+                    ${this.renderTriggerGroup()}
+                    ${this.renderToolsGroup()}
+                    ${this.renderPolicyGroup()}
+                    ${this.renderSummaryGroup()}
+                    ${this.renderFeedback()}
+                    ${this.renderActions()}
+                  </fieldset>
                 </form>`
             : nothing
         }

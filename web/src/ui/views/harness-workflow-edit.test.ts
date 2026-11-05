@@ -3,6 +3,7 @@ import { ApiError, type ApiResponse } from '../../api/client.js';
 import {
   createHarnessWorkflow,
   getHarnessWorkflow,
+  getHarnessWorkflowRevision,
   setHarnessWorkflowEnabled,
   updateHarnessWorkflow,
 } from '../../api/harness.js';
@@ -19,6 +20,7 @@ vi.mock('../../api/harness.js', async (importOriginal) => {
   return {
     ...actual,
     getHarnessWorkflow: vi.fn(),
+    getHarnessWorkflowRevision: vi.fn(),
     createHarnessWorkflow: vi.fn(),
     updateHarnessWorkflow: vi.fn(),
     setHarnessWorkflowEnabled: vi.fn(),
@@ -26,6 +28,7 @@ vi.mock('../../api/harness.js', async (importOriginal) => {
 });
 
 const getWorkflow = vi.mocked(getHarnessWorkflow);
+const getWorkflowRevision = vi.mocked(getHarnessWorkflowRevision);
 const createWorkflow = vi.mocked(createHarnessWorkflow);
 const updateWorkflow = vi.mocked(updateHarnessWorkflow);
 const setEnabled = vi.mocked(setHarnessWorkflowEnabled);
@@ -81,15 +84,28 @@ async function settle(): Promise<void> {
 }
 
 async function mount(
-  options: { workflowId?: string; loaded?: WorkflowRevision | Error } = {},
+  options: {
+    workflowId?: string;
+    loaded?: WorkflowRevision | Error;
+    fixedVersion?: number;
+  } = {},
 ): Promise<void> {
   view = document.createElement('view-harness-workflow-edit') as HarnessWorkflowEditView;
   view.workspaceId = 'ws_1';
   view.workflowId = options.workflowId ?? '';
+  view.fixedVersion = options.fixedVersion ?? 0;
   if (options.loaded instanceof Error) {
-    getWorkflow.mockRejectedValueOnce(options.loaded);
+    if (options.fixedVersion) {
+      getWorkflowRevision.mockRejectedValueOnce(options.loaded);
+    } else {
+      getWorkflow.mockRejectedValueOnce(options.loaded);
+    }
   } else if (options.loaded) {
-    getWorkflow.mockResolvedValueOnce(response(options.loaded));
+    if (options.fixedVersion) {
+      getWorkflowRevision.mockResolvedValueOnce(response(options.loaded));
+    } else {
+      getWorkflow.mockResolvedValueOnce(response(options.loaded));
+    }
   }
   document.body.append(view);
   await settle();
@@ -119,6 +135,7 @@ beforeEach(() => {
   localStorage.setItem('workspace-id', 'ws_1');
   window.history.replaceState({}, '', '/dashboard');
   getWorkflow.mockReset();
+  getWorkflowRevision.mockReset();
   createWorkflow.mockReset();
   updateWorkflow.mockReset();
   setEnabled.mockReset();
@@ -172,6 +189,28 @@ describe('Harness workflow editor form', () => {
     expect(summary.textContent).toContain('v3');
     expect(summary.textContent).toContain('已启用');
     expect(summary.textContent).toContain('保存不会改变启停状态');
+  });
+
+  it('loads a fixed revision read-only and links back to the current revision', async () => {
+    await mount({
+      workflowId: 'wf:1',
+      fixedVersion: 2,
+      loaded: revision({ version: 2 }),
+    });
+
+    expect(getWorkflowRevision).toHaveBeenCalledWith('ws_1', 'wf:1', 2);
+    expect(getWorkflow).not.toHaveBeenCalled();
+    expect(view.querySelector('[data-fixed-revision]')?.textContent).toContain(
+      '固定版本 v2',
+    );
+    expect(view.querySelector('[data-fixed-revision]')?.textContent).toContain(
+      '自动跟随最新',
+    );
+    const save = view.querySelector<HTMLButtonElement>('[data-action="save"]');
+    expect(save?.matches(':disabled')).toBe(true);
+    expect(
+      view.querySelector<HTMLAnchorElement>('[data-action="return-current"]')?.getAttribute('href'),
+    ).toBe('#/harness/workflows/wf%3A1');
   });
 
   it('saves a new blank workflow as disabled, never sends enabled, and notifies the router', async () => {

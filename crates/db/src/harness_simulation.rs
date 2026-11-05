@@ -440,13 +440,17 @@ impl Db {
 }
 
 fn collect_evidence(payload: &Value, evidence: &mut Vec<String>) {
-    for value in payload
-        .get("evidenceRefs")
-        .and_then(Value::as_array)
-        .into_iter()
-        .flatten()
-        .filter_map(Value::as_str)
-    {
-        evidence.push(value.to_string());
+    // TaskOutcome is serialized camelCase and nested under `outcome`; top-level
+    // refs stay supported for events that carry them directly.
+    for path in ["/evidenceRefs", "/outcome/evidenceRefs"] {
+        for value in payload
+            .pointer(path)
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .filter_map(Value::as_str)
+        {
+            evidence.push(value.to_string());
+        }
     }
 }

@@ -23,16 +23,25 @@ describe('Harness canonical URL state', () => {
       name: 'workflows',
       workflowId: null,
       creating: false,
+      version: null,
     });
     expect(parseHarnessHash('#/harness/workflows/wf%3A1')).toEqual({
       name: 'workflows',
       workflowId: 'wf:1',
       creating: false,
+      version: null,
+    });
+    expect(parseHarnessHash('#/harness/workflows/wf%3A1?version=2')).toEqual({
+      name: 'workflows',
+      workflowId: 'wf:1',
+      creating: false,
+      version: 2,
     });
     expect(parseHarnessHash('#/harness/workflows/new')).toEqual({
       name: 'workflows',
       workflowId: null,
       creating: true,
+      version: null,
     });
     expect(parseHarnessHash('#/harness/workflows/templates')).toEqual({ name: 'templates' });
     expect(parseHarnessHash('#/harness/tasks/task%3A1')).toMatchObject({
@@ -78,6 +87,7 @@ describe('Harness canonical URL state', () => {
     expect(parseHarnessHash('#/harness/workflows/wf%3A1/dry-run')).toBeNull();
     expect(parseHarnessHash('#/harness/workflows/wf%3A1/dry-run?version=0')).toBeNull();
     expect(parseHarnessHash('#/harness/workflows/wf%3A1/dry-run?version=nope')).toBeNull();
+    expect(parseHarnessHash('#/harness/workflows/wf%3A1?version=0')).toBeNull();
   });
 
   it('round-trips encoded Task IDs, view, device and history state', () => {

@@ -27,7 +27,13 @@ import {
 
 export type HarnessRoute =
   | { name: 'overview'; anchor?: string }
-  | { name: 'workflows'; workflowId: string | null; creating: boolean }
+  | {
+      name: 'workflows';
+      workflowId: string | null;
+      creating: boolean;
+      /** Fixed historical revision detail; null means the current revision. */
+      version: number | null;
+    }
   | {
       name: 'dry-run';
       workflowId: string;
@@ -92,7 +98,7 @@ export function parseHarnessHash(hash: string): HarnessRoute | null {
   if (path === '#/harness/tasks') return { name: 'tasks' };
   if (path === '#/harness/tasks/new') return { name: 'new' };
   if (path === '#/harness/workflows') {
-    return { name: 'workflows', workflowId: null, creating: false };
+    return { name: 'workflows', workflowId: null, creating: false, version: null };
   }
   if (path === '#/harness/workflows/templates') {
     return { name: 'templates' };
@@ -115,10 +121,13 @@ export function parseHarnessHash(hash: string): HarnessRoute | null {
   const workflowMatch = path.match(/^#\/harness\/workflows\/([^/]+)$/);
   if (workflowMatch) {
     if (workflowMatch[1] === 'new') {
-      return { name: 'workflows', workflowId: null, creating: true };
+      return { name: 'workflows', workflowId: null, creating: true, version: null };
     }
     const workflowId = decodeHashId(workflowMatch[1]);
-    return workflowId ? { name: 'workflows', workflowId, creating: false } : null;
+    const versionParam = params.get('version');
+    const version = versionParam === null ? null : positiveInteger(versionParam);
+    if (versionParam !== null && version === null) return null;
+    return workflowId ? { name: 'workflows', workflowId, creating: false, version } : null;
   }
 
   const taskMatch = path.match(/^#\/harness\/tasks\/([^/]+)$/);

@@ -135,6 +135,16 @@ function workflowVersionPath(workspaceId: string, workflowId: string, version: n
   );
 }
 
+/** One fixed historical revision for the dry-run return path. */
+export function getHarnessWorkflowRevision(
+  workspaceId: string,
+  workflowId: string,
+  version: number,
+  signal?: AbortSignal,
+): Promise<ApiResponse<WorkflowRevision>> {
+  return ApiClient.get(workflowVersionPath(workspaceId, workflowId, version, ''), undefined, signal);
+}
+
 /** Historical production snapshots for the fixed-revision dry-run picker. */
 export function listHarnessWorkflowSnapshots(
   workspaceId: string,

@@ -83,6 +83,11 @@ pub struct EvidenceGauges {
 }
 
 /// Durable gauges for rollout dashboards. These are observations, not quotas.
+///
+/// These queries read the platform runtime tables. Harness simulation
+/// Tasks/Runs live in the separate per-workspace `harness.db`, so they are
+/// never counted here; production Harness lists/recovery use their own
+/// `execution_mode='production'` filters.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RuntimeMetrics {

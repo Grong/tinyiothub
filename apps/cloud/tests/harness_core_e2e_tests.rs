@@ -2951,6 +2951,7 @@ mod dry_run_tests {
     };
     use tinyiothub_skills::registry::Capability;
     use tinyiothub_storage::test_helpers::{WorkspaceFixture, fixture_workspace};
+    use tokio::sync::Notify;
 
     const WS: &str = "ws-dry-run";
 
@@ -2975,12 +2976,37 @@ mod dry_run_tests {
     impl SubagentExecutor for RecordingExecutor {
         async fn execute(&self, input: SubagentInput) -> anyhow::Result<TaskOutcome> {
             self.calls.lock().expect("calls").push(input.clone());
+            let snapshot_seq = input
+                .source
+                .get("snapshotSeq")
+                .and_then(serde_json::Value::as_i64)
+                .unwrap_or_default();
             Ok(TaskOutcome {
                 status: "completed".to_string(),
                 summary: "simulation complete".to_string(),
                 observations: vec!["temperature 20 from snapshot".to_string()],
-                evidence_refs: vec!["evidence-sim-1".to_string()],
+                evidence_refs: vec![format!("snapshot:{snapshot_seq}")],
                 recommended_actions: input.workflow.definition.tool_ids.clone(),
+            })
+        }
+    }
+
+    struct BlockingExecutor {
+        started: Arc<Notify>,
+        release: Arc<Notify>,
+    }
+
+    #[async_trait]
+    impl SubagentExecutor for BlockingExecutor {
+        async fn execute(&self, _input: SubagentInput) -> anyhow::Result<TaskOutcome> {
+            self.started.notify_one();
+            self.release.notified().await;
+            Ok(TaskOutcome {
+                status: "completed".to_string(),
+                summary: "simulation complete".to_string(),
+                observations: vec![],
+                evidence_refs: vec![],
+                recommended_actions: vec![],
             })
         }
     }
@@ -3051,6 +3077,7 @@ mod dry_run_tests {
             "effect_intents" => "SELECT COUNT(*) FROM effect_intents",
             "decisions" => "SELECT COUNT(*) FROM decisions",
             "workflow_occurrences" => "SELECT COUNT(*) FROM workflow_occurrences",
+            "device_jobs" => "SELECT COUNT(*) FROM device_jobs",
             other => panic!("unsupported count table: {other}"),
         };
         sqlx::query_scalar(sql)
@@ -3068,7 +3095,7 @@ mod dry_run_tests {
 
     fn dry_run(
         fixture: &WorkspaceFixture,
-        executor: Arc<RecordingExecutor>,
+        executor: Arc<dyn SubagentExecutor>,
         capabilities: Vec<Capability>,
     ) -> WorkflowDryRun {
         WorkflowDryRun::new(
@@ -3268,6 +3295,82 @@ mod dry_run_tests {
         assert_eq!(projection["readOnly"], true);
         assert_eq!(projection["snapshot"]["seq"], snapshot_seq);
         assert_eq!(projection["outcome"]["status"], "completed");
+        // F1: TaskOutcome evidence is nested under outcome.evidenceRefs and
+        // must surface in the generic projection.
+        assert_eq!(
+            projection["outcome"]["evidenceRefs"],
+            json!([format!("snapshot:{snapshot_seq}")])
+        );
+        // F7: successful outcome serialization keeps the exact camelCase
+        // contract consumed by renderOutcome.
+        assert_eq!(
+            projection["outcome"]["recommendedActions"],
+            json!(["read_property", "set_speed"])
+        );
+        assert_eq!(
+            projection["outcome"]["observations"],
+            json!(["temperature 20 from snapshot"])
+        );
+        assert!(
+            projection["evidence"]
+                .as_array()
+                .expect("evidence list")
+                .iter()
+                .any(|value| value == &format!("snapshot:{snapshot_seq}")),
+            "projection evidence must include the snapshot ref: {projection}"
+        );
+
+        // F2: platform runtime gauges never count Harness workspace simulation
+        // Tasks (they live in a different database).
+        let metrics = fixture
+            .db
+            .runtime_metrics(Some(&fixture.workspace_id))
+            .await
+            .expect("runtime metrics");
+        assert_eq!(metrics.drain.nonterminal_tasks, 0);
+        assert_eq!(metrics.drain.active_runs, 0);
+        assert_eq!(metrics.tasks.active, 0);
+        assert_eq!(metrics.tasks.completed, 0);
+
+        // F4: production single-task reads/controls cannot see or mutate a
+        // simulation Task id.
+        assert!(
+            fixture
+                .db
+                .runtime_projection(&fixture.workspace_id, &result.task_id)
+                .await
+                .expect("runtime projection")
+                .is_none()
+        );
+        assert!(matches!(
+            fixture
+                .db
+                .pause_workflow_task(&fixture.workspace_id, &result.task_id)
+                .await,
+            Err(tinyiothub_storage::DbError::NotFound { .. })
+        ));
+        assert!(matches!(
+            fixture
+                .db
+                .resume_workflow_task(&fixture.workspace_id, &result.task_id)
+                .await,
+            Err(tinyiothub_storage::DbError::NotFound { .. })
+        ));
+        assert!(matches!(
+            fixture
+                .db
+                .cancel_workflow_task(&fixture.workspace_id, &result.task_id)
+                .await,
+            Err(tinyiothub_storage::DbError::NotFound { .. })
+        ));
+        let (state_after_controls, version_after_controls): (String, i64) =
+            sqlx::query_as("SELECT state, state_version FROM agent_tasks WHERE id = ?")
+                .bind(&result.task_id)
+                .fetch_one(&fixture.workspace_pool().await)
+                .await
+                .expect("simulation state after controls");
+        assert_eq!(state_after_controls, "completed");
+        assert_eq!(version_after_controls, 2);
 
         // Simulation snapshots are not valid production inputs.
         let rejected = service
@@ -3297,12 +3400,30 @@ mod dry_run_tests {
         let service = dry_run(&fixture, Arc::new(RecordingExecutor::default()), vec![Capability::Text]);
         let result = service
             .start(DryRunInput {
-                workflow_id: revision.workflow_id,
+                workflow_id: revision.workflow_id.clone(),
                 workflow_version: revision.version,
                 snapshot_seq,
             })
             .await
             .expect("start");
+
+        let null_task_error = sqlx::query(
+            "INSERT INTO effect_intents
+                (effect_id, session_id, task_id, run_id, tool_call_id, tool_name, request_json,
+                 request_digest, idempotency_key, external_ref, state, recovery_from, state_version,
+                 result_json, created_at, updated_at)
+             VALUES ('effect-null-task', 'session-sim', NULL, ?, 'call-null', 'set_speed', '{}',
+                     'digest-null', 'effect-null-task', NULL, 'prepared', NULL, 1, NULL,
+                     '2026-11-03T00:00:00Z', '2026-11-03T00:00:00Z')",
+        )
+        .bind(&result.run_id)
+        .execute(&fixture.workspace_pool().await)
+        .await
+        .expect_err("a NULL task id cannot create a simulation effect");
+        assert!(
+            null_task_error.to_string().to_lowercase().contains("not null"),
+            "{null_task_error}"
+        );
 
         let effect_error = sqlx::query(
             "INSERT INTO effect_intents
@@ -3356,9 +3477,47 @@ mod dry_run_tests {
             "{wake_error}"
         );
 
+        let occurrence_error = sqlx::query(
+            "INSERT INTO workflow_occurrences
+                (source_key, workflow_id, trigger_id, occurrence_id, workflow_version,
+                 task_id, run_id, session_id, source_json, created_at)
+             VALUES ('simulation-occurrence', ?, 'manual', 'simulation', ?, ?, ?, 'session-sim',
+                     '{}', '2026-11-03T00:00:00Z')",
+        )
+        .bind(&revision.workflow_id)
+        .bind(revision.version)
+        .bind(&result.task_id)
+        .bind(&result.run_id)
+        .execute(&fixture.workspace_pool().await)
+        .await
+        .expect_err("simulation occurrence insert must abort");
+        assert!(
+            occurrence_error.to_string().contains("SimulationDispatchBlocked"),
+            "{occurrence_error}"
+        );
+
+        let job_error = sqlx::query(
+            "INSERT INTO device_jobs
+                (id, workspace_id, device_id, tool, args_json, state, timeout_ms, started_at, task_id, run_id)
+             VALUES ('job-sim', ?, 'robot-1', 'set_speed', '{}', 'running', 5000,
+                     '2026-11-03T00:00:00Z', ?, ?)",
+        )
+        .bind(&fixture.workspace_id)
+        .bind(&result.task_id)
+        .bind(&result.run_id)
+        .execute(&fixture.workspace_pool().await)
+        .await
+        .expect_err("simulation device job insert must abort");
+        assert!(
+            job_error.to_string().contains("SimulationDispatchBlocked"),
+            "{job_error}"
+        );
+
         assert_eq!(count(&fixture, "effect_intents").await, 0);
         assert_eq!(count(&fixture, "decisions").await, 0);
         assert_eq!(count(&fixture, "task_wake_outbox").await, 0);
+        assert_eq!(count(&fixture, "workflow_occurrences").await, 0);
+        assert_eq!(count(&fixture, "device_jobs").await, 0);
         fixture.close().await;
     }
 
@@ -3474,6 +3633,90 @@ mod dry_run_tests {
                 .iter()
                 .any(|error| error["type"] == "capability.unavailable")
         );
+        fixture.close().await;
+    }
+
+    #[tokio::test]
+    async fn dry_run_running_simulation_is_never_a_production_main_or_subagent() {
+        let fixture = fixture_workspace(WS).await;
+        let revision = create_workflow(&fixture, &[], &["read_property"]).await;
+        let (snapshot_seq, _) = seed_snapshot(
+            &fixture,
+            "production-snapshot-running",
+            ExecutionMode::Production,
+            observed_at(),
+            20,
+        )
+        .await;
+        let started = Arc::new(Notify::new());
+        let release = Arc::new(Notify::new());
+        let service = dry_run(
+            &fixture,
+            Arc::new(BlockingExecutor {
+                started: started.clone(),
+                release: release.clone(),
+            }),
+            vec![Capability::Text],
+        );
+        let workflow_id = revision.workflow_id.clone();
+        let workflow_version = revision.version;
+        let running = tokio::spawn(async move {
+            service
+                .start(DryRunInput {
+                    workflow_id,
+                    workflow_version,
+                    snapshot_seq,
+                })
+                .await
+        });
+        started.notified().await;
+
+        let task_id: String = sqlx::query_scalar("SELECT id FROM agent_tasks WHERE execution_mode = 'simulation'")
+            .fetch_one(&fixture.workspace_pool().await)
+            .await
+            .expect("running simulation task");
+        let state: String = sqlx::query_scalar("SELECT state FROM agent_tasks WHERE id = ?")
+            .bind(&task_id)
+            .fetch_one(&fixture.workspace_pool().await)
+            .await
+            .expect("running state");
+        assert_eq!(state, "running");
+
+        // F5: a *running* simulation is still excluded from production Main
+        // and Subagent lists (completed-only filtering is not the reason).
+        assert!(
+            fixture
+                .db
+                .harness_main_tasks(&fixture.workspace_id)
+                .await
+                .expect("main tasks")
+                .is_empty()
+        );
+        assert!(matches!(
+            fixture
+                .db
+                .harness_subagents(&fixture.workspace_id, &task_id, 20, 0)
+                .await,
+            Err(tinyiothub_storage::DbError::NotFound { .. })
+        ));
+        assert!(
+            fixture
+                .db
+                .list_effect_recovery(&fixture.workspace_id)
+                .await
+                .expect("recovery")
+                .is_empty()
+        );
+
+        release.notify_one();
+        let result = running.await.expect("join dry run").expect("dry run result");
+        assert_eq!(result.task_id, task_id);
+        let final_state: String = sqlx::query_scalar("SELECT state FROM agent_tasks WHERE id = ?")
+            .bind(&task_id)
+            .fetch_one(&fixture.workspace_pool().await)
+            .await
+            .expect("final state");
+        assert_eq!(final_state, "completed");
         fixture.close().await;
     }
 }

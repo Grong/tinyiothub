@@ -1157,7 +1157,7 @@ pub(crate) async fn drain_cancelling_tasks(
 ) -> DbResult<()> {
     let tasks = sqlx::query_as::<_, (String, Option<String>, Option<String>, i64)>(
         "SELECT id, parent_task_id, run_id, state_version FROM agent_tasks
-         WHERE state = 'cancelling'
+         WHERE state = 'cancelling' AND execution_mode = 'production'
          ORDER BY CASE WHEN parent_task_id IS NULL THEN 1 ELSE 0 END, id",
     )
     .fetch_all(&mut *connection)
@@ -1235,7 +1235,8 @@ impl Db {
         let pool = self.workspace_pool(workspace_id).await?;
         let mut tx = pool.begin().await?;
         let current = sqlx::query_as::<_, (String, Option<String>, i64)>(
-            "SELECT state, run_id, state_version FROM agent_tasks WHERE id = ?",
+            "SELECT state, run_id, state_version FROM agent_tasks
+             WHERE id = ? AND execution_mode = 'production'",
         )
         .bind(task_id)
         .fetch_optional(&mut *tx)
@@ -1254,7 +1255,7 @@ impl Db {
         }
         let updated = sqlx::query(
             "UPDATE agent_tasks SET state = 'paused', state_version = state_version + 1
-             WHERE id = ? AND state = ? AND state_version = ?",
+             WHERE id = ? AND state = ? AND state_version = ? AND execution_mode = 'production'",
         )
         .bind(task_id)
         .bind(&state)
@@ -1285,7 +1286,8 @@ impl Db {
         let pool = self.workspace_pool(workspace_id).await?;
         let mut tx = pool.begin().await?;
         let current = sqlx::query_as::<_, (String, Option<String>, i64)>(
-            "SELECT state, run_id, state_version FROM agent_tasks WHERE id = ?",
+            "SELECT state, run_id, state_version FROM agent_tasks
+             WHERE id = ? AND execution_mode = 'production'",
         )
         .bind(task_id)
         .fetch_optional(&mut *tx)
@@ -1316,7 +1318,7 @@ impl Db {
         }
         let updated = sqlx::query(
             "UPDATE agent_tasks SET state = ?, state_version = state_version + 1
-             WHERE id = ? AND state = 'paused' AND state_version = ?",
+             WHERE id = ? AND state = 'paused' AND state_version = ? AND execution_mode = 'production'",
         )
         .bind(&previous)
         .bind(task_id)
@@ -1346,27 +1348,32 @@ impl Db {
     pub async fn cancel_workflow_task(&self, workspace_id: &str, task_id: &str) -> DbResult<Vec<String>> {
         let pool = self.workspace_pool(workspace_id).await?;
         let mut tx = pool.begin().await?;
-        let root_state = sqlx::query_scalar::<_, String>("SELECT state FROM agent_tasks WHERE id = ?")
-            .bind(task_id)
-            .fetch_optional(&mut *tx)
-            .await?
-            .ok_or_else(|| DbError::NotFound {
-                id: task_id.to_string(),
-            })?;
+        let root_state = sqlx::query_scalar::<_, String>(
+            "SELECT state FROM agent_tasks WHERE id = ? AND execution_mode = 'production'",
+        )
+        .bind(task_id)
+        .fetch_optional(&mut *tx)
+        .await?
+        .ok_or_else(|| DbError::NotFound {
+            id: task_id.to_string(),
+        })?;
         if matches!(root_state.as_str(), "completed" | "failed" | "cancelled") {
             return Ok(Vec::new());
         }
         let mut task_ids = vec![task_id.to_string()];
         task_ids.extend(
-            sqlx::query_scalar::<_, String>("SELECT id FROM agent_tasks WHERE parent_task_id = ? ORDER BY id")
-                .bind(task_id)
-                .fetch_all(&mut *tx)
-                .await?,
+            sqlx::query_scalar::<_, String>(
+                "SELECT id FROM agent_tasks WHERE parent_task_id = ? AND execution_mode = 'production' ORDER BY id",
+            )
+            .bind(task_id)
+            .fetch_all(&mut *tx)
+            .await?,
         );
         let now = Utc::now();
         for id in &task_ids {
             let current = sqlx::query_as::<_, (String, Option<String>, i64)>(
-                "SELECT state, run_id, state_version FROM agent_tasks WHERE id = ?",
+                "SELECT state, run_id, state_version FROM agent_tasks
+                 WHERE id = ? AND execution_mode = 'production'",
             )
             .bind(id)
             .fetch_one(&mut *tx)
@@ -1377,7 +1384,7 @@ impl Db {
             }
             let updated = sqlx::query(
                 "UPDATE agent_tasks SET state = 'cancelling', state_version = state_version + 1
-                 WHERE id = ? AND state = ? AND state_version = ?",
+                 WHERE id = ? AND state = ? AND state_version = ? AND execution_mode = 'production'",
             )
             .bind(id)
             .bind(&state)
@@ -1511,7 +1518,7 @@ impl Db {
         let mut tx = pool.begin().await?;
         let parent = sqlx::query_as::<_, (Option<String>, Option<String>, Option<i64>, Option<String>, String)>(
             "SELECT parent_task_id, workflow_id, workflow_version, run_id, state
-             FROM agent_tasks WHERE id = ?",
+             FROM agent_tasks WHERE id = ? AND execution_mode = 'production'",
         )
         .bind(parent_task_id)
         .fetch_optional(&mut *tx)
@@ -1606,7 +1613,8 @@ impl Db {
         let pool = self.workspace_pool(workspace_id).await?;
         let mut tx = pool.begin().await?;
         let current = sqlx::query_as::<_, (String, Option<String>, Option<String>, i64)>(
-            "SELECT state, run_id, parent_task_id, state_version FROM agent_tasks WHERE id = ?",
+            "SELECT state, run_id, parent_task_id, state_version FROM agent_tasks
+             WHERE id = ? AND execution_mode = 'production'",
         )
         .bind(task_id)
         .fetch_optional(&mut *tx)
@@ -1620,7 +1628,7 @@ impl Db {
         }
         let updated = sqlx::query(
             "UPDATE agent_tasks SET state = ?, state_version = state_version + 1
-             WHERE id = ? AND state = ? AND state_version = ?",
+             WHERE id = ? AND state = ? AND state_version = ? AND execution_mode = 'production'",
         )
         .bind(outcome_status)
         .bind(task_id)

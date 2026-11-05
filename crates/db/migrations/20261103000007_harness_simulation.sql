@@ -43,3 +43,27 @@ WHEN (SELECT execution_mode FROM agent_tasks WHERE id = NEW.task_id) = 'simulati
 BEGIN
     SELECT RAISE(ABORT, 'SimulationDispatchBlocked: simulation cannot enqueue production wakes');
 END;
+
+-- Reachable dispatch/occupancy surfaces outside the three core tables above.
+CREATE TRIGGER workflow_occurrences_reject_simulation
+BEFORE INSERT ON workflow_occurrences
+WHEN (SELECT execution_mode FROM agent_tasks WHERE id = NEW.task_id) = 'simulation'
+BEGIN
+    SELECT RAISE(ABORT, 'SimulationDispatchBlocked: simulation cannot create workflow occurrences');
+END;
+
+CREATE TRIGGER device_jobs_reject_simulation_insert
+BEFORE INSERT ON device_jobs
+WHEN NEW.task_id IS NOT NULL
+ AND (SELECT execution_mode FROM agent_tasks WHERE id = NEW.task_id) = 'simulation'
+BEGIN
+    SELECT RAISE(ABORT, 'SimulationDispatchBlocked: simulation cannot create device jobs');
+END;
+
+CREATE TRIGGER device_jobs_reject_simulation_update
+BEFORE UPDATE ON device_jobs
+WHEN NEW.task_id IS NOT NULL
+ AND (SELECT execution_mode FROM agent_tasks WHERE id = NEW.task_id) = 'simulation'
+BEGIN
+    SELECT RAISE(ABORT, 'SimulationDispatchBlocked: simulation cannot update device jobs');
+END;

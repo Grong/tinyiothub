@@ -503,3 +503,52 @@ view-harness-workflow-edit {
     padding: var(--space-3);
   }
 }
+
+/* Fixed historical revision detail: read-only fields, no implicit current follow. */
+.harness-editor__fieldset {
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.harness-editor__fixed {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+  align-items: center;
+  justify-content: space-between;
+  margin: var(--space-3) 0 var(--space-4);
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface-elevated);
+}
+
+.harness-editor__fixed p {
+  margin: 0;
+  color: var(--muted-foreground);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.harness-editor__fixed a {
+  display: inline-flex;
+  align-items: center;
+  min-height: 44px;
+  color: var(--accent);
+  font-size: 13px;
+  text-decoration: none;
+}
+
+.harness-editor__fixed a:hover {
+  text-decoration: underline;
+}
+
+.harness-editor__fixed-badge {
+  padding: 2px var(--space-2);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  color: var(--muted-foreground);
+  font-size: 12px;
+}
