@@ -93,6 +93,8 @@ pub struct TaskRuntimeDeps {
     /// moves Task state through the port instead of the legacy platform
     /// approval transaction.
     pub harness_task_store: bool,
+    /// Production Harness Effect dispatcher (Task 19C1). None in unit tests.
+    pub effect_dispatch: Option<Arc<crate::domains::agent::runtime::dispatch::EffectDispatch>>,
 }
 
 /// Tunables for [`ThingAgentManager`].
@@ -222,6 +224,10 @@ pub struct ThingAgentManager {
     watch_cmds: Arc<DashMap<String, mpsc::Sender<WatchCommand>>>,
     task_runtime: std::sync::Mutex<Option<Arc<TaskCoordinator>>>,
     task_router: std::sync::Mutex<Option<JoinHandle<()>>>,
+    /// Task 19C1 recovery/dispatch loop. It shares the Task runtime lifetime
+    /// and is aborted on manager drop, like the wake router.
+    task_dispatch: std::sync::Mutex<Option<Arc<crate::domains::agent::runtime::dispatch::EffectDispatch>>>,
+    task_dispatch_task: std::sync::Mutex<Option<JoinHandle<()>>>,
 }
 
 impl ThingAgentManager {
@@ -273,6 +279,8 @@ impl ThingAgentManager {
             watch_cmds,
             task_runtime: std::sync::Mutex::new(None),
             task_router: std::sync::Mutex::new(None),
+            task_dispatch: std::sync::Mutex::new(None),
+            task_dispatch_task: std::sync::Mutex::new(None),
         }
     }
 
@@ -346,8 +354,26 @@ impl ThingAgentManager {
             }
         });
         *self.task_router.lock().unwrap_or_else(|error| error.into_inner()) = Some(router_task);
+        // Task 19C1: the same composition that starts the Task runtime starts
+        // the bounded per-workspace Effect dispatch/recovery pass.
+        if let Some(dispatch) = deps.effect_dispatch {
+            let task_dispatch = tokio::spawn(dispatch.clone().run());
+            *self.task_dispatch.lock().unwrap_or_else(|error| error.into_inner()) = Some(dispatch);
+            *self
+                .task_dispatch_task
+                .lock()
+                .unwrap_or_else(|error| error.into_inner()) = Some(task_dispatch);
+        }
         *self.task_runtime.lock().unwrap_or_else(|error| error.into_inner()) = Some(coordinator);
         Ok(())
+    }
+
+    /// The production Effect dispatcher, when this manager is fully wired.
+    pub fn effect_dispatch(&self) -> Option<Arc<crate::domains::agent::runtime::dispatch::EffectDispatch>> {
+        self.task_dispatch
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .clone()
     }
 
     fn task_coordinator(&self) -> Result<Arc<TaskCoordinator>, TaskError> {
@@ -688,6 +714,14 @@ impl Drop for ThingAgentManager {
     fn drop(&mut self) {
         if let Some(task) = self
             .task_router
+            .get_mut()
+            .unwrap_or_else(|error| error.into_inner())
+            .take()
+        {
+            task.abort();
+        }
+        if let Some(task) = self
+            .task_dispatch_task
             .get_mut()
             .unwrap_or_else(|error| error.into_inner())
             .take()
@@ -2580,6 +2614,7 @@ pub(crate) mod tests {
                 watches: Arc::new(StubWatchRuleStore { rules: vec![] }),
                 jobs: None,
                 harness_task_store: false,
+                effect_dispatch: None,
             })
             .await
             .expect("start production task runtime");
@@ -2608,6 +2643,7 @@ pub(crate) mod tests {
                 watches: Arc::new(StubWatchRuleStore { rules: vec![] }),
                 jobs: None,
                 harness_task_store: false,
+                effect_dispatch: None,
             })
             .await
             .expect("start task runtime");
@@ -2969,6 +3005,7 @@ pub(crate) mod tests {
                 watches,
                 jobs: None,
                 harness_task_store: false,
+                effect_dispatch: None,
             })
             .await
             .expect("task runtime");

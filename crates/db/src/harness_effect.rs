@@ -3,6 +3,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sha2::Digest;
 use sqlx::{SqlSafeStr, SqliteConnection, SqlitePool};
+use tinyiothub_core::device_job::DeviceJob;
 use tinyiothub_core::harness::{
     CommandKind, CommandState, Decision, DecisionKind, DecisionMutation, DecisionState, EffectIntent, EffectState,
     ExecutionMode, HarnessEventInput, Transition, TransitionPrecondition,
@@ -826,6 +827,129 @@ impl Db {
             .await?
             .map(EffectIntent::try_from)
             .transpose()
+    }
+
+    /// Upsert the workspace `device_jobs` projection for one physical Job.
+    ///
+    /// Harness Effect Jobs (`job:<effect-id>`) are stored in the owning
+    /// workspace generation, not the platform table; only legacy Jobs keep the
+    /// platform writer until Task 19C3 centralizes the store. The row is
+    /// inserted before the `prepared -> dispatching` permit so the transition
+    /// can carry the `JobProjection`, then refreshed with the submitted Job's
+    /// real timeout and start time.
+    pub async fn upsert_workspace_job_projection(&self, workspace_id: &str, job: &DeviceJob) -> Result<()> {
+        let pool = self.workspace_pool(workspace_id).await?;
+        sqlx::query(
+            "INSERT INTO device_jobs
+                (id, workspace_id, device_id, tool, args_json, state, stop_requested_at,
+                 progress_json, result_json, task_id, run_id, tool_call_id, driver_call_id,
+                 timeout_ms, started_at, ended_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             ON CONFLICT(id) DO UPDATE SET
+                 device_id = excluded.device_id,
+                 tool = excluded.tool,
+                 args_json = excluded.args_json,
+                 state = excluded.state,
+                 stop_requested_at = excluded.stop_requested_at,
+                 progress_json = excluded.progress_json,
+                 result_json = excluded.result_json,
+                 task_id = excluded.task_id,
+                 run_id = excluded.run_id,
+                 tool_call_id = excluded.tool_call_id,
+                 driver_call_id = excluded.driver_call_id,
+                 timeout_ms = excluded.timeout_ms,
+                 started_at = excluded.started_at,
+                 ended_at = excluded.ended_at",
+        )
+        .bind(&job.id)
+        .bind(&job.workspace_id)
+        .bind(&job.device_id)
+        .bind(&job.tool)
+        .bind(serde_json::to_string(&job.args_json)?)
+        .bind(job.state.as_str())
+        .bind(job.stop_requested_at.map(|value| value.to_rfc3339()))
+        .bind(job.progress_json.as_ref().map(serde_json::to_string).transpose()?)
+        .bind(job.result_json.as_ref().map(serde_json::to_string).transpose()?)
+        .bind(&job.task_id)
+        .bind(&job.run_id)
+        .bind(&job.tool_call_id)
+        .bind(&job.driver_call_id)
+        .bind(i64::try_from(job.timeout_ms).unwrap_or(i64::MAX))
+        .bind(job.started_at.to_rfc3339())
+        .bind(job.ended_at.map(|value| value.to_rfc3339()))
+        .execute(&pool)
+        .await?;
+        Ok(())
+    }
+
+    pub async fn workspace_job(&self, workspace_id: &str, job_id: &str) -> Result<Option<DeviceJob>> {
+        let pool = self.workspace_pool(workspace_id).await?;
+        sqlx::query_as::<_, crate::device_job::DeviceJobRow>(
+            "SELECT id, workspace_id, device_id, tool, args_json, state, stop_requested_at,
+                    progress_json, result_json, task_id, run_id, tool_call_id, driver_call_id,
+                    timeout_ms, started_at, ended_at
+             FROM device_jobs WHERE id = ?",
+        )
+        .bind(job_id)
+        .fetch_optional(&pool)
+        .await?
+        .map(DeviceJob::try_from)
+        .transpose()
+        .map_err(|error| DbError::Internal(error.to_string()))
+    }
+
+    pub async fn workspace_job_by_tool_call(
+        &self,
+        workspace_id: &str,
+        tool_call_id: &str,
+    ) -> Result<Option<DeviceJob>> {
+        let pool = self.workspace_pool(workspace_id).await?;
+        sqlx::query_as::<_, crate::device_job::DeviceJobRow>(
+            "SELECT id, workspace_id, device_id, tool, args_json, state, stop_requested_at,
+                    progress_json, result_json, task_id, run_id, tool_call_id, driver_call_id,
+                    timeout_ms, started_at, ended_at
+             FROM device_jobs WHERE workspace_id = ? AND tool_call_id = ?",
+        )
+        .bind(workspace_id)
+        .bind(tool_call_id)
+        .fetch_optional(&pool)
+        .await?
+        .map(DeviceJob::try_from)
+        .transpose()
+        .map_err(|error| DbError::Internal(error.to_string()))
+    }
+
+    pub async fn workspace_active_jobs(&self, workspace_id: &str, unknown_only: bool) -> Result<Vec<DeviceJob>> {
+        let pool = self.workspace_pool(workspace_id).await?;
+        let sql = if unknown_only {
+            "SELECT id, workspace_id, device_id, tool, args_json, state, stop_requested_at,
+                    progress_json, result_json, task_id, run_id, tool_call_id, driver_call_id,
+                    timeout_ms, started_at, ended_at
+             FROM device_jobs WHERE state = 'cancelled_unknown' ORDER BY started_at, id"
+        } else {
+            "SELECT id, workspace_id, device_id, tool, args_json, state, stop_requested_at,
+                    progress_json, result_json, task_id, run_id, tool_call_id, driver_call_id,
+                    timeout_ms, started_at, ended_at
+             FROM device_jobs WHERE state IN ('accepted', 'running') ORDER BY started_at, id"
+        };
+        sqlx::query_as::<_, crate::device_job::DeviceJobRow>(sql)
+            .fetch_all(&pool)
+            .await?
+            .into_iter()
+            .map(DeviceJob::try_from)
+            .collect::<std::result::Result<Vec<_>, _>>()
+            .map_err(|error| DbError::Internal(error.to_string()))
+    }
+
+    /// Remove a workspace `device_jobs` projection that never produced a
+    /// physical Job (a failed dispatch or a permit the controls refused).
+    pub async fn delete_workspace_job_projection(&self, workspace_id: &str, job_id: &str) -> Result<()> {
+        let pool = self.workspace_pool(workspace_id).await?;
+        sqlx::query("DELETE FROM device_jobs WHERE id = ?")
+            .bind(job_id)
+            .execute(&pool)
+            .await?;
+        Ok(())
     }
 
     pub async fn effect_decision(&self, workspace_id: &str, effect_id: &str) -> Result<Option<Decision>> {

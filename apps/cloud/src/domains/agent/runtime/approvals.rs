@@ -168,6 +168,15 @@ async fn decide(
         Err(error) => return harness_approval_error(error),
     };
     state.harness_stream.notify(&workspace_id);
+    // An approval answer is the fact that can unblock a Prepared Effect. Run
+    // the bounded workspace dispatch pass now so the answer is not waiting for
+    // the recovery interval; denial settles the Effect to `not_applied` in the
+    // same pass.
+    if let Some(dispatch) = &state.effect_dispatch
+        && let Err(error) = dispatch.dispatch_workspace(&workspace_id).await
+    {
+        tracing::warn!(%workspace_id, %error, "effect dispatch after approval answer failed");
+    }
     let projection = match state.db.harness_runtime_projection(&workspace_id, &task_id).await {
         Ok(Some(projection)) => projection,
         Ok(None) => return error_response(StatusCode::NOT_FOUND, "Task 不存在"),
@@ -294,6 +303,7 @@ mod tests {
     use tower::ServiceExt;
 
     use super::DbApprovalStore;
+    use crate::domains::agent::runtime::dispatch::EffectDispatch;
     use crate::test_utils::{
         auth_header, create_test_token, response_parts, seed_test_workspace, test_app_state_on_pool,
     };
@@ -302,6 +312,7 @@ mod tests {
 
     struct Fixture {
         app: Router,
+        state: crate::state::AppState,
         db: Arc<Db>,
         token: String,
         _dir: tempfile::TempDir,
@@ -334,9 +345,10 @@ mod tests {
         db.create_workspace_store(WS).await.expect("workspace store");
         let app = Router::new()
             .nest("/api", crate::api::create_router(&app_state))
-            .with_state(app_state);
+            .with_state(app_state.clone());
         Fixture {
             app,
+            state: app_state,
             db,
             token: create_test_token("user-1", "tenant-1"),
             _dir: dir,
@@ -465,6 +477,47 @@ mod tests {
     }
 
     impl Fixture {
+        fn access(&self) -> Arc<tinyiothub_runtime::access::service::AccessService> {
+            let manifests = Arc::new(tinyiothub_runtime::access::registry::ManifestRegistry::new());
+            manifests
+                .seed_builtin(include_str!(
+                    "../../../../../../drivers/demo-declarative/driver.manifest.json"
+                ))
+                .expect("demo manifest");
+            Arc::new(tinyiothub_runtime::access::service::AccessService::new(
+                std::path::PathBuf::from("."),
+                manifests,
+                Arc::new(crate::shared::access_ports::DbDriverStore(self.db.clone())),
+                Arc::new(crate::shared::access_ports::DbDeviceStore(self.db.clone())),
+                Arc::new(crate::shared::access_ports::DbProjectionStore(self.db.clone())),
+                Arc::new(crate::shared::access_ports::DbThingSource(self.db.clone())),
+                Arc::new(crate::shared::access_ports::DbAcceptanceStore(self.db.clone())),
+                Arc::new(tinyiothub_runtime::access::demand::DemandTracker::new()),
+            ))
+        }
+
+        fn job_service(&self, worker: Arc<RecordingWorker>) -> tinyiothub_runtime::job::service::JobService {
+            let access = self.access();
+            tinyiothub_runtime::job::service::JobService::new(
+                Arc::new(crate::shared::runtime_ports::HarnessAwareDeviceJobStore::new(
+                    self.db.clone(),
+                    crate::shared::runtime_ports::DbDeviceJobStore::new(self.db.as_ref().clone()),
+                )),
+                Arc::new(RecordingWorkers { worker }),
+                access.clone(),
+                access,
+                Arc::new(tinyiothub_runtime::arbitration::ArbitrationRegistry::default()),
+            )
+        }
+
+        fn app_with_dispatch(&self, dispatch: Arc<crate::domains::agent::runtime::dispatch::EffectDispatch>) -> Router {
+            let mut state = self.state.clone();
+            state.effect_dispatch = Some(dispatch);
+            Router::new()
+                .nest("/api", crate::api::create_router(&state))
+                .with_state(state)
+        }
+
         fn runtime(&self, worker: Arc<RecordingWorker>, provider: Arc<RuntimeProvider>) -> ApprovalRuntime {
             let store = Arc::new(crate::domains::agent::runtime::DbTaskStore::new(self.db.clone()));
             let approvals = Arc::new(DbApprovalStore::new(self.db.clone()));
@@ -677,17 +730,156 @@ mod tests {
         .expect("harness decision");
     }
 
-    async fn post(fixture: &Fixture, token: &str, workspace: &str, action: &str, body: Value) -> (StatusCode, Value) {
+    /// Seed a Harness Task, device/declaration, a Prepared Effect, and a
+    /// linked requested `tool_approval` Decision. No platform Task/approval
+    /// rows are written (Task 19C1 must not create them).
+    async fn seed_dispatch_approval(fixture: &Fixture) {
+        let now = Utc::now();
+        let task = AgentTask {
+            id: "task-approval".into(),
+            workspace_id: WS.into(),
+            idempotency_key: "dispatch-approval-key".into(),
+            objective: "dispatch through approval".into(),
+            session_key: None,
+            created_by: "user-1".into(),
+            status: TaskStatus::Active,
+            current_run_id: Some("run-1".into()),
+            state_version: 0,
+            created_at: now,
+            updated_at: now,
+            ended_at: None,
+        };
+        let wake = TaskWake {
+            task_id: task.id.clone(),
+            event_id: "create-dispatch-approval".into(),
+            signal_json: json!({"workspace_id":WS}).to_string(),
+            dispatch_state: WakeDispatchState::Dispatched,
+            created_at: now,
+            dispatched_at: Some(now),
+            resolved_at: Some(now),
+        };
+        fixture
+            .db
+            .harness_create_task_with_wake(&task, &wake)
+            .await
+            .expect("harness task");
+        sqlx::query(
+            "INSERT INTO things (id, name, workspace_id, thing_type) VALUES ('device-1', 'Device', ?, 'device')",
+        )
+        .bind(WS)
+        .execute(fixture.db.pool())
+        .await
+        .expect("device");
+        let declaration: tinyiothub_core::driver::declaration::DeviceDeclaration = serde_json::from_value(json!({
+            "manifestVersion": "1.1",
+            "driver": "demo-declarative",
+            "driverVersion": "1.0.0",
+            "stateFields": [{"name":"level","type":"integer"}],
+            "tools": [{
+                "name":"set_level","kind":"set","targetField":"level",
+                "parameters":{"type":"object","properties":{"level":{"type":"integer","minimum":0,"maximum":100}},"required":["level"],"additionalProperties":false},
+                "resources":["actuator"]
+            }]
+        }))
+        .expect("declaration");
+        fixture
+            .db
+            .upsert_device_declaration(&tinyiothub_core::driver::declaration::DeviceDeclarationRecord {
+                workspace_id: WS.into(),
+                thing_id: "device-1".into(),
+                driver_name: declaration.driver.clone(),
+                driver_version: declaration.driver_version.clone(),
+                declaration_json: serde_json::to_string(&declaration).expect("declaration JSON"),
+                declaration_hash: "dispatch-approval-hash".into(),
+                status: "active".into(),
+                updated_at: now.to_rfc3339(),
+            })
+            .await
+            .expect("declaration row");
+        let pool = fixture.db.workspace_pool_for_testing(WS).await.expect("workspace pool");
+        sqlx::query("INSERT INTO agent_runs (id, task_id, state) VALUES ('run-1', 'task-approval', 'running')")
+            .execute(&pool)
+            .await
+            .expect("run");
+        sqlx::query(
+            "INSERT INTO effect_intents
+                (effect_id, session_id, task_id, run_id, tool_call_id, tool_name, request_json,
+                 request_digest, idempotency_key, external_ref, state, state_version, result_json,
+                 created_at, updated_at)
+             VALUES ('effect-1', 'session-1', 'task-approval', 'run-1', 'call-1', 'set_level', ?,
+                     'digest-1', 'effect-1', NULL, 'prepared', 1, NULL, ?, ?)",
+        )
+        .bind(
+            json!({
+                "deviceId": "device-1",
+                "tool": "set_level",
+                "argsJson": {"level": 7},
+                "reason": "confirm",
+            })
+            .to_string(),
+        )
+        .bind(now)
+        .bind(now)
+        .execute(&pool)
+        .await
+        .expect("effect");
+        sqlx::query(
+            "INSERT INTO decisions
+                (decision_id, kind, state, session_id, run_id, task_id, effect_id, subject_json,
+                 options_json, created_at, updated_at, expires_at, answer, answer_actor,
+                 answer_event_id, answer_evidence_json, consumed_at, consumed_by)
+             VALUES ('approval-1', 'tool_approval', 'requested', 'session-1', 'run-1',
+                     'task-approval', 'effect-1', ?, '[\"approved\",\"denied\"]', ?, ?, NULL,
+                     NULL, NULL, NULL, NULL, NULL, NULL)",
+        )
+        .bind(
+            json!({
+                "deviceId": "device-1",
+                "tool": "set_level",
+                "argsJson": {"level": 7},
+                "reason": "confirm",
+            })
+            .to_string(),
+        )
+        .bind(now)
+        .bind(now)
+        .execute(&pool)
+        .await
+        .expect("decision");
+    }
+
+    async fn post_to(
+        app: &Router,
+        token: &str,
+        workspace: &str,
+        task_id: &str,
+        approval_id: &str,
+        action: &str,
+        body: Value,
+    ) -> (StatusCode, Value) {
         let request = Request::builder()
             .method("POST")
             .uri(format!(
-                "/api/v1/workspaces/{workspace}/agent/tasks/task-approval/approvals/approval-1/{action}"
+                "/api/v1/workspaces/{workspace}/agent/tasks/{task_id}/approvals/{approval_id}/{action}"
             ))
             .header("Authorization", auth_header(token))
             .header("Content-Type", "application/json")
             .body(Body::from(body.to_string()))
             .expect("request");
-        response_parts(fixture.app.clone().oneshot(request).await.expect("response")).await
+        response_parts(app.clone().oneshot(request).await.expect("response")).await
+    }
+
+    async fn post(fixture: &Fixture, token: &str, workspace: &str, action: &str, body: Value) -> (StatusCode, Value) {
+        post_to(
+            &fixture.app,
+            token,
+            workspace,
+            "task-approval",
+            "approval-1",
+            action,
+            body,
+        )
+        .await
     }
 
     fn decision_wake(approval: &TaskApproval) -> TaskWake {
@@ -1459,6 +1651,75 @@ mod tests {
                 .await
                 .expect("job count");
             assert_eq!(jobs, 0, "{action}");
+        }
+    }
+
+    /// Task 19C1: the HTTP answer is the unblock fact. Approval dispatches the
+    /// Prepared Effect immediately; denial settles it without a Job. Neither
+    /// flow writes a platform approval or the legacy runtime ledger.
+    #[tokio::test]
+    async fn approval_answer_runs_the_effect_dispatch_pass_for_that_workspace() {
+        for (action, expected_effect, expected_jobs) in
+            [("approve", "dispatching", 1_usize), ("reject", "not_applied", 0)]
+        {
+            let fixture = fixture().await;
+            seed_dispatch_approval(&fixture).await;
+            let worker = Arc::new(RecordingWorker::default());
+            let dispatch = Arc::new(EffectDispatch::new(
+                fixture.db.clone(),
+                fixture.job_service(worker.clone()),
+            ));
+
+            // The unanswered decision blocks before the HTTP answer.
+            let before = dispatch.dispatch_workspace(WS).await.expect("pre-answer pass");
+            assert_eq!(before.blocked, 1, "{action}");
+            assert!(worker.submitted.lock().expect("submissions").is_empty(), "{action}");
+
+            let app = fixture.app_with_dispatch(dispatch);
+            let (status, body) = post_to(
+                &app,
+                &fixture.token,
+                WS,
+                "task-approval",
+                "approval-1",
+                action,
+                json!({}),
+            )
+            .await;
+            assert_eq!(status, StatusCode::OK, "{action}: {body}");
+
+            let pool = fixture.db.workspace_pool_for_testing(WS).await.expect("workspace pool");
+            let (effect_state, external_ref): (String, Option<String>) =
+                sqlx::query_as("SELECT state, external_ref FROM effect_intents WHERE effect_id = 'effect-1'")
+                    .fetch_one(&pool)
+                    .await
+                    .expect("effect");
+            assert_eq!(effect_state, expected_effect, "{action}");
+            assert_eq!(
+                worker.submitted.lock().expect("submissions").len(),
+                expected_jobs,
+                "{action}"
+            );
+            if expected_jobs == 1 {
+                assert_eq!(
+                    external_ref.as_deref(),
+                    Some("job:effect-1"),
+                    "dispatch must record the deterministic Job identity"
+                );
+            } else {
+                assert!(external_ref.is_none(), "{action}");
+            }
+
+            let platform_approvals: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM task_approvals")
+                .fetch_one(fixture.db.pool())
+                .await
+                .expect("platform approvals");
+            assert_eq!(platform_approvals, 0, "{action}: no platform approval writes");
+            let legacy_events: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM hub_ledger WHERE kind = 'runtime.v1'")
+                .fetch_one(fixture.db.pool())
+                .await
+                .expect("legacy runtime events");
+            assert_eq!(legacy_events, 0, "{action}: no runtime.v1 writes");
         }
     }
 }

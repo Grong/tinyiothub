@@ -145,10 +145,11 @@ impl ServiceManager {
         data_server.set_sampler(sampler);
 
         let task_jobs = tinyiothub_runtime::job::service::JobService::new(
-            Arc::new(
+            Arc::new(crate::shared::runtime_ports::HarnessAwareDeviceJobStore::new(
+                app_state.db.clone(),
                 crate::shared::runtime_ports::DbDeviceJobStore::new((*app_state.db).clone())
                     .with_recorder(app_state.runtime_recorder.clone()),
-            ),
+            )),
             Arc::new(tinyiothub_runtime::job::worker_adapter::DataServerJobWorkers::new(
                 data_server.as_ref().clone(),
             )),
@@ -156,7 +157,20 @@ impl ServiceManager {
             access.clone(),
             app_state.arbitration.clone(),
         );
-        data_server.set_job_result_sink(Arc::new(task_jobs.clone()));
+        // Task 19C1: the single JobService also backs the Harness Effect
+        // dispatcher. The sink still lets JobService own the terminal Job fact;
+        // it then settles the matching workspace Effect.
+        let effect_dispatch = Arc::new(
+            crate::domains::agent::runtime::dispatch::EffectDispatch::new(app_state.db.clone(), task_jobs.clone())
+                .with_stream(app_state.harness_stream.clone()),
+        );
+        app_state.effect_dispatch = Some(effect_dispatch.clone());
+        data_server.set_job_result_sink(Arc::new(
+            crate::domains::agent::runtime::dispatch::HarnessJobResultSink::new(
+                task_jobs.clone(),
+                effect_dispatch.clone(),
+            ),
+        ));
 
         // 启动数据服务器
         let shutdown_rx = self.shutdown_tx.subscribe();
@@ -699,6 +713,7 @@ impl ServiceManager {
                     ),
                     jobs: Some(task_jobs),
                     harness_task_store: true,
+                    effect_dispatch: Some(effect_dispatch),
                 })
                 .await
                 .map_err(|error| Error::Internal(format!("Task runtime startup failed: {error}")))?;

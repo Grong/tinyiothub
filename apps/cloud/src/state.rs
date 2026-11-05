@@ -106,6 +106,8 @@ pub struct AppState {
     pub runtime_stream: Arc<crate::domains::agent::runtime::stream::RuntimeStreamHub>,
     /// Workspace-Harness Task SSE tail (Task 19B cutover).
     pub harness_stream: Arc<crate::domains::agent::runtime::harness_stream::HarnessStreamHub>,
+    /// Production Harness Effect dispatcher (Task 19C1).
+    pub effect_dispatch: Option<Arc<crate::domains::agent::runtime::dispatch::EffectDispatch>>,
     /// Shared runtime event recorder for Task/Run/Job/watch facts.
     pub runtime_recorder: crate::domains::agent::runtime::stream::RuntimeRecorder,
 
@@ -558,6 +560,7 @@ impl AppState {
             event_bus,
             runtime_stream,
             harness_stream,
+            effect_dispatch: None,
             runtime_recorder,
             sse_manager,
             sse_token_manager,
@@ -1094,6 +1097,7 @@ impl axum::extract::FromRef<AppState> for crate::domains::agent::AgentState {
             event_bus: state.event_bus.clone(),
             runtime_stream: state.runtime_stream.clone(),
             harness_stream: state.harness_stream.clone(),
+            effect_dispatch: state.effect_dispatch.clone(),
             runtime_recorder: state.runtime_recorder.clone(),
         }
     }

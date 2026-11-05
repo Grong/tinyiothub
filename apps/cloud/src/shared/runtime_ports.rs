@@ -247,6 +247,277 @@ impl DeviceJobStore for DbDeviceJobStore {
     }
 }
 
+/// `DeviceJobStore` that routes Harness Effect Jobs (`job:<effect-id>`) to the
+/// owning workspace `device_jobs` projection.
+///
+/// Task 19C1 dispatches Harness Effects through the single existing
+/// `JobService`, but production Tasks no longer have a platform
+/// `agent_tasks` row, so the platform Job writer's foreign key cannot accept
+/// them. Until Task 19C3 moves the whole store, this adapter keeps legacy Jobs
+/// on `DbDeviceJobStore` and stores Effect Jobs in the workspace generation.
+/// The Job id convention is the discriminator; it is the same deterministic id
+/// the dispatcher uses.
+pub struct HarnessAwareDeviceJobStore {
+    db: Arc<Db>,
+    legacy: DbDeviceJobStore,
+    workspaces: Arc<dashmap::DashMap<String, String>>,
+}
+
+fn job_storage(error: tinyiothub_storage::error::DbError) -> DeviceJobError {
+    DeviceJobError::Storage(error.to_string())
+}
+
+fn is_harness_job(job_id: &str) -> bool {
+    job_id.starts_with("job:")
+}
+
+impl HarnessAwareDeviceJobStore {
+    pub fn new(db: Arc<Db>, legacy: DbDeviceJobStore) -> Self {
+        Self {
+            db,
+            legacy,
+            workspaces: Arc::new(dashmap::DashMap::new()),
+        }
+    }
+
+    async fn workspace_for_job(&self, job_id: &str) -> Result<Option<String>, DeviceJobError> {
+        if let Some(workspace_id) = self.workspaces.get(job_id) {
+            return Ok(Some(workspace_id.clone()));
+        }
+        let Some(effect_id) = job_id.strip_prefix("job:") else {
+            return Ok(None);
+        };
+        for workspace_id in self
+            .db
+            .find_all_workspace_ids()
+            .await
+            .map_err(|error| DeviceJobError::Storage(error.to_string()))?
+        {
+            if self
+                .db
+                .effect_intent(&workspace_id, effect_id)
+                .await
+                .map_err(job_storage)?
+                .is_some()
+            {
+                self.workspaces.insert(job_id.to_string(), workspace_id.clone());
+                return Ok(Some(workspace_id));
+            }
+        }
+        Ok(None)
+    }
+
+    async fn workspace_job(&self, job_id: &str) -> Result<Option<DeviceJob>, DeviceJobError> {
+        let Some(workspace_id) = self.workspace_for_job(job_id).await? else {
+            return Ok(None);
+        };
+        self.db.workspace_job(&workspace_id, job_id).await.map_err(job_storage)
+    }
+}
+
+#[async_trait]
+impl DeviceJobStore for HarnessAwareDeviceJobStore {
+    async fn create_job(&self, job: &DeviceJob) -> Result<(), DeviceJobError> {
+        if !is_harness_job(&job.id) {
+            return self.legacy.create_job(job).await;
+        }
+        self.db
+            .upsert_workspace_job_projection(&job.workspace_id, job)
+            .await
+            .map_err(job_storage)?;
+        self.workspaces.insert(job.id.clone(), job.workspace_id.clone());
+        Ok(())
+    }
+
+    async fn get_job(&self, workspace_id: &str, job_id: &str) -> Result<Option<DeviceJob>, DeviceJobError> {
+        if !is_harness_job(job_id) {
+            return self.legacy.get_job(workspace_id, job_id).await;
+        }
+        self.db.workspace_job(workspace_id, job_id).await.map_err(job_storage)
+    }
+
+    async fn get_job_by_id(&self, job_id: &str) -> Result<Option<DeviceJob>, DeviceJobError> {
+        if !is_harness_job(job_id) {
+            return self.legacy.get_job_by_id(job_id).await;
+        }
+        self.workspace_job(job_id).await
+    }
+
+    async fn get_task_job(
+        &self,
+        workspace_id: &str,
+        task_id: &str,
+        job_id: &str,
+    ) -> Result<Option<DeviceJob>, DeviceJobError> {
+        if !is_harness_job(job_id) {
+            return self.legacy.get_task_job(workspace_id, task_id, job_id).await;
+        }
+        Ok(self
+            .db
+            .workspace_job(workspace_id, job_id)
+            .await
+            .map_err(job_storage)?
+            .filter(|job| job.task_id.as_deref() == Some(task_id)))
+    }
+
+    async fn get_job_by_tool_call(
+        &self,
+        workspace_id: &str,
+        tool_call_id: &str,
+    ) -> Result<Option<DeviceJob>, DeviceJobError> {
+        if let Some(job) = self.legacy.get_job_by_tool_call(workspace_id, tool_call_id).await? {
+            return Ok(Some(job));
+        }
+        self.db
+            .workspace_job_by_tool_call(workspace_id, tool_call_id)
+            .await
+            .map_err(job_storage)
+    }
+
+    async fn submit_approved_job(&self, job: &DeviceJob) -> Result<(Option<DeviceJob>, bool), DeviceJobError> {
+        // Approved legacy Jobs stay on the platform writer until 19C3.
+        self.legacy.submit_approved_job(job).await
+    }
+
+    async fn mark_running(&self, job_id: &str, driver_call_id: &str) -> Result<DeviceJob, DeviceJobError> {
+        if !is_harness_job(job_id) {
+            return self.legacy.mark_running(job_id, driver_call_id).await;
+        }
+        let workspace_id = self.workspace_for_job(job_id).await?.ok_or(DeviceJobError::NotFound)?;
+        let mut job = self
+            .db
+            .workspace_job(&workspace_id, job_id)
+            .await
+            .map_err(job_storage)?
+            .ok_or(DeviceJobError::NotFound)?;
+        if job.state != DeviceJobState::Accepted {
+            return Err(DeviceJobError::Conflict("job is not accepted".into()));
+        }
+        job.state = DeviceJobState::Running;
+        job.driver_call_id = Some(driver_call_id.to_string());
+        self.db
+            .upsert_workspace_job_projection(&workspace_id, &job)
+            .await
+            .map_err(job_storage)?;
+        Ok(job)
+    }
+
+    async fn finish_job(
+        &self,
+        job_id: &str,
+        state: DeviceJobState,
+        result: &serde_json::Value,
+        wake: Option<&TaskWake>,
+    ) -> Result<bool, DeviceJobError> {
+        if !is_harness_job(job_id) {
+            return self.legacy.finish_job(job_id, state, result, wake).await;
+        }
+        let Some(workspace_id) = self.workspace_for_job(job_id).await? else {
+            return Err(DeviceJobError::NotFound);
+        };
+        let mut job = self
+            .db
+            .workspace_job(&workspace_id, job_id)
+            .await
+            .map_err(job_storage)?
+            .ok_or(DeviceJobError::NotFound)?;
+        if !job.state.is_active() {
+            return Ok(false);
+        }
+        job.state = state;
+        job.result_json = Some(result.clone());
+        job.ended_at = Some(chrono::Utc::now());
+        self.db
+            .upsert_workspace_job_projection(&workspace_id, &job)
+            .await
+            .map_err(job_storage)?;
+        // Effect settlement owns the wake; a platform wake would point at no
+        // platform Task row.
+        Ok(true)
+    }
+
+    async fn update_progress(&self, job_id: &str, progress: &serde_json::Value) -> Result<bool, DeviceJobError> {
+        if !is_harness_job(job_id) {
+            return self.legacy.update_progress(job_id, progress).await;
+        }
+        let Some(workspace_id) = self.workspace_for_job(job_id).await? else {
+            return Err(DeviceJobError::NotFound);
+        };
+        let mut job = self
+            .db
+            .workspace_job(&workspace_id, job_id)
+            .await
+            .map_err(job_storage)?
+            .ok_or(DeviceJobError::NotFound)?;
+        if !job.state.is_active() {
+            return Ok(false);
+        }
+        job.progress_json = Some(progress.clone());
+        self.db
+            .upsert_workspace_job_projection(&workspace_id, &job)
+            .await
+            .map_err(job_storage)?;
+        Ok(true)
+    }
+
+    async fn request_stop(&self, workspace_id: &str, task_id: &str, job_id: &str) -> Result<DeviceJob, DeviceJobError> {
+        if !is_harness_job(job_id) {
+            return self.legacy.request_stop(workspace_id, task_id, job_id).await;
+        }
+        let mut job = self
+            .db
+            .workspace_job(workspace_id, job_id)
+            .await
+            .map_err(job_storage)?
+            .filter(|job| job.task_id.as_deref() == Some(task_id))
+            .ok_or(DeviceJobError::NotFound)?;
+        if job.state.is_active() && job.stop_requested_at.is_none() {
+            job.stop_requested_at = Some(chrono::Utc::now());
+            self.db
+                .upsert_workspace_job_projection(workspace_id, &job)
+                .await
+                .map_err(job_storage)?;
+        }
+        Ok(job)
+    }
+
+    async fn active_jobs(
+        &self,
+        workspace_id: Option<&str>,
+        unknown_only: bool,
+    ) -> Result<Vec<DeviceJob>, DeviceJobError> {
+        let mut jobs = self.legacy.active_jobs(workspace_id, unknown_only).await?;
+        match workspace_id {
+            Some(workspace_id) => {
+                jobs.extend(
+                    self.db
+                        .workspace_active_jobs(workspace_id, unknown_only)
+                        .await
+                        .map_err(job_storage)?,
+                );
+            }
+            None => {
+                for workspace_id in self
+                    .db
+                    .find_all_workspace_ids()
+                    .await
+                    .map_err(|error| DeviceJobError::Storage(error.to_string()))?
+                {
+                    match self.db.workspace_active_jobs(&workspace_id, unknown_only).await {
+                        Ok(mut workspace_jobs) => jobs.append(&mut workspace_jobs),
+                        Err(error) => {
+                            tracing::warn!(%workspace_id, %error, "workspace job scan failed");
+                        }
+                    }
+                }
+            }
+        }
+        jobs.sort_by(|left, right| left.id.cmp(&right.id));
+        jobs.dedup_by(|left, right| left.id == right.id);
+        Ok(jobs)
+    }
+}
+
 /// `Db` → `EventRetentionStore`。SQL 已收编进 `db::event` 领域函数（Task 10），
 /// 与原 runtime 内联语句逐字一致。
 pub struct EventRetentionAdapter(pub Db);

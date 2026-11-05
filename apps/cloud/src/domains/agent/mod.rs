@@ -83,6 +83,10 @@ pub struct AgentState {
     pub runtime_stream: Arc<runtime::stream::RuntimeStreamHub>,
     /// Workspace-Harness Task SSE tail (Task 19B cutover).
     pub harness_stream: Arc<runtime::harness_stream::HarnessStreamHub>,
+    /// Production Harness Effect dispatcher (Task 19C1). None in unit tests
+    /// and unfinished compositions; approval answers then leave dispatch to
+    /// the bounded background pass.
+    pub effect_dispatch: Option<Arc<runtime::dispatch::EffectDispatch>>,
     /// Shared durable recorder used by the existing runtime stores.
     pub runtime_recorder: runtime::stream::RuntimeRecorder,
 }
