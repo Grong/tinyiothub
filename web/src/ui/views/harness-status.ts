@@ -36,6 +36,13 @@ const statusEntries = {
   cancelled: { label: '已取消', icon: '⊘', tone: 'muted' },
   enabled: { label: '已启用', icon: '●', tone: 'ok' },
   disabled: { label: '未启用', icon: '○', tone: 'muted' },
+
+  // Supervisor health (Task 14). Idle and stalled are deliberately distinct:
+  // "no new Runs" must never be rendered as a scheduler failure.
+  healthy: { label: '运行正常', icon: '●', tone: 'ok' },
+  idle: { label: '正常空闲', icon: '○', tone: 'muted' },
+  stalled: { label: '调度停滞', icon: '⚠', tone: 'danger' },
+  interrupted: { label: '已中断', icon: '⚠', tone: 'warn' },
 } as const satisfies Record<string, HarnessStatusEntry>;
 
 /** Fixed public mapping. Tests extend this map whenever a status is added. */

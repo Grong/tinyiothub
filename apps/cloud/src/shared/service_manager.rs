@@ -486,6 +486,9 @@ impl ServiceManager {
             // 3. 僵尸 reconcile：DB 里 status='running' 但 registry 无主的
             //    run → 'interrupted'。
             crate::bootstrap::reconcile_zombie_runs(&app_state.db, &runtime).await;
+            // Task 14 / Task 9 follow-up: recover in-flight Harness workspace
+            // Runs before the persistence subscriber starts consuming facts.
+            crate::bootstrap::reconcile_harness_runs(&app_state.db).await;
             // 4. 持久化订阅者（restore 前取得的 receiver；shutdown token
             //    编排主循环与心跳重试任务退出）。CEO review T1：改经监管
             //    循环启动——任务 panic/异常退出不再静默，error! + 新 receiver

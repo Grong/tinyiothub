@@ -11,6 +11,7 @@ import type {
   HarnessOverview,
   HarnessSimulationProjection,
   HarnessSubagentPage,
+  HarnessSupervisor,
   HarnessWorkflowSnapshotList,
   HarnessWorkflowTemplateInput,
   HarnessWorkflowTemplateList,
@@ -168,6 +169,31 @@ export function startHarnessDryRun(
   return ApiClient.post(workflowVersionPath(workspaceId, workflowId, version, '/dry-run'), {
     snapshotSeq,
   });
+}
+
+/**
+ * Read-only Supervisor health facts plus the current dead-wake page. Retry
+ * permission is reported per caller; no heartbeat is used as liveness.
+ */
+export function getHarnessSupervisor(
+  workspaceId: string,
+  signal?: AbortSignal,
+): Promise<ApiResponse<HarnessSupervisor>> {
+  return ApiClient.get(harnessPath(workspaceId, '/supervisor'), undefined, signal);
+}
+
+/**
+ * Confirm exactly one original dead wake. The server reuses the original
+ * event ID; callers never pass a replacement or bulk list.
+ */
+export function retryHarnessDeadWake(
+  workspaceId: string,
+  eventId: string,
+): Promise<ApiResponse<{ eventId: string; state: string; retriedBy: string }>> {
+  return ApiClient.post(
+    harnessPath(workspaceId, `/supervisor/dead-wakes/${encodeURIComponent(eventId)}/retry`),
+    {},
+  );
 }
 
 /** Read-only simulation Run projection; production Task IDs are rejected. */

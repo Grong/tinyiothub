@@ -35,11 +35,12 @@ use tinyiothub_web::security::Claims;
 
 use crate::domains::agent::AgentState;
 use crate::domains::agent::host::handler::agent_tasks::check_agent_admin_response;
+use crate::domains::agent::host::handler::is_admin;
 use crate::domains::agent::runtime::tasks::error_response;
 use crate::domains::agent::tools::resolve_capabilities;
 use crate::domains::agent::workflows::{
-    DryRunInput, ScriptedDryRunExecutor, TemplateInput, WorkflowDryRun, WorkflowService, builtin_templates,
-    next_wake_at,
+    DryRunInput, ScriptedDryRunExecutor, SupervisorHealth, TemplateInput, WorkflowDryRun, WorkflowService,
+    builtin_templates, next_wake_at,
 };
 
 const DEFAULT_ATTENTION_LIMIT: i64 = 5;
@@ -87,6 +88,11 @@ where
             post(start_workflow_dry_run),
         )
         .route("/{workspace_id}/harness/simulations/{task_id}", get(get_simulation))
+        .route("/{workspace_id}/harness/supervisor", get(get_supervisor_health))
+        .route(
+            "/{workspace_id}/harness/supervisor/dead-wakes/{event_id}/retry",
+            post(retry_supervisor_dead_wake),
+        )
 }
 
 /// Request DTOs accept the snake_case bodies produced by the web ApiClient.
@@ -469,6 +475,72 @@ pub async fn get_simulation(
         Err(error) => {
             tracing::error!(%workspace_id, %task_id, %error, "load simulation projection failed");
             error_response(StatusCode::SERVICE_UNAVAILABLE, "Harness 存储不可用")
+        }
+    }
+}
+
+fn supervisor_health(state: &AgentState, workspace_id: &str) -> SupervisorHealth {
+    SupervisorHealth::new(state.db.as_ref().clone(), workspace_id)
+}
+
+/// Read-only Supervisor panel: bounded health facts plus the current
+/// dead-wake page. Retry availability is permission-driven per caller.
+pub async fn get_supervisor_health(
+    State(state): State<AgentState>,
+    Extension(claims): Extension<Claims>,
+    Path(workspace_id): Path<String>,
+) -> Response {
+    if let Err(response) = verify_workspace_read(&state, &claims, &workspace_id).await {
+        return response;
+    }
+    let health = supervisor_health(&state, &workspace_id);
+    let snapshot = match health.snapshot().await {
+        Ok(snapshot) => snapshot,
+        Err(error) => {
+            tracing::error!(%workspace_id, %error, "load Supervisor health failed");
+            return error_response(StatusCode::SERVICE_UNAVAILABLE, "Harness 存储不可用");
+        }
+    };
+    let dead_wakes = match health.dead_wakes(200).await {
+        Ok(dead_wakes) => dead_wakes,
+        Err(error) => {
+            tracing::error!(%workspace_id, %error, "load Supervisor dead wakes failed");
+            return error_response(StatusCode::SERVICE_UNAVAILABLE, "Harness 存储不可用");
+        }
+    };
+    let can_retry = is_admin(&state.db, &claims.user_id).await;
+    ApiResponseBuilder::success(json!({
+        "health": snapshot,
+        "deadWakes": dead_wakes,
+        "canRetry": can_retry,
+        "readOnly": !can_retry,
+    }))
+    .into_response()
+}
+
+/// Confirm exactly one original dead wake. Agent management permission and
+/// the workspace/tenant check happen before the workspace store is opened.
+pub async fn retry_supervisor_dead_wake(
+    State(state): State<AgentState>,
+    Extension(claims): Extension<Claims>,
+    Path((workspace_id, event_id)): Path<(String, String)>,
+) -> Response {
+    if let Err(response) = check_agent_admin_response(&state, &claims, &workspace_id).await {
+        return response;
+    }
+    let health = supervisor_health(&state, &workspace_id);
+    match health.retry_dead_wake(&workspace_id, &event_id, &claims.user_id).await {
+        Ok(true) => ApiResponseBuilder::success(json!({
+            "eventId": event_id,
+            "state": "pending",
+            "retriedBy": claims.user_id,
+        }))
+        .into_response(),
+        Ok(false) => error_response(StatusCode::NOT_FOUND, "Dead wake 不存在"),
+        Err(DbError::Validation { message }) => error_response(StatusCode::BAD_REQUEST, message),
+        Err(error) => {
+            tracing::error!(%workspace_id, %event_id, %error, "retry Supervisor dead wake failed");
+            error_response(StatusCode::SERVICE_UNAVAILABLE, "Wake retry 失败")
         }
     }
 }
@@ -1313,6 +1385,70 @@ mod tests {
             .expect("approval request");
         let response = app.clone().oneshot(request).await.expect("approval response");
         assert!(!response.status().is_success());
+
+        drop(app);
+        fixture.close().await;
+    }
+
+    #[tokio::test]
+    async fn supervisor_health_http_is_member_readable_but_retry_requires_admin_before_store_open() {
+        let workspace_id = "ws-supervisor-http";
+        let fixture = fixture_workspace(workspace_id).await;
+        let (mut app_state, pool) = setup_test_app_with_pool().await;
+        seed_test_workspace(&pool, "tenant-1", workspace_id).await;
+        seed_test_workspace(&pool, "tenant-2", "ws-supervisor-other").await;
+        app_state.db = Arc::new(fixture.db.clone());
+        let app = axum::Router::new()
+            .nest("/api", crate::api::create_router(&app_state))
+            .with_state(app_state);
+        let admin = create_test_token("admin-user-001", "tenant-1");
+        let member = create_test_token("user-2", "tenant-1");
+        let base = format!("/api/v1/workspaces/{workspace_id}/harness/supervisor");
+
+        let (status, body) = get(&app, Some(&member), &base).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(body["result"]["health"]["status"], "idle");
+        assert_eq!(body["result"]["canRetry"], false);
+        assert_eq!(body["result"]["readOnly"], true);
+        assert_eq!(body["result"]["deadWakes"].as_array().unwrap().len(), 0);
+
+        let retry_uri = format!("{base}/dead-wakes/event-original/retry");
+        let (status, body) = send(&app, "POST", Some(&member), &retry_uri, Some(json!({}))).await;
+        assert_eq!(status, StatusCode::FORBIDDEN, "{body}");
+
+        let (status, body) = get(&app, Some(&admin), &base).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(body["result"]["canRetry"], true);
+        assert_eq!(body["result"]["readOnly"], false);
+
+        let (status, body) = send(&app, "POST", Some(&admin), &retry_uri, Some(json!({}))).await;
+        assert_eq!(status, StatusCode::NOT_FOUND, "{body}");
+
+        // Cross-tenant and missing Workspaces are rejected before their
+        // harness store is opened or created.
+        let (status, body) = get(
+            &app,
+            Some(&admin),
+            "/api/v1/workspaces/ws-supervisor-other/harness/supervisor",
+        )
+        .await;
+        assert_eq!(status, StatusCode::FORBIDDEN, "{body}");
+        let (status, body) = send(
+            &app,
+            "POST",
+            Some(&admin),
+            "/api/v1/workspaces/ws-supervisor-other/harness/supervisor/dead-wakes/event/retry",
+            Some(json!({})),
+        )
+        .await;
+        assert_eq!(status, StatusCode::FORBIDDEN, "{body}");
+        assert!(
+            !fixture
+                .root
+                .join("data/agents/ws-supervisor-other/harness/harness.db")
+                .exists(),
+            "cross-tenant requests must not open the workspace store"
+        );
 
         drop(app);
         fixture.close().await;

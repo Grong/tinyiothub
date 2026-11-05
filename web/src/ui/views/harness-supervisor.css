@@ -1,0 +1,251 @@
+/* Supervisor health and in-context dead-wake recovery (Task 14). */
+
+view-harness-supervisor {
+  display: block;
+  color: var(--text);
+}
+
+.harness-supervisor {
+  max-width: 1040px;
+  margin: 0 auto;
+  padding: var(--space-6);
+  overflow-wrap: anywhere;
+}
+
+.harness-supervisor__back {
+  display: inline-flex;
+  align-items: center;
+  min-height: 44px;
+  color: var(--accent);
+  font-size: 13px;
+  text-decoration: none;
+}
+
+.harness-supervisor__back:hover {
+  text-decoration: underline;
+}
+
+.harness-supervisor__header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-4);
+  margin: var(--space-3) 0 var(--space-4);
+}
+
+.harness-supervisor__header h1 {
+  margin: 0 0 var(--space-2);
+  color: var(--text-strong);
+  font-family: var(--font-display);
+  font-size: 24px;
+  line-height: 1.2;
+}
+
+.harness-supervisor__header h1:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+.harness-supervisor__header p {
+  max-width: 62ch;
+  margin: 0;
+  color: var(--muted-foreground);
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+.harness-supervisor__header .btn,
+.harness-supervisor__retry {
+  min-height: 44px;
+}
+
+.harness-supervisor__section {
+  margin-top: var(--space-4);
+  padding: var(--space-4);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--card);
+}
+
+.harness-supervisor__section-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-3);
+  margin-bottom: var(--space-3);
+}
+
+.harness-supervisor__section-header h2 {
+  margin: 0 0 var(--space-1);
+  color: var(--text-strong);
+  font-family: var(--font-display);
+  font-size: 18px;
+  line-height: 1.3;
+}
+
+.harness-supervisor__summary,
+.harness-supervisor__hint {
+  margin: 0;
+  color: var(--muted-foreground);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.harness-supervisor__hint {
+  display: block;
+  margin-top: var(--space-1);
+  font-size: 12px;
+}
+
+/* Stalled and unknown use warning colour with explicit text, never a fake
+   online/progress indicator. */
+.harness-supervisor__stalled {
+  margin: 0 0 var(--space-3);
+  padding: var(--space-3);
+  border: 1px solid var(--danger);
+  border-radius: var(--radius-sm);
+  background: var(--danger-subtle);
+  color: var(--text);
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+.harness-supervisor__quiet {
+  margin: 0 0 var(--space-3);
+  color: var(--muted-foreground);
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+.harness-supervisor__facts {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 180px), 1fr));
+  gap: var(--space-3);
+  margin: 0;
+}
+
+.harness-supervisor__facts div {
+  padding: var(--space-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-elevated);
+}
+
+.harness-supervisor__facts dt {
+  color: var(--muted-foreground);
+  font-size: 12px;
+}
+
+.harness-supervisor__facts dd {
+  margin: var(--space-1) 0 0;
+  color: var(--text-strong);
+  font-size: 13px;
+}
+
+.harness-supervisor__readonly {
+  margin: 0 0 var(--space-3);
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--muted-foreground);
+  font-size: 13px;
+}
+
+.harness-supervisor__empty {
+  margin: 0;
+  color: var(--muted-foreground);
+  font-size: 14px;
+}
+
+.harness-supervisor__wake-list {
+  display: grid;
+  gap: var(--space-3);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.harness-supervisor__wake {
+  padding: var(--space-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-elevated);
+}
+
+.harness-supervisor__wake-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-2);
+}
+
+.harness-supervisor__wake-id {
+  margin: 0;
+  color: var(--text-strong);
+  font-family: var(--mono);
+  font-size: 13px;
+}
+
+.harness-supervisor__wake-target,
+.harness-supervisor__wake-reason,
+.harness-supervisor__wake-time {
+  margin: var(--space-1) 0 0;
+  color: var(--muted-foreground);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.harness-supervisor__result {
+  margin: var(--space-2) 0 0;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.harness-supervisor__result--success {
+  color: var(--text-strong);
+}
+
+.harness-supervisor__result--error {
+  color: var(--danger);
+}
+
+.harness-supervisor__loading {
+  color: var(--muted-foreground);
+  font-size: 13px;
+}
+
+.harness-supervisor__error {
+  color: var(--danger);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.harness-supervisor :focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+.harness-sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+@media (max-width: 640px) {
+  .harness-supervisor {
+    padding: var(--space-4);
+  }
+
+  .harness-supervisor__header {
+    flex-direction: column;
+  }
+}

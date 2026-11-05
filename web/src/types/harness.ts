@@ -223,6 +223,56 @@ export interface HarnessDryRunResult {
   runId: string;
 }
 
+/** Scheduler health status. `idle` is normal, never a stalled alias. */
+export type HarnessSupervisorStatus = 'idle' | 'healthy' | 'stalled';
+
+export type HarnessStalledReason =
+  | 'tick_deadline_exceeded'
+  | 'due_not_started'
+  | 'clock_rollback';
+
+/**
+ * Facts from the single mutable supervisor_state row plus durable Workflow,
+ * wake and Task projections. AI heartbeat is never part of liveness here.
+ */
+export interface HarnessSupervisorHealth {
+  status: HarnessSupervisorStatus;
+  stalledReason: HarnessStalledReason | null;
+  stalledLabel: string | null;
+  tickSeq: number;
+  lastStartedAt: string | null;
+  lastCompletedAt: string | null;
+  /** Planned wake time only; it never promises on-time execution. */
+  nextWakeAt: string | null;
+  oldestPendingAt: string | null;
+  schedulingDelaySeconds: number;
+  activeMains: number;
+  activeSubagents: number;
+  enabledWorkflows: number;
+  pendingWakes: number;
+  lastError: string | null;
+  /** True when no Main/Subagent is active; separate from scheduler health. */
+  noNewRuns: boolean;
+  observedAt: string;
+}
+
+/** One dead wake that can be retried in place under its original event ID. */
+export interface HarnessDeadWake {
+  eventId: string;
+  taskId: string;
+  failureReason: string | null;
+  createdAt: string;
+  retriedBy: string | null;
+  retriedAt: string | null;
+}
+
+export interface HarnessSupervisor {
+  health: HarnessSupervisorHealth;
+  deadWakes: HarnessDeadWake[];
+  canRetry: boolean;
+  readOnly: boolean;
+}
+
 /** Generic read-only Run projection reused by the simulation page. */
 export interface HarnessSimulationStep {
   id: string;

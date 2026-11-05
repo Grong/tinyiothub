@@ -55,6 +55,7 @@ pub mod harness_effect;
 pub mod harness_event;
 pub mod harness_simulation;
 pub mod harness_snapshot;
+pub mod harness_supervisor;
 pub mod harness_workflow;
 mod harness_workspace;
 /// Heartbeat task/result/trust persistence and row types.

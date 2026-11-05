@@ -44,6 +44,7 @@ describe('Harness canonical URL state', () => {
       version: null,
     });
     expect(parseHarnessHash('#/harness/workflows/templates')).toEqual({ name: 'templates' });
+    expect(parseHarnessHash('#/harness/supervisor')).toEqual({ name: 'supervisor' });
     expect(parseHarnessHash('#/harness/tasks/task%3A1')).toMatchObject({
       name: 'task',
       taskId: 'task:1',

@@ -292,6 +292,20 @@ impl Db {
     ) -> Result<Option<HarnessEventInput>> {
         let pool = self.workspace_pool(workspace_id).await?;
         let mut tx = pool.begin().await?;
+        // The run's own execution mode decides the event mode. Recovery must
+        // never relabel an isolated simulation run as production history.
+        let execution_mode = sqlx::query_scalar::<_, String>(
+            "SELECT execution_mode FROM agent_runs
+             WHERE id = ? AND task_id = ? AND state IN ('running', 'model_calling')",
+        )
+        .bind(run_id)
+        .bind(task_id)
+        .fetch_optional(&mut *tx)
+        .await?;
+        let Some(execution_mode) = execution_mode else {
+            tx.commit().await?;
+            return Ok(None);
+        };
         let updated = sqlx::query(
             "UPDATE agent_runs SET state = 'interrupted'
              WHERE id = ? AND task_id = ? AND state IN ('running', 'model_calling')",
@@ -305,6 +319,15 @@ impl Db {
             tx.commit().await?;
             return Ok(None);
         }
+        // The Task projection must not stay "running" forever after a crash.
+        // Only an in-flight Task changes; paused/terminal facts are retained.
+        sqlx::query(
+            "UPDATE agent_tasks SET state = 'interrupted', state_version = state_version + 1
+             WHERE id = ? AND state IN ('running', 'model_calling')",
+        )
+        .bind(task_id)
+        .execute(&mut *tx)
+        .await?;
         let last_persisted_seq =
             sqlx::query_scalar::<_, i64>("SELECT COALESCE(MAX(seq), 0) FROM session_events WHERE run_id = ?")
                 .bind(run_id)
@@ -322,7 +345,11 @@ impl Db {
             event_id: format!("run:{run_id}:interrupted"),
             workspace_id: workspace_id.to_string(),
             session_id: format!("task:{task_id}"),
-            execution_mode: ExecutionMode::Production,
+            execution_mode: if execution_mode == "simulation" {
+                ExecutionMode::Simulation
+            } else {
+                ExecutionMode::Production
+            },
             run_id: Some(run_id.to_string()),
             task_id: Some(task_id.to_string()),
             event_type: "run.interrupted".to_string(),
@@ -335,6 +362,43 @@ impl Db {
         crate::harness_effect::insert_event(&mut tx, &input).await?;
         tx.commit().await?;
         Ok(Some(input))
+    }
+
+    /// Startup crash recovery for every in-flight Harness run in one
+    /// workspace store. A workspace without a Harness store is skipped so
+    /// startup reconciliation never creates empty stores.
+    pub async fn recover_interrupted_harness_runs(
+        &self,
+        workspace_id: &str,
+        occurred_at: DateTime<Utc>,
+    ) -> Result<Vec<HarnessEventInput>> {
+        crate::harness_workspace::validate_workspace_id(workspace_id)?;
+        let path = self
+            .workspace_store_root
+            .join(workspace_id)
+            .join("harness")
+            .join("harness.db");
+        if !tokio::fs::try_exists(&path).await.unwrap_or(false) {
+            return Ok(Vec::new());
+        }
+        let pool = self.workspace_pool(workspace_id).await?;
+        let runs = sqlx::query_as::<_, (String, String)>(
+            "SELECT id, task_id FROM agent_runs
+             WHERE state IN ('running', 'model_calling')
+             ORDER BY id",
+        )
+        .fetch_all(&pool)
+        .await?;
+        let mut events = Vec::new();
+        for (run_id, task_id) in runs {
+            if let Some(event) = self
+                .interrupt_harness_run(workspace_id, &task_id, &run_id, occurred_at)
+                .await?
+            {
+                events.push(event);
+            }
+        }
+        Ok(events)
     }
 
     pub async fn projection_tail(

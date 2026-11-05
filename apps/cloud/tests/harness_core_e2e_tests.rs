@@ -3720,3 +3720,464 @@ mod dry_run_tests {
         fixture.close().await;
     }
 }
+
+/// Task 14 (Spec T17): bounded Supervisor health and in-context dead-wake
+/// recovery. Every test drives real SQLite workspace stores through the same
+/// `SupervisorHealth` API the scheduler and HTTP handlers use.
+mod supervisor_health_tests {
+    use super::*;
+    use tinyiothub_cloud::domains::agent::workflows::{StalledReason, SupervisorHealth, SupervisorStatus};
+    use tinyiothub_storage::test_helpers::{WorkspaceFixture, fixture_workspace};
+
+    const WS: &str = "ws-supervisor-health";
+    const OTHER_WS: &str = "ws-supervisor-other";
+
+    fn seconds(value: i64) -> Duration {
+        Duration::seconds(value)
+    }
+
+    fn cron_definition() -> serde_json::Value {
+        json!({
+            "objective": "supervisor health fixture",
+            "trigger": {"type": "cron", "trigger_id": "t1", "expression": "0 0 0 1 1 *"},
+            "deviceSelector": {},
+            "sourceSelector": {},
+            "toolIds": [],
+            "skillRefs": [],
+            "requiredCapabilities": [],
+            "approvalPolicy": {},
+            "evidencePolicy": {},
+        })
+    }
+
+    async fn seed_enabled_cron(
+        fixture: &WorkspaceFixture,
+        workflow_id: &str,
+        enabled_at: DateTime<Utc>,
+        next_slot: Option<DateTime<Utc>>,
+    ) {
+        let pool = fixture.workspace_pool().await;
+        sqlx::query(
+            "INSERT INTO agent_workflows (workflow_id, enabled, current_version, updated_at)
+             VALUES (?, 1, 1, ?)",
+        )
+        .bind(workflow_id)
+        .bind(enabled_at)
+        .execute(&pool)
+        .await
+        .expect("seed enabled workflow");
+        sqlx::query(
+            "INSERT INTO workflow_revisions (workflow_id, version, definition_json, created_at)
+             VALUES (?, 1, ?, ?)",
+        )
+        .bind(workflow_id)
+        .bind(cron_definition().to_string())
+        .bind(enabled_at)
+        .execute(&pool)
+        .await
+        .expect("seed workflow revision");
+        if let Some(next_slot) = next_slot {
+            sqlx::query(
+                "INSERT INTO workflow_cron_cursors (workflow_id, trigger_id, next_slot)
+                 VALUES (?, 't1', ?)",
+            )
+            .bind(workflow_id)
+            .bind(next_slot)
+            .execute(&pool)
+            .await
+            .expect("seed cron cursor");
+        }
+    }
+
+    async fn seed_dead_wake(
+        fixture: &WorkspaceFixture,
+        workspace_id: &str,
+        task_id: &str,
+        event_id: &str,
+        reason: Option<&str>,
+        created_at: DateTime<Utc>,
+    ) {
+        if workspace_id != fixture.workspace_id {
+            sqlx::query(
+                "INSERT OR IGNORE INTO workspaces (id, name, tenant_id, created_at, updated_at)
+                 VALUES (?, 'other', 'tenant-default-001', 'now', 'now')",
+            )
+            .bind(workspace_id)
+            .execute(fixture.db.pool())
+            .await
+            .expect("seed other workspace registry");
+            fixture
+                .db
+                .create_workspace_store(workspace_id)
+                .await
+                .expect("create other workspace store");
+        }
+        let pool = fixture
+            .db
+            .workspace_pool_for_testing(workspace_id)
+            .await
+            .expect("dead wake pool");
+        sqlx::query("INSERT INTO agent_tasks (id, run_id, state, state_version) VALUES (?, ?, 'running', 1)")
+            .bind(task_id)
+            .bind(format!("run-{task_id}"))
+            .execute(&pool)
+            .await
+            .expect("dead wake target task");
+        sqlx::query(
+            "INSERT INTO task_wake_outbox
+                (task_id, event_id, signal_json, dispatch_state, created_at, failure_reason)
+             VALUES (?, ?, ?, 'dead', ?, ?)",
+        )
+        .bind(task_id)
+        .bind(event_id)
+        .bind(json!({"workspace_id": workspace_id}).to_string())
+        .bind(created_at)
+        .bind(reason)
+        .execute(&pool)
+        .await
+        .expect("seed dead wake");
+    }
+
+    fn health(fixture: &WorkspaceFixture) -> SupervisorHealth {
+        SupervisorHealth::new(fixture.db.clone(), WS)
+    }
+
+    #[tokio::test]
+    async fn supervisor_health_without_enabled_workflows_is_normal_idle_not_stalled() {
+        let fixture = fixture_workspace(WS).await;
+        let snapshot = health(&fixture).snapshot_at(at()).await.expect("idle snapshot");
+
+        assert_eq!(snapshot.status, SupervisorStatus::Idle);
+        assert_eq!(snapshot.stalled_reason, None);
+        assert_eq!(snapshot.tick_seq, 0);
+        assert_eq!(snapshot.enabled_workflows, 0);
+        assert!(snapshot.no_new_runs, "idle must never claim new Runs");
+        assert_eq!(event_count(&fixture, "supervisor.stalled").await, 0);
+        assert_eq!(event_count(&fixture, "supervisor.recovered").await, 0);
+        fixture.close().await;
+    }
+
+    #[tokio::test]
+    async fn supervisor_health_far_next_wake_is_healthy_and_never_stalled() {
+        let fixture = fixture_workspace(WS).await;
+        let far = at() + seconds(6 * 3600);
+        seed_enabled_cron(&fixture, "workflow-far", at(), Some(far)).await;
+
+        let health = health(&fixture);
+        let started = health.record_tick_started(at()).await.expect("tick start");
+        assert_eq!(started, 1);
+        health.record_tick_completed(at()).await.expect("tick complete");
+
+        let snapshot = health.snapshot_at(at()).await.expect("healthy snapshot");
+        assert_eq!(snapshot.status, SupervisorStatus::Healthy);
+        assert_eq!(snapshot.stalled_reason, None);
+        assert_eq!(snapshot.next_wake_at, Some(far));
+        assert_eq!(snapshot.enabled_workflows, 1);
+        assert_eq!(snapshot.last_completed_at, Some(at()));
+        assert_eq!(event_count(&fixture, "supervisor.stalled").await, 0);
+        fixture.close().await;
+    }
+
+    #[tokio::test]
+    async fn supervisor_health_tick_deadline_stalls_once_and_success_recovers() {
+        let fixture = fixture_workspace(WS).await;
+        let health = health(&fixture);
+        health.record_tick_started(at()).await.expect("tick start");
+
+        let stalled = health.snapshot_at(at() + seconds(31)).await.expect("stalled snapshot");
+        assert_eq!(stalled.status, SupervisorStatus::Stalled);
+        assert_eq!(stalled.stalled_reason, Some(StalledReason::TickDeadlineExceeded));
+
+        // Only the state transition is permanent; repeated observation is not.
+        health.observe_at(at() + seconds(31)).await.expect("observe stall");
+        health.observe_at(at() + seconds(32)).await.expect("observe same stall");
+        assert_eq!(event_count(&fixture, "supervisor.stalled").await, 1);
+        assert_eq!(event_count(&fixture, "supervisor.recovered").await, 0);
+
+        // A successful tick clears the recovering state and writes one recovery.
+        health
+            .record_tick_completed(at() + seconds(33))
+            .await
+            .expect("tick complete");
+        let recovered = health.observe_at(at() + seconds(33)).await.expect("observe recovery");
+        assert_eq!(recovered.status, SupervisorStatus::Idle);
+        assert_eq!(recovered.stalled_reason, None);
+        health.observe_at(at() + seconds(34)).await.expect("repeat observe");
+        assert_eq!(event_count(&fixture, "supervisor.stalled").await, 1);
+        assert_eq!(event_count(&fixture, "supervisor.recovered").await, 1);
+        fixture.close().await;
+    }
+
+    #[tokio::test]
+    async fn supervisor_health_due_not_started_is_stalled_while_far_wake_is_not() {
+        let fixture = fixture_workspace(WS).await;
+        seed_enabled_cron(&fixture, "workflow-due", at() - seconds(120), Some(at() - seconds(60))).await;
+
+        let stalled = health(&fixture).snapshot_at(at()).await.expect("due snapshot");
+        assert_eq!(stalled.status, SupervisorStatus::Stalled);
+        assert_eq!(stalled.stalled_reason, Some(StalledReason::DueNotStarted));
+        assert_eq!(stalled.next_wake_at, Some(at() - seconds(60)));
+        assert_eq!(stalled.scheduling_delay_seconds, 60);
+
+        // A cursorless enabled Workflow is due when the scheduler never even
+        // initialized its plan, but not before the grace window.
+        let fixture_fresh = fixture_workspace("ws-supervisor-cursorless").await;
+        seed_enabled_cron(&fixture_fresh, "workflow-no-cursor", at(), None).await;
+        let fresh = SupervisorHealth::new(fixture_fresh.db.clone(), "ws-supervisor-cursorless");
+        let not_yet_due = fresh.snapshot_at(at()).await.expect("within grace");
+        assert_eq!(not_yet_due.stalled_reason, None);
+        let due = fresh.snapshot_at(at() + seconds(31)).await.expect("past grace");
+        assert_eq!(due.stalled_reason, Some(StalledReason::DueNotStarted));
+        fixture.close().await;
+        fixture_fresh.close().await;
+    }
+
+    #[tokio::test]
+    async fn supervisor_health_persisted_utc_rollback_is_stalled_across_restart() {
+        let fixture = fixture_workspace(WS).await;
+        let pool = fixture.workspace_pool().await;
+        sqlx::query("UPDATE supervisor_state SET tick_seq = 7, last_started_at = ?, last_completed_at = ?")
+            .bind(at() + seconds(3600))
+            .bind(at() + seconds(3600))
+            .execute(&pool)
+            .await
+            .expect("seed future persisted state");
+
+        let snapshot = health(&fixture).snapshot_at(at()).await.expect("rollback snapshot");
+        assert_eq!(snapshot.status, SupervisorStatus::Stalled);
+        assert_eq!(snapshot.stalled_reason, Some(StalledReason::ClockRollback));
+        assert_eq!(snapshot.last_completed_at, Some(at() + seconds(3600)));
+        fixture.close().await;
+    }
+
+    #[tokio::test]
+    async fn supervisor_health_ai_heartbeat_never_masks_a_stalled_scheduler() {
+        let fixture = fixture_workspace(WS).await;
+        seed_enabled_cron(
+            &fixture,
+            "workflow-masked",
+            at() - seconds(120),
+            Some(at() - seconds(60)),
+        )
+        .await;
+        fixture
+            .db
+            .append_session_event(&HarnessEventInput {
+                event_id: "fresh-ai-heartbeat".to_string(),
+                workspace_id: WS.to_string(),
+                session_id: format!("supervisor:{WS}"),
+                execution_mode: ExecutionMode::Production,
+                run_id: None,
+                task_id: None,
+                event_type: "heartbeat.completed".to_string(),
+                occurred_at: at(),
+                cause_id: None,
+                schema_v: 1,
+                payload_digest: "digest-fresh-ai-heartbeat".to_string(),
+                payload_json: json!({"status": "ok"}),
+            })
+            .await
+            .expect("seed AI heartbeat");
+
+        let snapshot = health(&fixture).snapshot_at(at()).await.expect("health snapshot");
+        assert_eq!(snapshot.status, SupervisorStatus::Stalled);
+        assert_eq!(
+            snapshot.stalled_reason,
+            Some(StalledReason::DueNotStarted),
+            "AI heartbeat is not process liveness"
+        );
+        fixture.close().await;
+    }
+
+    #[tokio::test]
+    async fn supervisor_health_dead_wake_retry_is_identity_preserving_and_workspace_scoped() {
+        let fixture = fixture_workspace(WS).await;
+        seed_dead_wake(
+            &fixture,
+            WS,
+            "task-original",
+            "event-original",
+            Some("provider timeout"),
+            at(),
+        )
+        .await;
+        seed_dead_wake(
+            &fixture,
+            WS,
+            "task-sibling",
+            "event-sibling",
+            Some("worker unavailable"),
+            at() + seconds(1),
+        )
+        .await;
+        seed_dead_wake(
+            &fixture,
+            OTHER_WS,
+            "task-foreign",
+            "event-foreign",
+            Some("other workspace failure"),
+            at(),
+        )
+        .await;
+
+        let health = health(&fixture);
+        let dead = health.dead_wakes(20).await.expect("dead wakes");
+        assert_eq!(dead.len(), 2, "only this workspace's failures are visible");
+        assert_eq!(dead[0].event_id, "event-original");
+        assert_eq!(dead[0].task_id, "task-original");
+        assert_eq!(dead[0].failure_reason.as_deref(), Some("provider timeout"));
+
+        assert!(
+            health
+                .retry_dead_wake(WS, "event-original", "admin-user")
+                .await
+                .expect("first retry"),
+            "confirming a dead wake retries the original event"
+        );
+        let pool = fixture.workspace_pool().await;
+        let (state, retried_by): (String, Option<String>) =
+            sqlx::query_as("SELECT dispatch_state, retried_by FROM task_wake_outbox WHERE event_id = 'event-original'")
+                .fetch_one(&pool)
+                .await
+                .expect("retried row");
+        assert_eq!(state, "pending");
+        assert_eq!(retried_by.as_deref(), Some("admin-user"));
+        let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM task_wake_outbox")
+            .fetch_one(&pool)
+            .await
+            .expect("outbox count");
+        assert_eq!(count, 2, "retry must not replace or duplicate the original event");
+
+        assert!(
+            health
+                .retry_dead_wake(WS, "event-original", "admin-user")
+                .await
+                .expect("idempotent retry"),
+            "a repeated retry returns the same pending fact"
+        );
+        let sibling: String =
+            sqlx::query_scalar("SELECT dispatch_state FROM task_wake_outbox WHERE event_id = 'event-sibling'")
+                .fetch_one(&pool)
+                .await
+                .expect("sibling untouched");
+        assert_eq!(sibling, "dead", "no bulk retry is allowed");
+        assert!(
+            !health
+                .retry_dead_wake(WS, "event-foreign", "admin-user")
+                .await
+                .expect("foreign retry"),
+            "another workspace's failures are never retried"
+        );
+        let foreign: String =
+            sqlx::query_scalar("SELECT dispatch_state FROM task_wake_outbox WHERE event_id = 'event-foreign'")
+                .fetch_one(
+                    &fixture
+                        .db
+                        .workspace_pool_for_testing(OTHER_WS)
+                        .await
+                        .expect("other pool"),
+                )
+                .await
+                .expect("foreign row");
+        assert_eq!(foreign, "dead");
+
+        fixture
+            .db
+            .close_workspace_store(OTHER_WS)
+            .await
+            .expect("close other workspace");
+        fixture.close().await;
+    }
+
+    #[tokio::test]
+    async fn supervisor_health_startup_recovery_uses_the_run_mode_and_does_not_create_stores() {
+        let fixture = fixture_workspace(WS).await;
+        let pool = fixture.workspace_pool().await;
+        for (run_id, task_id, mode, state) in [
+            ("run-prod", "task-prod", "production", "running"),
+            ("run-sim", "task-sim", "simulation", "model_calling"),
+            ("run-done", "task-done", "production", "completed"),
+        ] {
+            sqlx::query(
+                "INSERT INTO agent_tasks (id, run_id, state, state_version, execution_mode)
+                 VALUES (?, ?, 'running', 1, ?)",
+            )
+            .bind(task_id)
+            .bind(run_id)
+            .bind(mode)
+            .execute(&pool)
+            .await
+            .expect("seed recovery task");
+            sqlx::query("INSERT INTO agent_runs (id, task_id, state, execution_mode) VALUES (?, ?, ?, ?)")
+                .bind(run_id)
+                .bind(task_id)
+                .bind(state)
+                .bind(mode)
+                .execute(&pool)
+                .await
+                .expect("seed recovery run");
+        }
+
+        let events = fixture
+            .db
+            .recover_interrupted_harness_runs(WS, at())
+            .await
+            .expect("startup Harness recovery");
+        assert_eq!(events.len(), 2, "only in-flight Runs are interrupted");
+        let modes: Vec<ExecutionMode> = events.iter().map(|event| event.execution_mode).collect();
+        assert!(modes.contains(&ExecutionMode::Production));
+        assert!(modes.contains(&ExecutionMode::Simulation), "simulation stays isolated");
+        assert!(
+            events
+                .iter()
+                .all(|event| event.event_type == "run.interrupted" && event.payload_json["incomplete_tail"] == true)
+        );
+        let (task_state, run_state): (String, String) = sqlx::query_as(
+            "SELECT t.state, r.state FROM agent_tasks t JOIN agent_runs r ON r.task_id = t.id
+             WHERE t.id = 'task-prod'",
+        )
+        .fetch_one(&pool)
+        .await
+        .expect("recovered prod state");
+        assert_eq!(task_state, "interrupted");
+        assert_eq!(run_state, "interrupted");
+        let completed: String = sqlx::query_scalar("SELECT state FROM agent_runs WHERE id = 'run-done'")
+            .fetch_one(&pool)
+            .await
+            .expect("terminal run");
+        assert_eq!(completed, "completed");
+        assert!(
+            fixture
+                .db
+                .recover_interrupted_harness_runs(WS, at())
+                .await
+                .expect("idempotent recovery")
+                .is_empty()
+        );
+
+        // A registered Workspace that never opened a Harness store is skipped.
+        sqlx::query(
+            "INSERT OR IGNORE INTO workspaces (id, name, tenant_id, created_at, updated_at)
+             VALUES ('ws-no-harness-store', 'none', 'tenant-default-001', 'now', 'now')",
+        )
+        .execute(fixture.db.pool())
+        .await
+        .expect("seed storeless workspace");
+        assert!(
+            fixture
+                .db
+                .recover_interrupted_harness_runs("ws-no-harness-store", at())
+                .await
+                .expect("storeless recovery")
+                .is_empty()
+        );
+        assert!(
+            !fixture
+                .root
+                .join("data/agents/ws-no-harness-store/harness/harness.db")
+                .exists(),
+            "startup recovery must not create an empty store"
+        );
+        fixture.close().await;
+    }
+}

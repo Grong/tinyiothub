@@ -61,10 +61,11 @@ fn harness_migrator() -> Migrator {
         crate::harness_workflow::migration(),
         crate::harness_snapshot::migration(),
         crate::harness_simulation::migration(),
+        crate::harness_supervisor::migration(),
     ])
 }
 
-fn validate_workspace_id(workspace_id: &str) -> Result<()> {
+pub(crate) fn validate_workspace_id(workspace_id: &str) -> Result<()> {
     if workspace_id.is_empty()
         || workspace_id == "."
         || workspace_id == ".."

@@ -18,6 +18,7 @@ import {
 import './harness-workflow-edit.js';
 import './harness-templates.js';
 import './harness-dry-run.js';
+import './harness-supervisor.js';
 import './harness-overview.css';
 
 const attentionPageSize = 5;
@@ -82,7 +83,11 @@ export class HarnessOverviewView extends LitElement {
 
   connectedCallback(): void {
     super.connectedCallback();
-    if (this.route?.name === 'workflows' || this.route?.name === 'dry-run') {
+    if (
+      this.route?.name === 'workflows' ||
+      this.route?.name === 'dry-run' ||
+      this.route?.name === 'supervisor'
+    ) {
       this.connection = 'online';
       return;
     }
@@ -130,7 +135,7 @@ export class HarnessOverviewView extends LitElement {
   }
 
   private async load(offset: number): Promise<void> {
-    if (this.route?.name === 'workflows') {
+    if (this.route?.name === 'workflows' || this.route?.name === 'supervisor') {
       this.connection = 'online';
       return;
     }
@@ -586,6 +591,11 @@ export class HarnessOverviewView extends LitElement {
         .workspaceId=${this.workspaceId}
       ></view-harness-templates>`;
     }
+    if (this.route?.name === 'supervisor') {
+      return html`<view-harness-supervisor
+        .workspaceId=${this.workspaceId}
+      ></view-harness-supervisor>`;
+    }
     if (this.route?.name === 'dry-run') {
       return html`<view-harness-dry-run
         .workspaceId=${this.workspaceId}
@@ -606,6 +616,9 @@ export class HarnessOverviewView extends LitElement {
             <p>例外优先：先处理需要你确认的事项，再查看计划任务与当前协调。</p>
           </div>
           <div class="harness-overview__actions">
+            <a class="btn harness-overview__supervisor" href="#/harness/supervisor"
+              >Supervisor 健康</a
+            >
             <button type="button" class="btn harness-overview__retry" @click=${() => this.retry()}>
               刷新
             </button>

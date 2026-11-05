@@ -13,13 +13,17 @@ use tokio_util::sync::CancellationToken;
 pub struct WorkflowScheduler {
     db: Arc<Db>,
     workspace_id: String,
+    health: super::SupervisorHealth,
 }
 
 impl WorkflowScheduler {
     pub fn new(db: Arc<Db>, workspace_id: impl Into<String>) -> Self {
+        let workspace_id = workspace_id.into();
+        let health = super::SupervisorHealth::new((*db).clone(), workspace_id.clone());
         Self {
             db,
-            workspace_id: workspace_id.into(),
+            workspace_id,
+            health,
         }
     }
 
@@ -30,12 +34,59 @@ impl WorkflowScheduler {
             tokio::select! {
                 _ = shutdown.cancelled() => return,
                 _ = interval.tick() => {
-                    if let Err(error) = self.tick(Utc::now()).await {
+                    // Monotonic-derived wall time: an in-process clock jump
+                    // cannot fake a tick deadline or due boundary.
+                    let now = self.health.monotonic_now();
+                    if let Err(error) = self.health.record_tick_started(now).await {
                         tracing::error!(
                             workspace_id = %self.workspace_id,
                             %error,
-                            "workflow scheduler tick failed"
+                            "workflow scheduler health start failed"
                         );
+                        continue;
+                    }
+                    match self.tick(now).await {
+                        Ok(_) => {
+                            if let Err(error) = self.health.record_tick_completed(now).await {
+                                tracing::error!(
+                                    workspace_id = %self.workspace_id,
+                                    %error,
+                                    "workflow scheduler health completion failed"
+                                );
+                            }
+                        }
+                        Err(error) => {
+                            tracing::error!(
+                                workspace_id = %self.workspace_id,
+                                %error,
+                                "workflow scheduler tick failed"
+                            );
+                            if let Err(record_error) = self.health.record_tick_error(now, &error.to_string()).await {
+                                tracing::error!(
+                                    workspace_id = %self.workspace_id,
+                                    %record_error,
+                                    "workflow scheduler health error record failed"
+                                );
+                            }
+                        }
+                    }
+                    match self.health.observe().await {
+                        Ok(snapshot) if matches!(snapshot.status, super::SupervisorStatus::Stalled) => {
+                            tracing::warn!(
+                                metric = "harness_supervisor_stalled",
+                                workspace_id = %self.workspace_id,
+                                reason = snapshot.stalled_reason.map(super::StalledReason::as_str),
+                                "workflow scheduler stalled"
+                            );
+                        }
+                        Ok(_) => {}
+                        Err(error) => {
+                            tracing::error!(
+                                workspace_id = %self.workspace_id,
+                                %error,
+                                "workflow scheduler health observation failed"
+                            );
+                        }
                     }
                 }
             }

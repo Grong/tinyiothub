@@ -331,6 +331,37 @@ pub async fn reconcile_zombie_runs(db: &Db, runtime: &AgentRuntime) {
     }
 }
 
+/// Task 14 / Task 9 follow-up: Harness workspace crash recovery.
+///
+/// The durable writer [`Db::interrupt_harness_run`] marks a Run
+/// `interrupted` and writes `run.interrupted` with the last persisted seq in
+/// one transaction. Startup now has a production caller: every registered
+/// workspace that already owns a Harness store is reconciled. A workspace
+/// without a store is skipped, so recovery never creates empty stores.
+pub async fn reconcile_harness_runs(db: &Db) {
+    let now = chrono::Utc::now();
+    match db.find_all_workspace_ids().await {
+        Ok(workspace_ids) => {
+            for workspace_id in workspace_ids {
+                match db.recover_interrupted_harness_runs(&workspace_id, now).await {
+                    Ok(events) if !events.is_empty() => {
+                        info!(
+                            %workspace_id,
+                            runs = events.len(),
+                            "startup Harness recovery: in-flight runs marked interrupted"
+                        );
+                    }
+                    Ok(_) => {}
+                    Err(error) => {
+                        warn!(%workspace_id, %error, "startup Harness recovery failed");
+                    }
+                }
+            }
+        }
+        Err(error) => warn!(%error, "startup Harness recovery: list workspaces failed"),
+    }
+}
+
 /// 单实例强制（CEO review T24/OV4）：内存真相源架构（agent runtime 内存 +
 /// 事件投影）下双进程 = 双份自治 loop 互相覆盖投影、重复 tick、重复告警。
 /// 启动即对 DB 旁路锁文件取排他 flock——第二进程响亮失败并指明原因；

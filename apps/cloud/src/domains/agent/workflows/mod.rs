@@ -1,4 +1,5 @@
 mod dry_run;
+mod health;
 mod runner;
 mod supervisor;
 mod templates;
@@ -12,6 +13,10 @@ use tinyiothub_core::harness::{WorkflowDefinition, WorkflowRevision, WorkflowTri
 use tinyiothub_storage::{Db, DbError};
 
 pub use dry_run::{DryRunInput, DryRunResult, ScriptedDryRunExecutor, WorkflowDryRun};
+pub use health::{
+    DEFAULT_DUE_GRACE, DEFAULT_TICK_DEADLINE, DeadWakeSummary, StalledReason, SupervisorHealth,
+    SupervisorHealthSnapshot, SupervisorStatus,
+};
 pub use runner::{MainCoordinator, SubagentRunner};
 pub use supervisor::WorkflowScheduler;
 pub use templates::{
