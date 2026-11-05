@@ -146,6 +146,7 @@ impl AutonomousAgentFactory {
         }
 
         let slot = new_run_context_slot(Arc::clone(&ctx));
+        let tool_call_ids: tinyiothub_agent::port::tool::ToolCallIdSlot = Arc::new(std::sync::Mutex::new(None));
         let mut autonomous_tools = build_autonomous_tools(
             &self.db_pool,
             workspace_id,
@@ -154,6 +155,7 @@ impl AutonomousAgentFactory {
             Arc::clone(&self.event_bus),
             Arc::clone(&self.throttle),
             &self.runtime,
+            Some(tool_call_ids.clone()),
         );
         if let Some(provider) = &self.extra_tools {
             autonomous_tools.extend(provider(workspace_id).into_iter().map(|(tool, _safety)| tool));
@@ -192,6 +194,7 @@ impl AutonomousAgentFactory {
             // thing_agent 自治路径：保留 zeroclaw 时代的跨轮 recall 行为。
             conversation_memory: true,
             available_capabilities: self.available_capabilities.clone(),
+            tool_call_ids: Some(tool_call_ids.clone()),
         };
         let agent = match rig_loop_factory(cfg) {
             Ok(agent) => agent,
@@ -287,6 +290,7 @@ pub(crate) fn build_autonomous_tools(
     event_bus: Arc<ThingEventBus>,
     throttle: Arc<ThrottleState>,
     runtime: &ThingToolContext,
+    tool_call_ids: Option<tinyiothub_agent::port::tool::ToolCallIdSlot>,
 ) -> Vec<Box<dyn Tool>> {
     // The 9 ontology tools minus the chat invoke_action (confirmation-token
     // flow), plus the autonomous invoke_action (policy-gated).
@@ -320,15 +324,18 @@ pub(crate) fn build_autonomous_tools(
         jobs: runtime.jobs.clone(),
         run_ctx: Some(run_ctx.clone()),
     };
-    tools.push(Box::new(AutonomousInvokeActionTool::new(
-        inner,
-        policy_repo,
-        run_ctx,
-        pool.clone(),
-        workspace_id.to_string(),
-        event_bus,
-        throttle,
-    )));
+    tools.push(Box::new(
+        AutonomousInvokeActionTool::new(
+            inner,
+            policy_repo,
+            run_ctx,
+            pool.clone(),
+            workspace_id.to_string(),
+            event_bus,
+            throttle,
+        )
+        .with_tool_call_ids(tool_call_ids),
+    ));
     tools
 }
 
@@ -445,6 +452,7 @@ mod tests {
                 pending_actions: Some(Arc::new(dashmap::DashMap::new())),
                 ..Default::default()
             },
+            None,
         );
 
         // E2：模型可见 = 7 设备工具 + 4 非设备工具（固定集合）。
@@ -823,6 +831,7 @@ mod tests {
                 jobs: Some(jobs.clone()),
                 ..Default::default()
             },
+            None,
         );
         let call = call_device(&tools);
 
@@ -936,6 +945,7 @@ mod tests {
                 jobs: Some(jobs.clone()),
                 ..Default::default()
             },
+            None,
         );
         let call = call_device(&tools);
 
@@ -1035,6 +1045,7 @@ mod tests {
                 jobs: Some(jobs.clone()),
                 ..Default::default()
             },
+            None,
         );
         let call = call_device(&tools);
 
@@ -1148,6 +1159,7 @@ mod tests {
             .await
             .expect("legacy events before");
         let worker = Arc::new(SubmittingWorker::default());
+        let tool_call_ids: tinyiothub_agent::port::tool::ToolCallIdSlot = Arc::new(Mutex::new(Some("call-1".into())));
         let tools = build_autonomous_tools(
             &pool,
             "ws-approve",
@@ -1160,6 +1172,7 @@ mod tests {
                 jobs: Some(job_service(&db, worker.clone())),
                 ..Default::default()
             },
+            Some(tool_call_ids.clone()),
         );
         let call = call_device(&tools);
 
@@ -1193,6 +1206,31 @@ mod tests {
             .expect("platform approvals");
         assert_eq!(platform_approvals, 0, "no platform approval writers remain");
 
+        // M2: two distinct provider calls get distinct identities, and M3: a
+        // retried identical call returns the original approvalId.
+        let first_id = decision_id.clone();
+        *tool_call_ids.lock().expect("tool call slot") = Some("call-2".into());
+        let second = call
+            .execute(serde_json::json!({"thingId":"dev-1","action":"set_level","params":{"level":8}}))
+            .await
+            .expect("second tool call");
+        let second: serde_json::Value = serde_json::from_str(&second.output).expect("second output");
+        let second_id = second["approvalId"].as_str().expect("second approvalId").to_string();
+        assert_ne!(second_id, first_id, "distinct calls need distinct identities");
+        *tool_call_ids.lock().expect("tool call slot") = Some("call-1".into());
+        let retry = call.execute(call_args()).await.expect("retried tool call");
+        let retry: serde_json::Value = serde_json::from_str(&retry.output).expect("retry output");
+        assert_eq!(
+            retry["approvalId"].as_str(),
+            Some(first_id.as_str()),
+            "a retried identical call must return the existing approval"
+        );
+        let decisions: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM decisions")
+            .fetch_one(&workspace)
+            .await
+            .expect("decision count");
+        assert_eq!(decisions, 2, "only the two distinct calls created rows");
+
         let jobs = JobService::new(
             Arc::new(crate::shared::runtime_ports::HarnessAwareDeviceJobStore::new(
                 db.clone(),
@@ -1210,8 +1248,8 @@ mod tests {
                 .await
                 .expect("pre-answer pass")
                 .blocked,
-            1,
-            "a requested Decision blocks dispatch"
+            2,
+            "both requested Decisions block dispatch"
         );
 
         db.harness_answer_tool_approval(

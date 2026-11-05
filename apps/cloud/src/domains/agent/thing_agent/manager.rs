@@ -1204,6 +1204,7 @@ pub(crate) mod tests {
                 // 自治语义的测试夹具：对齐真实 autonomous_factory 的 true。
                 conversation_memory: true,
                 available_capabilities: vec![],
+                tool_call_ids: None,
             };
             let handle = tinyiothub_agent::adapters::rig::loop_::rig_loop_factory(cfg).expect("build stub loop");
             Self {

@@ -197,9 +197,22 @@ impl DeviceJobStore for DbDeviceJobStore {
     }
 
     async fn submit_approved_job(&self, job: &DeviceJob) -> Result<(Option<DeviceJob>, bool), DeviceJobError> {
-        // Task 19C2 removed the legacy approval execution path. The trait keeps
-        // the seam for the Runtime Job service, but there is no approved-tool
-        // projection left to replay: an accepted Job is created once.
+        // Task 19C2 removed the legacy approved-tool projection. The seam keeps
+        // its idempotent replay contract: an existing Job for the same frozen
+        // tool call is returned instead of inserting a duplicate.
+        if let Some(tool_call_id) = job.tool_call_id.as_deref()
+            && let Some(existing) = self.db.get_job_by_tool_call(&job.workspace_id, tool_call_id).await?
+        {
+            let matches = existing.device_id == job.device_id
+                && existing.tool == job.tool
+                && existing.args_json == job.args_json
+                && existing.task_id == job.task_id
+                && existing.run_id == job.run_id;
+            if !matches {
+                return Err(DeviceJobError::ExecutionConflict);
+            }
+            return Ok((Some(existing), false));
+        }
         self.create_job(job).await?;
         Ok((Some(job.clone()), true))
     }
@@ -1362,14 +1375,16 @@ mod runtime_job_event_tests {
             .await
             .expect("legacy wake");
         assert_eq!(wakes, 1, "the legacy TaskWake must be preserved");
-        let events: i64 = sqlx::query_scalar(
-            "SELECT COUNT(*) FROM hub_ledger WHERE kind = 'runtime' || '.v1' AND payload LIKE '%' || ? || '%'",
-        )
-        .bind(&job.id)
-        .fetch_one(db.pool())
-        .await
-        .expect("legacy runtime event");
-        assert!(events >= 1, "the legacy Job runtime event must be preserved");
+        let events = db
+            .runtime_events_after("ws-job", None, None, 100)
+            .await
+            .expect("legacy runtime events");
+        assert!(
+            events
+                .iter()
+                .any(|event| event.job_id.as_deref() == Some(job.id.as_str())),
+            "the legacy Job runtime event must be preserved"
+        );
     }
 
     #[tokio::test]
@@ -1658,6 +1673,36 @@ mod runtime_job_event_tests {
                 "watch:watch-generic:deleted",
             ]
         );
+    }
+
+    #[tokio::test]
+    async fn approved_job_submission_replays_the_existing_tool_call() {
+        let (db, _, _) = fixture().await;
+        let store = DbDeviceJobStore::new(db.as_ref().clone());
+        let job = DeviceJob {
+            id: "approved-job".into(),
+            workspace_id: "ws-job".into(),
+            device_id: "device-1".into(),
+            tool: "set_speed".into(),
+            args_json: serde_json::json!({"speed": 1}),
+            state: tinyiothub_core::device_job::DeviceJobState::Accepted,
+            stop_requested_at: None,
+            progress_json: None,
+            result_json: None,
+            task_id: Some("task-1".into()),
+            run_id: Some("run-1".into()),
+            tool_call_id: Some("call-approved".into()),
+            driver_call_id: None,
+            timeout_ms: 5_000,
+            started_at: chrono::Utc::now(),
+            ended_at: None,
+        };
+        let (first, inserted) = store.submit_approved_job(&job).await.expect("first submit");
+        assert!(inserted);
+        let (second, inserted) = store.submit_approved_job(&job).await.expect("replay");
+        assert!(!inserted, "a retried approved submission must not insert twice");
+        assert_eq!(second.map(|job| job.id), Some("approved-job".into()));
+        assert_eq!(first.map(|job| job.id), Some("approved-job".into()));
     }
 }
 

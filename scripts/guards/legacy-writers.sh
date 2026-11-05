@@ -48,6 +48,9 @@ check_rust() {
 }
 
 # ── Old runtime event writer ───────────────────────────────
+# `runtime/api_cutover_tests.rs` is a #[cfg(test)]-only module; its assertions
+# intentionally name the legacy identifiers. It is allow-listed by exact path,
+# not by pattern, so production hits still fail.
 # Only the legacy runtime adapters and the low-level db transaction writer may
 # append runtime.v1 events. The Harness path uses append_session_event.
 check_rust \
@@ -58,7 +61,7 @@ check_rust \
 check_rust \
   "runtime.v1 kind outside the ledger writer" \
   'RUNTIME_EVENT_KIND|runtime\.v1' \
-  '^(crates/db/src/(runtime_event|runtime_task|agent_runs|watch)\.rs|apps/cloud/src/domains/agent/runtime/stream\.rs):'
+  '^(crates/db/src/(runtime_event|runtime_task|agent_runs|watch)\.rs|apps/cloud/src/domains/agent/runtime/stream\.rs|apps/cloud/src/domains/agent/runtime/api_cutover_tests\.rs):'
 
 check_rust \
   "runtime event construction outside legacy adapters" \
@@ -84,7 +87,7 @@ check_rust \
 check_rust \
   "device_jobs write outside the Job owner" \
   '(INSERT INTO device_jobs|UPDATE device_jobs)' \
-  '^(crates/db/src/(device_job|harness_effect)\.rs|apps/cloud/src/domains/agent/host/autonomous_factory\.rs):'
+  '^(crates/db/src/(device_job|harness_effect)\.rs|apps/cloud/src/domains/agent/host/autonomous_factory\.rs|apps/cloud/src/domains/agent/runtime/api_cutover_tests\.rs):'
 # task_approval.rs deliberately has no device_jobs SQL: it calls
 # crate::device_job::insert_job_projection inside its own transaction.
 

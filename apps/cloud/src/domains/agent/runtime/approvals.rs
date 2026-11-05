@@ -41,11 +41,44 @@ async fn decide(
     // An approval answer is the fact that can unblock a Prepared Effect. Run
     // the bounded workspace dispatch pass now so the answer is not waiting for
     // the recovery interval; denial settles the Effect to `not_applied` in the
-    // same pass.
-    if let Some(dispatch) = &state.effect_dispatch
-        && let Err(error) = dispatch.dispatch_task(&workspace_id, &task_id).await
+    // same pass. The continuation wake is written only after this pass so a
+    // wake router can never start the conversation while the approved Job is
+    // still in flight: an approved+dispatched answer relies on the Job's
+    // terminal wake instead.
+    let dispatched = match &state.effect_dispatch {
+        Some(dispatch) => match dispatch.dispatch_task(&workspace_id, &task_id).await {
+            Ok(report) => report.dispatched > 0,
+            Err(error) => {
+                tracing::warn!(%workspace_id, %task_id, %error, "effect dispatch after approval answer failed");
+                false
+            }
+        },
+        None => false,
+    };
+    let effect_id = outcome.decision.effect_id.clone();
+    let wake_outcome = if answer == "denied" {
+        "denied"
+    } else if dispatched {
+        "approved"
+    } else {
+        "not_applied"
+    };
+    // A deduplicated answer (already answered, or a closed expiry/withdrawal)
+    // must not append a second continuation wake.
+    if !outcome.deduplicated
+        && let Err(error) = state
+            .db
+            .harness_enqueue_approval_wake(
+                &workspace_id,
+                &task_id,
+                &approval_id,
+                effect_id.as_deref(),
+                wake_outcome,
+                Utc::now(),
+            )
+            .await
     {
-        tracing::warn!(%workspace_id, %task_id, %error, "effect dispatch after approval answer failed");
+        tracing::warn!(%workspace_id, %task_id, %error, "approval continuation wake write failed");
     }
     let projection = match state.db.harness_runtime_projection(&workspace_id, &task_id).await {
         Ok(Some(projection)) => projection,
@@ -167,6 +200,7 @@ mod tests {
     use tower::ServiceExt;
 
     use crate::domains::agent::runtime::dispatch::EffectDispatch;
+    use crate::domains::agent::runtime::harness_stream::HarnessStreamHub;
     use crate::test_utils::{
         auth_header, create_test_token, response_parts, seed_test_workspace, test_app_state_on_pool,
     };
@@ -590,8 +624,10 @@ mod tests {
             StatusCode::CONFLICT
         );
         let pool = fixture.db.workspace_pool_for_testing(WS).await.expect("workspace pool");
+        // No live dispatcher in this fixture, so an approved answer records
+        // the not-applied outcome; exactly one continuation wake is written.
         let wakes: i64 =
-            sqlx::query_scalar("SELECT COUNT(*) FROM task_wake_outbox WHERE event_id = 'approval:approval-1:approved'")
+            sqlx::query_scalar("SELECT COUNT(*) FROM task_wake_outbox WHERE event_id LIKE 'approval:approval-1:%'")
                 .fetch_one(&pool)
                 .await
                 .expect("wakes");
@@ -623,6 +659,151 @@ mod tests {
             .await
             .expect("platform approvals");
         assert_eq!(platform, 0, "HTTP approvals never write the platform table");
+    }
+
+    #[tokio::test]
+    async fn approval_projection_and_sse_snapshot_redact_nested_secrets() {
+        let fixture = fixture().await;
+        let now = Utc::now();
+        let task = AgentTask {
+            id: "task-secret".into(),
+            workspace_id: WS.into(),
+            idempotency_key: "secret-key".into(),
+            objective: "redaction".into(),
+            session_key: None,
+            created_by: "user-1".into(),
+            status: TaskStatus::Active,
+            current_run_id: Some("run-secret".into()),
+            state_version: 0,
+            created_at: now,
+            updated_at: now,
+            ended_at: None,
+        };
+        let wake = TaskWake {
+            task_id: task.id.clone(),
+            event_id: "create-task-secret".into(),
+            signal_json: json!({"workspace_id":WS}).to_string(),
+            dispatch_state: WakeDispatchState::Dispatched,
+            created_at: now,
+            dispatched_at: Some(now),
+            resolved_at: Some(now),
+        };
+        fixture
+            .db
+            .harness_create_task_with_wake(&task, &wake)
+            .await
+            .expect("harness task");
+        let pool = fixture.db.workspace_pool_for_testing(WS).await.expect("workspace pool");
+        // Historical raw subject: the public projection must redact on read.
+        sqlx::query(
+            "INSERT INTO decisions
+                (decision_id, kind, state, session_id, run_id, task_id, effect_id, subject_json,
+                 options_json, created_at, updated_at, expires_at, answer, answer_actor,
+                 answer_event_id, answer_evidence_json, consumed_at, consumed_by)
+             VALUES ('decision-secret', 'tool_approval', 'requested', 'session-1', 'run-secret',
+                     'task-secret', NULL, ?, '[\"approved\",\"denied\"]', ?, ?, NULL, NULL, NULL, NULL, NULL, NULL, NULL)",
+        )
+        .bind(
+            json!({
+                "deviceId":"device-1",
+                "tool":"set_level",
+                "argsJson":{"level":7,"credentials":{"password":"s3cret"}},
+                "reason":"confirm",
+            })
+            .to_string(),
+        )
+        .bind(now)
+        .bind(now)
+        .execute(&pool)
+        .await
+        .expect("secret decision");
+        // Effect fallback: a subject without argsJson must not leak the raw
+        // effect request either.
+        sqlx::query(
+            "INSERT INTO effect_intents
+                (effect_id, session_id, task_id, run_id, tool_call_id, tool_name, request_json,
+                 request_digest, idempotency_key, external_ref, state, state_version, result_json,
+                 created_at, updated_at)
+             VALUES ('effect-secret', 'session-1', 'task-secret', 'run-secret', 'call-secret',
+                     'set_level', ?, 'digest-secret', 'effect-secret', NULL, 'prepared', 1, NULL, ?, ?)",
+        )
+        .bind(json!({"deviceId":"device-1","argsJson":{"level":7,"credentials":{"password":"s3cret"}}}).to_string())
+        .bind(now)
+        .bind(now)
+        .execute(&pool)
+        .await
+        .expect("secret effect");
+        sqlx::query(
+            "INSERT INTO decisions
+                (decision_id, kind, state, session_id, run_id, task_id, effect_id, subject_json,
+                 options_json, created_at, updated_at, expires_at, answer, answer_actor,
+                 answer_event_id, answer_evidence_json, consumed_at, consumed_by)
+             VALUES ('decision-fallback', 'tool_approval', 'requested', 'session-1', 'run-secret',
+                     'task-secret', 'effect-secret', '{\"deviceId\":\"device-1\",\"tool\":\"set_level\"}',
+                     '[\"approved\",\"denied\"]', ?, ?, NULL, NULL, NULL, NULL, NULL, NULL, NULL)",
+        )
+        .bind(now)
+        .bind(now)
+        .execute(&pool)
+        .await
+        .expect("fallback decision");
+
+        // This row deliberately models a historical unredacted subject; the
+        // write path itself is covered by the tool test. The read projection
+        // must still redact it.
+        let _subject: String =
+            sqlx::query_scalar("SELECT subject_json FROM decisions WHERE decision_id = 'decision-secret'")
+                .fetch_one(&pool)
+                .await
+                .expect("subject");
+        let projection = fixture
+            .db
+            .harness_runtime_projection(WS, "task-secret")
+            .await
+            .expect("projection")
+            .expect("task projection");
+        for approval in &projection.approvals {
+            assert!(
+                !approval.args_json.to_string().contains("s3cret"),
+                "projection leaked a secret: {:?}",
+                approval.args_json
+            );
+        }
+        let fallback = projection
+            .approvals
+            .iter()
+            .find(|approval| approval.id == "decision-fallback")
+            .expect("fallback approval");
+        assert_eq!(
+            fallback.args_json["argsJson"]["credentials"]["password"], "[REDACTED]",
+            "the effect request fallback must be redacted: {}",
+            fallback.args_json
+        );
+
+        let hub = Arc::new(HarnessStreamHub::default());
+        let mut connection = hub
+            .connect(fixture.db.clone(), WS, "task-secret", None)
+            .await
+            .expect("connect");
+        let frame = connection.next_frame().await.expect("snapshot");
+        let frame = serde_json::to_string(&frame).expect("frame JSON");
+        assert!(!frame.contains("s3cret"), "SSE snapshot leaked a secret");
+
+        let (status, body) = post_to(
+            &fixture.app,
+            &fixture.token,
+            WS,
+            "task-secret",
+            "decision-secret",
+            "approve",
+            json!({}),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert!(
+            !body.to_string().contains("s3cret"),
+            "HTTP approval response leaked a secret"
+        );
     }
 
     /// Task 19C1: the HTTP answer is the unblock fact. Approval dispatches the

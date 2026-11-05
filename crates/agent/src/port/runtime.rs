@@ -35,6 +35,10 @@ pub struct AgentLoopConfig {
     /// fails closed before the first model call if an exposed tool requires a
     /// capability that is missing.
     pub available_capabilities: Vec<tinyiothub_skills::registry::Capability>,
+    /// Optional shared slot the loop fills with the provider tool-call id
+    /// before it executes a tool. Tools that need a durable call identity read
+    /// it at execution time.
+    pub tool_call_ids: Option<crate::port::tool::ToolCallIdSlot>,
 }
 
 /// zeroclaw Agent::turn_streamed 的 port 形状（返回去掉 ConversationMessage，
@@ -144,6 +148,7 @@ mod tests {
             provider_factory: stub_provider_factory(),
             conversation_memory: false,
             available_capabilities: vec![],
+            tool_call_ids: None,
         };
         assert_eq!(config.model_name, "test-model");
         assert_eq!(config.tools.len(), 1);

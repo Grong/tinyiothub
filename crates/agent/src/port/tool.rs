@@ -1,4 +1,11 @@
+use std::sync::{Arc, Mutex};
+
 use serde::{Deserialize, Serialize};
+
+/// Latest provider tool-call id seen by the agent loop before tool execution.
+/// The loop writes it in its pre-execution hook; tools read it to freeze the
+/// durable `tool_call_id` without relying on asynchronous event delivery.
+pub type ToolCallIdSlot = Arc<Mutex<Option<String>>>;
 
 /// Boilerplate-collapsing macro: pair a concrete `Tool` impl with a
 /// matching `Attributable` impl that surfaces the supplied `ToolKind`

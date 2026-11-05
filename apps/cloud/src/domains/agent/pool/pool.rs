@@ -230,6 +230,7 @@ impl AgentPool {
             // chat/heartbeat：历史由 cloud DB 每轮重建，不经 agent 内存。
             conversation_memory: false,
             available_capabilities: vec![],
+            tool_call_ids: None,
         };
 
         let agent = tinyiothub_agent::adapters::rig::loop_::rig_loop_factory(cfg)

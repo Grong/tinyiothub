@@ -56,6 +56,9 @@ pub struct RigAgentLoop {
     /// arguments are still what the tool receives; only the observable event
     /// carries the redacted summary.
     redactions: std::collections::HashMap<String, tinyiothub_skills::registry::RedactionPolicy>,
+    /// Provider tool-call id of the call about to execute. Filled by the
+    /// pre-execution hook and read by tools that freeze a durable identity.
+    tool_call_ids: Option<crate::port::tool::ToolCallIdSlot>,
 }
 
 impl RigAgentLoop {
@@ -65,7 +68,13 @@ impl RigAgentLoop {
             memory,
             seeded: tokio::sync::Mutex::new(Vec::new()),
             redactions: std::collections::HashMap::new(),
+            tool_call_ids: None,
         }
+    }
+
+    pub fn with_tool_call_ids(mut self, slot: Option<crate::port::tool::ToolCallIdSlot>) -> Self {
+        self.tool_call_ids = slot;
+        self
     }
 
     pub fn with_redactions(
@@ -97,6 +106,7 @@ struct BudgetHook {
     cancel: Option<CancellationToken>,
     steering: Option<SteeringBuffer>,
     media: tokio::sync::Mutex<RunMediaAccountant>,
+    tool_call_ids: Option<crate::port::tool::ToolCallIdSlot>,
 }
 
 fn take_steering_patch(steering: &SteeringBuffer) -> Option<RequestPatch> {
@@ -215,7 +225,11 @@ impl AgentHook for BudgetHook {
             .map_or_else(CompletionCallAction::continue_run, CompletionCallAction::patch)
     }
 
-    async fn on_tool_call(&self, _ctx: &HookContext, _event: ToolCallEvent<'_>) -> ToolCallAction {
+    async fn on_tool_call(&self, _ctx: &HookContext, event: ToolCallEvent<'_>) -> ToolCallAction {
+        if let Some(slot) = &self.tool_call_ids {
+            let id = event.tool_call_id.unwrap_or(event.internal_call_id).to_string();
+            *slot.lock().unwrap_or_else(|error| error.into_inner()) = Some(id);
+        }
         self.action()
     }
 }
@@ -302,6 +316,7 @@ impl AgentLoop for RigAgentLoop {
                 cancel: cancel_token.clone(),
                 steering,
                 media: tokio::sync::Mutex::new(RunMediaAccountant::default()),
+                tool_call_ids: self.tool_call_ids.clone(),
             })
             .add_hook(InvalidToolCallRecovery);
         // conversation_memory=false：历史由 cloud DB 每轮 seed，经 .history() 传入。
@@ -412,6 +427,7 @@ impl AgentLoop for RigAgentLoop {
                 cancel: None,
                 steering: None,
                 media: tokio::sync::Mutex::new(RunMediaAccountant::default()),
+                tool_call_ids: self.tool_call_ids.clone(),
             })
             .add_hook(InvalidToolCallRecovery);
         let seeded = self.seeded_history().await;
@@ -519,7 +535,9 @@ pub fn rig_loop_factory(cfg: AgentLoopConfig) -> anyhow::Result<AgentLoopHandle>
     };
 
     let handle: AgentLoopHandle = Arc::new(tokio::sync::Mutex::new(
-        RigAgentLoop::new(agent, memory).with_redactions(redactions),
+        RigAgentLoop::new(agent, memory)
+            .with_redactions(redactions)
+            .with_tool_call_ids(cfg.tool_call_ids),
     ));
     Ok(handle)
 }
@@ -593,6 +611,7 @@ mod tests {
             cancel: Some(cancel),
             steering: None,
             media: tokio::sync::Mutex::new(RunMediaAccountant::default()),
+            tool_call_ids: None,
         };
         assert_eq!(hook.action(), ToolCallAction::Stop("run cancelled".into()));
         assert_eq!(hook.count.load(Ordering::SeqCst), 0);

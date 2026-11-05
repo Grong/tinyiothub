@@ -208,7 +208,10 @@ fn approval_from_decision(
     decision: &Decision,
     effect: Option<&EffectIntent>,
 ) -> Result<TaskApproval, DbError> {
-    let subject = &decision.subject;
+    // Public projection: the subject may have historical unredacted rows, so
+    // redact again here. The Effect fallback below is redacted too.
+    let redaction = tinyiothub_core::redaction::RedactionPolicy::default();
+    let subject = redaction.redact(&decision.subject);
     let (state, approval_decision) = match decision.state {
         DecisionState::Requested => (ApprovalState::Pending, None),
         DecisionState::Answered | DecisionState::Consumed => match decision.answer.as_deref() {
@@ -224,20 +227,20 @@ fn approval_from_decision(
         DecisionState::Answered | DecisionState::Consumed | DecisionState::Expired | DecisionState::Withdrawn
     )
     .then_some(decision.updated_at);
-    let device_id = payload_str(subject, &["deviceId", "device_id", "device"])
+    let device_id = payload_str(&subject, &["deviceId", "device_id", "device"])
         .or_else(|| effect.and_then(|effect| payload_str(&effect.request_json, &["deviceId", "device_id"])))
         .unwrap_or_default();
-    let tool_call_id = payload_str(subject, &["toolCallId", "tool_call_id"])
+    let tool_call_id = payload_str(&subject, &["toolCallId", "tool_call_id"])
         .or_else(|| effect.map(|effect| effect.tool_call_id.clone()))
         .unwrap_or_default();
-    let tool = payload_str(subject, &["tool", "toolName"]).or_else(|| effect.map(|effect| effect.tool_name.clone()));
+    let tool = payload_str(&subject, &["tool", "toolName"]).or_else(|| effect.map(|effect| effect.tool_name.clone()));
     let args_json = subject
         .get("argsJson")
         .or_else(|| subject.get("args"))
         .cloned()
-        .or_else(|| effect.map(|effect| effect.request_json.clone()))
+        .or_else(|| effect.map(|effect| redaction.redact(&effect.request_json)))
         .unwrap_or(Value::Null);
-    let reason = payload_str(subject, &["reason", "summary"]).unwrap_or_default();
+    let reason = payload_str(&subject, &["reason", "summary"]).unwrap_or_default();
     Ok(TaskApproval {
         id: decision.decision_id.clone(),
         workspace_id: workspace_id.to_string(),
@@ -472,6 +475,25 @@ impl crate::Db {
         .bind(task_id)
         .fetch_one(&pool)
         .await?)
+    }
+
+    /// Recent `tool_approval` Decisions for a Task, newest last. Used to tell
+    /// the model the recorded approval outcome in the continuation prompt.
+    pub async fn harness_task_tool_approvals(
+        &self,
+        workspace_id: &str,
+        task_id: &str,
+    ) -> Result<Vec<Decision>, DbError> {
+        let pool = self.workspace_pool(workspace_id).await?;
+        sqlx::query_as::<_, DecisionRow>(sqlx::AssertSqlSafe(format!(
+            "{DECISION_SELECT} WHERE task_id = ? AND kind = 'tool_approval' ORDER BY created_at, decision_id"
+        )))
+        .bind(task_id)
+        .fetch_all(&pool)
+        .await?
+        .into_iter()
+        .map(DecisionRow::into_decision)
+        .collect()
     }
 
     /// Ascending event page strictly after `after`, bounded by the existing
@@ -736,27 +758,10 @@ impl crate::Db {
             payload_json: payload,
         };
         crate::harness_effect::insert_event(&mut tx, &event).await?;
-        sqlx::query(
-            "INSERT INTO task_wake_outbox
-                (task_id, event_id, signal_json, dispatch_state, created_at, dispatched_at, resolved_at)
-             VALUES (?, ?, ?, 'pending', ?, NULL, NULL)
-             ON CONFLICT(task_id, event_id) DO NOTHING",
-        )
-        .bind(task_id)
-        .bind(&event.event_id)
-        .bind(
-            json!({
-                "kind":"approval_decided",
-                "workspace_id":workspace_id,
-                "task_id":task_id,
-                "approval_id":approval_id,
-                "decision_event_id":event.event_id,
-            })
-            .to_string(),
-        )
-        .bind(now)
-        .execute(&mut *tx)
-        .await?;
+        // The continuation wake is deliberately NOT written here. The HTTP
+        // handler dispatches an approved Effect first, then enqueues the
+        // approval wake with the actual outcome. Otherwise the wake router can
+        // start a continuation while the approved Job is still in flight.
         tx.commit().await?;
         let decision =
             sqlx::query_as::<_, DecisionRow>(sqlx::AssertSqlSafe(format!("{DECISION_SELECT} WHERE decision_id = ?")))
@@ -768,6 +773,47 @@ impl crate::Db {
             decision,
             deduplicated: false,
         })
+    }
+
+    /// Enqueue the continuation wake for an answered/expired approval. The
+    /// signal is the same shape every approval path uses, so the Task
+    /// coordinator can parse it. `outcome` is `approved`, `denied`,
+    /// `not_applied`, or `expired`.
+    pub async fn harness_enqueue_approval_wake(
+        &self,
+        workspace_id: &str,
+        task_id: &str,
+        approval_id: &str,
+        effect_id: Option<&str>,
+        outcome: &str,
+        now: DateTime<Utc>,
+    ) -> Result<(), DbError> {
+        let pool = self.workspace_pool(workspace_id).await?;
+        let event_id = format!("approval:{approval_id}:{outcome}");
+        sqlx::query(
+            "INSERT INTO task_wake_outbox
+                (task_id, event_id, signal_json, dispatch_state, created_at, dispatched_at, resolved_at)
+             VALUES (?, ?, ?, 'pending', ?, NULL, NULL)
+             ON CONFLICT(task_id, event_id) DO NOTHING",
+        )
+        .bind(task_id)
+        .bind(&event_id)
+        .bind(
+            json!({
+                "kind":"approval_decided",
+                "workspace_id":workspace_id,
+                "task_id":task_id,
+                "approval_id":approval_id,
+                "effect_id":effect_id,
+                "decision_event_id":event_id,
+                "outcome":outcome,
+            })
+            .to_string(),
+        )
+        .bind(now)
+        .execute(&pool)
+        .await?;
+        Ok(())
     }
 
     /// Resolve one Device Job scoped to its Task, plus the Effect intent that

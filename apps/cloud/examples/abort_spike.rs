@@ -126,6 +126,7 @@ fn build_agent() -> AgentLoopHandle {
         security_summary: None,
         conversation_memory: false,
         available_capabilities: vec![],
+        tool_call_ids: None,
         provider_factory: Arc::new(move || Ok(Box::new(scripted.clone()))),
     };
     rig_loop_factory(cfg).expect("build agent")

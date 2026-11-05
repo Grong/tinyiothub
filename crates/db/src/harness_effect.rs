@@ -877,6 +877,132 @@ async fn apply_writes(
     })
 }
 
+/// Expire one due `tool_approval` Decision. The Task/Run state machine is never
+/// touched: a paused, cancelling, or terminal Task keeps its exact state, and a
+/// finished Run is never reopened. A missing or non-Prepared Effect only skips
+/// the Effect settlement; the Decision still expires and the sweep continues.
+async fn expire_decision_row(
+    workspace_id: &str,
+    pool: &SqlitePool,
+    decision: &Decision,
+    now: DateTime<Utc>,
+) -> Result<bool> {
+    let mut tx = pool.begin().await?;
+    let decision_updated = sqlx::query(
+        "UPDATE decisions SET state = 'expired', updated_at = ?
+         WHERE decision_id = ? AND state = 'requested'",
+    )
+    .bind(now.to_rfc3339())
+    .bind(&decision.decision_id)
+    .execute(&mut *tx)
+    .await?
+    .rows_affected();
+    if decision_updated == 0 {
+        tx.rollback().await?;
+        return Ok(false);
+    }
+    let event = |suffix: &str, event_type: &str, payload: Value| tinyiothub_core::harness::HarnessEventInput {
+        event_id: format!("approval-expired:{}:{suffix}", decision.decision_id),
+        workspace_id: workspace_id.to_string(),
+        session_id: decision.session_id.clone(),
+        execution_mode: tinyiothub_core::harness::ExecutionMode::Production,
+        run_id: Some(decision.run_id.clone()),
+        task_id: Some(decision.task_id.clone()),
+        event_type: event_type.to_string(),
+        occurred_at: now,
+        cause_id: None,
+        schema_v: 1,
+        payload_digest: format!("{:x}", sha2::Sha256::digest(payload.to_string().as_bytes())),
+        payload_json: payload,
+    };
+    insert_event(
+        &mut tx,
+        &event(
+            "decision",
+            "decision.expired",
+            serde_json::json!({"decisionId":decision.decision_id,"kind":"tool_approval"}),
+        ),
+    )
+    .await?;
+
+    if let Some(effect_id) = decision.effect_id.as_deref() {
+        let intent = sqlx::query_as::<_, EffectIntentRow>(
+            "SELECT effect_id, session_id, task_id, run_id, tool_call_id, tool_name, request_json,
+                    request_digest, idempotency_key, external_ref, state, recovery_from, state_version, result_json,
+                    created_at, updated_at FROM effect_intents WHERE effect_id = ?",
+        )
+        .bind(effect_id)
+        .fetch_optional(&mut *tx)
+        .await?
+        .map(EffectIntent::try_from)
+        .transpose()?;
+        if let Some(intent) = intent
+            && intent.state == EffectState::Prepared
+        {
+            let next_version = intent.state_version + 1;
+            let effect_updated = sqlx::query(
+                "UPDATE effect_intents SET state = 'not_applied', state_version = ?,
+                     result_json = '{\"reason\":\"approval_expired\"}', updated_at = ?
+                 WHERE effect_id = ? AND state = 'prepared' AND state_version = ?",
+            )
+            .bind(next_version)
+            .bind(now.to_rfc3339())
+            .bind(effect_id)
+            .bind(intent.state_version)
+            .execute(&mut *tx)
+            .await?
+            .rows_affected();
+            if effect_updated == 1 {
+                insert_event(
+                    &mut tx,
+                    &event(
+                        "effect",
+                        "effect.not_applied",
+                        serde_json::json!({"effectId":effect_id,"state":"not_applied","reason":"approval_expired"}),
+                    ),
+                )
+                .await?;
+                insert_event(
+                    &mut tx,
+                    &event(
+                        "tool-result",
+                        "step.tool_result",
+                        serde_json::json!({"effectId":effect_id,"state":"not_applied","result":{"reason":"approval_expired"}}),
+                    ),
+                )
+                .await?;
+            }
+        }
+    }
+
+    let wake_event_id = format!("approval-expired:{}:wake", decision.decision_id);
+    sqlx::query(
+        "INSERT INTO task_wake_outbox
+            (task_id, event_id, signal_json, dispatch_state, created_at, dispatched_at, resolved_at)
+         VALUES (?, ?, ?, 'pending', ?, NULL, NULL)
+         ON CONFLICT(task_id, event_id) DO NOTHING",
+    )
+    .bind(&decision.task_id)
+    .bind(&wake_event_id)
+    .bind(
+        serde_json::json!({
+            "kind":"approval_decided",
+            "workspace_id":workspace_id,
+            "task_id":decision.task_id,
+            "approval_id":decision.decision_id,
+            "effect_id":decision.effect_id,
+            "decision_event_id":wake_event_id,
+            "outcome":"expired",
+        })
+        .to_string(),
+    )
+    .bind(now.to_rfc3339())
+    .execute(&mut *tx)
+    .await?;
+    tx.commit().await?;
+    Ok(true)
+}
+
 impl Db {
     pub async fn workflow_dispatch_permitted(&self, workspace_id: &str, effect_id: &str) -> Result<bool> {
         self.guard_recovery_matrix(workspace_id).await?;
@@ -1444,6 +1570,126 @@ impl Db {
         insert_event(&mut connection, &event).await
     }
 
+    /// Withdraw every requested `tool_approval` Decision for a Task and settle
+    /// its still-Prepared Effect `not_applied`. Independent of the periodic
+    /// dispatcher: cancel is the fact that closes the approval. Task/Run rows
+    /// are left to the caller's cancellation transition.
+    pub async fn withdraw_requested_tool_approvals(
+        &self,
+        workspace_id: &str,
+        task_id: &str,
+        now: DateTime<Utc>,
+    ) -> Result<u64> {
+        self.guard_recovery_matrix(workspace_id).await?;
+        let pool = self.workspace_pool(workspace_id).await?;
+        let requested = sqlx::query_as::<_, DecisionRow>(
+            "SELECT decision_id, kind, state, session_id, run_id, task_id, effect_id, subject_json,
+                    options_json, created_at, updated_at, expires_at, answer, answer_actor,
+                    answer_event_id, answer_evidence_json, consumed_at, consumed_by
+             FROM decisions
+             WHERE task_id = ? AND kind = 'tool_approval' AND state = 'requested'
+             ORDER BY created_at, decision_id",
+        )
+        .bind(task_id)
+        .fetch_all(&pool)
+        .await?
+        .into_iter()
+        .map(Decision::try_from)
+        .collect::<Result<Vec<_>>>()?;
+        let mut withdrawn = 0;
+        for decision in requested {
+            let mut tx = pool.begin().await?;
+            let updated = sqlx::query(
+                "UPDATE decisions SET state = 'withdrawn', updated_at = ?
+                 WHERE decision_id = ? AND state = 'requested'",
+            )
+            .bind(now.to_rfc3339())
+            .bind(&decision.decision_id)
+            .execute(&mut *tx)
+            .await?
+            .rows_affected();
+            if updated == 0 {
+                tx.rollback().await?;
+                continue;
+            }
+            let event = |suffix: &str, event_type: &str, payload: Value| tinyiothub_core::harness::HarnessEventInput {
+                event_id: format!("approval-withdrawn:{}:{suffix}", decision.decision_id),
+                workspace_id: workspace_id.to_string(),
+                session_id: decision.session_id.clone(),
+                execution_mode: tinyiothub_core::harness::ExecutionMode::Production,
+                run_id: Some(decision.run_id.clone()),
+                task_id: Some(decision.task_id.clone()),
+                event_type: event_type.to_string(),
+                occurred_at: now,
+                cause_id: None,
+                schema_v: 1,
+                payload_digest: format!("{:x}", sha2::Sha256::digest(payload.to_string().as_bytes())),
+                payload_json: payload,
+            };
+            insert_event(
+                &mut tx,
+                &event(
+                    "decision",
+                    "decision.withdrawn",
+                    serde_json::json!({"decisionId":decision.decision_id,"kind":"tool_approval","reason":"cancelled"}),
+                ),
+            )
+            .await?;
+            if let Some(effect_id) = decision.effect_id.as_deref() {
+                let intent = sqlx::query_as::<_, EffectIntentRow>(
+                    "SELECT effect_id, session_id, task_id, run_id, tool_call_id, tool_name, request_json,
+                            request_digest, idempotency_key, external_ref, state, recovery_from, state_version, result_json,
+                            created_at, updated_at FROM effect_intents WHERE effect_id = ?",
+                )
+                .bind(effect_id)
+                .fetch_optional(&mut *tx)
+                .await?
+                .map(EffectIntent::try_from)
+                .transpose()?;
+                if let Some(intent) = intent
+                    && intent.state == EffectState::Prepared
+                {
+                    let next_version = intent.state_version + 1;
+                    let settled = sqlx::query(
+                        "UPDATE effect_intents SET state = 'not_applied', state_version = ?,
+                             result_json = '{\"reason\":\"cancelled\"}', updated_at = ?
+                         WHERE effect_id = ? AND state = 'prepared' AND state_version = ?",
+                    )
+                    .bind(next_version)
+                    .bind(now.to_rfc3339())
+                    .bind(effect_id)
+                    .bind(intent.state_version)
+                    .execute(&mut *tx)
+                    .await?
+                    .rows_affected();
+                    if settled == 1 {
+                        insert_event(
+                            &mut tx,
+                            &event(
+                                "effect",
+                                "effect.not_applied",
+                                serde_json::json!({"effectId":effect_id,"state":"not_applied","reason":"cancelled"}),
+                            ),
+                        )
+                        .await?;
+                        insert_event(
+                            &mut tx,
+                            &event(
+                                "tool-result",
+                                "step.tool_result",
+                                serde_json::json!({"effectId":effect_id,"state":"not_applied","result":{"reason":"cancelled"}}),
+                            ),
+                        )
+                        .await?;
+                    }
+                }
+            }
+            tx.commit().await?;
+            withdrawn += 1;
+        }
+        Ok(withdrawn)
+    }
+
     pub async fn expire_harness_decisions(&self, workspace_id: &str, now: DateTime<Utc>) -> Result<u64> {
         self.guard_recovery_matrix(workspace_id).await?;
         let pool = self.workspace_pool(workspace_id).await?;
@@ -1462,126 +1708,22 @@ impl Db {
         .map(Decision::try_from)
         .collect::<Result<Vec<_>>>()?;
         let mut expired = 0;
+        // One malformed or already-moved row must not starve the rest of the
+        // workspace. Each row is its own transaction; failures are logged and
+        // the sweep continues.
         for decision in due {
-            let Some(effect_id) = decision.effect_id.clone() else {
-                continue;
-            };
-            let mut tx = pool.begin().await?;
-            let intent = sqlx::query_as::<_, EffectIntentRow>(
-                "SELECT effect_id, session_id, task_id, run_id, tool_call_id, tool_name, request_json,
-                        request_digest, idempotency_key, external_ref, state, recovery_from, state_version, result_json,
-                        created_at, updated_at FROM effect_intents WHERE effect_id = ?",
-            )
-            .bind(&effect_id)
-            .fetch_optional(&mut *tx)
-            .await?
-            .map(EffectIntent::try_from)
-            .transpose()?
-            .ok_or_else(|| DbError::NotFound { id: effect_id.clone() })?;
-            if intent.state != EffectState::Prepared {
-                return Err(DbError::Conflict {
-                    message: format!("only a prepared effect can expire with its approval: {effect_id}"),
-                });
+            match expire_decision_row(workspace_id, &pool, &decision, now).await {
+                Ok(true) => expired += 1,
+                Ok(false) => {}
+                Err(error) => {
+                    tracing::warn!(
+                        %workspace_id,
+                        decision_id = %decision.decision_id,
+                        %error,
+                        "approval expiry row failed; continuing sweep"
+                    );
+                }
             }
-            let decision_updated = sqlx::query(
-                "UPDATE decisions SET state = 'expired', updated_at = ?
-                 WHERE decision_id = ? AND state = 'requested'",
-            )
-            .bind(now.to_rfc3339())
-            .bind(&decision.decision_id)
-            .execute(&mut *tx)
-            .await?
-            .rows_affected();
-            if decision_updated == 0 {
-                tx.rollback().await?;
-                continue;
-            }
-            let next_version = intent.state_version + 1;
-            let effect_updated = sqlx::query(
-                "UPDATE effect_intents SET state = 'not_applied', state_version = ?,
-                     result_json = '{\"reason\":\"approval_expired\"}', updated_at = ?
-                 WHERE effect_id = ? AND state = 'prepared' AND state_version = ?",
-            )
-            .bind(next_version)
-            .bind(now.to_rfc3339())
-            .bind(&effect_id)
-            .bind(intent.state_version)
-            .execute(&mut *tx)
-            .await?
-            .rows_affected();
-            if effect_updated != 1 {
-                return Err(DbError::CasConflict {
-                    message: format!("effect {effect_id} changed during approval expiry"),
-                });
-            }
-            let event = |suffix: &str, event_type: &str, payload: Value| tinyiothub_core::harness::HarnessEventInput {
-                event_id: format!("approval-expired:{effect_id}:{suffix}"),
-                workspace_id: workspace_id.to_string(),
-                session_id: intent.session_id.clone(),
-                execution_mode: tinyiothub_core::harness::ExecutionMode::Production,
-                run_id: Some(intent.run_id.clone()),
-                task_id: Some(intent.task_id.clone()),
-                event_type: event_type.to_string(),
-                occurred_at: now,
-                cause_id: None,
-                schema_v: 1,
-                payload_digest: format!("{:x}", sha2::Sha256::digest(payload.to_string().as_bytes())),
-                payload_json: payload,
-            };
-            insert_event(
-                &mut tx,
-                &event(
-                    "decision",
-                    "decision.expired",
-                    serde_json::json!({"decisionId":decision.decision_id,"kind":"tool_approval"}),
-                ),
-            )
-            .await?;
-            let effect_event = event(
-                "effect",
-                "effect.not_applied",
-                serde_json::json!({"effectId":effect_id,"state":"not_applied","reason":"approval_expired"}),
-            );
-            insert_event(&mut tx, &effect_event).await?;
-            insert_event(
-                &mut tx,
-                &event(
-                    "tool-result",
-                    "step.tool_result",
-                    serde_json::json!({"effectId":effect_id,"state":"not_applied","result":{"reason":"approval_expired"}}),
-                ),
-            )
-            .await?;
-            sqlx::query(
-                "UPDATE device_jobs SET state = 'rejected', result_json = '{\"reason\":\"approval_expired\"}', ended_at = ?
-                 WHERE tool_call_id = ?",
-            )
-            .bind(now.to_rfc3339())
-            .bind(&intent.tool_call_id)
-            .execute(&mut *tx)
-            .await?;
-            sqlx::query("UPDATE agent_runs SET state = 'running' WHERE id = ?")
-                .bind(&intent.run_id)
-                .execute(&mut *tx)
-                .await?;
-            sqlx::query("UPDATE agent_tasks SET state = 'running', state_version = state_version + 1 WHERE id = ?")
-                .bind(&intent.task_id)
-                .execute(&mut *tx)
-                .await?;
-            sqlx::query(
-                "INSERT INTO task_wake_outbox
-                    (task_id, event_id, signal_json, dispatch_state, created_at, dispatched_at, resolved_at)
-                 VALUES (?, ?, ?, 'pending', ?, NULL, NULL)
-                 ON CONFLICT(task_id, event_id) DO NOTHING",
-            )
-            .bind(&intent.task_id)
-            .bind(&effect_event.event_id)
-            .bind(serde_json::json!({"effectId":effect_id,"state":"not_applied"}).to_string())
-            .bind(now.to_rfc3339())
-            .execute(&mut *tx)
-            .await?;
-            tx.commit().await?;
-            expired += 1;
         }
         Ok(expired)
     }

@@ -4,8 +4,20 @@ use async_trait::async_trait;
 use chrono::{DateTime, Duration, Utc};
 use serde_json::json;
 use tinyiothub_agent::harness::{EffectReconciler, ReconcileOutcome};
+use tinyiothub_agent::port::events::TurnEvent;
+use tinyiothub_agent::port::runtime::AgentLoop;
+use tinyiothub_agent::port::task::TaskStore;
+use tinyiothub_cloud::domains::agent::events::AgentEventBus;
 use tinyiothub_cloud::domains::agent::runtime::controls::{CommandControl, CommandRecovery};
+use tinyiothub_cloud::domains::agent::runtime::harness_store::HarnessTaskStore;
 use tinyiothub_cloud::domains::agent::runtime::{EffectRecovery, RecoveryMode};
+use tinyiothub_cloud::domains::agent::thing_agent::active_runs::ActiveRunRegistry;
+use tinyiothub_cloud::domains::agent::thing_agent::approval_port::HarnessPendingToolApproval;
+use tinyiothub_cloud::domains::agent::thing_agent::manager::AutonomousAgentProvider;
+use tinyiothub_cloud::domains::agent::thing_agent::runner::{AgentHandle, RunContextInner, Runner};
+use tinyiothub_cloud::domains::agent::thing_agent::task::coordinator::TaskCoordinator;
+use tinyiothub_cloud::domains::agent::thing_agent::task::wake::WakeRouter;
+use tinyiothub_cloud::shared::runtime_ports::WatchRuleStoreAdapter;
 use tinyiothub_core::harness::{
     CommandKind, CommandState, DecisionState, EffectIntent, EffectState, ExecutionMode, HarnessCommand,
     HarnessEventInput,
@@ -754,7 +766,380 @@ async fn effect_recovery_tool_approval_expiry_settles_prepared_effect_atomically
         .fetch_one(&fixture.workspace_pool().await)
         .await
         .expect("job state");
-    assert_eq!(job, "rejected");
+    assert_eq!(
+        job, "running",
+        "a Prepared effect never dispatched, so expiry must not rewrite a Job row"
+    );
+    let signal: String = sqlx::query_scalar(
+        "SELECT signal_json FROM task_wake_outbox WHERE task_id = 'effect-expired' ORDER BY created_at DESC LIMIT 1",
+    )
+    .fetch_one(&fixture.workspace_pool().await)
+    .await
+    .expect("expiry wake signal");
+    let signal: serde_json::Value = serde_json::from_str(&signal).expect("signal JSON");
+    assert_eq!(signal["kind"], "approval_decided");
+    assert_eq!(signal["workspace_id"], WS);
+    assert_eq!(signal["outcome"], "expired");
+    assert_eq!(signal["approval_id"], "decision-effect-expired");
+    fixture.close().await;
+}
+
+#[derive(Default)]
+struct ExpiryAgent {
+    prompts: Arc<Mutex<Vec<String>>>,
+}
+
+#[async_trait]
+impl AgentLoop for ExpiryAgent {
+    async fn turn_streamed(
+        &self,
+        user_message: &str,
+        _event_tx: tokio::sync::mpsc::Sender<TurnEvent>,
+        _cancel_token: Option<tokio_util::sync::CancellationToken>,
+    ) -> anyhow::Result<String> {
+        self.prompts.lock().expect("prompts").push(user_message.to_string());
+        Ok("continued".into())
+    }
+
+    async fn run_single(&self, _message: &str) -> anyhow::Result<String> {
+        Ok("continued".into())
+    }
+
+    async fn clear_history(&self) {}
+
+    async fn seed_history(&self, _messages: &[tinyiothub_agent::port::provider::ChatMessage]) -> anyhow::Result<()> {
+        Ok(())
+    }
+}
+
+struct ExpiryProvider {
+    prompts: Arc<Mutex<Vec<String>>>,
+}
+
+#[async_trait]
+impl AutonomousAgentProvider for ExpiryProvider {
+    async fn get_or_create(
+        &self,
+        _workspace_id: &str,
+        _ctx: Arc<tokio::sync::RwLock<RunContextInner>>,
+    ) -> anyhow::Result<AgentHandle> {
+        Ok(Arc::new(tokio::sync::Mutex::new(ExpiryAgent {
+            prompts: self.prompts.clone(),
+        })))
+    }
+
+    fn invalidate(&self, _workspace_id: &str) {}
+}
+
+fn task_runtime(
+    db: &Arc<tinyiothub_storage::Db>,
+    prompts: Arc<Mutex<Vec<String>>>,
+) -> (Arc<HarnessTaskStore>, Arc<TaskCoordinator>, WakeRouter) {
+    let store = Arc::new(HarnessTaskStore::new(db.clone()));
+    let coordinator = Arc::new(
+        TaskCoordinator::new(
+            store.clone(),
+            None,
+            Arc::new(WatchRuleStoreAdapter::new(db.as_ref().clone())),
+            Arc::new(dashmap::DashMap::new()),
+            Arc::new(AgentEventBus::new(64)),
+            ActiveRunRegistry::new(4),
+            Arc::new(Runner::new()),
+            Arc::new(ExpiryProvider {
+                prompts: prompts.clone(),
+            }),
+        )
+        .with_pending_tool_approvals(Arc::new(HarnessPendingToolApproval::new(db.clone()))),
+    );
+    let router = WakeRouter::new(store.clone(), coordinator.clone());
+    (store, coordinator, router)
+}
+
+/// Seed a full Harness Task plus a Prepared Effect and a due requested
+/// Decision. The Task deliberately has no current Run so the expiry
+/// continuation must start one.
+async fn seed_expiry_task(fixture: &WorkspaceFixture, task_id: &str, effect_id: &str) {
+    use tinyiothub_core::agent_task::{AgentTask, TaskStatus, TaskWake, WakeDispatchState};
+
+    let now = at();
+    let task = AgentTask {
+        id: task_id.into(),
+        workspace_id: WS.into(),
+        idempotency_key: format!("{task_id}-key"),
+        objective: "exercise approval expiry".into(),
+        session_key: Some("session-expiry".into()),
+        created_by: "user-1".into(),
+        status: TaskStatus::Active,
+        current_run_id: None,
+        state_version: 0,
+        created_at: now,
+        updated_at: now,
+        ended_at: None,
+    };
+    let wake = TaskWake {
+        task_id: task_id.into(),
+        event_id: format!("create-{task_id}"),
+        signal_json: json!({"workspace_id":WS}).to_string(),
+        dispatch_state: WakeDispatchState::Dispatched,
+        created_at: now,
+        dispatched_at: Some(now),
+        resolved_at: Some(now),
+    };
+    fixture
+        .db
+        .harness_create_task_with_wake(&task, &wake)
+        .await
+        .expect("harness Task");
+    let pool = fixture.workspace_pool().await;
+    sqlx::query("INSERT INTO agent_runs (id, task_id, state) VALUES (?, ?, 'running')")
+        .bind(format!("run-{effect_id}"))
+        .bind(task_id)
+        .execute(&pool)
+        .await
+        .expect("run");
+    sqlx::query(
+        "INSERT INTO effect_intents
+            (effect_id, session_id, task_id, run_id, tool_call_id, tool_name, request_json,
+             request_digest, idempotency_key, external_ref, state, state_version, result_json,
+             created_at, updated_at)
+         VALUES (?, 'session-expiry', ?, ?, ?, 'set_speed', '{\"deviceId\":\"robot-1\",\"argsJson\":{}}',
+                 ?, ?, NULL, 'prepared', 1, NULL, ?, ?)",
+    )
+    .bind(effect_id)
+    .bind(task_id)
+    .bind(format!("run-{effect_id}"))
+    .bind(format!("call-{effect_id}"))
+    .bind(format!("digest-{effect_id}"))
+    .bind(effect_id)
+    .bind(now.to_rfc3339())
+    .bind(now.to_rfc3339())
+    .execute(&pool)
+    .await
+    .expect("effect");
+    sqlx::query(
+        "INSERT INTO decisions
+            (decision_id, kind, state, session_id, run_id, task_id, effect_id, subject_json,
+             options_json, created_at, updated_at, expires_at, answer, answer_actor,
+             answer_event_id, answer_evidence_json, consumed_at, consumed_by)
+         VALUES (?, 'tool_approval', 'requested', 'session-expiry', ?, ?, ?,
+                 '{\"tool\":\"set_speed\",\"reason\":\"confirm\"}', '[\"approved\",\"denied\"]',
+                 ?, ?, ?, NULL, NULL, NULL, NULL, NULL, NULL)",
+    )
+    .bind(format!("decision-{effect_id}"))
+    .bind(format!("run-{effect_id}"))
+    .bind(task_id)
+    .bind(effect_id)
+    .bind(now.to_rfc3339())
+    .bind(now.to_rfc3339())
+    .bind((now + Duration::hours(1)).to_rfc3339())
+    .execute(&pool)
+    .await
+    .expect("decision");
+}
+
+#[tokio::test]
+async fn approval_expiry_wake_is_dispatched_and_continues_with_the_outcome() {
+    let fixture = fixture_workspace(WS).await;
+    seed_expiry_task(&fixture, "task-expiry", "effect-expiry").await;
+    let db = Arc::new(fixture.db.clone());
+    let expired = db
+        .expire_harness_decisions(WS, at() + Duration::hours(2))
+        .await
+        .expect("expire");
+    assert_eq!(expired, 1);
+
+    let prompts = Arc::new(Mutex::new(Vec::new()));
+    let (store, coordinator, router) = task_runtime(&db, prompts.clone());
+    assert_eq!(router.run(64).await.expect("route expiry wake"), 1);
+    let wake_state: String = sqlx::query_scalar(
+        "SELECT dispatch_state FROM task_wake_outbox WHERE event_id = 'approval-expired:decision-effect-expiry:wake'",
+    )
+    .fetch_one(&fixture.workspace_pool().await)
+    .await
+    .expect("expiry wake state");
+    assert_eq!(wake_state, "dispatched", "expiry wake must not dead-letter");
+
+    let mut status = None;
+    for _ in 0..300 {
+        let task = store
+            .get_task(WS, "task-expiry")
+            .await
+            .expect("task read")
+            .expect("task row");
+        status = Some(task.status);
+        if task.status == tinyiothub_core::agent_task::TaskStatus::Completed {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    }
+    assert_eq!(
+        status,
+        Some(tinyiothub_core::agent_task::TaskStatus::Completed),
+        "the expiry continuation must finish the Task"
+    );
+    let prompt = prompts.lock().expect("prompts").join("\n");
+    assert!(prompt.contains("decision-effect-expiry"), "{prompt}");
+    assert!(prompt.contains("expired"), "{prompt}");
+    drop(coordinator);
+    fixture.close().await;
+}
+
+#[tokio::test]
+async fn cancelling_a_task_withdraws_a_requested_approval_and_settles_the_effect() {
+    let fixture = fixture_workspace(WS).await;
+    seed_expiry_task(&fixture, "task-cancel", "effect-cancel").await;
+    let db = Arc::new(fixture.db.clone());
+    let (_, coordinator, _) = task_runtime(&db, Arc::new(Mutex::new(Vec::new())));
+    let outcome = coordinator.cancel(WS, "task-cancel").await.expect("cancel");
+    assert!(outcome.accepted);
+    let pool = fixture.workspace_pool().await;
+    let decision: String = sqlx::query_scalar("SELECT state FROM decisions WHERE effect_id = 'effect-cancel'")
+        .fetch_one(&pool)
+        .await
+        .expect("decision state");
+    assert_eq!(decision, "withdrawn");
+    let effect: String = sqlx::query_scalar("SELECT state FROM effect_intents WHERE effect_id = 'effect-cancel'")
+        .fetch_one(&pool)
+        .await
+        .expect("effect state");
+    assert_eq!(effect, "not_applied");
+    fixture.close().await;
+}
+
+#[tokio::test]
+async fn approval_expiry_preserves_paused_cancelling_and_terminal_task_state() {
+    for (label, task_state) in [
+        ("paused", "paused"),
+        ("cancelling", "cancelling"),
+        ("terminal", "completed"),
+    ] {
+        let fixture = fixture_workspace(WS).await;
+        seed_effect(&fixture, "effect-state", EffectState::Prepared, task_state).await;
+        // A finished Run must not be reopened by the sweep.
+        sqlx::query("UPDATE agent_runs SET state = 'completed' WHERE task_id = 'effect-state'")
+            .execute(&fixture.workspace_pool().await)
+            .await
+            .expect("run state");
+        seed_decision(
+            &fixture,
+            "effect-state",
+            "tool_approval",
+            DecisionState::Requested,
+            None,
+            Some(at() + Duration::hours(1)),
+        )
+        .await;
+        let before = run_task_states(&fixture, "effect-state").await;
+        assert_eq!(before.0, "completed");
+        assert_eq!(before.1, task_state);
+        let expired = fixture
+            .db
+            .expire_harness_decisions(WS, at() + Duration::hours(2))
+            .await
+            .expect("expire");
+        assert_eq!(expired, 1, "{label}");
+        let after = run_task_states(&fixture, "effect-state").await;
+        assert_eq!(after, before, "{label}: task and run state must not move");
+        assert_eq!(effect_state(&fixture, "effect-state").await.0, "not_applied");
+        fixture.close().await;
+    }
+}
+
+#[tokio::test]
+async fn approval_expiry_continues_past_a_missing_effect() {
+    let fixture = fixture_workspace(WS).await;
+    seed_effect(&fixture, "z-valid", EffectState::Prepared, "running").await;
+    seed_decision(
+        &fixture,
+        "z-valid",
+        "tool_approval",
+        DecisionState::Requested,
+        None,
+        Some(at() + Duration::hours(1)),
+    )
+    .await;
+    // A due row whose Effect vanished sorts first; it must not starve the sweep.
+    sqlx::query(
+        "INSERT INTO decisions
+            (decision_id, kind, state, session_id, run_id, task_id, effect_id, subject_json,
+             options_json, created_at, updated_at, expires_at, answer, answer_actor,
+             answer_event_id, consumed_at, consumed_by)
+         VALUES ('decision-a-missing', 'tool_approval', 'requested', 'session-1', 'run-missing',
+                 'a-missing', 'a-missing', '{}', '[\"approved\"]', ?, ?, ?, NULL, NULL, NULL, NULL, NULL)",
+    )
+    .bind(at().to_rfc3339())
+    .bind(at().to_rfc3339())
+    .bind((at() + Duration::hours(1)).to_rfc3339())
+    .execute(&fixture.workspace_pool().await)
+    .await
+    .expect("missing-effect decision");
+    let expired = fixture
+        .db
+        .expire_harness_decisions(WS, at() + Duration::hours(2))
+        .await
+        .expect("expire");
+    assert_eq!(expired, 2, "the later valid row must still be expired");
+    assert_eq!(effect_state(&fixture, "z-valid").await.0, "not_applied");
+    let missing: String = sqlx::query_scalar("SELECT state FROM decisions WHERE decision_id = 'decision-a-missing'")
+        .fetch_one(&fixture.workspace_pool().await)
+        .await
+        .expect("missing decision");
+    assert_eq!(missing, "expired");
+    fixture.close().await;
+}
+
+#[tokio::test]
+async fn drain_ignores_prerelease_platform_approvals() {
+    let fixture = fixture_workspace(WS).await;
+    let now = Utc::now();
+    fixture
+        .db
+        .create_task_with_wake(
+            &tinyiothub_core::agent_task::AgentTask {
+                id: "task-legacy".into(),
+                workspace_id: WS.into(),
+                idempotency_key: "legacy-task-key".into(),
+                objective: "legacy".into(),
+                session_key: None,
+                created_by: "user-1".into(),
+                status: tinyiothub_core::agent_task::TaskStatus::Active,
+                current_run_id: None,
+                state_version: 0,
+                created_at: now,
+                updated_at: now,
+                ended_at: None,
+            },
+            &tinyiothub_core::agent_task::TaskWake {
+                task_id: "task-legacy".into(),
+                event_id: "legacy-create".into(),
+                signal_json: json!({"workspace_id":WS}).to_string(),
+                dispatch_state: tinyiothub_core::agent_task::WakeDispatchState::Dispatched,
+                created_at: now,
+                dispatched_at: Some(now),
+                resolved_at: Some(now),
+            },
+        )
+        .await
+        .expect("legacy task");
+    // A pre-upgrade pending row has no writer and no expirer. The drain gate
+    // must not count it forever (Task 19C2 M7).
+    sqlx::query(
+        "INSERT INTO task_approvals
+            (id, workspace_id, task_id, run_id, tool_call_id, device_id, tool, args_json, reason,
+             state, decision, decider_id, requested_at, decided_at, expires_at, decision_event_id, updated_at)
+         VALUES ('legacy-pending', ?, 'task-legacy', 'run-1', 'call-1', 'dev-1', 'set_speed', '{}',
+                 'confirm', 'pending', NULL, NULL, '2026-10-30T00:00:00Z', NULL,
+                 '2026-11-30T00:00:00Z', 'decision-1', '2026-10-30T00:00:00Z')",
+    )
+    .bind(WS)
+    .execute(fixture.db.pool())
+    .await
+    .expect("legacy pending approval");
+    let counts = fixture.db.runtime_drain_counts(Some(WS)).await.expect("drain counts");
+    assert_eq!(counts.pending_approvals, 0, "writer-less rows are not live work");
+    let metrics = fixture.db.runtime_metrics(Some(WS)).await.expect("metrics");
+    assert_eq!(metrics.approvals.pending, 0);
+    assert_eq!(metrics.approvals.oldest_pending_age_secs, 0);
     fixture.close().await;
 }
 

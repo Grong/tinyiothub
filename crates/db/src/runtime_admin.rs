@@ -154,8 +154,9 @@ impl Db {
                  JOIN agent_tasks t ON t.id = w.owner_task_id
                  WHERE (? IS NULL OR w.workspace_id = ?) AND w.owner_task_id IS NOT NULL
                    AND t.status NOT IN ('completed', 'failed', 'cancelled')),
-               (SELECT COUNT(*) FROM task_approvals a
-                 WHERE (? IS NULL OR a.workspace_id = ?) AND a.state = 'pending'),
+               -- The platform task_approvals table has no writers since 19C2.
+               -- Counting a pre-upgrade orphan would pin the drain forever.
+               0,
                (SELECT COUNT(*) FROM task_wake_outbox o
                  JOIN agent_tasks t ON t.id = o.task_id
                  WHERE (? IS NULL OR t.workspace_id = ?)
@@ -167,8 +168,6 @@ impl Db {
                      SELECT 1 FROM runtime_unknown_dispositions d WHERE d.job_id = j.id
                    ))",
         )
-        .bind(workspace_id)
-        .bind(workspace_id)
         .bind(workspace_id)
         .bind(workspace_id)
         .bind(workspace_id)
@@ -204,13 +203,10 @@ impl Db {
             workspace_id,
         )
         .await?;
-        let approval_rows = status_counts(
-            self,
-            "SELECT state, COUNT(*) FROM task_approvals
-             WHERE (? IS NULL OR workspace_id = ?) GROUP BY state",
-            workspace_id,
-        )
-        .await?;
+        // Writer-less platform approvals are not live work (19C2). The
+        // dashboard keeps the field for API compatibility but never counts
+        // pre-upgrade orphans.
+        let approval_rows: Vec<(String, i64)> = Vec::new();
         let outbox_rows = status_counts(
             self,
             "SELECT o.dispatch_state, COUNT(*) FROM task_wake_outbox o
@@ -249,15 +245,7 @@ impl Db {
         .fetch_one(self.pool())
         .await
         .map_err(storage)?;
-        let oldest_pending_approval: i64 = sqlx::query_scalar(
-            "SELECT COALESCE(MAX(0, CAST(strftime('%s', 'now') - strftime('%s', MIN(requested_at)) AS INTEGER)), 0)
-             FROM task_approvals WHERE (? IS NULL OR workspace_id = ?) AND state = 'pending'",
-        )
-        .bind(workspace_id)
-        .bind(workspace_id)
-        .fetch_one(self.pool())
-        .await
-        .map_err(storage)?;
+        let oldest_pending_approval: i64 = 0;
         let oldest_pending_outbox: i64 = sqlx::query_scalar(
             "SELECT COALESCE(MAX(0, CAST(strftime('%s', 'now') - strftime('%s', MIN(o.created_at)) AS INTEGER)), 0)
              FROM task_wake_outbox o JOIN agent_tasks t ON t.id = o.task_id

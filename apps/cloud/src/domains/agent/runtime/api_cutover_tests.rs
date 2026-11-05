@@ -2,7 +2,7 @@
 //!
 //! The production Task HTTP surface must read and write workspace Harness
 //! facts only. These tests drive the real router and assert that the legacy
-//! The legacy runtime ledger and platform `task_approvals` table stay untouched.
+//! `runtime.v1` ledger and platform `task_approvals` table stay untouched.
 
 use std::sync::Arc;
 
@@ -342,13 +342,12 @@ async fn runtime_api_uses_harness_facts_and_never_writes_legacy_tables() {
     .execute(&pool)
     .await
     .expect("stop effect");
-    sqlx::query(concat!(
-        "INSERT",
-        " INTO device_jobs
+    sqlx::query(
+        "INSERT INTO device_jobs
             (id, workspace_id, device_id, tool, args_json, state, timeout_ms, started_at,
              task_id, run_id, tool_call_id)
          VALUES ('job-stop', ?, 'device-1', 'set_level', '{}', 'running', 5000, ?, ?, 'run-effect-approval', 'call-stop')",
-    ))
+    )
     .bind(WS)
     .bind(now)
     .bind(task_id)
@@ -384,12 +383,12 @@ async fn runtime_api_uses_harness_facts_and_never_writes_legacy_tables() {
     );
 
     let runtime_rows: i64 =
-        sqlx::query_scalar("SELECT COUNT(*) FROM hub_ledger WHERE kind = 'runtime' || '.v1' AND workspace_id = ?")
+        sqlx::query_scalar("SELECT COUNT(*) FROM hub_ledger WHERE kind = 'runtime.v1' AND workspace_id = ?")
             .bind(WS)
             .fetch_one(&fixture.pool)
             .await
             .expect("legacy runtime rows");
-    assert_eq!(runtime_rows, 0, "no legacy runtime ledger rows may be produced");
+    assert_eq!(runtime_rows, 0, "no runtime.v1 rows may be produced");
     let platform_approvals: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM task_approvals")
         .fetch_one(&fixture.pool)
         .await
@@ -585,15 +584,20 @@ async fn http_cancel_stops_the_job_owned_by_the_live_coordinator() {
             .status,
         tinyiothub_core::agent_task::TaskStatus::Cancelling
     );
-    // The un-dispatched Effect is left Prepared: settling it while the Task is
-    // `cancelling` would trigger the workspace drain. The 19C1 dispatcher
-    // settles Effects of terminal Tasks; dispatch is already blocked here.
+    // Task 19C2 M5: cancel closes the requested approval atomically,
+    // independent of the dispatcher. The un-sent Effect settles not_applied.
     let effect_state: String =
         sqlx::query_scalar("SELECT state FROM effect_intents WHERE effect_id = 'effect-live-cancel'")
             .fetch_one(&workspace_pool(&fixture).await)
             .await
             .expect("effect state");
-    assert_eq!(effect_state, "prepared");
+    assert_eq!(effect_state, "not_applied");
+    let decision_state: String =
+        sqlx::query_scalar("SELECT state FROM decisions WHERE decision_id = 'approval-live-cancel'")
+            .fetch_one(&workspace_pool(&fixture).await)
+            .await
+            .expect("decision state");
+    assert_eq!(decision_state, "withdrawn");
     assert!(
         !fixture
             .db

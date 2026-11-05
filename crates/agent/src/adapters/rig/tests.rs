@@ -769,6 +769,7 @@ async fn rig_loop_forwards_tool_and_usage_events() {
         provider_factory: Arc::new(|| Ok(Box::new(ScriptModel { calls: Mutex::new(0) }))),
         conversation_memory: false,
         available_capabilities: vec![],
+        tool_call_ids: None,
     };
     let loop_ = rig_loop_factory(cfg).expect("factory builds loop");
 
@@ -943,6 +944,7 @@ fn invalid_tool_loop(
         }),
         conversation_memory: false,
         available_capabilities: vec![],
+        tool_call_ids: None,
     })
     .expect("factory builds loop")
 }
@@ -1110,6 +1112,7 @@ async fn run_budget_rejects_fifth_distinct_image_before_provider_delivery() {
         }),
         conversation_memory: false,
         available_capabilities: vec![],
+        tool_call_ids: None,
     })
     .expect("loop");
     let (tx, _rx) = tokio::sync::mpsc::channel(64);
@@ -1224,6 +1227,7 @@ async fn failing_tool_result_is_delivered_as_text_not_retried() {
         provider_factory: Arc::new(|| Ok(Box::new(AssertModel { calls: Mutex::new(0) }))),
         conversation_memory: false,
         available_capabilities: vec![],
+        tool_call_ids: None,
     };
     let loop_ = rig_loop_factory(cfg).expect("factory builds loop");
 
@@ -1512,6 +1516,7 @@ async fn cancelled_after_stream_end_is_tool_loop_cancelled() {
         }),
         conversation_memory: false,
         available_capabilities: vec![],
+        tool_call_ids: None,
     };
     let loop_ = rig_loop_factory(cfg).expect("factory builds loop");
 
@@ -1632,6 +1637,7 @@ fn tools_descriptor_capability_gate_fails_before_model_call() {
         }),
         conversation_memory: false,
         available_capabilities: vec![],
+        tool_call_ids: None,
     });
     let error = match result {
         Ok(_) => panic!("missing video/vision capability must fail closed"),
@@ -1755,6 +1761,7 @@ async fn tools_descriptor_redacts_nested_secrets_in_public_events() {
         provider_factory: Arc::new(|| Ok(Box::new(SecretArgsModel { calls: Mutex::new(0) }))),
         conversation_memory: false,
         available_capabilities: vec![],
+        tool_call_ids: None,
     })
     .expect("loop");
 

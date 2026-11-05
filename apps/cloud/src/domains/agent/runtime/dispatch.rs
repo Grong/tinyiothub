@@ -1427,10 +1427,11 @@ mod tests {
         }
 
         async fn platform_runtime_events(&self) -> i64 {
-            sqlx::query_scalar("SELECT COUNT(*) FROM hub_ledger WHERE kind = 'runtime' || '.v1'")
-                .fetch_one(self.db.pool())
+            self.db
+                .runtime_events_after(WS, None, None, 100)
                 .await
                 .expect("platform runtime events")
+                .len() as i64
         }
     }
 

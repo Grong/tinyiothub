@@ -196,6 +196,11 @@ impl TaskCoordinator {
         }
         validate_transition(task.status, TaskStatus::Cancelling)
             .map_err(|error| TaskStoreError::Validation(error.to_string()))?;
+        // Cancel is the fact that closes a requested approval. Do it before
+        // the Task transition and independently of the dispatcher's next pass.
+        if let Some(approvals) = &self.pending_approvals {
+            approvals.withdraw_requested_approvals(workspace_id, task_id).await?;
+        }
         let task = self
             .store
             .transition_task(workspace_id, task_id, task.state_version, TaskStatus::Cancelling, None)
@@ -541,13 +546,54 @@ impl TaskCoordinator {
                         .transition_task(workspace_id, task_id, task.state_version, TaskStatus::Active, None)
                         .await?;
                 }
+                // Approved-and-dispatched relies on the Job terminal wake for
+                // the continuation. Consume this wake without starting a Run
+                // while an approved Job is still active; otherwise the model
+                // sees a running/empty Job and can duplicate the action.
+                if let Some(jobs) = &self.jobs {
+                    // The approved Effect's deterministic Job may already be
+                    // terminal (a fast device result). In that case the Job
+                    // terminal wake owns the continuation; this approval wake
+                    // must not start a second one.
+                    let effect_job = raw_signal
+                        .get("effect_id")
+                        .and_then(serde_json::Value::as_str)
+                        .map(|effect_id| format!("effect:{effect_id}"));
+                    let job_exists = match effect_job {
+                        Some(job_id) => jobs
+                            .job(workspace_id, &job_id)
+                            .await
+                            .map_err(|error| TaskStoreError::Unavailable(error.to_string()))?
+                            .is_some(),
+                        None => false,
+                    };
+                    let active = jobs
+                        .task_jobs(workspace_id, task_id, false)
+                        .await
+                        .map_err(|error| TaskStoreError::Unavailable(error.to_string()))?
+                        .iter()
+                        .any(|job| job.state.is_active());
+                    if job_exists || active {
+                        return Ok(Advance::Recorded);
+                    }
+                }
+                let outcome = raw_signal
+                    .get("outcome")
+                    .and_then(serde_json::Value::as_str)
+                    .unwrap_or("decided");
+                let approval_id = raw_signal
+                    .get("approval_id")
+                    .and_then(serde_json::Value::as_str)
+                    .unwrap_or("unknown");
                 WakeSignal {
                     workspace_id: task.workspace_id.clone(),
                     priority: crate::domains::agent::thing_agent::types::Priority::Normal,
                     dedup_key: Some(format!("task:{task_id}:approval:{wake_event_id}")),
                     source: crate::domains::agent::thing_agent::types::TriggerSource::UserDirective {
                         user_id: task.created_by.clone(),
-                        text: "Continue after the recorded approval decision.".into(),
+                        text: format!(
+                            "Approval {approval_id} is {outcome}. Continue after the recorded approval decision; do not re-issue the action unless the objective still requires it."
+                        ),
                         session_key: task.session_key.clone(),
                         source: Some("approval_decided".into()),
                         problem_key: None,
@@ -734,14 +780,35 @@ impl TaskCoordinator {
         if let Some(metrics) = snapshot_metrics {
             ctx.inner.write().await.snapshot = Some(metrics);
         }
-        // Approval context now travels in the wake signal
-        // (`approval_decided`); the legacy platform projection is not read.
+        // The model must see the recorded outcome (id + approved/denied/expired)
+        // or it re-issues the same action. Facts come from the workspace
+        // Decisions, never the writer-less platform table.
+        let approval_facts = match &self.pending_approvals {
+            Some(approvals) => approvals
+                .tool_approval_facts(&task.workspace_id, &task.id)
+                .await
+                .map(|facts| {
+                    facts
+                        .into_iter()
+                        .map(|fact| super::prompt::TaskPromptApproval {
+                            approval_id: fact.approval_id,
+                            status: fact.status,
+                            detail: fact.detail,
+                        })
+                        .collect()
+                })
+                .unwrap_or_else(|error| {
+                    tracing::warn!(task_id = %task.id, %error, "Task approval context read failed");
+                    Vec::new()
+                }),
+            None => Vec::new(),
+        };
         let prompt = build_task_prompt(
             &task,
             &runs,
             &jobs,
             &watches,
-            &[],
+            &approval_facts,
             snapshot.as_deref().unwrap_or(""),
             Some(&signal),
             terminal_job.as_ref(),
@@ -2304,6 +2371,25 @@ pub(crate) mod tests {
         ) -> Result<bool, tinyiothub_core::agent_task::TaskStoreError> {
             Ok(true)
         }
+
+        async fn tool_approval_facts(
+            &self,
+            _workspace_id: &str,
+            _task_id: &str,
+        ) -> Result<
+            Vec<crate::domains::agent::thing_agent::approval_port::ApprovalPromptFact>,
+            tinyiothub_core::agent_task::TaskStoreError,
+        > {
+            Ok(Vec::new())
+        }
+
+        async fn withdraw_requested_approvals(
+            &self,
+            _workspace_id: &str,
+            _task_id: &str,
+        ) -> Result<u64, tinyiothub_core::agent_task::TaskStoreError> {
+            Ok(1)
+        }
     }
 
     #[derive(Clone, Copy)]
@@ -2318,6 +2404,100 @@ pub(crate) mod tests {
         ) -> Result<bool, tinyiothub_core::agent_task::TaskStoreError> {
             Ok(self.0)
         }
+
+        async fn tool_approval_facts(
+            &self,
+            _workspace_id: &str,
+            _task_id: &str,
+        ) -> Result<
+            Vec<crate::domains::agent::thing_agent::approval_port::ApprovalPromptFact>,
+            tinyiothub_core::agent_task::TaskStoreError,
+        > {
+            Ok(Vec::new())
+        }
+
+        async fn withdraw_requested_approvals(
+            &self,
+            _workspace_id: &str,
+            _task_id: &str,
+        ) -> Result<u64, tinyiothub_core::agent_task::TaskStoreError> {
+            Ok(1)
+        }
+    }
+
+    struct DeniedFact;
+
+    #[async_trait]
+    impl PendingToolApproval for DeniedFact {
+        async fn has_requested_tool_approval(
+            &self,
+            _workspace_id: &str,
+            _task_id: &str,
+        ) -> Result<bool, tinyiothub_core::agent_task::TaskStoreError> {
+            Ok(false)
+        }
+
+        async fn tool_approval_facts(
+            &self,
+            _workspace_id: &str,
+            _task_id: &str,
+        ) -> Result<
+            Vec<crate::domains::agent::thing_agent::approval_port::ApprovalPromptFact>,
+            tinyiothub_core::agent_task::TaskStoreError,
+        > {
+            Ok(vec![
+                crate::domains::agent::thing_agent::approval_port::ApprovalPromptFact {
+                    approval_id: "approval_9".into(),
+                    status: "denied".into(),
+                    detail: "set_speed: confirm".into(),
+                },
+            ])
+        }
+
+        async fn withdraw_requested_approvals(
+            &self,
+            _workspace_id: &str,
+            _task_id: &str,
+        ) -> Result<u64, tinyiothub_core::agent_task::TaskStoreError> {
+            Ok(0)
+        }
+    }
+
+    #[tokio::test]
+    async fn continuation_prompt_carries_the_recorded_approval_outcome() {
+        let fixture = Fixture::new(task(TaskStatus::NeedsApproval));
+        let coordinator = Arc::new(
+            TaskCoordinator::new(
+                fixture.store.clone(),
+                None,
+                fixture.watches.clone(),
+                fixture.watch_cmds.clone(),
+                fixture.events.clone(),
+                fixture.active.clone(),
+                Arc::new(Runner::new()),
+                fixture.provider.clone(),
+            )
+            .with_pending_tool_approvals(Arc::new(DeniedFact)),
+        );
+        fixture.store.insert_wake(TaskWake {
+            signal_json: json!({
+                "kind":"approval_decided",
+                "workspace_id":"ws_1",
+                "task_id":"task_1",
+                "approval_id":"approval_9",
+                "outcome":"denied",
+            })
+            .to_string(),
+            ..wake("approval_denied")
+        });
+        assert!(matches!(
+            coordinator.advance("task_1", "approval_denied").await,
+            Ok(Advance::Started { .. })
+        ));
+        wait_for(|| !fixture.provider.prompts.lock().expect("prompts").is_empty()).await;
+        let prompt = fixture.provider.prompts.lock().expect("prompts")[0].clone();
+        assert!(prompt.contains("approval_9"), "{prompt}");
+        assert!(prompt.contains("denied"), "{prompt}");
     }
 
     #[tokio::test]
@@ -3121,6 +3301,59 @@ pub(crate) mod tests {
             "a successful terminal CAS must stop the live rule"
         );
         assert!(fixture.watches.rules.lock().expect("watches").is_empty());
+    }
+
+    #[tokio::test]
+    async fn approved_job_blocks_continuation_until_its_terminal_wake() {
+        let (jobs, job_store, _worker) = jobs();
+        let mut waiting = task(TaskStatus::NeedsApproval);
+        waiting.current_run_id = None;
+        let fixture = Fixture::new_with_jobs(waiting, Some(jobs.clone()));
+        // A fast device result can make the approved Job terminal before the
+        // approval wake is routed. The deterministic Job identity still owns
+        // the continuation; the approval wake must not start a second one.
+        job_store
+            .create_job(&job("effect:effect-1", "task_1", DeviceJobState::Done))
+            .await
+            .expect("terminal job");
+        fixture.store.insert_wake(TaskWake {
+            signal_json: json!({
+                "kind":"approval_decided",
+                "workspace_id":"ws_1",
+                "task_id":"task_1",
+                "approval_id":"approval_1",
+                "effect_id":"effect-1",
+                "outcome":"approved",
+            })
+            .to_string(),
+            ..wake("approval_1")
+        });
+        assert_eq!(
+            fixture.coordinator.advance("task_1", "approval_1").await,
+            Ok(Advance::Recorded),
+            "an existing approved Effect Job consumes the approval wake without a continuation"
+        );
+        assert!(fixture.provider.prompts.lock().expect("prompts").is_empty());
+        assert_eq!(fixture.store.task("task_1").status, TaskStatus::Active);
+
+        fixture.store.insert_wake(TaskWake {
+            signal_json: json!({
+                "kind":"device_job_terminal",
+                "workspace_id":"ws_1",
+                "task_id":"task_1",
+                "job_id":"effect:effect-1",
+            })
+            .to_string(),
+            ..wake("job_done")
+        });
+        assert!(matches!(
+            fixture.coordinator.advance("task_1", "job_done").await,
+            Ok(Advance::Started { .. })
+        ));
+        wait_for(|| !fixture.provider.prompts.lock().expect("prompts").is_empty()).await;
+        let prompt = fixture.provider.prompts.lock().expect("prompts")[0].clone();
+        assert!(prompt.contains("effect:effect-1"), "{prompt}");
+        assert!(prompt.contains("Terminal Job result"), "{prompt}");
     }
 
     #[tokio::test]
