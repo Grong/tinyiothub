@@ -863,9 +863,38 @@ impl Db {
         .await;
         match inserted {
             Ok(_) => Ok(()),
-            Err(sqlx::Error::Database(database)) if database.is_unique_violation() => Err(DbError::Conflict {
-                message: format!("workspace job {} already exists", job.id),
-            }),
+            Err(sqlx::Error::Database(database)) if database.is_unique_violation() => {
+                // The workspace schema has two unique constraints: the Job id
+                // and (workspace_id, tool_call_id). Attribute the collision to
+                // the constraint that actually fired instead of always blaming
+                // the id.
+                let id_exists: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM device_jobs WHERE id = ?)")
+                    .bind(&job.id)
+                    .fetch_one(&pool)
+                    .await?;
+                if id_exists {
+                    return Err(DbError::Conflict {
+                        message: format!("workspace job {} already exists", job.id),
+                    });
+                }
+                if let Some(tool_call_id) = &job.tool_call_id {
+                    let tool_call_exists: bool = sqlx::query_scalar(
+                        "SELECT EXISTS(SELECT 1 FROM device_jobs WHERE workspace_id = ? AND tool_call_id = ?)",
+                    )
+                    .bind(workspace_id)
+                    .bind(tool_call_id)
+                    .fetch_one(&pool)
+                    .await?;
+                    if tool_call_exists {
+                        return Err(DbError::Conflict {
+                            message: format!("workspace tool call {tool_call_id} already has a Job"),
+                        });
+                    }
+                }
+                Err(DbError::Conflict {
+                    message: format!("workspace job {} violates a unique constraint", job.id),
+                })
+            }
             Err(error) => Err(error.into()),
         }
     }
@@ -978,17 +1007,6 @@ impl Db {
             .map(DeviceJob::try_from)
             .collect::<std::result::Result<Vec<_>, _>>()
             .map_err(|error| DbError::Internal(error.to_string()))
-    }
-
-    /// Remove a workspace `device_jobs` projection that never produced a
-    /// physical Job (a failed dispatch or a permit the controls refused).
-    pub async fn delete_workspace_job_projection(&self, workspace_id: &str, job_id: &str) -> Result<()> {
-        let pool = self.workspace_pool(workspace_id).await?;
-        sqlx::query("DELETE FROM device_jobs WHERE id = ?")
-            .bind(job_id)
-            .execute(&pool)
-            .await?;
-        Ok(())
     }
 
     pub async fn effect_decision(&self, workspace_id: &str, effect_id: &str) -> Result<Option<Decision>> {

@@ -525,7 +525,12 @@ impl EffectDispatch {
                     json!({"reason": "dispatch_gate_error", "error": error.to_string()}),
                 )
                 .await?;
-                return Err(error.to_string());
+                // The failure is fully handled (the permit is settled); do
+                // not report it as an unhandled pass error.
+                return Ok(DispatchReport {
+                    not_applied: 1,
+                    ..DispatchReport::default()
+                });
             }
         };
         if !permitted {
@@ -541,12 +546,23 @@ impl EffectDispatch {
         match sender.submit(workspace_id, intent).await {
             Ok(job) => {
                 // A cancel may have been requested after the permit gate but
-                // before the submit. Re-check the Effect and stop the Job we
-                // just created when it moved out of `dispatching`.
-                if let Ok(Some(current)) = self.db.effect_intent(workspace_id, &intent.effect_id).await
-                    && current.state != EffectState::Dispatching
-                    && let Err(error) = self.jobs.stop(workspace_id, &intent.task_id, &job.id).await
-                {
+                // before the submit. Re-evaluate the full dispatch predicate
+                // (Effect state and Task state) and stop the Job we just
+                // created when dispatch is no longer permitted. A gate read
+                // failure fails closed to a stop.
+                let still_permitted = match controls.dispatch_permitted(&intent.effect_id).await {
+                    Ok(permitted) => permitted,
+                    Err(error) => {
+                        tracing::warn!(
+                            %workspace_id,
+                            job_id = %job.id,
+                            %error,
+                            "post-submit dispatch re-check failed; stopping the Job"
+                        );
+                        false
+                    }
+                };
+                if !still_permitted && let Err(error) = self.jobs.stop(workspace_id, &intent.task_id, &job.id).await {
                     tracing::warn!(
                         %workspace_id,
                         job_id = %job.id,
@@ -1173,6 +1189,9 @@ mod tests {
         /// Test hook: request cancellation while submit is between the permit
         /// gate and the worker call.
         cancel_on_validate: Option<(Arc<Mutex<Option<Arc<Db>>>>, String)>,
+        /// Test hook: move the owning Task to `cancelling` while submit is in
+        /// flight (the production Task-cancel race).
+        cancel_task_on_validate: Option<(Arc<Mutex<Option<Arc<Db>>>>, String)>,
     }
 
     #[async_trait]
@@ -1194,6 +1213,17 @@ mod tests {
                         .request_cancellation(WS, effect_id)
                         .await
                         .expect("cancel during validate");
+                }
+            }
+            if let Some((slot, task_id)) = &self.cancel_task_on_validate {
+                let db = { slot.lock().expect("validator db").clone() };
+                if let Some(db) = db {
+                    let pool = db.workspace_pool_for_testing(WS).await.expect("workspace pool");
+                    sqlx::query("UPDATE agent_tasks SET state = 'cancelling' WHERE id = ?")
+                        .bind(task_id)
+                        .execute(&pool)
+                        .await
+                        .expect("cancel task during validate");
                 }
             }
             Ok(ValidatedCall {
@@ -1676,7 +1706,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn retried_submit_reuses_the_job_and_does_not_recall_the_worker() {
+    async fn retried_submit_conflicts_without_recalling_the_worker() {
         let fixture = Fixture::new().await;
         fixture
             .seed(
@@ -1711,6 +1741,7 @@ mod tests {
         let slot: Arc<Mutex<Option<Arc<Db>>>> = Arc::new(Mutex::new(None));
         let fixture = Fixture::new_with(Arc::new(Validator {
             cancel_on_validate: Some((slot.clone(), "effect-race".into())),
+            ..Validator::default()
         }))
         .await;
         *slot.lock().expect("slot") = Some(fixture.db.clone());
@@ -1736,6 +1767,138 @@ mod tests {
             "a cancel that wins the gate-vs-submit race must stop the new Job"
         );
         assert_eq!(fixture.effect("effect-race").await.0, "cancelling");
+        fixture.workspace.close().await;
+    }
+
+    #[tokio::test]
+    async fn task_cancel_between_gate_and_submit_stops_the_created_job() {
+        let slot: Arc<Mutex<Option<Arc<Db>>>> = Arc::new(Mutex::new(None));
+        let fixture = Fixture::new_with(Arc::new(Validator {
+            cancel_task_on_validate: Some((slot.clone(), "effect-task-race".into())),
+            ..Validator::default()
+        }))
+        .await;
+        *slot.lock().expect("slot") = Some(fixture.db.clone());
+        fixture
+            .seed(
+                "effect-task-race",
+                "running",
+                json!({"deviceId":"device-1","argsJson":{"level":7}}),
+            )
+            .await;
+
+        let report = fixture.dispatch.dispatch_workspace(WS).await.expect("dispatch");
+        assert_eq!(report.dispatched, 1);
+        let job_id = job_id_for("effect-task-race");
+        let job = fixture
+            .jobs
+            .job(WS, &job_id)
+            .await
+            .expect("job read")
+            .expect("created job");
+        assert!(
+            job.stop_requested_at.is_some(),
+            "a Task cancellation that wins the gate-vs-submit race must stop the new Job"
+        );
+        assert_eq!(
+            fixture.effect("effect-task-race").await.0,
+            "dispatching",
+            "the Task cancel path owns the Effect transition"
+        );
+        fixture.workspace.close().await;
+    }
+
+    #[tokio::test]
+    async fn startup_reconciliation_leaves_a_live_dispatching_effect_alone() {
+        let fixture = Fixture::new().await;
+        fixture
+            .seed(
+                "effect-live",
+                "running",
+                json!({"deviceId":"device-1","argsJson":{"level":7}}),
+            )
+            .await;
+        fixture.dispatch.dispatch_workspace(WS).await.expect("dispatch");
+        let job_id = job_id_for("effect-live");
+
+        fixture.dispatch.reconcile_startup().await;
+        assert_eq!(fixture.effect("effect-live").await.0, "dispatching");
+        let job = fixture
+            .jobs
+            .job(WS, &job_id)
+            .await
+            .expect("job read")
+            .expect("live job");
+        assert!(
+            job.state.is_active(),
+            "a live in-flight Job must not be settled by startup reconciliation"
+        );
+        assert!(job.stop_requested_at.is_none());
+        fixture.workspace.close().await;
+    }
+
+    #[tokio::test]
+    async fn startup_reconciliation_settles_dispatching_from_a_terminal_job() {
+        let fixture = Fixture::new().await;
+        fixture
+            .seed(
+                "effect-terminal",
+                "running",
+                json!({"deviceId":"device-1","argsJson":{"level":7}}),
+            )
+            .await;
+        fixture.dispatch.dispatch_workspace(WS).await.expect("dispatch");
+        let job_id = job_id_for("effect-terminal");
+        fixture
+            .jobs
+            .finish(&job_id, JobFinal::Failed("device failed".into()))
+            .await
+            .expect("finish");
+
+        fixture.dispatch.reconcile_startup().await;
+        assert_eq!(fixture.effect("effect-terminal").await.0, "failed");
+        let (state, result): (String, Option<String>) =
+            sqlx::query_as("SELECT state, result_json FROM device_jobs WHERE id = ?")
+                .bind(&job_id)
+                .fetch_one(&fixture.workspace.workspace_pool().await)
+                .await
+                .expect("workspace job");
+        assert_eq!(state, "failed");
+        assert!(
+            result.as_deref().is_some_and(|value| value.contains("device failed")),
+            "{result:?}"
+        );
+        fixture.workspace.close().await;
+    }
+
+    #[tokio::test]
+    async fn startup_reconciliation_cancels_a_cancelling_effect_without_a_job() {
+        let fixture = Fixture::new().await;
+        fixture
+            .seed(
+                "effect-cancel-crash",
+                "running",
+                json!({"deviceId":"device-1","argsJson":{"level":7}}),
+            )
+            .await;
+        sqlx::query(
+            "UPDATE effect_intents SET state = 'cancelling', state_version = 3
+             WHERE effect_id = 'effect-cancel-crash'",
+        )
+        .execute(&fixture.workspace.workspace_pool().await)
+        .await
+        .expect("cancelling effect");
+
+        fixture.dispatch.reconcile_startup().await;
+        let (state, _, _, result) = fixture.effect("effect-cancel-crash").await;
+        assert_eq!(state, "cancelled");
+        assert!(
+            result
+                .as_deref()
+                .is_some_and(|value| value.contains("cancelled_before_send")),
+            "{result:?}"
+        );
+        assert!(fixture.worker.submitted.lock().expect("submissions").is_empty());
         fixture.workspace.close().await;
     }
 
