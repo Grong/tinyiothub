@@ -1435,4 +1435,180 @@ mod tests {
             1
         );
     }
+
+    async fn corrupt_workspace(fixture: &MultiStoreFixture, workspace_id: &str) {
+        fixture
+            .db
+            .close_workspace_store(workspace_id)
+            .await
+            .expect("close workspace to corrupt");
+        let path = fixture.database_path(workspace_id);
+        tokio::fs::write(&path, b"not a sqlite database")
+            .await
+            .expect("corrupt store");
+        for suffix in ["-wal", "-shm"] {
+            let mut sidecar = path.clone().into_os_string();
+            sidecar.push(suffix);
+            let _ = tokio::fs::remove_file(sidecar).await;
+        }
+    }
+
+    #[tokio::test]
+    async fn unreadable_owning_workspace_fails_point_lookups_closed() {
+        let fixture = MultiStoreFixture::new(&["ws-only"]).await;
+        let store = fixture.harness();
+        store
+            .create_task_with_wake(
+                &sample_task_in("ws-only", "task-only"),
+                &sample_wake_in("ws-only", "task-only", "event-only"),
+            )
+            .await
+            .expect("create");
+        let task = store.get_task("ws-only", "task-only").await.unwrap().unwrap();
+        store
+            .begin_run(&task, "event-only", "run-only")
+            .await
+            .expect("begin run");
+        corrupt_workspace(&fixture, "ws-only").await;
+
+        assert!(matches!(
+            store.get_task("ws-only", "task-only").await,
+            Err(TaskStoreError::Unavailable(_))
+        ));
+        assert!(matches!(
+            store.bind_current_run("task-only", 0, Some("run-next")).await,
+            Err(TaskStoreError::Unavailable(_))
+        ));
+        assert!(matches!(
+            store.wake_by_id("task-only", "event-only").await,
+            Err(TaskStoreError::Unavailable(_))
+        ));
+        assert!(matches!(
+            store.resolve_task_wakes("task-only").await,
+            Err(TaskStoreError::Unavailable(_))
+        ));
+        assert!(matches!(
+            store.latest_task_run("task-only").await,
+            Err(TaskStoreError::Unavailable(_))
+        ));
+        assert!(matches!(
+            store.finalize_intent("task-only", "event-only").await,
+            Err(TaskStoreError::Unavailable(_))
+        ));
+        assert!(matches!(
+            store
+                .mark_wake("task-only", "event-only", WakeDispatchState::Dispatched)
+                .await,
+            Err(TaskStoreError::Unavailable(_))
+        ));
+        assert!(matches!(
+            store.completed_run_report("run-only").await,
+            Err(TaskStoreError::Unavailable(_))
+        ));
+
+        // Sweeps keep the F4 per-workspace skip and must stay Ok.
+        assert!(store.claim_pending_wakes(10).await.expect("claim").is_empty());
+        assert!(store.recover_claimed_wakes().await.is_ok());
+        assert!(store.pending_finalize_intents().await.is_ok());
+        assert_eq!(store.count_finalize_intents().await.expect("count"), 0);
+        assert!(
+            store
+                .prune_finalize_intents(Utc::now() - Duration::days(1))
+                .await
+                .is_ok()
+        );
+        assert!(store.interrupt_unfinished_runs(&[]).await.is_ok());
+        assert!(store.list_nonterminal_tasks(None).await.is_ok());
+        fixture.close().await;
+    }
+
+    #[tokio::test]
+    async fn mutation_is_refused_when_a_duplicate_workspace_is_unreadable() {
+        let fixture = MultiStoreFixture::new(&["ws-readable", "ws-shadow"]).await;
+        let store = fixture.harness();
+        for workspace_id in ["ws-readable", "ws-shadow"] {
+            store
+                .create_task_with_wake(
+                    &sample_task_in(workspace_id, "task-shadow"),
+                    &sample_wake_in(workspace_id, "task-shadow", "event-shadow"),
+                )
+                .await
+                .expect("create duplicate");
+        }
+        corrupt_workspace(&fixture, "ws-shadow").await;
+
+        // Read-only lookup may return the unique readable match.
+        let wake = store
+            .wake_by_id("task-shadow", "event-shadow")
+            .await
+            .expect("read lookup")
+            .expect("readable match");
+        assert_eq!(wake.task_id, "task-shadow");
+
+        // Mutating lookups cannot prove the readable match is unique.
+        assert!(matches!(
+            store.bind_current_run("task-shadow", 0, Some("run-shadow")).await,
+            Err(TaskStoreError::Unavailable(_))
+        ));
+        assert!(matches!(
+            store.resolve_task_wakes("task-shadow").await,
+            Err(TaskStoreError::Unavailable(_))
+        ));
+        assert!(matches!(
+            store
+                .mark_wake("task-shadow", "event-shadow", WakeDispatchState::Dispatched)
+                .await,
+            Err(TaskStoreError::Unavailable(_))
+        ));
+        let pool = fixture
+            .db
+            .workspace_pool_for_testing("ws-readable")
+            .await
+            .expect("readable pool");
+        let resolved: Option<String> =
+            sqlx::query_scalar("SELECT resolved_at FROM task_wake_outbox WHERE task_id = 'task-shadow'")
+                .fetch_one(&pool)
+                .await
+                .expect("wake row");
+        assert!(resolved.is_none(), "refused mutation must not resolve the wake");
+        fixture.close().await;
+    }
+
+    #[tokio::test]
+    async fn dedup_replay_after_transition_keeps_the_created_event() {
+        let fixture = ParityFixture::new().await;
+        create_both(&fixture, "task-created", "event-created").await;
+        fixture
+            .legacy
+            .transition_task(WS, "task-created", 0, TaskStatus::Paused, None)
+            .await
+            .expect("legacy transition");
+        fixture
+            .harness
+            .transition_task(WS, "task-created", 0, TaskStatus::Paused, None)
+            .await
+            .expect("harness transition");
+
+        let replay_task = sample_task("task-created");
+        let replay_wake = sample_wake("task-created", "event-created");
+        let legacy = fixture
+            .legacy
+            .create_task_with_wake(&replay_task, &replay_wake)
+            .await
+            .expect("legacy replay after transition");
+        let harness = fixture
+            .harness
+            .create_task_with_wake(&replay_task, &replay_wake)
+            .await
+            .expect("harness replay after transition");
+        assert!(legacy.deduplicated && harness.deduplicated);
+        assert_eq!(harness.task.status, TaskStatus::Paused);
+        assert_eq!(harness.task.state_version, 1);
+
+        fixture.assert_same_events("task-created").await;
+        let events = fixture.harness_events("task-created").await;
+        assert_eq!(events.len(), 2, "dedup must not append a new event");
+        assert_eq!(events[0].0, "task:task-created:created");
+        assert_eq!(events[0].2["stateVersion"], 0, "created payload stays at v0");
+    }
 }
