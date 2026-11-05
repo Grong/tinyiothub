@@ -219,6 +219,22 @@ describe("app router · canonical Harness hash routes", () => {
     });
   });
 
+  it("restores the overview from a parent-return anchor link", () => {
+    window.history.pushState({}, "", "/dashboard");
+    window.location.hash = "#/harness#main-main%3A1";
+    const el = makeApp(true);
+    el.handleRoute();
+
+    expect(el.currentRoute).toBe("harness");
+    expect(el.harnessRoute).toEqual({ name: "overview", anchor: "main-main:1" });
+
+    const host = document.createElement("div");
+    render(el.renderPage(), host);
+    expect((host.querySelector("view-harness-overview") as any)?.anchor).toBe(
+      "main-main:1",
+    );
+  });
+
   it("falls through invalid Harness routes instead of rendering the overview", () => {
     window.history.pushState({}, "", "/dashboard");
     window.location.hash = "#/harness/unknown";

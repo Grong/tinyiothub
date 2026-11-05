@@ -4,6 +4,14 @@ import { parseHarnessHash, runtimeToHarnessUrl, toHarnessTaskUrl } from './harne
 describe('Harness canonical URL state', () => {
   it('parses exactly the canonical Harness routes', () => {
     expect(parseHarnessHash('#/harness')).toEqual({ name: 'overview' });
+    expect(parseHarnessHash('#/harness#main-main%3A1')).toEqual({
+      name: 'overview',
+      anchor: 'main-main:1',
+    });
+    expect(parseHarnessHash('#/harness#harness-attention-5')).toEqual({
+      name: 'overview',
+      anchor: 'harness-attention-5',
+    });
     expect(parseHarnessHash('#/harness/tasks')).toEqual({ name: 'tasks' });
     expect(parseHarnessHash('#/harness/tasks/new')).toEqual({ name: 'new' });
     expect(parseHarnessHash('#/harness/workflows')).toEqual({

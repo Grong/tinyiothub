@@ -23,6 +23,10 @@ import './views/home.js';
 
 // Lazy view loaders — each returns a Promise that resolves once the
 // custom element is registered.
+function viewTag(route: string): string {
+  return route === 'harness' ? 'view-harness-overview' : `view-${route}`;
+}
+
 const lazyViews: Record<string, () => Promise<void>> = {
   dashboard: () => import('./views/dashboard.js').then(() => {}),
   things: () => import('./views/things.js').then(() => {}),
@@ -472,7 +476,7 @@ export class TinyIoTHubApp extends LitElement {
     const base = route;
     const loader = lazyViews[base];
     if (!loader) return;
-    const tag = `view-${base}`;
+    const tag = viewTag(base);
     if (customElements.get(tag)) return; // already registered
     this.loadError = null;
     this.loadingRoute = base;
@@ -764,7 +768,7 @@ export class TinyIoTHubApp extends LitElement {
     if (route === 'home') return html`<view-home></view-home>`;
 
     const base = route.startsWith('things/') ? 'things' : route;
-    const tag = `view-${base}`;
+    const tag = viewTag(base);
     const isReady = !!customElements.get(tag);
     const isLoading = this.loadingRoute === base;
 
@@ -795,6 +799,7 @@ export class TinyIoTHubApp extends LitElement {
     if (base === 'harness')
       return html`<view-harness-overview
         .route=${this.harnessRoute}
+        .anchor=${this.harnessRoute?.name === 'overview' ? (this.harnessRoute.anchor ?? null) : null}
       ></view-harness-overview>`;
     if (base === 'runtime') return html`<view-runtime-list></view-runtime-list>`;
     if (base === 'runtime-new') return html`<view-runtime-new></view-runtime-new>`;
@@ -809,8 +814,8 @@ export class TinyIoTHubApp extends LitElement {
         this.harnessRoute?.name === 'task' ? this.harnessRoute.from : null;
       if (!returnTo) return taskView;
       return html`<div class="harness-task-view">
-        <div class="harness-task-return" style="padding: var(--space-3) var(--space-4) 0;">
-          <a href=${returnTo} style="color: var(--accent);">← 返回父级</a>
+        <div class="harness-task-return">
+          <a href=${returnTo}>← 返回父级</a>
         </div>
         ${taskView}
       </div>`;

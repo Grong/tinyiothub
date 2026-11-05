@@ -92,11 +92,14 @@ export interface HarnessWorkflowSummary {
   updatedAt: string | null;
 }
 
+/** Workspace Harness Tasks use `running`; platform Runtime Tasks do not. */
+export type HarnessTaskStatus = TaskStatus | 'running';
+
 /** Isolated child execution summary. It never shares the Main conversation context. */
 export interface HarnessSubagentSummary {
   taskId: string;
   runId: string | null;
-  status: TaskStatus | string;
+  status: HarnessTaskStatus;
   waitReason: string | null;
   recentResult: string | null;
   updatedAt: string | null;
@@ -106,7 +109,7 @@ export interface HarnessMainTaskSummary {
   taskId: string;
   runId: string | null;
   objective: string;
-  status: TaskStatus | string;
+  status: HarnessTaskStatus;
   waitReason: string | null;
   recentResult: string | null;
   updatedAt: string | null;

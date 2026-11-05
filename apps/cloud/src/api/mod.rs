@@ -94,6 +94,10 @@ pub fn create_router(app_state: &AppState) -> Router<AppState> {
         )
         .nest(
             "/workspaces",
+            crate::domains::agent::harness::create_workspace_router(),
+        )
+        .nest(
+            "/workspaces",
             crate::domains::agent::host::handler::workspace_heartbeat::create_router(),
         )
         .nest(

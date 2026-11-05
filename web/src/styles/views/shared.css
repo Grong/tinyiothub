@@ -676,3 +676,15 @@
 }
 
 /* Compact data table variant */
+
+/* Canonical Harness return bar (shared so direct Task deep links also style it). */
+.harness-task-return {
+  padding: var(--space-3) var(--space-4) 0;
+}
+.harness-task-return a {
+  color: var(--accent);
+  text-decoration: none;
+}
+.harness-task-return a:hover {
+  text-decoration: underline;
+}

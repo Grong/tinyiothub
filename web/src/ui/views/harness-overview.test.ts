@@ -10,7 +10,7 @@ import type {
 } from '../../types/harness.js';
 import './harness-overview.js';
 import type { HarnessOverviewView } from './harness-overview.js';
-import { parseHarnessHash } from './harness-url-state.js';
+import { parseHarnessHash, type HarnessRoute } from './harness-url-state.js';
 
 vi.mock('../../api/harness.js', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../../api/harness.js')>();
@@ -96,10 +96,15 @@ async function settle(): Promise<void> {
   }
 }
 
-async function mount(result: HarnessOverview = overview()): Promise<void> {
+async function mount(
+  result: HarnessOverview = overview(),
+  options: { anchor?: string; route?: HarnessRoute } = {},
+): Promise<void> {
   overviewApi.mockResolvedValue(response(result));
   view = document.createElement('view-harness-overview') as HarnessOverviewView;
   view.workspaceId = 'ws_1';
+  view.anchor = options.anchor ?? null;
+  view.route = options.route ?? null;
   document.body.append(view);
   await settle();
 }
@@ -139,6 +144,127 @@ describe('Harness exception-first overview', () => {
 
     const h1 = view.querySelector('h1');
     expect(h1?.textContent).toContain('Harness');
+  });
+
+  it('renders an honest workflow placeholder instead of a no-op primary action', async () => {
+    await mount(overview(), {
+      route: { name: 'workflows', workflowId: null, creating: true },
+    });
+
+    const primary = view.querySelector<HTMLButtonElement>('.btn--primary')!;
+    expect(primary.tagName).toBe('BUTTON');
+    expect(primary.disabled).toBe(true);
+    expect(primary.textContent).toContain('下一步提供');
+    expect(view.querySelector('#harness-workflow-placeholder')?.textContent).toContain(
+      '工作流编辑器将在下一步提供',
+    );
+    expect(view.querySelector('a[href="#/harness/workflows/new"]')).toBeNull();
+  });
+
+  it('expands and scrolls the anchored Main when returning from a child Task', async () => {
+    const original = (HTMLElement.prototype as unknown as { scrollIntoView?: unknown })
+      .scrollIntoView;
+    const scroll = vi.fn();
+    (HTMLElement.prototype as unknown as { scrollIntoView?: unknown }).scrollIntoView = scroll;
+    try {
+      await mount(overview(), { anchor: 'main-main:1' });
+
+      const toggle = view.querySelector<HTMLButtonElement>('.harness-main__toggle')!;
+      expect(toggle.getAttribute('aria-expanded')).toBe('true');
+      expect(view.querySelectorAll('.harness-subagent')).toHaveLength(1);
+      expect(scroll).toHaveBeenCalled();
+    } finally {
+      (HTMLElement.prototype as unknown as { scrollIntoView?: unknown }).scrollIntoView = original;
+    }
+  });
+
+  it('restores the attention page encoded in the return anchor', async () => {
+    await mount(
+      overview({
+        attention: {
+          items: ['6', '7'].map(attention),
+          total: 7,
+          limit: 5,
+          offset: 5,
+        },
+      }),
+      { anchor: 'harness-attention-5' },
+    );
+
+    expect(overviewApi.mock.calls[0][1]).toEqual({ attentionLimit: 5, attentionOffset: 5 });
+    expect(view.textContent).toContain('第 6-7 项，共 7 项');
+  });
+
+  it('keeps aria-controls targets present while collapsed or empty', async () => {
+    await mount(
+      overview({
+        attention: { items: [], total: 0, limit: 5, offset: 0 },
+      }),
+    );
+
+    expect(view.querySelector('#harness-attention-list')).not.toBeNull();
+    const mainToggle = view.querySelector<HTMLButtonElement>('.harness-main__toggle')!;
+    expect(mainToggle.getAttribute('aria-controls')).toBe('subagents-main:1');
+    expect(view.querySelector('#subagents-main\\:1')).not.toBeNull();
+    expect(view.querySelector('#subagents-main\\:1')?.hasAttribute('hidden')).toBe(true);
+
+    view.querySelector<HTMLButtonElement>('.harness-attention__toggle')!.click();
+    await settle();
+    expect(view.querySelector('#harness-attention-list')?.hasAttribute('hidden')).toBe(true);
+  });
+
+  it('uses the server-reported attention limit for paging', async () => {
+    const first = overview({
+      attention: {
+        items: ['1', '2', '3'].map(attention),
+        total: 7,
+        limit: 3,
+        offset: 0,
+      },
+    });
+    await mount(first);
+
+    overviewApi.mockResolvedValueOnce(
+      response({
+        ...first,
+        attention: {
+          items: ['4', '5', '6'].map(attention),
+          total: 7,
+          limit: 3,
+          offset: 3,
+        },
+      }),
+    );
+    view.querySelector<HTMLButtonElement>('.harness-attention__next')!.click();
+    await settle();
+
+    expect(overviewApi.mock.calls[1][1]).toEqual({ attentionLimit: 5, attentionOffset: 3 });
+  });
+
+  it('keeps per-Main child errors across an aggregate attention refresh', async () => {
+    const first = overview({
+      attention: { items: ['1', '2', '3', '4', '5'].map(attention), total: 7, limit: 5, offset: 0 },
+      coordination: [main([subagent('child:1')], 2)],
+    });
+    await mount(first);
+    childrenApi.mockRejectedValueOnce(new ApiError(503, '子任务加载失败'));
+
+    view.querySelector<HTMLButtonElement>('.harness-main__toggle')!.click();
+    await settle();
+    view.querySelector<HTMLButtonElement>('.harness-children__more')!.click();
+    await settle();
+    expect(view.querySelector('.harness-children__error')?.textContent).toContain('子任务加载失败');
+
+    overviewApi.mockResolvedValueOnce(
+      response({
+        ...first,
+        attention: { items: ['6', '7'].map(attention), total: 7, limit: 5, offset: 5 },
+      }),
+    );
+    view.querySelector<HTMLButtonElement>('.harness-attention__next')!.click();
+    await settle();
+
+    expect(view.querySelector('.harness-children__error')?.textContent).toContain('子任务加载失败');
   });
 
   it('paginates and collapses attention items instead of stacking them', async () => {
@@ -264,6 +390,8 @@ describe('Harness exception-first overview', () => {
     await settle();
 
     expect(view.querySelector('[role="alert"]')?.textContent).toContain('接口未提供');
+    expect(view.textContent).toContain('无法加载，请重试');
+    expect(view.textContent).not.toContain('显示上次结果');
     expect(view.textContent).not.toContain('尚未配置 Workflow');
     expect(view.querySelectorAll('[data-harness-section]')).toHaveLength(0);
   });

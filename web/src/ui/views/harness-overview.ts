@@ -17,6 +17,7 @@ const subagentPageSize = 20;
 
 const statusLabels: Record<string, string> = {
   active: '进行中',
+  running: '进行中',
   waiting_job: '等待设备',
   waiting_watch: '等待观察',
   needs_approval: '等待审批',
@@ -34,6 +35,7 @@ const statusLabels: Record<string, string> = {
 
 const statusTones: Record<string, string> = {
   active: 'accent',
+  running: 'accent',
   waiting_job: 'accent',
   waiting_watch: 'accent',
   needs_approval: 'warn',
@@ -72,10 +74,29 @@ function timestamp(value: string | null): string {
   return value ?? '暂无';
 }
 
+function mainTaskIdFromAnchor(anchor: string | null): string | null {
+  if (!anchor?.startsWith('main-')) return null;
+  return anchor.slice('main-'.length) || null;
+}
+
+function attentionOffsetFromAnchor(anchor: string | null): number | null {
+  if (!anchor) return null;
+  if (anchor === 'harness-attention') return 0;
+  const match = anchor.match(/^harness-attention-(\d+)$/);
+  return match ? Number(match[1]) : null;
+}
+
+function anchorTargetId(anchor: string): string {
+  return anchor === 'harness-attention' || anchor.startsWith('harness-attention-')
+    ? 'harness-attention'
+    : anchor;
+}
+
 @customElement('view-harness-overview')
 export class HarnessOverviewView extends LitElement {
   @property() workspaceId = getWorkspaceId() ?? '';
   @property({ attribute: false }) route: HarnessRoute | null = null;
+  @property({ attribute: false }) anchor: string | null = null;
 
   @state() private overview: HarnessOverview | null = null;
   @state() private connection: 'connecting' | 'online' | 'offline' = 'connecting';
@@ -91,7 +112,9 @@ export class HarnessOverviewView extends LitElement {
 
   private generation = 0;
   private abort: AbortController | null = null;
+  private childAborts = new Map<string, AbortController>();
   private loadedWorkspace = '';
+  private pendingAnchor: string | null = null;
 
   createRenderRoot() {
     return this;
@@ -99,13 +122,27 @@ export class HarnessOverviewView extends LitElement {
 
   connectedCallback(): void {
     super.connectedCallback();
+    const anchoredOffset = attentionOffsetFromAnchor(this.anchor);
+    if (anchoredOffset !== null) this.attentionOffset = anchoredOffset;
     void this.load(this.attentionOffset);
   }
 
   disconnectedCallback(): void {
     this.generation += 1;
     this.abort?.abort();
+    for (const controller of this.childAborts.values()) controller.abort();
+    this.childAborts.clear();
     super.disconnectedCallback();
+  }
+
+  protected updated(): void {
+    if (!this.pendingAnchor) return;
+    const anchor = this.pendingAnchor;
+    this.pendingAnchor = null;
+    const target = document.getElementById(anchorTargetId(anchor));
+    if (target && typeof target.scrollIntoView === 'function') {
+      target.scrollIntoView({ block: 'start' });
+    }
   }
 
   willUpdate(changed: PropertyValues<this>): void {
@@ -141,6 +178,17 @@ export class HarnessOverviewView extends LitElement {
       const sameWorkspace = this.loadedWorkspace === this.workspaceId;
       this.loadedWorkspace = this.workspaceId;
       this.attentionOffset = result.attention.offset;
+      if (!sameWorkspace) {
+        for (const controller of this.childAborts.values()) controller.abort();
+        this.childAborts.clear();
+        this.childErrors = {};
+        this.expandedMains = [];
+      }
+      const anchoredMain = mainTaskIdFromAnchor(this.anchor);
+      if (anchoredMain && !this.expandedMains.includes(anchoredMain)) {
+        this.expandedMains = [...this.expandedMains, anchoredMain];
+      }
+      if (this.anchor) this.pendingAnchor = this.anchor;
       const children: Record<string, HarnessSubagentSummary[]> = {};
       const totals: Record<string, number> = {};
       for (const main of result.coordination) {
@@ -159,7 +207,6 @@ export class HarnessOverviewView extends LitElement {
       }
       this.childItems = children;
       this.childTotals = totals;
-      this.childErrors = {};
       this.connection = 'online';
     } catch (error) {
       if (generation !== this.generation || this.abort.signal.aborted) return;
@@ -196,7 +243,10 @@ export class HarnessOverviewView extends LitElement {
   private async loadMoreChildren(main: HarnessMainTaskSummary): Promise<void> {
     const existing = this.childItems[main.taskId] ?? [];
     const generation = this.generation;
-    this.childLoading = [...this.childLoading, main.taskId];
+    this.childAborts.get(main.taskId)?.abort();
+    const controller = new AbortController();
+    this.childAborts.set(main.taskId, controller);
+    this.childLoading = [...new Set([...this.childLoading, main.taskId])];
     this.childErrors = { ...this.childErrors, [main.taskId]: '' };
     try {
       const response = await listHarnessSubagents(
@@ -204,9 +254,9 @@ export class HarnessOverviewView extends LitElement {
         main.taskId,
         subagentPageSize,
         existing.length,
-        this.abort?.signal,
+        controller.signal,
       );
-      if (generation !== this.generation) return;
+      if (generation !== this.generation || controller.signal.aborted) return;
       const page = response.result;
       if (!page) throw new Error('空响应');
       this.childItems = {
@@ -219,21 +269,24 @@ export class HarnessOverviewView extends LitElement {
       };
       this.announcement = `已加载 ${page.subagents.length} 个 Subagent`;
     } catch (error) {
-      if (generation !== this.generation) return;
+      if (generation !== this.generation || controller.signal.aborted) return;
       this.childErrors = {
         ...this.childErrors,
         [main.taskId]: error instanceof ApiError ? error.message : '加载 Subagent 失败',
       };
     } finally {
-      this.childLoading = this.childLoading.filter((id) => id !== main.taskId);
+      if (this.childAborts.get(main.taskId) === controller) {
+        this.childAborts.delete(main.taskId);
+        this.childLoading = this.childLoading.filter((id) => id !== main.taskId);
+      }
     }
   }
 
-  private renderAttentionItem(item: HarnessAttentionItem) {
+  private renderAttentionItem(item: HarnessAttentionItem, offset: number) {
     const href = item.taskId
       ? toHarnessTaskUrl(item.taskId, {
           event: item.eventId,
-          from: '#/harness#harness-attention',
+          from: `#/harness#harness-attention-${offset}`,
         })
       : null;
     return html`
@@ -262,6 +315,7 @@ export class HarnessOverviewView extends LitElement {
     if (!page) return nothing;
     const start = page.total === 0 ? 0 : page.offset + 1;
     const end = Math.min(page.offset + page.items.length, page.total);
+    const limit = page.limit > 0 ? page.limit : attentionPageSize;
     return html`
       <section
         class="harness-section harness-attention"
@@ -287,14 +341,19 @@ export class HarnessOverviewView extends LitElement {
           </button>
         </div>
         ${
-          this.attentionCollapsed
-            ? nothing
-            : page.items.length === 0
-              ? html`<p class="harness-empty">当前没有需要处理的事项。</p>`
-              : html`<ul class="harness-attention__list" id="harness-attention-list">
-                  ${page.items.map((item) => this.renderAttentionItem(item))}
-                </ul>`
+          page.items.length === 0
+            ? html`<p class="harness-empty">当前没有需要处理的事项。</p>`
+            : nothing
         }
+        <div id="harness-attention-list" ?hidden=${this.attentionCollapsed}>
+          ${
+            this.attentionCollapsed || page.items.length === 0
+              ? nothing
+              : html`<ul class="harness-attention__list">
+                  ${page.items.map((item) => this.renderAttentionItem(item, page.offset))}
+                </ul>`
+          }
+        </div>
         <div class="harness-section__footer">
           <span class="harness-attention__range">
             ${page.total === 0 ? '第 0 项，共 0 项' : `第 ${start}-${end} 项，共 ${page.total} 项`}
@@ -303,17 +362,15 @@ export class HarnessOverviewView extends LitElement {
             type="button"
             class="btn harness-attention__previous"
             ?disabled=${page.offset === 0 || this.connection === 'connecting'}
-            @click=${() => this.page(page.offset - attentionPageSize)}
+            @click=${() => this.page(page.offset - limit)}
           >
             上一页
           </button>
           <button
             type="button"
             class="btn harness-attention__next"
-            ?disabled=${
-              page.offset + attentionPageSize >= page.total || this.connection === 'connecting'
-            }
-            @click=${() => this.page(page.offset + attentionPageSize)}
+            ?disabled=${page.offset + limit >= page.total || this.connection === 'connecting'}
+            @click=${() => this.page(page.offset + limit)}
           >
             下一页
           </button>
@@ -401,7 +458,7 @@ export class HarnessOverviewView extends LitElement {
     const loading = this.childLoading.includes(main.taskId);
     const error = this.childErrors[main.taskId];
     return html`
-      <div class="harness-children" id="subagents-${main.taskId}">
+      <div class="harness-children">
         <p class="harness-children__count">已显示 ${children.length} / 共 ${total}</p>
         ${
           children.length === 0
@@ -453,7 +510,9 @@ export class HarnessOverviewView extends LitElement {
         <div class="harness-main__actions">
           <a class="harness-main__task" href=${toHarnessTaskUrl(main.taskId)}>打开 Main Task</a>
         </div>
-        ${expanded ? this.renderChildren(main) : nothing}
+        <div id="subagents-${main.taskId}" ?hidden=${!expanded}>
+          ${expanded ? this.renderChildren(main) : nothing}
+        </div>
       </li>
     `;
   }
@@ -490,10 +549,13 @@ export class HarnessOverviewView extends LitElement {
     if (this.connection === 'connecting') {
       return html`<p class="harness-overview__status" role="status">连接中…</p>`;
     }
-    return html`<p class="harness-overview__status" role="status">离线，显示上次结果。</p>`;
+    return html`<p class="harness-overview__status" role="status">
+      ${this.overview ? '离线，显示上次结果。' : '无法加载，请重试。'}
+    </p>`;
   }
 
   render() {
+    const workflowPlaceholder = this.route?.name === 'workflows';
     return html`
       <section class="harness-overview" aria-labelledby="harness-overview-title">
         <header class="harness-overview__header">
@@ -505,11 +567,31 @@ export class HarnessOverviewView extends LitElement {
             <button type="button" class="btn harness-overview__retry" @click=${() => this.retry()}>
               刷新
             </button>
-            <a class="btn btn--primary harness-overview__primary" href="#/harness/workflows/new"
-              >新建工作流</a
-            >
+            ${
+              workflowPlaceholder
+                ? html`<button
+                    type="button"
+                    class="btn btn--primary harness-overview__primary"
+                    disabled
+                    aria-describedby="harness-workflow-placeholder"
+                  >
+                    新建工作流（下一步提供）
+                  </button>`
+                : html`<a
+                    class="btn btn--primary harness-overview__primary"
+                    href="#/harness/workflows/new"
+                    >新建工作流</a
+                  >`
+            }
           </div>
         </header>
+        ${
+          workflowPlaceholder
+            ? html`<p id="harness-workflow-placeholder" class="harness-overview__notice">
+                工作流编辑器将在下一步提供；当前可查看已有 Workflow 与调度状态。
+              </p>`
+            : nothing
+        }
         ${this.renderStatus()}
         ${
           this.error

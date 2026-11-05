@@ -411,6 +411,24 @@ impl Db {
         Ok(revision)
     }
 
+    /// Every current Workflow revision for the overview's scheduling section.
+    /// Unlike [`Self::list_enabled_workflows`], disabled Workflows are included.
+    pub async fn list_workflows(&self, workspace_id: &str) -> Result<Vec<WorkflowRevision>> {
+        let pool = self.workspace_pool(workspace_id).await?;
+        sqlx::query_as::<_, WorkflowRevisionRow>(
+            "SELECT r.workflow_id, r.version, w.enabled, r.definition_json, r.created_at
+             FROM agent_workflows w
+             JOIN workflow_revisions r
+               ON r.workflow_id = w.workflow_id AND r.version = w.current_version
+             ORDER BY w.workflow_id",
+        )
+        .fetch_all(&pool)
+        .await?
+        .into_iter()
+        .map(WorkflowRevision::try_from)
+        .collect()
+    }
+
     pub async fn list_enabled_workflows(&self, workspace_id: &str) -> Result<Vec<WorkflowRevision>> {
         let pool = self.workspace_pool(workspace_id).await?;
         sqlx::query_as::<_, WorkflowRevisionRow>(

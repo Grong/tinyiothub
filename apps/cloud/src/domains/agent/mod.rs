@@ -12,6 +12,7 @@
 pub mod agent_runtime;
 pub mod event;
 pub mod events;
+pub mod harness;
 pub mod heartbeat;
 pub mod host;
 pub mod orchestrator;

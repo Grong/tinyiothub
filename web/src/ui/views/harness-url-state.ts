@@ -24,7 +24,7 @@ import {
 } from './runtime-url-state.js';
 
 export type HarnessRoute =
-  | { name: 'overview' }
+  | { name: 'overview'; anchor?: string }
   | { name: 'workflows'; workflowId: string | null; creating: boolean }
   | { name: 'tasks' }
   | { name: 'new' }
@@ -53,6 +53,10 @@ function safeReturnPath(value: string | null): string | null {
 export function parseHarnessHash(hash: string): HarnessRoute | null {
   const { path, params } = splitHashQuery(hash);
   if (path === '#/harness') return { name: 'overview' };
+  if (path.startsWith('#/harness#')) {
+    const anchor = decodeHashId(path.slice('#/harness#'.length));
+    return anchor ? { name: 'overview', anchor } : { name: 'overview' };
+  }
   if (path === '#/harness/tasks') return { name: 'tasks' };
   if (path === '#/harness/tasks/new') return { name: 'new' };
   if (path === '#/harness/workflows') {

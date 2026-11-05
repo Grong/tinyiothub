@@ -38,6 +38,44 @@ impl FinalizeIntentRow {
     }
 }
 
+/// Read-only projection used by the Harness overview and Subagent page.
+#[derive(Debug, Clone)]
+pub struct HarnessTaskRow {
+    pub id: String,
+    pub run_id: Option<String>,
+    pub state: String,
+    pub objective: Option<String>,
+    /// Latest `task.outcome` payload, if any; parsed by the HTTP projection.
+    pub outcome_json: Option<String>,
+    pub updated_at: Option<String>,
+    pub parent_task_id: Option<String>,
+}
+
+#[derive(Debug, sqlx::FromRow)]
+struct HarnessTaskDbRow {
+    id: String,
+    run_id: Option<String>,
+    state: String,
+    objective: Option<String>,
+    outcome_json: Option<String>,
+    updated_at: Option<String>,
+    parent_task_id: Option<String>,
+}
+
+impl From<HarnessTaskDbRow> for HarnessTaskRow {
+    fn from(row: HarnessTaskDbRow) -> Self {
+        Self {
+            id: row.id,
+            run_id: row.run_id,
+            state: row.state,
+            objective: row.objective,
+            outcome_json: row.outcome_json,
+            updated_at: row.updated_at,
+            parent_task_id: row.parent_task_id,
+        }
+    }
+}
+
 #[derive(Debug, sqlx::FromRow)]
 struct AgentTaskRow {
     id: String,
@@ -1382,6 +1420,77 @@ impl Db {
         drain_cancelling_tasks(&mut tx, workspace_id, Utc::now()).await?;
         tx.commit().await?;
         Ok(())
+    }
+
+    /// Nonterminal root Tasks for the Harness overview. Subagents are loaded
+    /// separately so a Main with many children stays bounded.
+    pub async fn harness_main_tasks(&self, workspace_id: &str) -> DbResult<Vec<HarnessTaskRow>> {
+        let pool = self.workspace_pool(workspace_id).await?;
+        let rows = sqlx::query_as::<_, HarnessTaskDbRow>(
+            "SELECT t.id, t.run_id, t.state,
+                    json_extract(r.definition_json, '$.objective') AS objective,
+                    (SELECT e.payload_json FROM session_events e
+                      WHERE e.task_id = t.id AND e.type = 'task.outcome'
+                      ORDER BY e.seq DESC LIMIT 1) AS outcome_json,
+                    (SELECT MAX(e2.occurred_at) FROM session_events e2
+                      WHERE e2.task_id = t.id) AS updated_at,
+                    t.parent_task_id
+             FROM agent_tasks t
+             LEFT JOIN workflow_revisions r
+               ON r.workflow_id = t.workflow_id AND r.version = t.workflow_version
+             WHERE t.parent_task_id IS NULL
+               AND t.state NOT IN ('completed', 'failed', 'cancelled')
+             ORDER BY t.id",
+        )
+        .fetch_all(&pool)
+        .await?;
+        Ok(rows.into_iter().map(HarnessTaskRow::from).collect())
+    }
+
+    /// One bounded page of children for a Main Task. A missing Main returns
+    /// NotFound; tasks from other parents are never included.
+    pub async fn harness_subagents(
+        &self,
+        workspace_id: &str,
+        parent_task_id: &str,
+        limit: i64,
+        offset: i64,
+    ) -> DbResult<(Vec<HarnessTaskRow>, i64)> {
+        let pool = self.workspace_pool(workspace_id).await?;
+        let exists = sqlx::query_scalar::<_, String>("SELECT id FROM agent_tasks WHERE id = ?")
+            .bind(parent_task_id)
+            .fetch_optional(&pool)
+            .await?;
+        if exists.is_none() {
+            return Err(DbError::NotFound {
+                id: parent_task_id.to_string(),
+            });
+        }
+        let total = sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM agent_tasks WHERE parent_task_id = ?")
+            .bind(parent_task_id)
+            .fetch_one(&pool)
+            .await?;
+        let rows = sqlx::query_as::<_, HarnessTaskDbRow>(
+            "SELECT t.id, t.run_id, t.state,
+                    json_extract(r.definition_json, '$.objective') AS objective,
+                    (SELECT e.payload_json FROM session_events e
+                      WHERE e.task_id = t.id AND e.type = 'task.outcome'
+                      ORDER BY e.seq DESC LIMIT 1) AS outcome_json,
+                    (SELECT MAX(e2.occurred_at) FROM session_events e2
+                      WHERE e2.task_id = t.id) AS updated_at,
+                    t.parent_task_id
+             FROM agent_tasks t
+             LEFT JOIN workflow_revisions r
+               ON r.workflow_id = t.workflow_id AND r.version = t.workflow_version
+             WHERE t.parent_task_id = ?
+             ORDER BY t.id LIMIT ? OFFSET ?",
+        )
+        .bind(parent_task_id)
+        .bind(limit)
+        .bind(offset)
+        .fetch_all(&pool)
+        .await?;
+        Ok((rows.into_iter().map(HarnessTaskRow::from).collect(), total))
     }
 
     pub async fn create_subagent_task(
