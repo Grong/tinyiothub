@@ -1205,8 +1205,20 @@ pub(crate) async fn drain_cancelling_tasks(
                  WHERE (owner.id = ? OR owner.parent_task_id = ?)
                    AND effect.state NOT IN
                        ('completed', 'failed', 'not_applied', 'cancelled', 'cancelled_unknown')
+             ) OR EXISTS(
+                 -- A cancelling Task must stay cancelling while a physical Job
+                 -- is still accepted/running: finalizing it here would hide the
+                 -- later cancelled_unknown -> failed decision.
+                 SELECT 1 FROM device_jobs job
+                 WHERE (job.task_id = ?
+                    OR job.task_id IN (
+                        SELECT child.id FROM agent_tasks child WHERE child.parent_task_id = ?
+                    ))
+                   AND job.state IN ('accepted', 'running')
              )",
         )
+        .bind(&task_id)
+        .bind(&task_id)
         .bind(&task_id)
         .bind(&task_id)
         .bind(&task_id)

@@ -110,18 +110,25 @@ pub async fn cancel(
             // transition would write a derived Task state (`cancelled` for a
             // Prepared Effect, `cancelling` for a Dispatching one) into the row
             // and make the coordinator treat the Task as already cancelled.
+            // Workflow-owned Subagents are cancelled while the root is still
+            // non-`cancelling`, so their workspace drain cannot finalize it.
+            if let Err(error) = controls.cancel_children(&task_id).await {
+                state.harness_stream.notify(&workspace_id);
+                return control_error(error);
+            }
             match manager.cancel_task(&workspace_id, &task_id).await {
                 Ok(_) => {
-                    // The coordinator cannot see Workflow-owned Subagents or
-                    // Harness Effects; cancel those after its Task transition.
-                    if let Err(error) = controls.cancel_remaining(&task_id).await {
+                    if let Err(error) = controls.cancel_root_effects_if_terminal(&task_id).await {
                         state.harness_stream.notify(&workspace_id);
                         return control_error(error);
                     }
                     Ok(())
                 }
                 Err(TaskError::NotFound) => controls.cancel(&task_id).await.map_err(control_error),
-                Err(error) => Err(coordinator_error(error)),
+                Err(error) => {
+                    state.harness_stream.notify(&workspace_id);
+                    Err(coordinator_error(error))
+                }
             }
         }
         None => controls.cancel(&task_id).await.map_err(control_error),
@@ -221,21 +228,46 @@ impl WorkflowControls {
         self.db.drain_workflow_cancellation(&self.workspace_id).await
     }
 
-    /// Cancel the Workflow-owned part of an operator cancel when the live
-    /// coordinator owns the Task row: non-terminal Subagents and in-flight
-    /// Effects, but never the root Task transition or its terminal drain.
+    /// Cancel Workflow-owned Subagents and their in-flight Effects before the
+    /// coordinator cancels the root. The root is still non-`cancelling` here, so
+    /// the workspace-wide drain these calls trigger cannot finalize it.
     /// Subagents do not nest, so one level of children is the whole tree.
-    pub async fn cancel_remaining(&self, task_id: &str) -> Result<(), DbError> {
+    pub async fn cancel_children(&self, task_id: &str) -> Result<(), DbError> {
         self.db.guard_recovery_matrix(&self.workspace_id).await?;
-        let mut task_ids = vec![task_id.to_string()];
+        let mut child_ids = Vec::new();
         for child in self
             .db
             .harness_active_child_task_ids(&self.workspace_id, task_id)
             .await?
         {
-            task_ids.extend(self.db.cancel_workflow_task(&self.workspace_id, &child).await?);
+            child_ids.extend(self.db.cancel_workflow_task(&self.workspace_id, &child).await?);
         }
-        self.cancel_effects(&task_ids).await
+        self.cancel_effects(&child_ids).await
+    }
+
+    /// Settle the root's own in-flight Effects only once the coordinator has
+    /// finalized it. While the coordinator leaves the Task `cancelling` (active
+    /// Jobs), cancelling an Effect would trigger the workspace drain, which
+    /// cannot see those Jobs and would declare the Task terminal before the
+    /// `cancelled_unknown -> failed` decision runs.
+    pub async fn cancel_root_effects_if_terminal(&self, task_id: &str) -> Result<(), DbError> {
+        let Some(task) = self
+            .db
+            .harness_get_task(&self.workspace_id, task_id)
+            .await
+            .map_err(|error| DbError::Internal(error.to_string()))?
+        else {
+            return Ok(());
+        };
+        if matches!(
+            task.status,
+            tinyiothub_core::agent_task::TaskStatus::Completed
+                | tinyiothub_core::agent_task::TaskStatus::Failed
+                | tinyiothub_core::agent_task::TaskStatus::Cancelled
+        ) {
+            self.cancel_effects(&[task_id.to_string()]).await?;
+        }
+        Ok(())
     }
 
     async fn cancel_effects(&self, task_ids: &[String]) -> Result<(), DbError> {

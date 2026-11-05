@@ -572,27 +572,33 @@ async fn http_cancel_stops_the_job_owned_by_the_live_coordinator() {
         stopping.stop_requested_at.is_some(),
         "POST /cancel must stop the live coordinator's Job, not only write the Task row"
     );
-    let task_status = fixture
-        .db
-        .harness_get_task(WS, "task-live-cancel")
-        .await
-        .expect("read Task")
-        .expect("Task")
-        .status;
-    assert!(
-        matches!(
-            task_status,
-            tinyiothub_core::agent_task::TaskStatus::Cancelling | tinyiothub_core::agent_task::TaskStatus::Cancelled
-        ),
-        "cancel settled to {task_status:?}"
+    // The Task must stay `cancelling` while its Job is still running; the
+    // workspace drain may not finalize it before the Job outcome is known.
+    assert_eq!(
+        fixture
+            .db
+            .harness_get_task(WS, "task-live-cancel")
+            .await
+            .expect("read Task")
+            .expect("Task")
+            .status,
+        tinyiothub_core::agent_task::TaskStatus::Cancelling
     );
+    // The un-dispatched Effect is left Prepared: settling it while the Task is
+    // `cancelling` would trigger the workspace drain. The 19C1 dispatcher
+    // settles Effects of terminal Tasks; dispatch is already blocked here.
     let effect_state: String =
         sqlx::query_scalar("SELECT state FROM effect_intents WHERE effect_id = 'effect-live-cancel'")
             .fetch_one(&workspace_pool(&fixture).await)
             .await
             .expect("effect state");
-    assert_eq!(
-        effect_state, "not_applied",
-        "the Task's in-flight Effect must be settled by the cancel"
+    assert_eq!(effect_state, "prepared");
+    assert!(
+        !fixture
+            .db
+            .workflow_dispatch_permitted(WS, "effect-live-cancel")
+            .await
+            .expect("dispatch gate"),
+        "a cancelled Task's Effect may never dispatch"
     );
 }

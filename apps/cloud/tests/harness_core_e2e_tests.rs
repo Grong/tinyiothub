@@ -4462,6 +4462,64 @@ mod supervisor_health_tests {
         fixture.close().await;
     }
 
+    /// N6: a Task with an accepted/running workspace Job must stay `cancelling`
+    /// after its other Effects/children settle, so the later
+    /// `cancelled_unknown -> failed` decision still has a Task to finalize.
+    #[tokio::test]
+    async fn cancelling_task_with_a_running_device_job_is_not_drained_to_terminal() {
+        let fixture = fixture_workspace("ws-cancel-job-drain").await;
+        let pool = fixture.workspace_pool().await;
+        sqlx::query(
+            "INSERT INTO agent_tasks (id, run_id, state, state_version, execution_mode)
+             VALUES ('task-job-cancel', 'run-job-cancel', 'running', 1, 'production')",
+        )
+        .execute(&pool)
+        .await
+        .expect("task");
+        sqlx::query(
+            "INSERT INTO device_jobs
+                (id, workspace_id, device_id, tool, args_json, state, task_id, run_id,
+                 tool_call_id, timeout_ms, started_at)
+             VALUES ('job-cancel-active', 'ws-cancel-job-drain', 'device-1', 'set_speed',
+                     '{}', 'running', 'task-job-cancel', 'run-job-cancel', 'call-job-cancel',
+                     30000, ?)",
+        )
+        .bind(Utc::now())
+        .execute(&pool)
+        .await
+        .expect("running job");
+
+        fixture
+            .db
+            .cancel_workflow_task("ws-cancel-job-drain", "task-job-cancel")
+            .await
+            .expect("cancel");
+        let state: String = sqlx::query_scalar("SELECT state FROM agent_tasks WHERE id = 'task-job-cancel'")
+            .fetch_one(&pool)
+            .await
+            .expect("state");
+        assert_eq!(state, "cancelling");
+
+        // Once the Job leaves the active states, the same drain finalizes it.
+        sqlx::query("UPDATE device_jobs SET state = 'done', ended_at = ? WHERE id = 'job-cancel-active'")
+            .bind(Utc::now())
+            .execute(&pool)
+            .await
+            .expect("finish job");
+        fixture
+            .db
+            .drain_workflow_cancellation("ws-cancel-job-drain")
+            .await
+            .expect("drain");
+        let state: String = sqlx::query_scalar("SELECT state FROM agent_tasks WHERE id = 'task-job-cancel'")
+            .fetch_one(&pool)
+            .await
+            .expect("state");
+        assert_eq!(state, "cancelled");
+
+        fixture.close().await;
+    }
+
     #[tokio::test]
     async fn supervisor_health_healthy_tick_writes_no_events_and_failed_tick_records_error_and_recovers() {
         let fixture = fixture_workspace(WS).await;
