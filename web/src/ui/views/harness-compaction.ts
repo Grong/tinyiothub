@@ -114,6 +114,18 @@ export class HarnessCompactionView extends LitElement {
     this.result = null;
     this.error = '';
     this.replacedStateVersion = null;
+    this.replacing = false;
+  }
+
+  /**
+   * A validation failure invalidates any previous matched comparison so its
+   * 「替换投影快照」action cannot remain available for a different boundary.
+   */
+  private invalidate(message: string): void {
+    this.comparison = null;
+    this.result = null;
+    this.replacedStateVersion = null;
+    this.error = message;
   }
 
   private onCompare = (event: Event): void => {
@@ -127,23 +139,23 @@ export class HarnessCompactionView extends LitElement {
     const lastSeq = Number(this.lastSeq);
     const projectionVersion = Number(this.projectionVersion);
     if (!this.lastSeq.trim() || !Number.isSafeInteger(lastSeq) || lastSeq < 0) {
-      this.error = '请输入固定的 last_seq（非负整数）';
+      this.invalidate('请输入固定的 last_seq（非负整数）');
       return;
     }
     if (!Number.isSafeInteger(projectionVersion) || projectionVersion <= 0) {
-      this.error = 'projection_version 必须是正整数';
+      this.invalidate('projection_version 必须是正整数');
       return;
     }
     if (!projectionName) {
-      this.error = '请输入 projection_name';
+      this.invalidate('请输入 projection_name');
       return;
     }
     if (!subjectId) {
-      this.error = '请输入 subject_id';
+      this.invalidate('请输入 subject_id');
       return;
     }
     if (!this.workspaceId) {
-      this.error = '未选择工作空间';
+      this.invalidate('未选择工作空间');
       return;
     }
 
@@ -193,6 +205,7 @@ export class HarnessCompactionView extends LitElement {
     ) {
       return;
     }
+    const generation = this.generation;
     this.replacing = true;
     this.result = null;
     try {
@@ -204,6 +217,9 @@ export class HarnessCompactionView extends LitElement {
         expectedLastSeq: comparison.boundaryLastSeq,
         expectedStateVersion: comparison.snapshotStateVersion,
       });
+      // A workspace switch invalidates this response; it must not repopulate
+      // the new workspace with the old comparison's replacement result.
+      if (generation !== this.generation) return;
       const snapshot = response.result;
       if (!snapshot) throw new Error('空响应');
       this.replacedStateVersion = snapshot.stateVersion;
@@ -217,6 +233,7 @@ export class HarnessCompactionView extends LitElement {
         `已替换投影快照，边界 seq ${snapshot.lastSeq}`,
       );
     } catch (error) {
+      if (generation !== this.generation) return;
       const message = error instanceof ApiError ? error.message : '替换投影快照失败';
       // A 409 carries the fresh server-side comparison so a mismatch can show
       // its locatable differences without auto-retrying.

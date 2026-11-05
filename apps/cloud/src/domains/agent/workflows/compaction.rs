@@ -10,15 +10,15 @@
 
 use std::sync::Arc;
 
-use chrono::{SecondsFormat, Utc};
+use chrono::Utc;
 use futures_util::future::BoxFuture;
 use serde::Serialize;
-use serde_json::{Map, Value, json};
-use sha2::{Digest, Sha256};
-use tinyiothub_core::harness::HarnessEvent;
+use serde_json::Value;
 use tinyiothub_storage::Db;
 use tinyiothub_storage::error::DbError;
 use tinyiothub_storage::harness_snapshot::ProjectionSnapshot;
+
+use super::projection_contract::{canonical_hash, canonical_state};
 
 /// Optional test seam invoked between the fixed-boundary read and the
 /// post-rebuild high-watermark recheck. Production callers never set it.
@@ -209,7 +209,10 @@ impl ProjectionInspector {
             snapshot_state_version: snapshot.as_ref().map(|snapshot| snapshot.state_version),
             seq_first: boundary.events.first().map(|event| event.seq),
             seq_last: boundary.events.last().map(|event| event.seq),
-            last_complete_seq: last_seq.min(boundary.high_watermark),
+            // The highest production seq actually present in the slice. The
+            // requested boundary can fall inside a cross-session seq gap, so
+            // echoing `last_seq` here would overstate what was rebuilt.
+            last_complete_seq: boundary.events.last().map(|event| event.seq).unwrap_or(0),
             observed_high_watermark: high_watermark_after,
             appended_during_compare,
             status,
@@ -284,53 +287,6 @@ impl ProjectionInspector {
     }
 }
 
-fn canonical_state(projection_name: &str, subject_id: &str, last_seq: i64, events: &[HarnessEvent]) -> Value {
-    let events: Vec<Value> = events.iter().map(canonical_event).collect();
-    json!({
-        "projectionName": projection_name,
-        "subjectId": subject_id,
-        "lastSeq": last_seq,
-        "events": events,
-    })
-}
-
-fn canonical_event(event: &HarnessEvent) -> Value {
-    json!({
-        "seq": event.seq,
-        "eventId": event.event_id,
-        "type": event.event_type,
-        "occurredAt": event.occurred_at.to_rfc3339_opts(SecondsFormat::AutoSi, true),
-        "causeId": event.cause_id,
-        "payloadDigest": event.payload_digest,
-        "payload": event.payload_json,
-    })
-}
-
-/// Deterministic JSON serialization: object keys are sorted recursively and
-/// derived fields (for example `updated_at`) are never part of the state.
-fn canonical_value(value: &Value) -> Value {
-    match value {
-        Value::Object(object) => {
-            let mut keys: Vec<&String> = object.keys().collect();
-            keys.sort_unstable();
-            let mut sorted = Map::with_capacity(keys.len());
-            for key in keys {
-                if let Some(value) = object.get(key) {
-                    sorted.insert(key.clone(), canonical_value(value));
-                }
-            }
-            Value::Object(sorted)
-        }
-        Value::Array(items) => Value::Array(items.iter().map(canonical_value).collect()),
-        _ => value.clone(),
-    }
-}
-
-fn canonical_hash(value: &Value) -> String {
-    let bytes = serde_json::to_vec(&canonical_value(value)).unwrap_or_default();
-    format!("{:x}", Sha256::digest(bytes))
-}
-
 fn differences(rebuilt: &Value, snapshot: &Value) -> Vec<ProjectionDifference> {
     let mut found = Vec::new();
     collect_differences("", rebuilt, snapshot, &mut found);
@@ -397,15 +353,7 @@ fn escape_pointer(segment: &str) -> String {
 mod tests {
     use serde_json::json;
 
-    use super::{canonical_hash, differences};
-
-    #[test]
-    fn canonical_hash_ignores_object_key_order_but_not_values() {
-        let left = json!({"b": [{"d": 1, "c": 2}], "a": true});
-        let right = json!({"a": true, "b": [{"c": 2, "d": 1}]});
-        assert_eq!(canonical_hash(&left), canonical_hash(&right));
-        assert_ne!(canonical_hash(&left), canonical_hash(&json!({"a": true})));
-    }
+    use super::differences;
 
     #[test]
     fn differences_are_locatable_json_pointers() {

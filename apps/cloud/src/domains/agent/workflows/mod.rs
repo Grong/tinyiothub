@@ -1,6 +1,7 @@
 mod compaction;
 mod dry_run;
 mod health;
+pub mod projection_contract;
 mod runner;
 mod supervisor;
 mod templates;

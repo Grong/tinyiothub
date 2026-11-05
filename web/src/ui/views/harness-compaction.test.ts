@@ -273,4 +273,82 @@ describe('harness compaction inspector', () => {
       '请输入固定的 last_seq',
     );
   });
+
+  it('clears an old matched comparison when boundary validation fails', async () => {
+    compareCompaction.mockResolvedValue(response(comparison()));
+    await mount();
+    setInput('last-seq', '2');
+    await submitCompare();
+    expect(replaceButton()).not.toBeNull();
+
+    setInput('last-seq', '');
+    await submitCompare();
+
+    expect(view.querySelector('[data-compaction-error]')?.textContent).toContain(
+      '请输入固定的 last_seq',
+    );
+    expect(replaceButton()).toBeNull();
+    expect(view.querySelector('[data-compaction-facts]')).toBeNull();
+  });
+
+  it('renders differences from the fresh comparison carried by a 409 conflict', async () => {
+    compareCompaction.mockResolvedValue(response(comparison()));
+    const fresh = comparison({
+      status: 'hash_mismatch',
+      matched: false,
+      canReplace: false,
+      snapshotStateVersion: 4,
+      differences: [
+        { path: '/events/0/payload/text', rebuilt: 'one', snapshot: 'tampered' },
+      ],
+    });
+    replaceSnapshot.mockRejectedValue(
+      new ApiError(409, '投影快照已被更新，保留最新快照', {
+        code: 409,
+        msg: '投影快照已被更新，保留最新快照',
+        result: fresh,
+      }),
+    );
+    await mount();
+    setInput('last-seq', '2');
+    await submitCompare();
+    replaceButton()?.click();
+    await settle();
+
+    expect(view.querySelector('[data-differences]')?.textContent).toContain(
+      '/events/0/payload/text',
+    );
+    expect(view.textContent).toContain('Hash 不匹配');
+    expect(replaceButton()).toBeNull();
+    expect(recompareButton()).not.toBeNull();
+  });
+
+  it('ignores a stale replace response after a workspace switch', async () => {
+    compareCompaction.mockResolvedValue(response(comparison()));
+    let release: (value: {
+      code: number;
+      msg: string;
+      result: HarnessProjectionSnapshot;
+    }) => void = () => {};
+    replaceSnapshot.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          release = resolve;
+        }),
+    );
+    await mount();
+    setInput('last-seq', '2');
+    await submitCompare();
+    replaceButton()?.click();
+    await settle();
+
+    view.workspaceId = 'ws_2';
+    await settle();
+    release(response(snapshot({ stateVersion: 4 })));
+    await settle();
+
+    expect(view.textContent).not.toContain('已替换投影快照');
+    expect(view.querySelector('[data-compaction-facts]')).toBeNull();
+    expect(view.querySelector('[data-compaction-status]')).toBeNull();
+  });
 });

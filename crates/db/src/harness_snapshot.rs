@@ -1,3 +1,15 @@
+//! Projection snapshot persistence (Spec T18).
+//!
+//! **Canonical state contract.** `projection_snapshots.state_json` MUST be the
+//! canonical document produced by
+//! `tinyiothub_cloud::domains::agent::workflows::projection_contract::canonical_state`
+//! (shape: `projectionName`, `subjectId`, `lastSeq`, `events` with
+//! `seq/eventId/type/occurredAt/causeId/payloadDigest/payload`) and verified by
+//! `canonical_hash`. The comparison inspector uses the same functions, so a
+//! future writer cannot drift silently. Any shape change requires a new
+//! `projection_version`; otherwise an existing snapshot becomes a visible
+//! `hash_mismatch` instead of being silently accepted.
+
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -24,6 +36,7 @@ pub struct ProjectionSnapshot {
     pub last_seq: i64,
     pub projection_version: i64,
     pub state_version: i64,
+    /// Canonical projection document; see the module-level contract note.
     pub state_json: Value,
     pub updated_at: DateTime<Utc>,
 }
@@ -119,6 +132,9 @@ const PROJECTION_BOUNDARY_SQL: &str = "SELECT seq, event_id, session_id, executi
 const PROJECTION_HIGH_WATERMARK_SQL: &str =
     "SELECT COALESCE(MAX(seq), 0) FROM session_events WHERE execution_mode = ? AND session_id = ?";
 
+/// Workspace migration for `projection_snapshots`. Writers of `state_json`
+/// must follow the module-level canonical contract note; the migration itself
+/// stores an opaque string and cannot enforce that shape.
 pub(crate) fn migration() -> sqlx::migrate::Migration {
     sqlx::migrate::Migration::new(
         20261103000006,

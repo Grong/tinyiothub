@@ -4811,4 +4811,141 @@ mod compaction_tests {
         assert_eq!(advanced.1, last + 1);
         fixture.close().await;
     }
+
+    #[tokio::test]
+    async fn compaction_snapshot_advanced_keeps_the_newer_boundary() {
+        let fixture = fixture().await;
+        append_text(&fixture, "compaction-1", "one").await;
+        let last = append_text(&fixture, "compaction-2", "two").await;
+        let (inspector, _) = matched_inspector(&fixture, last).await;
+        let newer_seq = append_text(&fixture, "compaction-newer", "three").await;
+        let newer_state = json!({
+            "projectionName": PROJECTION,
+            "subjectId": SUBJECT,
+            "lastSeq": newer_seq,
+            "events": [],
+            "newer": true
+        });
+        sqlx::query(
+            "UPDATE projection_snapshots
+             SET last_seq = ?, state_version = state_version + 1, state_json = ?, updated_at = ?
+             WHERE projection_name = ? AND subject_id = ?",
+        )
+        .bind(newer_seq)
+        .bind(newer_state.to_string())
+        .bind(at().to_rfc3339())
+        .bind(PROJECTION)
+        .bind(SUBJECT)
+        .execute(&fixture.workspace_pool().await)
+        .await
+        .expect("advance snapshot");
+        let before = snapshot_row(&fixture).await;
+
+        let comparison = inspector
+            .compare(WS, PROJECTION, SUBJECT, last, 1)
+            .await
+            .expect("compare older boundary");
+        assert_eq!(comparison.status, ProjectionComparisonStatus::SnapshotAdvanced);
+        assert!(!comparison.matched);
+        assert_eq!(comparison.snapshot_last_seq, Some(newer_seq));
+        let error = inspector
+            .replace_snapshot(&comparison, last, 3)
+            .await
+            .expect_err("an older boundary must not replace a newer snapshot");
+        assert!(matches!(error, DbError::Conflict { .. } | DbError::Validation { .. }));
+        assert_eq!(snapshot_row(&fixture).await, before);
+        fixture.close().await;
+    }
+
+    #[tokio::test]
+    async fn compaction_boundary_mismatch_keeps_the_snapshot_at_its_own_boundary() {
+        let fixture = fixture().await;
+        append_text(&fixture, "compaction-1", "one").await;
+        let last = append_text(&fixture, "compaction-2", "two").await;
+        let (inspector, _) = matched_inspector(&fixture, last).await;
+        sqlx::query(
+            "UPDATE projection_snapshots SET last_seq = ?
+             WHERE projection_name = ? AND subject_id = ?",
+        )
+        .bind(last - 1)
+        .bind(PROJECTION)
+        .bind(SUBJECT)
+        .execute(&fixture.workspace_pool().await)
+        .await
+        .expect("older snapshot boundary");
+        let before = snapshot_row(&fixture).await;
+
+        let comparison = inspector
+            .compare(WS, PROJECTION, SUBJECT, last, 1)
+            .await
+            .expect("compare boundary mismatch");
+        assert_eq!(comparison.status, ProjectionComparisonStatus::BoundaryMismatch);
+        assert!(!comparison.matched);
+        assert_eq!(comparison.snapshot_last_seq, Some(last - 1));
+        assert!(inspector.replace_snapshot(&comparison, last, 3).await.is_err());
+        assert_eq!(snapshot_row(&fixture).await, before);
+        fixture.close().await;
+    }
+
+    #[tokio::test]
+    async fn compaction_unavailable_boundary_reports_the_observed_high_watermark() {
+        let fixture = fixture().await;
+        append_text(&fixture, "compaction-1", "one").await;
+        let last = append_text(&fixture, "compaction-2", "two").await;
+        let inspector = ProjectionInspector::new(fixture.db.clone(), WS);
+
+        let comparison = inspector
+            .compare(WS, PROJECTION, SUBJECT, last + 100, 1)
+            .await
+            .expect("compare beyond high watermark");
+        assert_eq!(comparison.status, ProjectionComparisonStatus::BoundaryUnavailable);
+        assert!(!comparison.matched);
+        assert_eq!(comparison.observed_high_watermark, last);
+        assert_eq!(comparison.last_complete_seq, last);
+        assert_eq!(comparison.snapshot_last_seq, None);
+        assert!(inspector.replace_snapshot(&comparison, last + 100, 1).await.is_err());
+        let snapshots: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM projection_snapshots")
+            .fetch_one(&fixture.workspace_pool().await)
+            .await
+            .expect("snapshot count");
+        assert_eq!(snapshots, 0, "an unavailable boundary must not create a snapshot");
+        fixture.close().await;
+    }
+
+    #[tokio::test]
+    async fn compaction_gap_boundary_reports_the_last_production_seq_in_the_slice() {
+        let fixture = fixture().await;
+        append_text(&fixture, "compaction-1", "one").await;
+        // An unrelated session occupies seq 2; the boundary falls inside the
+        // subject's production-event gap.
+        fixture
+            .db
+            .append_session_event(&HarnessEventInput {
+                session_id: "session-other".to_string(),
+                run_id: Some("run-other".to_string()),
+                task_id: Some("task-other".to_string()),
+                ..event_input("compaction-other", "interleaved")
+            })
+            .await
+            .expect("interleaved event");
+        let last_subject = append_text(&fixture, "compaction-3", "three").await;
+        let gap_boundary = last_subject - 1;
+
+        let (inspector, comparison) = matched_inspector(&fixture, gap_boundary).await;
+        assert_eq!(comparison.boundary_last_seq, gap_boundary);
+        assert_eq!(comparison.seq_first, Some(1));
+        assert_eq!(comparison.seq_last, Some(1));
+        assert_eq!(comparison.last_complete_seq, 1);
+        assert!(comparison.last_complete_seq < gap_boundary);
+        assert_eq!(comparison.observed_high_watermark, last_subject);
+        assert!(comparison.matched);
+
+        let state_version = comparison.snapshot_state_version.expect("snapshot version");
+        let replaced = inspector
+            .replace_snapshot(&comparison, gap_boundary, state_version)
+            .await
+            .expect("replace at the gap boundary");
+        assert_eq!(replaced.last_seq, gap_boundary);
+        fixture.close().await;
+    }
 }

@@ -578,6 +578,14 @@ pub async fn retry_supervisor_dead_wake(
 
 /// Rebuild and compare one projection at a fixed boundary. Read-only for
 /// every durable fact; replacement permission is reported per caller.
+///
+/// Read authorization boundary: workspace-read scope (tenant + workspace),
+/// because reads inherit workspace read permission. The canonical state is
+/// derived only from production `session_events` rows and their already
+/// sanitized/validated public payloads — the same event fields the read/SSE
+/// surface exposes. It never reads raw Effect `request_json`, Decision
+/// `subject_json`/`options_json`, provider secrets, or other non-public
+/// tables. Replacement is a separate Agent-management-only action.
 pub async fn compare_compaction(
     State(state): State<AgentState>,
     Extension(claims): Extension<Claims>,
@@ -650,7 +658,27 @@ pub async fn replace_compaction_snapshot(
         .await
     {
         Ok(snapshot) => ApiResponseBuilder::success(snapshot).into_response(),
-        Err(DbError::CasConflict { message }) => compaction_conflict_response(&message, &comparison),
+        Err(DbError::CasConflict { message }) => {
+            // Re-run the read-only comparison once so the 409 body describes
+            // the authoritative post-conflict state, not the pre-write view.
+            let fresh = match inspector
+                .compare(
+                    &workspace_id,
+                    &payload.projection_name,
+                    &payload.subject_id,
+                    payload.last_seq,
+                    payload.projection_version,
+                )
+                .await
+            {
+                Ok(fresh) => fresh,
+                Err(error) => {
+                    tracing::warn!(%workspace_id, %error, "fresh comparison after CAS loss failed");
+                    comparison.clone()
+                }
+            };
+            compaction_conflict_response(&message, &fresh)
+        }
         Err(error) => compaction_error_response(error),
     }
 }
@@ -1794,9 +1822,13 @@ mod tests {
         assert_eq!(body["result"]["stateVersion"], 4);
         assert_eq!(body["result"]["lastSeq"], last_seq);
 
-        // Replaying the old comparison must fail CAS and keep the replacement.
+        // Replaying the old comparison must fail CAS and keep the replacement;
+        // the 409 body carries a fresh read-only comparison of the new state.
         let (status, body) = send(&app, "POST", Some(&admin), &replace_uri, Some(replace_body)).await;
         assert_eq!(status, StatusCode::CONFLICT, "{body}");
+        assert_eq!(body["result"]["status"], "matched");
+        assert_eq!(body["result"]["snapshotStateVersion"], 4);
+        assert_eq!(body["result"]["boundaryLastSeq"], last_seq);
         let (state_version, state_json): (i64, String) = sqlx::query_as(
             "SELECT state_version, state_json FROM projection_snapshots
              WHERE projection_name = 'supervisor' AND subject_id = ?",
