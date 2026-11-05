@@ -9,6 +9,8 @@ import { ApiClient, type ApiResponse } from './client.js';
 import type {
   HarnessOverview,
   HarnessSubagentPage,
+  HarnessWorkflowTemplateInput,
+  HarnessWorkflowTemplateList,
   WorkflowDefinition,
   WorkflowRevision,
 } from '../types/harness.js';
@@ -98,4 +100,27 @@ export function setHarnessWorkflowEnabled(
   enabled: boolean,
 ): Promise<ApiResponse<WorkflowRevision>> {
   return ApiClient.put(workflowPath(workspaceId, workflowId, '/enabled'), { enabled });
+}
+
+/** Built-in inspection/video/energy templates with their full definitions. */
+export function listHarnessWorkflowTemplates(
+  workspaceId: string,
+  signal?: AbortSignal,
+): Promise<ApiResponse<HarnessWorkflowTemplateList>> {
+  return ApiClient.get(harnessPath(workspaceId, '/workflow-templates'), undefined, signal);
+}
+
+/**
+ * DR4=B: validated instantiation creates an enabled Workflow directly. A
+ * rejected request must not create a Workflow or schedule anything.
+ */
+export function instantiateHarnessWorkflowTemplate(
+  workspaceId: string,
+  templateId: string,
+  input: HarnessWorkflowTemplateInput,
+): Promise<ApiResponse<WorkflowRevision>> {
+  return ApiClient.post(
+    harnessPath(workspaceId, `/workflow-templates/${encodeURIComponent(templateId)}/instantiate`),
+    input,
+  );
 }

@@ -4,6 +4,7 @@
  * Canonical:
  *   #/harness
  *   #/harness/workflows
+ *   #/harness/workflows/templates
  *   #/harness/workflows/{workflow_id}
  *   #/harness/workflows/new
  *   #/harness/tasks
@@ -26,6 +27,7 @@ import {
 export type HarnessRoute =
   | { name: 'overview'; anchor?: string }
   | { name: 'workflows'; workflowId: string | null; creating: boolean }
+  | { name: 'templates' }
   | { name: 'tasks' }
   | { name: 'new' }
   | {
@@ -61,6 +63,9 @@ export function parseHarnessHash(hash: string): HarnessRoute | null {
   if (path === '#/harness/tasks/new') return { name: 'new' };
   if (path === '#/harness/workflows') {
     return { name: 'workflows', workflowId: null, creating: false };
+  }
+  if (path === '#/harness/workflows/templates') {
+    return { name: 'templates' };
   }
 
   const workflowMatch = path.match(/^#\/harness\/workflows\/([^/]+)$/);

@@ -58,6 +58,12 @@ use crate::database::Db;
 const SYSTEM_SQL: &str = include_str!("seed/system.sql");
 const DEMO_SQL: &str = include_str!("seed/demo.sql");
 
+/// Stable identities of the built-in Workflow templates shipped by the
+/// composition layer (`apps/cloud/templates/workflows`). The seed surface owns
+/// the versioned identity contract; the template bodies stay with the agent
+/// domain so they reuse the unified `WorkflowDefinition` schema.
+pub const BUILTIN_WORKFLOW_TEMPLATE_IDS: [&str; 3] = ["inspection", "video", "energy"];
+
 /// Apply the production-required seed tier. Idempotent.
 pub async fn seed_system(db: &Db) -> Result<(), sqlx::Error> {
     sqlx::raw_sql(SYSTEM_SQL).execute(db.pool()).await?;

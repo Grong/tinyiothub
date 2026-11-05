@@ -2484,3 +2484,342 @@ mod workflow_tests {
         fixture.close().await;
     }
 }
+
+mod workflow_template_tests {
+    use chrono::{DateTime, Duration, Utc};
+    use serde_json::{Value, json};
+    use tinyiothub_cloud::domains::agent::workflows::{
+        TemplateInput, WorkflowScheduler, WorkflowService, WorkflowTemplate, builtin_templates, next_wake_at,
+        validate_template,
+    };
+    use tinyiothub_core::harness::{WorkflowDefinition, WorkflowTrigger};
+    use tinyiothub_skills::registry::{ApprovalPolicy, Capability};
+    use tinyiothub_storage::test_helpers::{WorkspaceFixture, fixture_workspace};
+
+    fn at() -> DateTime<Utc> {
+        DateTime::parse_from_rfc3339("2026-11-03T00:00:00Z")
+            .expect("timestamp")
+            .with_timezone(&Utc)
+    }
+
+    /// Seed a workspace Thing with a driver manifest that declares the given
+    /// `(source_id, data_kind)` pairs. This is the reference surface template
+    /// instantiation validates against.
+    async fn seed_thing(fixture: &WorkspaceFixture, id: &str, sources: &[(&str, &str)]) {
+        let workspace_id = fixture.workspace_id.as_str();
+        let pool = fixture.db.pool().clone();
+        sqlx::query("INSERT INTO things (id, name, thing_type, workspace_id) VALUES (?, ?, 'device', ?)")
+            .bind(id)
+            .bind(id)
+            .bind(workspace_id)
+            .execute(&pool)
+            .await
+            .expect("seed thing");
+        let driver = format!("driver-{id}");
+        let manifest = json!({
+            "sources": sources
+                .iter()
+                .map(|(source_id, data_kind)| json!({"id": source_id, "kind": "poll", "dataKind": data_kind}))
+                .collect::<Vec<_>>(),
+            "tools": [{"name": "set_level", "safety": "control"}],
+        });
+        sqlx::query(
+            "INSERT INTO driver_declarations
+                (workspace_id, driver_name, driver_version, manifest_version, manifest_json,
+                 manifest_hash, status, installed_at)
+             VALUES (?, ?, '1.0.0', '1.0', ?, 'manifest-hash', 'active', 'now')",
+        )
+        .bind(workspace_id)
+        .bind(&driver)
+        .bind(manifest.to_string())
+        .execute(&pool)
+        .await
+        .expect("seed driver declaration");
+        sqlx::query(
+            "INSERT INTO device_declarations
+                (workspace_id, thing_id, driver_name, driver_version, declaration_json,
+                 declaration_hash, status, updated_at)
+             VALUES (?, ?, ?, '1.0.0', ?, 'declaration-hash', 'active', 'now')",
+        )
+        .bind(workspace_id)
+        .bind(id)
+        .bind(&driver)
+        .bind(
+            json!({"manifestVersion":"1.0","driver":driver,"driverVersion":"1.0.0","stateFields":[],"tools":[]})
+                .to_string(),
+        )
+        .execute(&pool)
+        .await
+        .expect("seed device declaration");
+    }
+
+    async fn side_effects(fixture: &WorkspaceFixture) -> (usize, i64, i64) {
+        let workflows = fixture
+            .db
+            .list_workflows(&fixture.workspace_id)
+            .await
+            .expect("list workflows")
+            .len();
+        let pool = fixture.workspace_pool().await;
+        let occurrences: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM workflow_occurrences")
+            .fetch_one(&pool)
+            .await
+            .expect("occurrence count");
+        let wakes: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM task_wake_outbox")
+            .fetch_one(&pool)
+            .await
+            .expect("wake count");
+        (workflows, occurrences, wakes)
+    }
+
+    fn input(device: &str, source: &str) -> TemplateInput {
+        TemplateInput {
+            workflow_id: String::new(),
+            device_selector: json!({"device_ids": [device]}),
+            source_selector: json!({"sources": [source]}),
+            approval_policy: json!({}),
+        }
+    }
+
+    #[test]
+    fn workflow_templates_are_versioned_and_cover_inspection_video_energy() {
+        let templates = builtin_templates();
+        let ids: Vec<&str> = templates.iter().map(|template| template.id.as_str()).collect();
+        assert_eq!(ids, vec!["inspection", "video", "energy"]);
+        for template in &templates {
+            assert!(template.version >= 1, "{} must be versioned", template.id);
+            assert!(!template.title.trim().is_empty());
+            validate_template(template).unwrap_or_else(|error| panic!("{} invalid: {error}", template.id));
+        }
+        let video = templates
+            .iter()
+            .find(|template| template.id == "video")
+            .expect("video template");
+        assert!(video.definition.required_capabilities.iter().any(|cap| cap == "vision"));
+        assert!(video.definition.required_capabilities.iter().any(|cap| cap == "video"));
+        assert!(!Capability::Video.is_satisfied_by(&[Capability::Video]));
+        assert!(Capability::Video.is_satisfied_by(&[Capability::Vision, Capability::Video]));
+    }
+
+    #[tokio::test]
+    async fn workflow_templates_instantiate_enabled_with_version_and_next_wake() {
+        let workspace_id = "ws-template-direct-enabled";
+        let fixture = fixture_workspace(workspace_id).await;
+        seed_thing(&fixture, "pump-1", &[("telemetry", "values")]).await;
+        seed_thing(&fixture, "camera-1", &[("front", "video")]).await;
+
+        let service = WorkflowService::new(std::sync::Arc::new(fixture.db.clone()), workspace_id);
+
+        let cases = [
+            ("inspection", "pump-1", "telemetry"),
+            ("video", "camera-1", "front"),
+            ("energy", "pump-1", "telemetry"),
+        ];
+        for (template_id, device, source) in cases {
+            let revision = service
+                .instantiate_template(template_id, input(device, source))
+                .await
+                .unwrap_or_else(|error| panic!("{template_id} instantiate failed: {error}"));
+            assert!(revision.enabled, "{template_id} must be created enabled (DR4=B)");
+            assert_eq!(revision.version, 1);
+            let next = next_wake_at(&revision.definition, at()).unwrap_or_else(|| {
+                panic!("{template_id} must expose a planned wake after creation");
+            });
+            assert!(next > at(), "{template_id} next wake must be in the future");
+            assert_eq!(
+                revision.definition.device_selector,
+                json!({"device_ids": [device]}),
+                "{template_id} must use the supplied device selector"
+            );
+            assert_eq!(
+                revision.definition.source_selector,
+                json!({"sources": [source]}),
+                "{template_id} must use the supplied source selector"
+            );
+        }
+
+        let (workflows, occurrences, wakes) = side_effects(&fixture).await;
+        assert_eq!(workflows, 3);
+        // Instantiation is a configuration action; it must not run or queue a wake.
+        assert_eq!(occurrences, 0);
+        assert_eq!(wakes, 0);
+        fixture.close().await;
+    }
+
+    #[tokio::test]
+    async fn workflow_templates_invalid_references_create_zero_workflows_and_zero_scheduling() {
+        let workspace_id = "ws-template-invalid";
+        let fixture = fixture_workspace(workspace_id).await;
+        seed_thing(&fixture, "pump-1", &[("telemetry", "values")]).await;
+        seed_thing(&fixture, "camera-1", &[("front", "video")]).await;
+        let service = WorkflowService::new(std::sync::Arc::new(fixture.db.clone()), workspace_id);
+
+        let cases: Vec<(&str, TemplateInput)> = vec![
+            ("inspection", input("missing-device", "telemetry")),
+            ("inspection", input("pump-1", "missing-source")),
+            ("video", input("camera-1", "telemetry")),
+            ("instantiation", input("pump-1", "telemetry")),
+            (
+                "inspection",
+                TemplateInput {
+                    workflow_id: String::new(),
+                    device_selector: json!({"device_ids": []}),
+                    source_selector: json!({"sources": ["telemetry"]}),
+                    approval_policy: json!({}),
+                },
+            ),
+        ];
+        for (template_id, template_input) in cases {
+            service
+                .instantiate_template(template_id, template_input)
+                .await
+                .expect_err("invalid reference must be rejected");
+            let (workflows, occurrences, wakes) = side_effects(&fixture).await;
+            assert_eq!(workflows, 0, "rejection must not create a workflow");
+            assert_eq!(occurrences, 0, "rejection must not schedule an occurrence");
+            assert_eq!(wakes, 0, "rejection must not queue a wake");
+        }
+        fixture.close().await;
+    }
+
+    #[test]
+    fn workflow_template_validation_rejects_unknown_references_and_untrusted_policy() {
+        let base = builtin_templates().into_iter().next().expect("inspection");
+
+        let unknown_tool = WorkflowTemplate {
+            definition: WorkflowDefinition {
+                tool_ids: vec!["not_a_real_tool".to_string()],
+                ..base.definition.clone()
+            },
+            ..base.clone()
+        };
+        assert!(validate_template(&unknown_tool).is_err());
+
+        let unknown_skill = WorkflowTemplate {
+            definition: WorkflowDefinition {
+                skill_refs: vec!["no-such-skill-reference".to_string()],
+                ..base.definition.clone()
+            },
+            ..base.clone()
+        };
+        assert!(validate_template(&unknown_skill).is_err());
+
+        let unknown_capability = WorkflowTemplate {
+            definition: WorkflowDefinition {
+                required_capabilities: vec!["telepathy".to_string()],
+                ..base.definition.clone()
+            },
+            ..base.clone()
+        };
+        assert!(validate_template(&unknown_capability).is_err());
+
+        let video_without_vision = WorkflowTemplate {
+            id: "video".to_string(),
+            definition: WorkflowDefinition {
+                required_capabilities: vec!["video".to_string()],
+                ..base.definition.clone()
+            },
+            ..base.clone()
+        };
+        assert!(validate_template(&video_without_vision).is_err());
+
+        let bad_evidence = WorkflowTemplate {
+            definition: WorkflowDefinition {
+                evidence_policy: json!({"required": true, "kinds": ["invented_evidence"]}),
+                ..base.definition.clone()
+            },
+            ..base.clone()
+        };
+        assert!(validate_template(&bad_evidence).is_err());
+
+        let disabled_mandatory = WorkflowTemplate {
+            id: "inspection".to_string(),
+            definition: WorkflowDefinition {
+                tool_ids: vec!["delete_thing".to_string()],
+                approval_policy: json!({"mandatory": false}),
+                ..base.definition.clone()
+            },
+            ..base.clone()
+        };
+        assert!(
+            validate_template(&disabled_mandatory).is_err(),
+            "a template must not disable mandatory approval"
+        );
+    }
+
+    #[tokio::test]
+    async fn workflow_templates_can_only_tighten_approval_policy() {
+        let workspace_id = "ws-template-policy";
+        let fixture = fixture_workspace(workspace_id).await;
+        seed_thing(&fixture, "pump-1", &[("telemetry", "values")]).await;
+        let service = WorkflowService::new(std::sync::Arc::new(fixture.db.clone()), workspace_id);
+
+        let revision = service
+            .instantiate_template(
+                "energy",
+                TemplateInput {
+                    workflow_id: String::new(),
+                    device_selector: json!({"device_ids": ["pump-1"]}),
+                    source_selector: json!({"sources": ["telemetry"]}),
+                    approval_policy: json!({"requiresApproval": false, "timeoutSecs": 1}),
+                },
+            )
+            .await
+            .expect("tightening-only merge accepts the input");
+        let persisted = ApprovalPolicy::from_workflow_value(&revision.definition.approval_policy)
+            .expect("effective approval policy");
+        assert!(persisted.mandatory, "input must not loosen mandatory approval");
+        assert!(persisted.timeout_secs >= 60, "input must not shorten the window");
+        fixture.close().await;
+    }
+
+    #[tokio::test]
+    async fn workflow_templates_skip_expired_slots_without_replay() {
+        let workspace_id = "ws-template-misfire";
+        let fixture = fixture_workspace(workspace_id).await;
+        seed_thing(&fixture, "pump-1", &[("telemetry", "values")]).await;
+        let db = std::sync::Arc::new(fixture.db.clone());
+        let service = WorkflowService::new(db.clone(), workspace_id);
+        let revision = service
+            .instantiate_template("inspection", input("pump-1", "telemetry"))
+            .await
+            .expect("instantiate enabled inspection");
+        let scheduler = WorkflowScheduler::new(db, workspace_id);
+        scheduler.tick(at()).await.expect("initialize cursor");
+
+        let due = scheduler.tick(at() + Duration::hours(4)).await.expect("misfire window");
+        assert_eq!(due.len(), 1, "only the latest due slot is scheduled");
+        assert_eq!(due[0].workflow_id, revision.workflow_id);
+        assert_eq!(due[0].occurrence_id, "2026-11-03T04:00:00Z");
+
+        let pool = fixture.workspace_pool().await;
+        let missed: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM session_events WHERE type = 'trigger.missed'")
+            .fetch_one(&pool)
+            .await
+            .expect("missed events");
+        assert_eq!(missed, 3);
+        let occurrences: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM workflow_occurrences")
+            .fetch_one(&pool)
+            .await
+            .expect("occurrence count");
+        assert_eq!(occurrences, 1, "expired slots are recorded, never replayed");
+        fixture.close().await;
+    }
+
+    #[tokio::test]
+    async fn workflow_templates_serialize_the_http_contract() {
+        // The service contract is the authority; the handler test lives with
+        // the existing harness HTTP tests. Here we assert the catalog payload
+        // shape used by the UI (version + definition) is serializable.
+        for template in builtin_templates() {
+            let value = serde_json::to_value(&template).expect("template serializes");
+            assert_eq!(value["id"], template.id);
+            assert!(value["version"].as_i64().unwrap_or_default() >= 1);
+            assert!(value["definition"]["trigger"]["type"].is_string());
+            let trigger: WorkflowTrigger =
+                serde_json::from_value(value["definition"]["trigger"].clone()).expect("trigger round-trips");
+            assert!(!trigger.trigger_id().is_empty());
+        }
+        let _: Value = json!({});
+    }
+}

@@ -17,8 +17,9 @@ use axum::{
     extract::{Path, Query, State},
     http::StatusCode,
     response::{IntoResponse, Response},
-    routing::{get, put},
+    routing::{get, post, put},
 };
+use chrono::Utc;
 use serde::Deserialize;
 use serde_json::{Value, json};
 use tinyiothub_core::harness::{WorkflowDefinition, WorkflowRevision, WorkflowTrigger};
@@ -31,7 +32,7 @@ use tinyiothub_web::security::Claims;
 
 use crate::domains::agent::AgentState;
 use crate::domains::agent::runtime::tasks::error_response;
-use crate::domains::agent::workflows::WorkflowService;
+use crate::domains::agent::workflows::{TemplateInput, WorkflowService, builtin_templates, next_wake_at};
 
 const DEFAULT_ATTENTION_LIMIT: i64 = 5;
 const MAX_ATTENTION_LIMIT: i64 = 50;
@@ -56,6 +57,14 @@ where
         .route(
             "/{workspace_id}/harness/workflows/{workflow_id}/enabled",
             put(set_workflow_enabled),
+        )
+        .route(
+            "/{workspace_id}/harness/workflow-templates",
+            get(list_workflow_templates),
+        )
+        .route(
+            "/{workspace_id}/harness/workflow-templates/{template_id}/instantiate",
+            post(instantiate_workflow_template),
         )
 }
 
@@ -300,6 +309,42 @@ pub async fn set_workflow_enabled(
     }
 }
 
+/// Built-in template catalog. Read-only and workspace-scoped; the full
+/// definition lets the first-run form prefill source/policy defaults without a
+/// second request.
+pub async fn list_workflow_templates(
+    State(state): State<AgentState>,
+    Extension(claims): Extension<Claims>,
+    Path(workspace_id): Path<String>,
+) -> Response {
+    if let Err(response) = verify_workspace_read(&state, &claims, &workspace_id).await {
+        return response;
+    }
+    ApiResponseBuilder::success(json!({ "templates": builtin_templates() })).into_response()
+}
+
+/// DR4=B: a valid template creates an enabled Workflow directly. Reference,
+/// capability, and policy validation happens before the revision write, so a
+/// rejected request creates no Workflow and no scheduling artifact.
+pub async fn instantiate_workflow_template(
+    State(state): State<AgentState>,
+    Extension(claims): Extension<Claims>,
+    Path((workspace_id, template_id)): Path<(String, String)>,
+    Json(payload): Json<TemplateInput>,
+) -> Response {
+    if let Err(response) = verify_workspace_read(&state, &claims, &workspace_id).await {
+        return response;
+    }
+    let service = WorkflowService::new(state.db.clone(), workspace_id.as_str());
+    match service.instantiate_template(&template_id, payload).await {
+        Ok(revision) => ApiResponseBuilder::success(workflow_revision_json(&revision)).into_response(),
+        Err(error) => {
+            tracing::warn!(%workspace_id, %template_id, %error, "instantiate Harness workflow template failed");
+            workflow_db_error_response(error, None)
+        }
+    }
+}
+
 fn workflow_revision_json(revision: &WorkflowRevision) -> Value {
     json!({
         "workflowId": revision.workflow_id,
@@ -307,6 +352,11 @@ fn workflow_revision_json(revision: &WorkflowRevision) -> Value {
         "enabled": revision.enabled,
         "definition": revision.definition,
         "createdAt": revision.created_at.to_rfc3339(),
+        "nextWakeAt": if revision.enabled {
+            next_wake_at(&revision.definition, Utc::now()).map(|wake| wake.to_rfc3339())
+        } else {
+            None
+        },
     })
 }
 
@@ -332,6 +382,7 @@ fn workflow_db_error_response(error: DbError, current_version: Option<i64>) -> R
     match error {
         DbError::Validation { message } => error_response(StatusCode::BAD_REQUEST, message),
         DbError::NotFound { id } => error_response(StatusCode::NOT_FOUND, format!("Workflow 不存在: {id}")),
+        DbError::Conflict { message } => error_response(StatusCode::CONFLICT, message),
         DbError::CasConflict { message } => workflow_conflict_response(message, current_version),
         _ => error_response(StatusCode::SERVICE_UNAVAILABLE, "Harness 存储不可用"),
     }
@@ -397,13 +448,18 @@ pub(crate) async fn subagents_payload(
 }
 
 fn workflow_json(revision: &tinyiothub_core::harness::WorkflowRevision) -> Value {
+    let next_run_at = if revision.enabled {
+        next_wake_at(&revision.definition, Utc::now()).map(|wake| wake.to_rfc3339())
+    } else {
+        None
+    };
     json!({
         "workflowId": revision.workflow_id,
         "objective": revision.definition.objective,
         "enabled": revision.enabled,
         "version": revision.version,
         "triggerLabel": trigger_label(&revision.definition.trigger),
-        "nextRunAt": Value::Null,
+        "nextRunAt": next_run_at,
         "lastResult": Value::Null,
         "updatedAt": revision.created_at.to_rfc3339(),
     })
@@ -827,6 +883,114 @@ mod tests {
 
         let (status, missing) = get(&app, Some(&token), &format!("{base}/missing-workflow")).await;
         assert_eq!(status, StatusCode::NOT_FOUND, "{missing}");
+
+        drop(app);
+        fixture.close().await;
+    }
+
+    async fn seed_template_thing(fixture: &WorkspaceFixture, id: &str) {
+        let workspace_id = fixture.workspace_id.as_str();
+        let driver = format!("driver-{id}");
+        sqlx::query("INSERT INTO things (id, name, thing_type, workspace_id) VALUES (?, ?, 'device', ?)")
+            .bind(id)
+            .bind(id)
+            .bind(workspace_id)
+            .execute(fixture.db.pool())
+            .await
+            .expect("seed thing");
+        sqlx::query(
+            "INSERT INTO driver_declarations
+                (workspace_id, driver_name, driver_version, manifest_version, manifest_json,
+                 manifest_hash, status, installed_at)
+             VALUES (?, ?, '1.0.0', '1.0', ?, 'hash', 'active', 'now')",
+        )
+        .bind(workspace_id)
+        .bind(&driver)
+        .bind(json!({"sources":[{"id":"telemetry","kind":"poll","dataKind":"values"}],"tools":[]}).to_string())
+        .execute(fixture.db.pool())
+        .await
+        .expect("seed driver declaration");
+        sqlx::query(
+            "INSERT INTO device_declarations
+                (workspace_id, thing_id, driver_name, driver_version, declaration_json,
+                 declaration_hash, status, updated_at)
+             VALUES (?, ?, ?, '1.0.0', '{}', 'hash', 'active', 'now')",
+        )
+        .bind(workspace_id)
+        .bind(id)
+        .bind(&driver)
+        .execute(fixture.db.pool())
+        .await
+        .expect("seed device declaration");
+    }
+
+    #[tokio::test]
+    async fn workflow_template_routes_list_and_instantiate_enabled_with_permission_checks() {
+        let workspace_id = "ws-template-http";
+        let fixture = fixture_workspace(workspace_id).await;
+        seed_template_thing(&fixture, "pump-1").await;
+        let (mut app_state, pool) = setup_test_app_with_pool().await;
+        seed_test_workspace(&pool, "tenant-1", workspace_id).await;
+        seed_test_workspace(&pool, "tenant-2", "ws-template-other").await;
+        app_state.db = Arc::new(fixture.db.clone());
+        let app = axum::Router::new()
+            .nest("/api", crate::api::create_router(&app_state))
+            .with_state(app_state);
+        let token = create_test_token("user-1", "tenant-1");
+
+        let base = format!("/api/v1/workspaces/{workspace_id}/harness");
+        let (status, _) = get(&app, None, &format!("{base}/workflow-templates")).await;
+        assert_eq!(status, StatusCode::UNAUTHORIZED);
+
+        let (status, forbidden) = get(
+            &app,
+            Some(&token),
+            "/api/v1/workspaces/ws-template-other/harness/workflow-templates",
+        )
+        .await;
+        assert_eq!(status, StatusCode::FORBIDDEN, "{forbidden}");
+
+        let (status, listed) = get(&app, Some(&token), &format!("{base}/workflow-templates")).await;
+        assert_eq!(status, StatusCode::OK, "{listed}");
+        let templates = listed["result"]["templates"].as_array().expect("templates");
+        assert_eq!(templates.len(), 3);
+        assert_eq!(templates[0]["id"], "inspection");
+        assert!(templates[0]["version"].as_i64().unwrap_or_default() >= 1);
+
+        let instantiate = |device: &str| {
+            json!({
+                "device_selector": {"device_ids": [device]},
+                "source_selector": {"sources": ["telemetry"]},
+                "approval_policy": {},
+            })
+        };
+        let (status, failed) = send(
+            &app,
+            "POST",
+            Some(&token),
+            &format!("{base}/workflow-templates/inspection/instantiate"),
+            Some(instantiate("missing-device")),
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{failed}");
+        let (_, workflows) = get(&app, Some(&token), &format!("{base}/workflows")).await;
+        assert_eq!(workflows["result"]["workflows"].as_array().unwrap().len(), 0);
+
+        let (status, created) = send(
+            &app,
+            "POST",
+            Some(&token),
+            &format!("{base}/workflow-templates/inspection/instantiate"),
+            Some(instantiate("pump-1")),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{created}");
+        assert_eq!(created["result"]["enabled"], true, "DR4=B direct enable");
+        assert_eq!(created["result"]["version"], 1);
+        assert!(created["result"]["nextWakeAt"].is_string());
+        let (_, workflows) = get(&app, Some(&token), &format!("{base}/workflows")).await;
+        assert_eq!(workflows["result"]["workflows"].as_array().unwrap().len(), 1);
+        assert_eq!(workflows["result"]["workflows"][0]["enabled"], true);
 
         drop(app);
         fixture.close().await;

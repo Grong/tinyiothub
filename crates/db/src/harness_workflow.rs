@@ -277,6 +277,23 @@ async fn schedule_occurrence_tx(
     occurrence_by_source_tx(tx, &key).await
 }
 
+/// A data source declared by a Thing's active driver manifest.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WorkflowDeviceSource {
+    pub id: String,
+    pub data_kind: String,
+}
+
+/// The current-workspace reference surface checked before a Workflow from a
+/// template is created. `found` distinguishes a missing Thing from a Thing
+/// whose driver has not published a declaration yet.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct WorkflowDeviceReference {
+    pub found: bool,
+    pub sources: Vec<WorkflowDeviceSource>,
+    pub dangerous_tool_ids: Vec<String>,
+}
+
 pub struct CronWindow<'a> {
     pub workflow_id: &'a str,
     pub trigger_id: &'a str,
@@ -288,14 +305,20 @@ pub struct CronWindow<'a> {
 }
 
 impl Db {
-    pub async fn create_workflow(&self, workspace_id: &str, revision: &WorkflowRevision) -> Result<WorkflowRevision> {
+    async fn insert_workflow(
+        &self,
+        workspace_id: &str,
+        revision: &WorkflowRevision,
+        enabled: bool,
+    ) -> Result<WorkflowRevision> {
         let pool = self.workspace_pool(workspace_id).await?;
         let mut tx = pool.begin().await?;
         sqlx::query(
             "INSERT INTO agent_workflows (workflow_id, enabled, current_version, updated_at)
-             VALUES (?, 0, ?, ?)",
+             VALUES (?, ?, ?, ?)",
         )
         .bind(&revision.workflow_id)
+        .bind(enabled)
         .bind(revision.version)
         .bind(revision.created_at)
         .execute(&mut *tx)
@@ -312,9 +335,91 @@ impl Db {
         .await?;
         tx.commit().await?;
         Ok(WorkflowRevision {
-            enabled: false,
+            enabled,
             ..revision.clone()
         })
+    }
+
+    /// Blank create (R30): the first revision is always disabled.
+    pub async fn create_workflow(&self, workspace_id: &str, revision: &WorkflowRevision) -> Result<WorkflowRevision> {
+        self.insert_workflow(workspace_id, revision, false).await
+    }
+
+    /// Template instantiation (DR4=B): a validated template creates its first
+    /// revision directly enabled. No occurrence or wake is queued here; the
+    /// normal trigger scheduler owns all future wakes.
+    pub async fn create_enabled_workflow(
+        &self,
+        workspace_id: &str,
+        revision: &WorkflowRevision,
+    ) -> Result<WorkflowRevision> {
+        self.insert_workflow(workspace_id, revision, revision.enabled).await
+    }
+
+    /// Resolve a Thing plus its active driver manifest inside one workspace.
+    /// Template instantiation uses this to reject unknown devices, sources, and
+    /// device-control tools before any Workflow row is written.
+    pub async fn workflow_device_reference(
+        &self,
+        workspace_id: &str,
+        device_id: &str,
+    ) -> Result<WorkflowDeviceReference> {
+        let found: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM things WHERE workspace_id = ? AND (id = ? OR name = ?)")
+                .bind(workspace_id)
+                .bind(device_id)
+                .bind(device_id)
+                .fetch_one(self.pool())
+                .await?;
+        if found == 0 {
+            return Ok(WorkflowDeviceReference::default());
+        }
+
+        let manifest_json: Option<String> = sqlx::query_scalar(
+            "SELECT m.manifest_json FROM device_declarations d
+             JOIN driver_declarations m
+               ON m.workspace_id = d.workspace_id
+              AND m.driver_name = d.driver_name
+              AND m.driver_version = d.driver_version
+             WHERE d.workspace_id = ? AND d.thing_id = ?
+               AND d.status = 'active' AND m.status = 'active'
+             ORDER BY d.id DESC LIMIT 1",
+        )
+        .bind(workspace_id)
+        .bind(device_id)
+        .fetch_optional(self.pool())
+        .await?;
+
+        let mut reference = WorkflowDeviceReference {
+            found: true,
+            ..WorkflowDeviceReference::default()
+        };
+        let Some(manifest_json) = manifest_json else {
+            return Ok(reference);
+        };
+        let manifest: Value = serde_json::from_str(&manifest_json)?;
+        for source in manifest.get("sources").and_then(Value::as_array).into_iter().flatten() {
+            let Some(id) = source.get("id").and_then(Value::as_str) else {
+                continue;
+            };
+            reference.sources.push(WorkflowDeviceSource {
+                id: id.to_string(),
+                data_kind: source
+                    .get("dataKind")
+                    .and_then(Value::as_str)
+                    .unwrap_or("values")
+                    .to_string(),
+            });
+        }
+        for tool in manifest.get("tools").and_then(Value::as_array).into_iter().flatten() {
+            let Some(name) = tool.get("name").and_then(Value::as_str) else {
+                continue;
+            };
+            if tool.get("safety").and_then(Value::as_str) == Some("dangerous") {
+                reference.dangerous_tool_ids.push(name.to_string());
+            }
+        }
+        Ok(reference)
     }
 
     pub async fn append_workflow_revision(

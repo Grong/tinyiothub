@@ -19,6 +19,9 @@ vi.mock('../../api/harness.js', async (importOriginal) => {
     getHarnessOverview: vi.fn(),
     listHarnessSubagents: vi.fn(),
     getHarnessWorkflow: vi.fn().mockResolvedValue({ code: 0, msg: '', result: null }),
+    listHarnessWorkflowTemplates: vi
+      .fn()
+      .mockResolvedValue({ code: 0, msg: '', result: { templates: [] } }),
   };
 });
 
@@ -139,16 +142,30 @@ describe('Harness exception-first overview', () => {
     expect(view.textContent).toContain('结果未知');
   });
 
-  it('has exactly one page-level primary action: 新建工作流', async () => {
+  it('has exactly one page-level primary action: 从模板新建', async () => {
     await mount();
 
     const primary = [...view.querySelectorAll<HTMLElement>('.btn--primary')];
     expect(primary).toHaveLength(1);
-    expect(primary[0].textContent?.trim()).toBe('新建工作流');
-    expect(primary[0].getAttribute('href')).toBe('#/harness/workflows/new');
+    expect(primary[0].textContent?.trim()).toBe('从模板新建');
+    expect(primary[0].getAttribute('href')).toBe('#/harness/workflows/templates');
+    expect(
+      view.querySelector<HTMLAnchorElement>('.harness-overview__actions a[href="#/harness/workflows/new"]'),
+    ).not.toBeNull();
 
     const h1 = view.querySelector('h1');
     expect(h1?.textContent).toContain('Harness');
+  });
+
+  it('routes the template-first journey to the templates view', async () => {
+    await mount(overview(), { route: { name: 'templates' } });
+
+    const templates = view.querySelector('view-harness-templates') as
+      | (HTMLElement & { workspaceId: string })
+      | null;
+    expect(templates).not.toBeNull();
+    expect(templates?.workspaceId).toBe('ws_1');
+    expect(view.querySelector('.harness-overview')).toBeNull();
   });
 
   it('routes workflow creation and editing to the shared editor', async () => {
@@ -408,7 +425,7 @@ describe('Harness exception-first overview', () => {
     expect(view.querySelectorAll('[data-harness-section]')).toHaveLength(0);
   });
 
-  it('shows Chinese empty states and a visible error state', async () => {
+  it('shows Chinese empty states, the template-first action and a visible error state', async () => {
     await mount(
       overview({
         attention: { items: [], total: 0, limit: 5, offset: 0 },
@@ -419,6 +436,14 @@ describe('Harness exception-first overview', () => {
     expect(view.textContent).toContain('当前没有需要处理的事项');
     expect(view.textContent).toContain('尚未配置 Workflow');
     expect(view.textContent).toContain('当前没有 Main 任务');
+    const emptyActions = view.querySelector<HTMLElement>('.harness-empty__actions');
+    expect(emptyActions?.querySelector('.btn--primary')?.textContent?.trim()).toBe('从模板新建');
+    expect(
+      emptyActions?.querySelector<HTMLAnchorElement>('a[href="#/harness/workflows/templates"]'),
+    ).not.toBeNull();
+    expect(
+      emptyActions?.querySelector<HTMLAnchorElement>('a[href="#/harness/workflows/new"]'),
+    ).not.toBeNull();
 
     overviewApi.mockRejectedValueOnce(new ApiError(503, '服务暂不可用'));
     view.querySelector<HTMLButtonElement>('.harness-overview__retry')!.click();

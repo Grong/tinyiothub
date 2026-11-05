@@ -62,6 +62,17 @@ view-harness-overview {
   color: var(--danger);
 }
 
+.harness-empty__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  margin-top: var(--space-3);
+}
+
+.harness-empty__actions .btn {
+  min-height: 44px;
+}
+
 .harness-overview__sections {
   display: grid;
   gap: var(--space-5);

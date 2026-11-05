@@ -16,6 +16,7 @@ import {
   renderHarnessStatus,
 } from './harness-status.js';
 import './harness-workflow-edit.js';
+import './harness-templates.js';
 import './harness-overview.css';
 
 const attentionPageSize = 5;
@@ -415,9 +416,16 @@ export class HarnessOverviewView extends LitElement {
         </div>
         ${
           workflows.length === 0
-            ? html`<p class="harness-empty">
-                尚未配置 Workflow。新建后，Harness 会按声明自动调度。
-              </p>`
+            ? html`<div class="harness-empty">
+                <p>
+                  尚未配置 Workflow。持续 Workflow 会按声明自动调度 Agent 并留下证据；
+                  从模板开始只需选择设备、数据源与策略。
+                </p>
+                <div class="harness-empty__actions">
+                  <a class="btn btn--primary" href="#/harness/workflows/templates">从模板新建</a>
+                  <a class="btn" href="#/harness/workflows/new">空白新建</a>
+                </div>
+              </div>`
             : html`<div class="harness-workflow__scroll">
                 <table class="harness-workflow-table" role="table">
                   <caption class="harness-sr-only">当前 Workflow 配置与调度状态</caption>
@@ -571,6 +579,11 @@ export class HarnessOverviewView extends LitElement {
         .workflowId=${this.route.workflowId ?? ''}
       ></view-harness-workflow-edit>`;
     }
+    if (this.route?.name === 'templates') {
+      return html`<view-harness-templates
+        .workspaceId=${this.workspaceId}
+      ></view-harness-templates>`;
+    }
     return html`
       <section class="harness-overview" aria-labelledby="harness-overview-title">
         <header class="harness-overview__header">
@@ -582,9 +595,12 @@ export class HarnessOverviewView extends LitElement {
             <button type="button" class="btn harness-overview__retry" @click=${() => this.retry()}>
               刷新
             </button>
-            <a class="btn btn--primary harness-overview__primary" href="#/harness/workflows/new"
-              >新建工作流</a
+            <a
+              class="btn btn--primary harness-overview__primary"
+              href="#/harness/workflows/templates"
+              >从模板新建</a
             >
+            <a class="btn" href="#/harness/workflows/new">空白新建</a>
           </div>
         </header>
         ${this.renderStatus()}

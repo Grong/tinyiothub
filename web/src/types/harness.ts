@@ -166,6 +166,32 @@ export interface WorkflowRevision {
   enabled: boolean;
   definition: WorkflowDefinition;
   createdAt: string;
+  /** Next planned cron wake; null for disabled/watch/event workflows. */
+  nextWakeAt?: string | null;
+}
+
+/** One versioned built-in template (X1). */
+export interface HarnessWorkflowTemplate {
+  id: string;
+  version: number;
+  title: string;
+  description: string;
+  definition: WorkflowDefinition;
+}
+
+export interface HarnessWorkflowTemplateList {
+  templates: HarnessWorkflowTemplate[];
+}
+
+/**
+ * Instantiation parameters. Selectors replace the template defaults and the
+ * approval policy may only tighten the template's mandatory policy.
+ */
+export interface HarnessWorkflowTemplateInput {
+  workflowId: string;
+  deviceSelector: unknown;
+  sourceSelector: unknown;
+  approvalPolicy: unknown;
 }
 
 /**

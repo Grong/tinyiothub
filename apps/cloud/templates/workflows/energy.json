@@ -1,0 +1,44 @@
+{
+  "id": "energy",
+  "version": 1,
+  "title": "节能控制",
+  "description": "按计划读取能耗相关属性，并在强制审批下执行预定的控制动作。",
+  "definition": {
+    "objective": "按计划读取能耗相关属性与告警，在强制审批通过后执行节能控制动作，并记录控制前后的证据。",
+    "trigger": {
+      "type": "cron",
+      "trigger_id": "energy-daily",
+      "expression": "0 2 * * *"
+    },
+    "deviceSelector": {},
+    "sourceSelector": {
+      "sources": [
+        "telemetry"
+      ]
+    },
+    "toolIds": [
+      "read_properties",
+      "send_command",
+      "alarm_list"
+    ],
+    "skillRefs": [
+      "device-management"
+    ],
+    "requiredCapabilities": [
+      "text"
+    ],
+    "approvalPolicy": {
+      "mandatory": true,
+      "timeoutSecs": 120,
+      "reason": "节能控制会影响设备运行，必须人工审批"
+    },
+    "evidencePolicy": {
+      "required": true,
+      "kinds": [
+        "property_snapshot",
+        "event",
+        "device_state"
+      ]
+    }
+  }
+}

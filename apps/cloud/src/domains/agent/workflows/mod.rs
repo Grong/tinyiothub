@@ -1,5 +1,6 @@
 mod runner;
 mod supervisor;
+mod templates;
 
 use std::str::FromStr;
 use std::sync::Arc;
@@ -11,6 +12,9 @@ use tinyiothub_storage::{Db, DbError};
 
 pub use runner::{MainCoordinator, SubagentRunner};
 pub use supervisor::WorkflowScheduler;
+pub use templates::{
+    TemplateInput, WorkflowTemplate, builtin_templates, find_template, next_wake_at, validate_template,
+};
 
 #[derive(Clone)]
 pub struct WorkflowService {
@@ -84,6 +88,58 @@ impl WorkflowService {
         self.db
             .append_workflow_revision(&self.workspace_id, &revision, expected_version)
             .await
+    }
+
+    /// Instantiate a validated built-in template as the first revision of a
+    /// new Workflow. DR4=B: unlike [`Self::create`], success is persisted
+    /// directly enabled. Invalid template references produce no Workflow row
+    /// and never enqueue an occurrence or wake.
+    pub async fn instantiate_template(
+        &self,
+        template_id: &str,
+        input: TemplateInput,
+    ) -> Result<WorkflowRevision, DbError> {
+        let template = templates::find_template(template_id).ok_or_else(|| DbError::NotFound {
+            id: format!("workflow-template:{template_id}"),
+        })?;
+        templates::validate_template(&template)?;
+
+        let mut definition = template.definition.clone();
+        if !templates::selector_is_empty(&input.device_selector) {
+            definition.device_selector = input.device_selector;
+        }
+        if !templates::selector_is_empty(&input.source_selector) {
+            definition.source_selector = input.source_selector;
+        }
+        definition.approval_policy =
+            templates::effective_approval_policy(&template.definition, &input.approval_policy)?;
+        Self::validate(&definition)?;
+        templates::validate_workspace_references(&self.db, &self.workspace_id, template_id, &definition).await?;
+
+        let workflow_id = input.workflow_id.trim();
+        let workflow_id = if workflow_id.is_empty() {
+            format!("workflow-{}", uuid::Uuid::new_v4())
+        } else {
+            if self
+                .db
+                .current_workflow(&self.workspace_id, workflow_id)
+                .await?
+                .is_some()
+            {
+                return Err(DbError::Conflict {
+                    message: format!("workflow already exists: {workflow_id}"),
+                });
+            }
+            workflow_id.to_string()
+        };
+        let revision = WorkflowRevision {
+            workflow_id,
+            version: 1,
+            enabled: true,
+            definition,
+            created_at: Utc::now(),
+        };
+        self.db.create_enabled_workflow(&self.workspace_id, &revision).await
     }
 
     pub async fn set_enabled(&self, workflow_id: &str, enabled: bool) -> Result<WorkflowRevision, DbError> {
