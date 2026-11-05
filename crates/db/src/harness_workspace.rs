@@ -133,6 +133,13 @@ fn harness_migrator() -> Migrator {
             include_str!("../migrations/20261105000003_harness_recovery_scan_indexes.sql").into_sql_str(),
             false,
         ),
+        Migration::new(
+            20261105000004,
+            "harness_task_store".into(),
+            MigrationType::Simple,
+            include_str!("../migrations/20261105000004_harness_task_store.sql").into_sql_str(),
+            false,
+        ),
     ])
 }
 

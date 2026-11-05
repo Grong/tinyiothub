@@ -15,6 +15,7 @@ use tinyiothub_storage::harness_effect::EffectRecoveryItem;
 pub mod admin;
 pub mod approvals;
 pub mod controls;
+pub mod harness_store;
 pub mod projection;
 pub mod stream;
 pub mod tasks;
