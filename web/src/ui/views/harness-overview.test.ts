@@ -142,6 +142,19 @@ describe('Harness exception-first overview', () => {
     expect(view.textContent).toContain('结果未知');
   });
 
+  it('renders cancelled_unknown as factual 停止结果未知 without claiming a stop', async () => {
+    const cancelled = {
+      ...main(),
+      status: 'cancelled_unknown' as const,
+      waitReason: null,
+      recentResult: null,
+    };
+    await mount(overview({ coordination: [cancelled] }));
+
+    expect(view.textContent).toContain('停止结果未知');
+    expect(view.textContent).not.toContain('已停止');
+  });
+
   it('has exactly one page-level primary action: 从模板新建', async () => {
     await mount();
 

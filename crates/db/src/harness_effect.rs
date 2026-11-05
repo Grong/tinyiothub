@@ -56,18 +56,26 @@ pub struct InvalidRecoveryState {
 
 impl InvalidRecoveryState {
     fn identity(&self) -> String {
+        // The reason digest keeps genuinely distinct invalid states apart even
+        // when the selected decision row (or command kind) is unchanged.
+        let reason_digest = format!("{:x}", sha2::Sha256::digest(self.reason.as_bytes()));
+        let reason_digest = &reason_digest[..12];
         if let Some(effect_id) = &self.effect_id {
             format!(
-                "{effect_id}:{}:{}:{}",
+                "{effect_id}:{}:{}:{}:{}:{}",
                 self.effect_state.as_deref().unwrap_or("unknown"),
+                self.decision_kind.as_deref().unwrap_or("none"),
                 self.decision_state.as_deref().unwrap_or("none"),
-                self.decision_answer.as_deref().unwrap_or("none")
+                self.decision_answer.as_deref().unwrap_or("none"),
+                reason_digest
             )
         } else {
             format!(
-                "{}:{}",
+                "{}:{}:{}:{}",
                 self.command_id.as_deref().unwrap_or("command"),
-                self.command_state.as_deref().unwrap_or("unknown")
+                self.command_kind.as_deref().unwrap_or("none"),
+                self.command_state.as_deref().unwrap_or("unknown"),
+                reason_digest
             )
         }
     }
@@ -868,9 +876,12 @@ impl Db {
         Ok(items)
     }
 
-    /// Scan every persisted Effect × Decision pair and every command row for
-    /// a combination the recovery matrix does not list. Returns the first
-    /// offending row without mutating anything.
+    /// Scan every **actionable** persisted Effect × Decision pair and command
+    /// row for a combination the recovery matrix does not list. Terminal
+    /// effects and terminal commands cannot be dispatched or consumed again,
+    /// so they are not scanned; the partial indexes keep this off the hot
+    /// path's full-table scan. Returns the first offending row without
+    /// mutating anything.
     pub async fn find_invalid_recovery_state(&self, workspace_id: &str) -> Result<Option<InvalidRecoveryState>> {
         let pool = self.workspace_pool(workspace_id).await?;
         let effects = sqlx::query_as::<_, (String, String, String, String, String, Option<String>, String)>(
@@ -878,6 +889,7 @@ impl Db {
                     COALESCE((SELECT task.execution_mode FROM agent_tasks task WHERE task.id = e.task_id),
                              'production')
              FROM effect_intents e
+             WHERE e.state NOT IN ('completed', 'failed', 'not_applied', 'cancelled', 'cancelled_unknown')
              ORDER BY e.created_at, e.effect_id",
         )
         .fetch_all(&pool)
@@ -938,7 +950,10 @@ impl Db {
         }
 
         let commands = sqlx::query_as::<_, (i64, String, String, String, String, String)>(
-            "SELECT seq, command_id, kind, state, target_task_id, target_run_id FROM commands ORDER BY seq",
+            "SELECT seq, command_id, kind, state, target_task_id, target_run_id
+             FROM commands
+             WHERE state NOT IN ('consumed', 'rejected', 'superseded', 'expired')
+             ORDER BY seq",
         )
         .fetch_all(&pool)
         .await?;
@@ -1447,6 +1462,7 @@ pub(crate) mod tests {
         Transition, TransitionPrecondition, WakeProjection,
     };
 
+    use super::{InvalidRecoveryState, classify_effect_decision};
     use crate::{Db, DbError};
 
     #[derive(Debug, Default)]
@@ -1973,6 +1989,15 @@ pub(crate) mod tests {
     #[tokio::test]
     async fn harness_recovery_matrix_accepts_every_listed_combination() {
         for (effect_state, decision) in listed_recovery_cases() {
+            // Terminal effects are not actionable dispatch/consume rows, so
+            // the DB guard skips them; the pure matrix contract still applies.
+            if effect_state.is_terminal() {
+                assert!(
+                    classify_effect_decision(effect_state, None, decision).is_ok(),
+                    "listed terminal combination was rejected: {effect_state:?} {decision:?}"
+                );
+                continue;
+            }
             let fixture = Fixture::new().await;
             reset_seeded_effect(&fixture, effect_state).await;
             if let Some((kind, state, answer)) = decision {
@@ -2005,7 +2030,9 @@ pub(crate) mod tests {
                 EffectState::Dispatching,
                 Some((ToolApproval, Answered, Some("approved"))),
             ),
+            (EffectState::Dispatching, Some((ToolApproval, Answered, Some("denied")))),
             (EffectState::Dispatching, Some((Other, Answered, Some("applied")))),
+            (EffectState::Cancelling, Some((ToolApproval, Requested, None))),
             (
                 EffectState::Cancelling,
                 Some((ToolApproval, Answered, Some("approved"))),
@@ -2033,11 +2060,32 @@ pub(crate) mod tests {
             (EffectState::Completed, Some((ToolApproval, Answered, Some("approved")))),
             (EffectState::Completed, Some((Other, Requested, None))),
             (EffectState::Failed, Some((EffectReconciliation, Requested, None))),
+            (EffectState::NotApplied, Some((ToolApproval, Requested, None))),
+            (
+                EffectState::NotApplied,
+                Some((EffectReconciliation, Answered, Some("applied"))),
+            ),
+            (EffectState::Cancelled, Some((ToolApproval, Requested, None))),
+            (EffectState::Cancelled, Some((Other, Requested, None))),
+            (EffectState::CancelledUnknown, Some((ToolApproval, Requested, None))),
+            (
+                EffectState::CancelledUnknown,
+                Some((EffectReconciliation, Answered, Some("not_applied"))),
+            ),
         ];
         for (effect_state, decision) in invalid {
+            let (kind, state, answer) = decision.expect("decision case");
+            // Terminal effects are skipped by the actionable DB scan; the
+            // pure matrix contract must still reject them.
+            if effect_state.is_terminal() {
+                assert!(
+                    classify_effect_decision(effect_state, None, Some((kind, state, answer))).is_err(),
+                    "unlisted terminal combination was accepted: {effect_state:?} {kind:?}/{state:?}"
+                );
+                continue;
+            }
             let fixture = Fixture::new().await;
             reset_seeded_effect(&fixture, effect_state).await;
-            let (kind, state, answer) = decision.expect("decision case");
             seed_decision(&fixture, "effect-1", kind, state, answer, None).await;
             let issue = fixture
                 .db
@@ -2204,6 +2252,168 @@ pub(crate) mod tests {
             assert!(issue.reason.contains("recover from"), "unexpected reason: {issue:?}");
             invalid.close().await;
         }
+    }
+
+    #[tokio::test]
+    async fn harness_recovery_matrix_rejects_recovery_from_on_non_unknown_effects() {
+        for state in [EffectState::Prepared, EffectState::Dispatching, EffectState::Cancelling] {
+            let fixture = Fixture::new().await;
+            reset_seeded_effect(&fixture, state).await;
+            sqlx::query("UPDATE effect_intents SET recovery_from = 'cancelling' WHERE effect_id = 'effect-1'")
+                .execute(&fixture.pool().await)
+                .await
+                .expect("recovery_from on non-unknown");
+            let issue = fixture
+                .db
+                .find_invalid_recovery_state("ws-effects")
+                .await
+                .expect("classify matrix")
+                .unwrap_or_else(|| panic!("recovery_from on {state:?} must be rejected"));
+            assert!(
+                issue.reason.contains("recovery_from is only valid"),
+                "unexpected reason: {issue:?}"
+            );
+            fixture.close().await;
+        }
+        for state in [
+            EffectState::Completed,
+            EffectState::Failed,
+            EffectState::NotApplied,
+            EffectState::Cancelled,
+            EffectState::CancelledUnknown,
+        ] {
+            let error = classify_effect_decision(state, Some(EffectState::Cancelling), None)
+                .expect_err("terminal effect with recovery_from must be rejected");
+            assert!(error.contains("recovery_from is only valid"), "{error}");
+        }
+    }
+
+    // M3: terminal rows are not actionable for dispatch/consume, so the DB
+    // guard skips them; the pure matrix contract still rejects them (covered
+    // by the classifier tests above).
+    #[tokio::test]
+    async fn harness_recovery_guard_skips_terminal_effect_rows() {
+        let fixture = Fixture::new().await;
+        reset_seeded_effect(&fixture, EffectState::Completed).await;
+        seed_decision(
+            &fixture,
+            "effect-1",
+            DecisionKind::EffectReconciliation,
+            DecisionState::Requested,
+            None,
+            None,
+        )
+        .await;
+        let issue = fixture
+            .db
+            .find_invalid_recovery_state("ws-effects")
+            .await
+            .expect("classify matrix");
+        assert!(
+            issue.is_none(),
+            "terminal rows are not actionable and must not be scanned: {issue:?}"
+        );
+        assert!(
+            classify_effect_decision(
+                EffectState::Completed,
+                None,
+                Some((DecisionKind::EffectReconciliation, DecisionState::Requested, None))
+            )
+            .is_err(),
+            "the pure matrix still rejects the terminal combination"
+        );
+        fixture.close().await;
+    }
+
+    #[test]
+    fn harness_recovery_invalid_state_identity_includes_kind_and_reason() {
+        let base = InvalidRecoveryState {
+            effect_id: Some("effect-1".to_string()),
+            session_id: "session-1".to_string(),
+            run_id: Some("run-1".to_string()),
+            task_id: Some("task-1".to_string()),
+            execution_mode: ExecutionMode::Production,
+            effect_state: Some("unknown".to_string()),
+            recovery_from: Some("dispatching".to_string()),
+            decision_kind: Some("tool_approval".to_string()),
+            decision_state: Some("consumed".to_string()),
+            decision_answer: Some("approved".to_string()),
+            command_id: None,
+            command_kind: None,
+            command_state: None,
+            reason: "first reason".to_string(),
+        };
+        let mut other_kind = base.clone();
+        other_kind.decision_kind = Some("effect_reconciliation".to_string());
+        let mut other_reason = base.clone();
+        other_reason.reason = "second reason".to_string();
+        assert_ne!(base.identity(), other_kind.identity());
+        assert_ne!(base.identity(), other_reason.identity());
+
+        let command = InvalidRecoveryState {
+            effect_id: None,
+            session_id: "supervisor:ws".to_string(),
+            run_id: Some("run-1".to_string()),
+            task_id: Some("task-1".to_string()),
+            execution_mode: ExecutionMode::Production,
+            effect_state: None,
+            recovery_from: None,
+            decision_kind: None,
+            decision_state: None,
+            decision_answer: None,
+            command_id: Some("cmd-1".to_string()),
+            command_kind: Some("steer".to_string()),
+            command_state: Some("requested".to_string()),
+            reason: "bad sequence".to_string(),
+        };
+        let mut other_command_kind = command.clone();
+        other_command_kind.command_kind = Some("queue".to_string());
+        let mut other_command_reason = command.clone();
+        other_command_reason.reason = "different bad sequence".to_string();
+        assert_ne!(command.identity(), other_command_kind.identity());
+        assert_ne!(command.identity(), other_command_reason.identity());
+    }
+
+    #[tokio::test]
+    async fn harness_recovery_scan_uses_partial_indexes() {
+        let fixture = Fixture::new().await;
+        let pool = fixture.pool().await;
+        let effects: Vec<(i64, i64, i64, String)> = sqlx::query_as(
+            "EXPLAIN QUERY PLAN
+             SELECT e.effect_id, e.session_id, e.run_id, e.task_id, e.state, e.recovery_from,
+                    COALESCE((SELECT task.execution_mode FROM agent_tasks task WHERE task.id = e.task_id),
+                             'production')
+             FROM effect_intents e
+             WHERE e.state NOT IN ('completed', 'failed', 'not_applied', 'cancelled', 'cancelled_unknown')
+             ORDER BY e.created_at, e.effect_id",
+        )
+        .fetch_all(&pool)
+        .await
+        .expect("effect query plan");
+        assert!(
+            effects
+                .iter()
+                .any(|(_, _, _, detail)| detail.contains("idx_effect_intents_recovery_scan")),
+            "effect recovery scan must use the actionable partial index: {effects:?}"
+        );
+
+        let commands: Vec<(i64, i64, i64, String)> = sqlx::query_as(
+            "EXPLAIN QUERY PLAN
+             SELECT seq, command_id, kind, state, target_task_id, target_run_id
+             FROM commands
+             WHERE state NOT IN ('consumed', 'rejected', 'superseded', 'expired')
+             ORDER BY seq",
+        )
+        .fetch_all(&pool)
+        .await
+        .expect("command query plan");
+        assert!(
+            commands
+                .iter()
+                .any(|(_, _, _, detail)| detail.contains("idx_commands_recovery_scan")),
+            "command recovery scan must use the actionable partial index: {commands:?}"
+        );
+        fixture.close().await;
     }
 
     #[tokio::test]
