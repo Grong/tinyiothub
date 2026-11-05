@@ -9,9 +9,11 @@
 //!   cargo test -p tinyiothub-cloud --bench harness -- --nocapture
 //!
 //! Optional environment:
-//!   HARNESS_BENCH_SCALE=smoke   smaller event/effect buckets (1k/10k instead
-//!                               of 100k/1M); metadata and missing-evidence
-//!                               reporting are unchanged.
+//!   HARNESS_BENCH_SCALE=smoke   smaller buckets (workspaces 1/10, events
+//!                               1k/10k, guard 10k terminal + 1k active,
+//!                               backup 10k, fewer Task/Job iterations).
+//!                               Metadata and missing-evidence reporting are
+//!                               unchanged.
 //!   HARNESS_BENCH_OUT=<dir>     artifact directory (default: target/harness-perf).
 //!
 //! The main/branch comparison is limited to paths that exist on both refs.
@@ -34,7 +36,9 @@ use chrono::Utc;
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use sqlx::{AssertSqlSafe, Row, SqlitePool};
-use tinyiothub_cloud::domains::agent::workflows::{CompareBarrier, ProjectionInspector};
+use tinyiothub_cloud::domains::agent::workflows::{
+    CompareBarrier, ProjectionInspector, projection_contract::canonical_state,
+};
 use tinyiothub_core::{
     agent_task::{AgentTask, TaskStatus, TaskWake, WakeDispatchState},
     device_job::{DeviceJob, DeviceJobState},
@@ -45,11 +49,83 @@ use uuid::Uuid;
 
 const SESSION_EVENT_BATCH: i64 = 100;
 
-fn main() {
-    // A bench target is normally driven by libtest (`cargo test --bench`).
-    // Keep an explicit main for `cargo bench --bench harness`, which only runs
-    // the measurement once.
-    println!("run with: cargo test -p tinyiothub-cloud --bench harness -- --nocapture");
+/// Bucket sizes are measurement inputs. `smoke` keeps the same measurement
+/// shape but shrinks the buckets so the entry point can be exercised quickly;
+/// the default is the full run described in the runbook.
+#[derive(Debug, Clone)]
+struct Scale {
+    name: &'static str,
+    workspace_counts: Vec<usize>,
+    event_buckets: Vec<i64>,
+    guard_terminal: i64,
+    guard_active: i64,
+    backup_events: i64,
+    task_iterations: u64,
+    task_dedup_iterations: u64,
+    task_large_iterations: u64,
+    concurrent_workers: usize,
+    concurrent_per_worker: u64,
+    multi_workspace_iterations: u64,
+    page_iterations: usize,
+    runtime_event_count: i64,
+}
+
+impl Scale {
+    fn current() -> Self {
+        match std::env::var("HARNESS_BENCH_SCALE").as_deref() {
+            Ok("smoke") => Self {
+                name: "smoke",
+                workspace_counts: vec![1, 10],
+                event_buckets: vec![1_000, 10_000],
+                guard_terminal: 10_000,
+                guard_active: 1_000,
+                backup_events: 10_000,
+                task_iterations: 50,
+                task_dedup_iterations: 20,
+                task_large_iterations: 10,
+                concurrent_workers: 4,
+                concurrent_per_worker: 10,
+                multi_workspace_iterations: 5,
+                page_iterations: 20,
+                runtime_event_count: 10_000,
+            },
+            _ => Self {
+                name: "full",
+                workspace_counts: vec![1, 10, 100, 1_000],
+                event_buckets: vec![1_000, 100_000, 1_000_000],
+                guard_terminal: 100_000,
+                guard_active: 10_000,
+                backup_events: 100_000,
+                task_iterations: 200,
+                task_dedup_iterations: 50,
+                task_large_iterations: 50,
+                concurrent_workers: 8,
+                concurrent_per_worker: 25,
+                multi_workspace_iterations: 10,
+                page_iterations: 50,
+                runtime_event_count: 100_000,
+            },
+        }
+    }
+
+    fn to_json(&self) -> Value {
+        json!({
+            "name": self.name,
+            "workspaceCounts": self.workspace_counts,
+            "eventBuckets": self.event_buckets,
+            "guardTerminalRows": self.guard_terminal,
+            "guardActiveRows": self.guard_active,
+            "backupEventsPerWorkspace": self.backup_events,
+            "taskIterations": self.task_iterations,
+            "taskDedupIterations": self.task_dedup_iterations,
+            "taskLargeIterations": self.task_large_iterations,
+            "concurrentWorkers": self.concurrent_workers,
+            "concurrentPerWorker": self.concurrent_per_worker,
+            "multiWorkspaceIterations": self.multi_workspace_iterations,
+            "pageIterations": self.page_iterations,
+            "runtimeEventCount": self.runtime_event_count,
+        })
+    }
 }
 
 #[test]
@@ -72,6 +148,7 @@ struct SampleSet {
     name: &'static str,
     unit: &'static str,
     samples: Vec<f64>,
+    dropped: u64,
 }
 
 impl SampleSet {
@@ -80,12 +157,15 @@ impl SampleSet {
             name,
             unit,
             samples: Vec::new(),
+            dropped: 0,
         }
     }
 
     fn push(&mut self, value: f64) {
         if value.is_finite() && value >= 0.0 {
             self.samples.push(value);
+        } else {
+            self.dropped += 1;
         }
     }
 
@@ -115,6 +195,7 @@ impl SampleSet {
             "p99": pct(99.0),
             "max": sorted.last().copied(),
             "mean": mean,
+            "droppedSamples": self.dropped,
             "rawSamples": self.samples,
         })
     }
@@ -264,17 +345,7 @@ fn binary_metadata() -> Value {
     })
 }
 
-fn main_ref_evidence() -> Value {
-    // Prefer the fetched baseline; a local `main` can be stale. Record both.
-    let ref_name = if git_output(&["rev-parse", "--verify", "origin/main"]).is_some() {
-        "origin/main"
-    } else {
-        "main"
-    };
-    let main_ref = git_output(&["rev-parse", "--verify", ref_name]).unwrap_or_else(|| "missing".to_string());
-    let main_commit = git_output(&["log", "-1", "--format=%H", ref_name]);
-    let main_subject = git_output(&["log", "-1", "--format=%s", ref_name]);
-    let local_main_commit = git_output(&["log", "-1", "--format=%H", "main"]);
+fn ref_evidence(ref_name: &str) -> Value {
     let required = [
         "crates/db/src/harness_workspace.rs",
         "crates/db/src/harness_event.rs",
@@ -293,9 +364,41 @@ fn main_ref_evidence() -> Value {
             absent.push(path);
         }
     }
+    json!({
+        "name": ref_name,
+        "commit": git_output(&["log", "-1", "--format=%H", ref_name]),
+        "subject": git_output(&["log", "-1", "--format=%s", ref_name]),
+        "requiredPathsPresent": present,
+        "requiredPathsAbsent": absent,
+        "complete": absent.is_empty(),
+    })
+}
+
+fn main_ref_evidence() -> Value {
+    // Check both the fetched baseline and the local ref independently. A local
+    // `main` can be stale; the report must show per-ref presence rather than
+    // claiming one ref's result for another.
+    let has_origin = git_output(&["rev-parse", "--verify", "origin/main"]).is_some();
+    let chosen_name = if has_origin { "origin/main" } else { "main" };
+    let mut refs = Vec::new();
+    if has_origin {
+        refs.push(ref_evidence("origin/main"));
+    }
+    refs.push(ref_evidence("main"));
+    let chosen = refs
+        .iter()
+        .find(|entry| entry["name"].as_str() == Some(chosen_name))
+        .expect("chosen baseline ref");
+    let required_paths_present = chosen["requiredPathsPresent"].clone();
+    let required_paths_absent = chosen["requiredPathsAbsent"].clone();
+    let complete = chosen["complete"].as_bool().unwrap_or(false);
+    let local_main_commit = refs
+        .iter()
+        .find(|entry| entry["name"].as_str() == Some("main"))
+        .and_then(|entry| entry["commit"].as_str().map(str::to_string));
     let main_worktree = std::env::var("HARNESS_BENCH_MAIN_WORKTREE").ok();
     let main_binary = std::env::var("HARNESS_BENCH_MAIN_BIN").ok();
-    let binary_metadata = main_binary.as_ref().and_then(|path| {
+    let main_binary_meta = main_binary.as_ref().and_then(|path| {
         let metadata = std::fs::metadata(path).ok()?;
         Some(json!({
             "path": path,
@@ -303,38 +406,32 @@ fn main_ref_evidence() -> Value {
             "modified": metadata.modified().ok().and_then(|time| time.duration_since(UNIX_EPOCH).ok()).map(|d| d.as_secs()),
         }))
     });
-    if !absent.is_empty() {
-        json!({
-            "role": "main",
-            "status": "missing",
-            "refName": ref_name,
-            "ref": main_ref,
-            "commit": main_commit,
-            "localMainCommit": local_main_commit,
-            "subject": main_subject,
-            "requiredPathsPresent": present,
-            "requiredPathsAbsent": absent,
-            "mainWorktree": main_worktree,
-            "mainBinary": binary_metadata,
-            "reason": "The baseline ref does not contain the durable Harness workspace store, session-event replay, Runtime Task or Device Job storage modules. The pre-existing Task route on main is an in-memory directive enqueue (no durable Task/stream/Job fixture), so an interleaved main/branch p50/p95 for those paths cannot be produced without inventing a different workload.",
-            "numbers": null,
-        })
+    let status = if complete {
+        "available_but_not_executed"
     } else {
-        json!({
-            "role": "main",
-            "status": "available_but_not_executed",
-            "refName": ref_name,
-            "ref": main_ref,
-            "commit": main_commit,
-            "localMainCommit": local_main_commit,
-            "subject": main_subject,
-            "requiredPathsPresent": present,
-            "mainWorktree": main_worktree,
-            "mainBinary": binary_metadata,
-            "reason": "This process is the branch binary. Run the same command in the main worktree (or pass a prebuilt main binary once the bench supports subprocess fixtures); no main samples were recorded here.",
-            "numbers": null,
-        })
-    }
+        "missing"
+    };
+    let reason = if complete {
+        "This process is the branch binary. Run the same command in the main worktree (or pass a prebuilt main binary once the bench supports subprocess fixtures); no main samples were recorded here."
+    } else {
+        "The baseline ref does not contain the durable Harness workspace store, session-event replay, Runtime Task or Device Job storage modules. The pre-existing Task route on main is an in-memory directive enqueue (no durable Task/stream/Job fixture), so an interleaved main/branch p50/p95 for those paths cannot be produced without inventing a different workload."
+    };
+    json!({
+        "role": "main",
+        "status": status,
+        "refName": chosen_name,
+        "ref": chosen["commit"].clone(),
+        "commit": chosen["commit"].clone(),
+        "subject": chosen["subject"].clone(),
+        "localMainCommit": local_main_commit,
+        "refs": refs,
+        "requiredPathsPresent": required_paths_present,
+        "requiredPathsAbsent": required_paths_absent,
+        "mainWorktree": main_worktree,
+        "mainBinary": main_binary_meta,
+        "reason": reason,
+        "numbers": null,
+    })
 }
 
 // ---------------------------------------------------------------------------
@@ -515,8 +612,8 @@ async fn append_bench_event(db: &Db, workspace_id: &str, sequence: u64, payload_
 // Startup / migration / recovery scales (workspace 1/10/100/1000)
 // ---------------------------------------------------------------------------
 
-async fn measure_startup(evidence: &mut Evidence) {
-    for workspace_count in [1usize, 10, 100, 1000] {
+async fn measure_startup(evidence: &mut Evidence, scale: &Scale) {
+    for &workspace_count in &scale.workspace_counts {
         let root = temp_root(&format!("startup-{workspace_count}"));
         let ids: Vec<String> = (0..workspace_count).map(|index| format!("ws-{index:04}")).collect();
         let db = platform_db(&root, &ids).await;
@@ -710,7 +807,7 @@ async fn query_plan(pool: &SqlitePool, sql: &str) -> Vec<String> {
         .collect()
 }
 
-async fn measure_guard(evidence: &mut Evidence) {
+async fn measure_guard(evidence: &mut Evidence, scale: &Scale) {
     let root = temp_root("guard");
     let workspace_id = "ws-guard".to_string();
     let db = platform_db(&root, std::slice::from_ref(&workspace_id)).await;
@@ -737,11 +834,12 @@ async fn measure_guard(evidence: &mut Evidence) {
         json!({"fixture": "no effects/commands", "workspaceCount": 1, "effectCount": 0, "commandCount": 0, "latency": empty.to_json()}),
     );
 
-    // Narrow: 100k terminal rows, no actionable rows. The partial index should
-    // keep the guard cost independent of terminal history.
-    insert_effects(&pool, &workspace_id, 0, 100_000, "completed").await;
-    insert_commands(&pool, &workspace_id, 0, 100_000, "consumed").await;
-    let mut narrow = SampleSet::new("guard_narrow_100k_terminal", "ms");
+    // Narrow: terminal rows only. The partial index should keep the guard
+    // cost independent of terminal history.
+    let terminal = scale.guard_terminal;
+    insert_effects(&pool, &workspace_id, 0, terminal, "completed").await;
+    insert_commands(&pool, &workspace_id, 0, terminal, "consumed").await;
+    let mut narrow = SampleSet::new("guard_narrow_terminal_only", "ms");
     for _ in 0..20 {
         let started = Instant::now();
         let issue = db
@@ -793,9 +891,9 @@ async fn measure_guard(evidence: &mut Evidence) {
     evidence.add(
         "guard",
         json!({
-            "fixture": "100k terminal effects + 100k terminal commands",
-            "effectCount": 100_000,
-            "commandCount": 100_000,
+            "fixture": format!("{terminal} terminal effects + {terminal} terminal commands"),
+            "effectCount": terminal,
+            "commandCount": terminal,
             "actionableEffectCount": 0,
             "actionableCommandCount": 0,
             "latency": narrow.to_json(),
@@ -807,12 +905,12 @@ async fn measure_guard(evidence: &mut Evidence) {
         }),
     );
 
-    // Large actionable batch: 10k non-terminal effects and 10k requested
-    // commands. This exercises the per-effect decision lookup and is the
-    // worst-case guard shape measured here.
-    insert_effects(&pool, &workspace_id, 100_000, 10_000, "prepared").await;
-    insert_commands(&pool, &workspace_id, 100_000, 10_000, "requested").await;
-    let mut large = SampleSet::new("guard_large_active_10k", "ms");
+    // Large actionable batch. This exercises the per-effect decision lookup and
+    // is the worst-case guard shape measured here.
+    let active = scale.guard_active;
+    insert_effects(&pool, &workspace_id, terminal, active, "prepared").await;
+    insert_commands(&pool, &workspace_id, terminal, active, "requested").await;
+    let mut large = SampleSet::new("guard_large_active", "ms");
     for _ in 0..10 {
         let started = Instant::now();
         let issue = db
@@ -828,11 +926,11 @@ async fn measure_guard(evidence: &mut Evidence) {
     evidence.add(
         "guard",
         json!({
-            "fixture": "10k prepared effects + 10k requested commands",
-            "effectCount": 110_000,
-            "commandCount": 110_000,
-            "actionableEffectCount": 10_000,
-            "actionableCommandCount": 10_000,
+            "fixture": format!("{active} prepared effects + {active} requested commands"),
+            "effectCount": terminal + active,
+            "commandCount": terminal + active,
+            "actionableEffectCount": active,
+            "actionableCommandCount": active,
             "latency": large.to_json(),
         }),
     );
@@ -842,8 +940,8 @@ async fn measure_guard(evidence: &mut Evidence) {
         "workspaceCount": 1,
         "dbBytes": file_sizes(&workspace_db_path(&root, &workspace_id))["dbBytes"],
         "walBytes": file_sizes(&workspace_db_path(&root, &workspace_id))["walBytes"],
-        "effectCount": 110_000,
-        "commandCount": 110_000,
+        "effectCount": terminal + active,
+        "commandCount": terminal + active,
     }));
 
     close_and_remove(db, &[workspace_id], &root).await;
@@ -913,7 +1011,7 @@ async fn event_page_latency(
     (samples, returned)
 }
 
-async fn measure_events(evidence: &mut Evidence) -> EventFixture {
+async fn measure_events(evidence: &mut Evidence, scale: &Scale) -> EventFixture {
     let fixture = event_fixture().await;
 
     // A gap session: 100 old events plus one newest event. Querying after the
@@ -922,7 +1020,7 @@ async fn measure_events(evidence: &mut Evidence) -> EventFixture {
     insert_session_events_batch(&fixture.pool, &fixture.gap_session, &fixture.task_id, 100, 96).await;
 
     let mut inserted = 0i64;
-    for target in [1_000i64, 100_000, 1_000_000] {
+    for &target in &scale.event_buckets {
         let count = target - inserted;
         if count > 0 {
             insert_session_events_batch(&fixture.pool, &fixture.big_session, &fixture.task_id, count, 96).await;
@@ -935,9 +1033,20 @@ async fn measure_events(evidence: &mut Evidence) -> EventFixture {
         let total = total_seq(&fixture.pool).await;
         let big_max = session_max_seq(&fixture.pool, &fixture.big_session).await;
         let gap_max = session_max_seq(&fixture.pool, &fixture.gap_session).await;
+        let big_session_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM session_events WHERE session_id = ?")
+            .bind(&fixture.big_session)
+            .fetch_one(&fixture.pool)
+            .await
+            .expect("big session event count");
 
         let (newest, newest_rows) = event_page_latency(&fixture, &fixture.big_session, big_max - 100, 30).await;
-        let (long_gap, gap_rows) = event_page_latency(&fixture, &fixture.gap_session, 100, 30).await;
+        // True in-session long-gap case: a cursor 100 events into the densest
+        // session, with the rest of that same session's history ahead of it.
+        let (in_session_long_gap, in_session_gap_rows) =
+            event_page_latency(&fixture, &fixture.big_session, 100, 30).await;
+        // Sparse session: 100 old rows then one newest row. This is a separate
+        // session-ID index range, not a gap inside the big session.
+        let (sparse_after_block, sparse_rows) = event_page_latency(&fixture, &fixture.gap_session, 100, 30).await;
         let (after_zero, zero_rows) = event_page_latency(&fixture, &fixture.big_session, 0, 30).await;
 
         let rss_before = rss_bytes();
@@ -982,14 +1091,18 @@ async fn measure_events(evidence: &mut Evidence) -> EventFixture {
             "events",
             json!({
                 "eventCount": target,
-                "totalSessionEvents": total,
-                "bigSessionMaxSeq": big_max,
-                "gapSessionMaxSeq": gap_max,
+                "globalHighWatermark": total,
+                "bigSessionBoundarySeq": big_max,
+                "bigSessionEventCount": big_session_count,
+                "gapSessionBoundarySeq": gap_max,
                 "payloadBytesApprox": 96,
                 "newestCursor": newest.to_json(),
                 "newestRows": newest_rows,
-                "longGap": long_gap.to_json(),
-                "longGapRows": gap_rows,
+                "inSessionLongGap": in_session_long_gap.to_json(),
+                "inSessionLongGapRows": in_session_gap_rows,
+                "inSessionLongGapAfter": 100,
+                "sparseSessionAfterBlock": sparse_after_block.to_json(),
+                "sparseSessionAfterBlockRows": sparse_rows,
                 "afterZero": after_zero.to_json(),
                 "afterZeroRows": zero_rows,
                 "boundedPageMemory": {
@@ -1026,6 +1139,12 @@ async fn measure_events(evidence: &mut Evidence) -> EventFixture {
 
 async fn measure_snapshot_rebuild(evidence: &mut Evidence, fixture: &EventFixture) {
     let max_seq = session_max_seq(&fixture.pool, &fixture.big_session).await;
+    let session_event_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM session_events WHERE session_id = ?")
+        .bind(&fixture.big_session)
+        .fetch_one(&fixture.pool)
+        .await
+        .expect("session event count");
+    let global_high_watermark = total_seq(&fixture.pool).await;
     let projection_name = "task-projection";
     let projection_version = 1i64;
     let sizes_before = file_sizes(&workspace_db_path(&fixture.root, &fixture.workspace_id));
@@ -1063,11 +1182,20 @@ async fn measure_snapshot_rebuild(evidence: &mut Evidence, fixture: &EventFixtur
     drop(comparison);
     let sizes_after = file_sizes(&workspace_db_path(&fixture.root, &fixture.workspace_id));
 
-    // A daily snapshot at the fixed boundary. Reading it must not touch the
-    // event history; the placeholder body is intentionally tiny because this
-    // bench measures the read path, not the canonical document writer.
-    let state_json =
-        json!({"projectionName": projection_name, "subjectId": fixture.big_session, "lastSeq": max_seq, "events": []});
+    // A daily snapshot at the fixed boundary. The body is a real canonical
+    // document shaped from the first 1,000 events at the boundary; its byte
+    // size is recorded so the read latency is not read as a tiny placeholder.
+    // The document keeps lastSeq = boundary; it is a size/shape sample, not a
+    // complete 1M-event projection.
+    let sample_events = fixture
+        .db
+        .projection_boundary_events(&fixture.workspace_id, &fixture.big_session, max_seq.min(1_000))
+        .await
+        .expect("snapshot sample events");
+    let state_json = canonical_state(projection_name, &fixture.big_session, max_seq, &sample_events.events);
+    let state_json_text = serde_json::to_string(&state_json).expect("serialize snapshot body");
+    let state_json_bytes = state_json_text.len();
+    let state_json_event_samples = sample_events.events.len();
     sqlx::query(
         "INSERT OR REPLACE INTO projection_snapshots
             (projection_name, subject_id, last_seq, projection_version, state_version, state_json, updated_at)
@@ -1077,7 +1205,7 @@ async fn measure_snapshot_rebuild(evidence: &mut Evidence, fixture: &EventFixtur
     .bind(&fixture.big_session)
     .bind(max_seq)
     .bind(projection_version)
-    .bind(state_json.to_string())
+    .bind(&state_json_text)
     .bind(Utc::now().to_rfc3339())
     .execute(&fixture.pool)
     .await
@@ -1151,9 +1279,17 @@ async fn measure_snapshot_rebuild(evidence: &mut Evidence, fixture: &EventFixtur
         "rebuild_snapshot",
         json!({
             "dailySnapshotRead": snapshot_read.to_json(),
+            "dailySnapshotBody": {
+                "canonicalShape": true,
+                "eventSamples": state_json_event_samples,
+                "stateJsonBytes": state_json_bytes,
+                "note": "Canonical document shaped from the first 1,000 events at the boundary; not a complete 1M-event projection.",
+            },
             "offlineRebuild": {
                 "durationMs": rebuild_duration,
-                "eventCount": max_seq,
+                "boundarySeq": max_seq,
+                "sessionEventCount": session_event_count,
+                "globalHighWatermark": global_high_watermark,
                 "rssBeforeBytes": rss_before,
                 "rssAfterBytes": rss_after,
                 "rssDeltaBytes": rss_before.zip(rss_after).map(|(a, b)| b as i64 - a as i64),
@@ -1180,7 +1316,7 @@ async fn measure_snapshot_rebuild(evidence: &mut Evidence, fixture: &EventFixtur
 // Backup write latency and cross-workspace isolation
 // ---------------------------------------------------------------------------
 
-async fn measure_backup_isolation(evidence: &mut Evidence) {
+async fn measure_backup_isolation(evidence: &mut Evidence, scale: &Scale) {
     let root = temp_root("backup");
     let ids = vec!["ws-backup-a".to_string(), "ws-backup-b".to_string()];
     let db = platform_db(&root, &ids).await;
@@ -1190,13 +1326,14 @@ async fn measure_backup_isolation(evidence: &mut Evidence) {
     let pool_a = db.workspace_pool_for_testing(&ids[0]).await.expect("pool a");
     let pool_b = db.workspace_pool_for_testing(&ids[1]).await.expect("pool b");
     // Enough history that VACUUM INTO takes long enough to overlap writers.
-    insert_session_events_batch(&pool_a, "sess-backup", "task-backup", 100_000, 96).await;
-    insert_session_events_batch(&pool_b, "sess-backup", "task-backup", 100_000, 96).await;
+    insert_session_events_batch(&pool_a, "sess-backup", "task-backup", scale.backup_events, 96).await;
+    insert_session_events_batch(&pool_b, "sess-backup", "task-backup", scale.backup_events, 96).await;
 
     let mut backup_samples = SampleSet::new("backup_vacuum_into", "ms");
     let mut a_write = SampleSet::new("workspace_write_during_own_backup", "ms");
     let mut b_write = SampleSet::new("other_workspace_write_during_backup", "ms");
     let mut rounds = Vec::new();
+    let mut last_backup_bytes = 0u64;
 
     for round in 0..3u64 {
         let backup_path = root
@@ -1271,6 +1408,7 @@ async fn measure_backup_isolation(evidence: &mut Evidence) {
             b_write.push(value);
         }
         backup_samples.push(backup_elapsed);
+        last_backup_bytes = std::fs::metadata(&backup_path).map(|m| m.len()).unwrap_or(0);
 
         let backup_check: String = if backup_path.exists() {
             let backup_pool = SqlitePool::connect(&format!("sqlite:{}?mode=ro", backup_path.display()))
@@ -1294,8 +1432,8 @@ async fn measure_backup_isolation(evidence: &mut Evidence) {
             "backupMs": backup_elapsed,
             "backupBytes": std::fs::metadata(&backup_path).map(|m| m.len()).unwrap_or(0),
             "backupValidation": backup_check,
-            "workspaceAWriteSamplesDuringBackup": in_backup(&samples_a).len(),
-            "workspaceBWriteSamplesDuringBackup": in_backup(&samples_b).len(),
+            "workspaceAWriteStartsInBackupWindow": in_backup(&samples_a).len(),
+            "workspaceBWriteStartsInBackupWindow": in_backup(&samples_b).len(),
         }));
     }
 
@@ -1322,13 +1460,16 @@ async fn measure_backup_isolation(evidence: &mut Evidence) {
     evidence.add(
         "backup_isolation",
         json!({
-            "workspaceAEventCount": 100_000,
-            "workspaceBEventCount": 100_000,
+            "workspaceAEventCount": scale.backup_events,
+            "workspaceBEventCount": scale.backup_events,
             "rounds": rounds,
             "backupLatency": backup_samples.to_json(),
             "workspaceAWriteDuringOwnBackup": a_write.to_json(),
             "workspaceBWriteDuringOtherBackup": b_write.to_json(),
-            "backupFileBytes": sizes_a["dbBytes"],
+            "backupFileBytesFromLastRound": last_backup_bytes,
+            "harnessDbBytes": sizes_a["dbBytes"],
+            "harnessWalBytes": sizes_a["walBytes"],
+            "windowAttribution": "write samples counted when the append started inside [backup start, backup end]",
             "workspaceAUnavailableError": a_error,
             "workspaceBWriteWhileAUnavailable": isolated_write.to_json(),
             "blockingClaim": "measured latency only; this does not claim zero blocking",
@@ -1403,7 +1544,7 @@ fn create_job_once<'a>(
     async move { db.create_job(&job).await.map(|_| ()).map_err(|error| error.to_string()) }
 }
 
-async fn measure_task_paths(evidence: &mut Evidence) {
+async fn measure_task_paths(evidence: &mut Evidence, scale: &Scale) {
     let root = temp_root("task-paths");
     let mut ids: Vec<String> = (0..20).map(|index| format!("ws-task-{index:02}")).collect();
     ids.insert(0, "ws-task-00".to_string());
@@ -1413,7 +1554,7 @@ async fn measure_task_paths(evidence: &mut Evidence) {
     let primary = ids[0].clone();
 
     let mut create = SampleSet::new("task_create", "ms");
-    for index in 0..200u64 {
+    for index in 0..scale.task_iterations {
         let started = Instant::now();
         create_task_once(&db, &primary, &format!("idem-{index}"), 64)
             .await
@@ -1422,7 +1563,7 @@ async fn measure_task_paths(evidence: &mut Evidence) {
     }
 
     let mut dedup = SampleSet::new("task_create_dedup", "ms");
-    for index in 0..50u64 {
+    for index in 0..scale.task_dedup_iterations {
         let started = Instant::now();
         create_task_once(&db, &primary, &format!("idem-{}", index % 10), 64)
             .await
@@ -1431,7 +1572,7 @@ async fn measure_task_paths(evidence: &mut Evidence) {
     }
 
     let mut large_create = SampleSet::new("task_create_64k_objective", "ms");
-    for index in 0..50u64 {
+    for index in 0..scale.task_large_iterations {
         let started = Instant::now();
         create_task_once(&db, &primary, &format!("idem-large-{index}"), 64 * 1024)
             .await
@@ -1439,9 +1580,9 @@ async fn measure_task_paths(evidence: &mut Evidence) {
         large_create.push(started.elapsed().as_secs_f64() * 1000.0);
     }
 
-    let mut multi_workspace_create = SampleSet::new("task_create_multi_workspace_20", "ms");
+    let mut multi_workspace_create = SampleSet::new("task_create_multi_workspace", "ms");
     for (workspace_index, workspace_id) in ids.iter().enumerate() {
-        for index in 0..10u64 {
+        for index in 0..scale.multi_workspace_iterations {
             let started = Instant::now();
             create_task_once(&db, workspace_id, &format!("multi-{workspace_index}-{index}"), 64)
                 .await
@@ -1450,16 +1591,17 @@ async fn measure_task_paths(evidence: &mut Evidence) {
         }
     }
 
-    // Concurrent Task create: 8 workers x 25 creates.
-    let mut concurrent_create = SampleSet::new("task_create_concurrent_8", "ms");
-    let concurrency = 8usize;
+    // Concurrent Task create.
+    let mut concurrent_create = SampleSet::new("task_create_concurrent", "ms");
+    let concurrency = scale.concurrent_workers;
+    let per_worker = scale.concurrent_per_worker;
     let mut handles = Vec::new();
     for worker in 0..concurrency {
         let db = db.clone();
         let workspace_id = primary.clone();
         handles.push(tokio::spawn(async move {
             let mut samples = Vec::new();
-            for index in 0..25u64 {
+            for index in 0..per_worker {
                 let started = Instant::now();
                 create_task_once(&db, &workspace_id, &format!("conc-{worker}-{index}"), 64)
                     .await
@@ -1482,10 +1624,10 @@ async fn measure_task_paths(evidence: &mut Evidence) {
 
     // Stream page: bounded runtime ledger page backing the Task SSE endpoint.
     let stream_task = "task-stream".to_string();
-    insert_runtime_events(db.pool(), &primary, &stream_task, 100_000, 96).await;
+    insert_runtime_events(db.pool(), &primary, &stream_task, scale.runtime_event_count, 96).await;
     let mut newest = SampleSet::new("runtime_event_page_newest", "ms");
     let mut old_cursor = SampleSet::new("runtime_event_page_old_cursor", "ms");
-    for _ in 0..50 {
+    for _ in 0..scale.page_iterations {
         let started = Instant::now();
         let page = db
             .runtime_events_page(&primary, &stream_task, None, 200)
@@ -1517,13 +1659,13 @@ async fn measure_task_paths(evidence: &mut Evidence) {
 
     // Job path.
     let mut job_create = SampleSet::new("job_create", "ms");
-    for index in 0..200u64 {
+    for index in 0..scale.task_iterations {
         let started = Instant::now();
         create_job_once(&db, &primary, index, 64).await.expect("job create");
         job_create.push(started.elapsed().as_secs_f64() * 1000.0);
     }
     let mut job_get = SampleSet::new("job_get", "ms");
-    for index in 0..200u64 {
+    for index in 0..scale.task_iterations {
         let started = Instant::now();
         db.get_job(&primary, &format!("job-{primary}-{index}"))
             .await
@@ -1532,7 +1674,7 @@ async fn measure_task_paths(evidence: &mut Evidence) {
         job_get.push(started.elapsed().as_secs_f64() * 1000.0);
     }
     let mut large_job = SampleSet::new("job_create_64k_args", "ms");
-    for index in 0..50u64 {
+    for index in 0..scale.task_large_iterations {
         let started = Instant::now();
         create_job_once(&db, &primary, 10_000 + index, 64 * 1024)
             .await
@@ -1546,11 +1688,11 @@ async fn measure_task_paths(evidence: &mut Evidence) {
             "taskCreate": create.to_json(),
             "taskCreateDedup": dedup.to_json(),
             "taskCreate64kObjective": large_create.to_json(),
-            "taskCreate20Workspaces": multi_workspace_create.to_json(),
-            "taskCreateConcurrent8": concurrent_create.to_json(),
+            "taskCreateMultiWorkspace": multi_workspace_create.to_json(),
+            "taskCreateConcurrent": concurrent_create.to_json(),
             "streamPageNewest": newest.to_json(),
             "streamPageOldCursor": old_cursor.to_json(),
-            "streamTaskEventCount": 100_000,
+            "streamTaskEventCount": scale.runtime_event_count,
             "streamLargePayload": {
                 "durationMs": large_duration,
                 "rows": large_payload_rows,
@@ -1569,9 +1711,13 @@ async fn measure_task_paths(evidence: &mut Evidence) {
     evidence.data_sizes.push(json!({
         "fixture": "task_paths",
         "workspaceCount": ids.len(),
-        "taskCount": 200 + 50 + 50 + 200 + 25 * concurrency,
-        "runtimeEventCount": 100_000 + 200,
-        "jobCount": 250,
+        "taskCount": scale.task_iterations
+            + scale.task_dedup_iterations
+            + scale.task_large_iterations
+            + ids.len() as u64 * scale.multi_workspace_iterations
+            + scale.concurrent_per_worker * concurrency as u64,
+        "runtimeEventCount": scale.runtime_event_count + 200,
+        "jobCount": scale.task_iterations + scale.task_large_iterations,
     }));
 
     db.pool().close().await;
@@ -1602,15 +1748,29 @@ fn collect_sample_counts(value: &Value, counts: &mut Vec<u64>) {
 }
 
 async fn run_all() -> Value {
-    let scale = std::env::var("HARNESS_BENCH_SCALE").unwrap_or_else(|_| "full".to_string());
+    let scale = Scale::current();
     let mut evidence = Evidence::new();
-    evidence.notes.push(format!("scale={scale}"));
+    evidence.notes.push(format!("scale={}", scale.name));
+    evidence.notes.push(format!(
+        "Scale config: workspaces {:?}, event buckets {:?}, guard {} terminal + {} active, backup {} events/workspace, runtime events {}, region iterations {} (unique), {} (dedup), {} (large), {} concurrent x {}.",
+        scale.workspace_counts,
+        scale.event_buckets,
+        scale.guard_terminal,
+        scale.guard_active,
+        scale.backup_events,
+        scale.runtime_event_count,
+        scale.task_iterations,
+        scale.task_dedup_iterations,
+        scale.task_large_iterations,
+        scale.concurrent_workers,
+        scale.concurrent_per_worker,
+    ));
     evidence.notes.push(
         "Latency percentiles use nearest-rank on the raw samples; local integration timings are not production p99."
             .to_string(),
     );
     evidence.notes.push(
-        "Size buckets (1/10/100/1000 workspaces, 1k/100k/1M events) are measurement inputs, not quotas or SLA."
+        "Size buckets are measurement inputs, not quotas or SLA; the artifact records the exact buckets used."
             .to_string(),
     );
     evidence.notes.push(
@@ -1624,12 +1784,12 @@ async fn run_all() -> Value {
     );
 
     let started = Instant::now();
-    measure_startup(&mut evidence).await;
-    measure_guard(&mut evidence).await;
-    let event_fixture = measure_events(&mut evidence).await;
+    measure_startup(&mut evidence, &scale).await;
+    measure_guard(&mut evidence, &scale).await;
+    let event_fixture = measure_events(&mut evidence, &scale).await;
     measure_snapshot_rebuild(&mut evidence, &event_fixture).await;
-    measure_backup_isolation(&mut evidence).await;
-    measure_task_paths(&mut evidence).await;
+    measure_backup_isolation(&mut evidence, &scale).await;
+    measure_task_paths(&mut evidence, &scale).await;
     let total_duration = started.elapsed().as_secs_f64() * 1000.0;
 
     // Clean the event fixture after snapshot/rebuild measurements.
@@ -1674,6 +1834,7 @@ async fn run_all() -> Value {
             "minConnections": 0,
             "acquireTimeoutSecs": config.acquire_timeout_secs,
             "idleTimeoutSecs": config.idle_timeout_secs,
+            "source": "Db::new -> DatabaseConfig::default(); pool::workspace_pool_options sets min_connections=0",
         },
     });
 
@@ -1723,7 +1884,8 @@ async fn run_all() -> Value {
         "overall": overall,
         "overallReason": overall_reason,
         "durationMs": total_duration,
-        "scale": scale,
+        "scale": scale.name,
+        "scaleConfig": scale.to_json(),
         "machine": machine_metadata(),
         "sqlite": sqlite,
         "binary": binary_metadata(),
@@ -1760,6 +1922,12 @@ fn collect_empty_sample_sets(value: &Value, path: &str, failures: &mut Vec<Strin
         Value::Object(map) => {
             if map.get("sampleCount").and_then(Value::as_u64) == Some(0) {
                 failures.push(format!("{path} has no samples"));
+            }
+            if map.get("droppedSamples").and_then(Value::as_u64).unwrap_or(0) > 0 {
+                failures.push(format!(
+                    "{path} dropped {} non-finite or negative samples",
+                    map["droppedSamples"]
+                ));
             }
             for (key, child) in map {
                 collect_empty_sample_sets(child, &format!("{path}.{key}"), failures);
