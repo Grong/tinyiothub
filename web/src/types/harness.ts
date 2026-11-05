@@ -7,6 +7,8 @@
  * allowlist. Never pass free-form tool output through `unsafeHTML`/`innerHTML`.
  */
 
+import type { TaskStatus } from "./runtime.js";
+
 export type ToolEffectKind = "read" | "write" | "destructive" | "external";
 
 export type ToolCapability = "vision" | "video" | "audio" | "network" | "text";
@@ -56,4 +58,72 @@ export interface ToolCallMetadata {
   presentation?: ToolPresentation;
   requiredCapabilities: ToolCapability[];
   approval: ToolApprovalPolicy;
+}
+
+/** One exception that needs a person, shown before any configuration or coordination. */
+export interface HarnessAttentionItem {
+  id: string;
+  kind: string;
+  title: string;
+  detail: string;
+  occurredAt: string;
+  taskId: string | null;
+  runId: string | null;
+  eventId: string | null;
+  actionLabel: string | null;
+}
+
+export interface HarnessAttentionPage {
+  items: HarnessAttentionItem[];
+  total: number;
+  limit: number;
+  offset: number;
+}
+
+/** Current Workflow revision summary; the editor consumes the full definition in Task 11B. */
+export interface HarnessWorkflowSummary {
+  workflowId: string;
+  objective: string;
+  enabled: boolean;
+  version: number;
+  triggerLabel: string;
+  nextRunAt: string | null;
+  lastResult: string | null;
+  updatedAt: string | null;
+}
+
+/** Isolated child execution summary. It never shares the Main conversation context. */
+export interface HarnessSubagentSummary {
+  taskId: string;
+  runId: string | null;
+  status: TaskStatus | string;
+  waitReason: string | null;
+  recentResult: string | null;
+  updatedAt: string | null;
+}
+
+export interface HarnessMainTaskSummary {
+  taskId: string;
+  runId: string | null;
+  objective: string;
+  status: TaskStatus | string;
+  waitReason: string | null;
+  recentResult: string | null;
+  updatedAt: string | null;
+  subagents: HarnessSubagentSummary[];
+  subagentTotal: number;
+}
+
+/** Exception-first overview aggregate for one workspace. */
+export interface HarnessOverview {
+  attention: HarnessAttentionPage;
+  workflows: HarnessWorkflowSummary[];
+  coordination: HarnessMainTaskSummary[];
+}
+
+export interface HarnessSubagentPage {
+  subagents: HarnessSubagentSummary[];
+  total: number;
+  limit: number;
+  offset: number;
 }

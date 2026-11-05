@@ -1,3 +1,10 @@
+/**
+ * Legacy Runtime hash state. Canonical navigation now lives in
+ * harness-url-state.ts; these parsers/builders keep old deep links working and
+ * are shared by the canonical Harness parser so both accept encoded IDs the
+ * same way.
+ */
+
 export type RuntimeView = 'loop' | 'flow';
 
 export interface RuntimeHistory {
@@ -23,7 +30,10 @@ export interface RuntimeTaskUrlState {
   event?: string | null;
 }
 
-function queryFromHash(hash: string): { path: string; params: URLSearchParams } {
+export function splitHashQuery(hash: string): {
+  path: string;
+  params: URLSearchParams;
+} {
   const queryIndex = hash.indexOf('?');
   return {
     path: queryIndex < 0 ? hash : hash.slice(0, queryIndex),
@@ -31,22 +41,22 @@ function queryFromHash(hash: string): { path: string; params: URLSearchParams } 
   };
 }
 
-function decodeTaskId(value: string): string | null {
+export function decodeHashId(value: string): string | null {
   try {
-    const taskId = decodeURIComponent(value);
-    return taskId ? taskId : null;
+    const id = decodeURIComponent(value);
+    return id ? id : null;
   } catch {
     return null;
   }
 }
 
 export function parseRuntimeHash(hash: string): RuntimeRoute | null {
-  const { path, params } = queryFromHash(hash);
+  const { path, params } = splitHashQuery(hash);
   if (path === '#/runtime') return { name: 'list' };
   if (path === '#/runtime/new') return { name: 'new' };
   const match = path.match(/^#\/runtime\/tasks\/([^/]+)$/);
   if (!match) return null;
-  const taskId = decodeTaskId(match[1]);
+  const taskId = decodeHashId(match[1]);
   if (!taskId) return null;
   const at = params.get('at');
   const event = params.get('event');

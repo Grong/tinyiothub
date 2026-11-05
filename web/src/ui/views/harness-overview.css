@@ -1,0 +1,360 @@
+/* Harness overview: exception first, configuration second, coordination third. */
+
+view-harness-overview {
+  display: block;
+}
+
+.harness-overview {
+  max-width: 960px;
+  margin: 0 auto;
+  padding: var(--space-6);
+  color: var(--text);
+}
+
+.harness-overview__header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-4);
+  margin-bottom: var(--space-4);
+}
+
+.harness-overview__intro h1 {
+  margin: 0 0 var(--space-2);
+  color: var(--text-strong);
+  font-family: var(--font-display);
+  font-size: 24px;
+  line-height: 1.2;
+}
+
+.harness-overview__intro p {
+  max-width: 56ch;
+  margin: 0;
+  color: var(--muted-foreground);
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+.harness-overview__actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.harness-overview__actions .btn {
+  min-height: 44px;
+}
+
+.harness-overview__status,
+.harness-overview__error {
+  margin: 0 0 var(--space-3);
+  font-size: 13px;
+}
+
+.harness-overview__status {
+  color: var(--muted-foreground);
+}
+
+.harness-overview__error {
+  color: var(--danger);
+}
+
+.harness-overview__sections {
+  display: grid;
+  gap: var(--space-5);
+}
+
+.harness-section {
+  padding: var(--space-4);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--card);
+}
+
+.harness-section__header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-3);
+  margin-bottom: var(--space-3);
+}
+
+.harness-section__header h2 {
+  margin: 0 0 var(--space-1);
+  color: var(--text-strong);
+  font-family: var(--font-display);
+  font-size: 17px;
+  line-height: 1.3;
+}
+
+.harness-section__summary {
+  margin: 0;
+  color: var(--muted-foreground);
+  font-size: 13px;
+}
+
+.harness-section__footer {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+  margin-top: var(--space-3);
+}
+
+.harness-attention__range {
+  margin-right: auto;
+  color: var(--muted-foreground);
+  font-size: 13px;
+}
+
+.harness-section__footer .btn,
+.harness-attention__toggle,
+.harness-children__more {
+  min-height: 44px;
+}
+
+.harness-attention__list,
+.harness-workflow__list,
+.harness-main__list,
+.harness-subagent__list {
+  display: grid;
+  gap: var(--space-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.harness-attention__item {
+  padding: var(--space-3);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--warn);
+  border-radius: var(--radius-sm);
+  background: var(--bg-elevated);
+}
+
+.harness-attention__title {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-2);
+}
+
+.harness-attention__kind {
+  color: var(--warn);
+  font-family: var(--mono);
+  font-size: 11px;
+  text-transform: uppercase;
+}
+
+.harness-attention__detail {
+  margin: var(--space-2) 0;
+  color: var(--text);
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+.harness-attention__meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  color: var(--muted-foreground);
+  font-size: 12px;
+}
+
+.harness-attention__action,
+.harness-main__task,
+.harness-subagent__task {
+  color: var(--accent);
+  font-size: 13px;
+  text-decoration: none;
+}
+
+.harness-attention__action:hover,
+.harness-main__task:hover,
+.harness-subagent__task:hover {
+  text-decoration: underline;
+}
+
+.harness-workflow,
+.harness-main {
+  padding: var(--space-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-elevated);
+}
+
+.harness-workflow__head,
+.harness-main__head,
+.harness-subagent__head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+}
+
+.harness-workflow__meta,
+.harness-workflow__result,
+.harness-main__facts,
+.harness-subagent__facts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2) var(--space-3);
+  margin: var(--space-2) 0 0;
+  color: var(--muted-foreground);
+  font-size: 13px;
+}
+
+.harness-main__toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: 44px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--text-strong);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.harness-main__toggle:hover .harness-main__objective {
+  text-decoration: underline;
+}
+
+.harness-main__chevron {
+  width: 1em;
+  color: var(--muted-foreground);
+}
+
+.harness-main__actions {
+  margin-top: var(--space-1);
+}
+
+.harness-children {
+  margin-top: var(--space-3);
+  padding-top: var(--space-3);
+  border-top: 1px solid var(--border);
+}
+
+.harness-children__count {
+  margin: 0 0 var(--space-2);
+  color: var(--muted-foreground);
+  font-size: 12px;
+}
+
+.harness-children__error {
+  margin: var(--space-2) 0 0;
+  color: var(--danger);
+  font-size: 13px;
+}
+
+.harness-subagent {
+  padding: var(--space-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--card);
+}
+
+.harness-subagent__id {
+  color: var(--muted-foreground);
+  font-family: var(--mono);
+  font-size: 12px;
+}
+
+.harness-status {
+  padding: 2px var(--space-2);
+  border-radius: var(--radius-full);
+  font-size: 12px;
+  line-height: 1.6;
+  white-space: nowrap;
+}
+
+.harness-status--ok {
+  color: var(--ok);
+  background: var(--ok-subtle);
+}
+
+.harness-status--warn {
+  color: var(--warn);
+  background: var(--warn-subtle);
+}
+
+.harness-status--danger {
+  color: var(--danger);
+  background: var(--danger-subtle);
+}
+
+.harness-status--accent {
+  color: var(--accent);
+  background: var(--accent-subtle);
+}
+
+.harness-status--muted {
+  color: var(--muted-foreground);
+  background: var(--bg-muted);
+}
+
+.harness-empty {
+  margin: 0;
+  color: var(--muted-foreground);
+  font-size: 14px;
+}
+
+.harness-sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.harness-overview :focus-visible,
+.harness-overview__actions :focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+@media (max-width: 600px) {
+  .harness-overview {
+    padding: var(--space-4);
+  }
+
+  .harness-overview__header {
+    flex-direction: column;
+  }
+
+  .harness-overview__actions {
+    width: 100%;
+  }
+
+  .harness-overview__actions .btn--primary {
+    flex: 1;
+    justify-content: center;
+  }
+
+  .harness-section__footer {
+    justify-content: space-between;
+  }
+
+  .harness-attention__range {
+    flex-basis: 100%;
+    margin-right: 0;
+  }
+
+  .harness-main__facts,
+  .harness-subagent__facts {
+    flex-direction: column;
+    gap: var(--space-1);
+  }
+}

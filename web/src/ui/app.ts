@@ -8,7 +8,13 @@ import './components/theme-toggle.js';
 import './components/toast.js';
 import { error as toastError } from './components/toast.js';
 import { thingCache } from '../stores/thing-cache.js';
-import { parseRuntimeHash, type RuntimeRoute } from './views/runtime-url-state.js';
+import type { RuntimeRoute } from './views/runtime-url-state.js';
+import {
+  parseHarnessHash,
+  runtimeToHarnessUrl,
+  toHarnessTaskUrl,
+  type HarnessRoute,
+} from './views/harness-url-state.js';
 
 // Public / first-screen views — eagerly loaded
 import './views/login.js';
@@ -39,6 +45,7 @@ const lazyViews: Record<string, () => Promise<void>> = {
   heartbeat: () => import('./views/heartbeat.js').then(() => {}),
   'ai-ops': () => import('./views/ai-ops.js').then(() => {}),
   'run-detail': () => import('./views/run-detail.js').then(() => {}),
+  harness: () => import('./views/harness-overview.js').then(() => {}),
   runtime: () => import('./views/runtime-list.js').then(() => {}),
   'runtime-new': () => import('./views/runtime-new.js').then(() => {}),
   'runtime-task': () => import('./views/runtime-task.js').then(() => {}),
@@ -144,8 +151,8 @@ const NAV_GROUPS: NavGroup[] = [
         icon: 'M12 2a10 10 0 1 0 10 10A10 10 0 0 0 12 2zm0 18a8 8 0 1 1 8-8 8 8 0 0 1-8 8zm1-13v5.59l4.29 4.3-1.42 1.42-5-5V7h2z',
       },
       {
-        route: 'runtime',
-        label: 'Runtime tasks',
+        route: 'harness',
+        label: 'Harness 工作台',
         icon: 'M9 11l3 3L22 4M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11',
         hashRoute: true,
       },
@@ -186,6 +193,7 @@ export class TinyIoTHubApp extends LitElement {
   /** T13：run 详情页 hash 路由参数（#/ai-ops/runs/{id}；id 容忍冒号如 patrol:p1） */
   @state() runDetailId = '';
   @state() runtimeRoute: RuntimeRoute | null = null;
+  @state() harnessRoute: HarnessRoute | null = null;
   /** E4：处置中心未读角标（needsYou 计数；「例外响亮」的前提是例外能到人） */
   @state() dispositionNeedsYou = 0;
 
@@ -331,22 +339,51 @@ export class TinyIoTHubApp extends LitElement {
   }
 
   handleRoute() {
-    // Runtime uses explicit hash routes so query-only history state never enters pathname routing.
-    const runtimeRoute = parseRuntimeHash(window.location.hash);
-    if (runtimeRoute) {
+    // Canonical Harness hash routes own Workflow, Task list/new/detail and overview.
+    const harnessRoute = parseHarnessHash(window.location.hash);
+    if (harnessRoute) {
       if (!this.isAuthenticated) {
         this.navigate('login');
         return;
       }
-      this.runtimeRoute = runtimeRoute;
-      this.currentRoute = runtimeRoute.name === 'task'
-        ? 'runtime-task'
-        : runtimeRoute.name === 'new'
-          ? 'runtime-new'
-          : 'runtime';
-      this._ensureViewLoaded(this.currentRoute);
+      this.applyHarnessRoute(harnessRoute);
       return;
     }
+
+    // Old #/runtime deep links redirect once, preserving encoded IDs and
+    // view/device/at/event state. They never render a second Runtime shell.
+    const migrated = runtimeToHarnessUrl(window.location.hash);
+    if (migrated) {
+      if (!this.isAuthenticated) {
+        this.navigate('login');
+        return;
+      }
+      const canonical = parseHarnessHash(migrated);
+      if (canonical) {
+        let target = migrated;
+        // A shared Task view may still emit a legacy URL for view/device/history
+        // changes; keep the parent return path from the current Harness route.
+        if (
+          canonical.name === 'task' &&
+          this.harnessRoute?.name === 'task' &&
+          this.harnessRoute.taskId === canonical.taskId &&
+          this.harnessRoute.from
+        ) {
+          canonical.from = this.harnessRoute.from;
+          target = toHarnessTaskUrl(canonical.taskId, {
+            view: canonical.view,
+            device: canonical.device,
+            at: canonical.history?.at,
+            event: canonical.history?.event,
+            from: canonical.from,
+          });
+        }
+        window.history.replaceState({}, '', target);
+        this.applyHarnessRoute(canonical);
+        return;
+      }
+    }
+    this.harnessRoute = null;
     this.runtimeRoute = null;
 
     // T13：hash 路由 #/ai-ops/runs/{id}（卡片层「查看完整轨迹」链接）。
@@ -396,6 +433,38 @@ export class TinyIoTHubApp extends LitElement {
     }
 
     this._ensureViewLoaded(this.currentRoute);
+  }
+
+  /** Canonical Harness routes reuse the existing Runtime list/new/Task views. */
+  private applyHarnessRoute(route: HarnessRoute): void {
+    this.harnessRoute = route;
+    if (route.name === 'task') {
+      this.runtimeRoute = {
+        name: 'task',
+        taskId: route.taskId,
+        view: route.view,
+        device: route.device,
+        history: route.history,
+      };
+      this.currentRoute = 'runtime-task';
+      this._ensureViewLoaded('runtime-task');
+      return;
+    }
+    if (route.name === 'tasks') {
+      this.runtimeRoute = { name: 'list' };
+      this.currentRoute = 'runtime';
+      this._ensureViewLoaded('runtime');
+      return;
+    }
+    if (route.name === 'new') {
+      this.runtimeRoute = { name: 'new' };
+      this.currentRoute = 'runtime-new';
+      this._ensureViewLoaded('runtime-new');
+      return;
+    }
+    this.runtimeRoute = null;
+    this.currentRoute = 'harness';
+    this._ensureViewLoaded('harness');
   }
 
   /** Lazy-load the view module for the given route if needed. */
@@ -466,6 +535,10 @@ export class TinyIoTHubApp extends LitElement {
       workspace: '工作空间',
       heartbeat: 'AI 巡检',
       'ai-ops': 'AI 运维',
+      harness: 'Harness 工作台',
+      runtime: 'Runtime 任务',
+      'runtime-new': '新建 Runtime 任务',
+      'runtime-task': 'Runtime 任务详情',
     };
     // Handle /things/:id (detail page)
     if (this.currentRoute.startsWith('things/')) return '物详情';
@@ -493,6 +566,10 @@ export class TinyIoTHubApp extends LitElement {
       workspace: 'AI 驱动的可视化分析与 3D 场景画布',
       heartbeat: 'AI 自主巡检 — 自动发现物异常，智能分析并执行恢复操作',
       'ai-ops': 'AI 自主运维 — 审批、历史、信任配置与知识管理',
+      harness: '例外优先的 Workflow、调度与 Main/Subagent 工作台',
+      runtime: '当前与最近的 Harness 任务',
+      'runtime-new': '创建一个持续 Runtime 任务',
+      'runtime-task': 'Task 时间线、设备事实与就地控制',
     };
     if (this.currentRoute.startsWith('things/')) return '查看物属性、事件、动作和知识';
     return subs[this.currentRoute] || '';
@@ -538,7 +615,7 @@ export class TinyIoTHubApp extends LitElement {
           ${this.renderNav()}
         </nav>
         <div class="content ${this.currentRoute === 'workspace' ? 'content--workspace' : this.currentRoute === 'ai-ops' ? 'content--heartbeat' : ''}" role="main" id="main-content">
-          ${this.currentRoute.startsWith('things/') || this.currentRoute === 'chat' || this.currentRoute === 'workspace' || this.currentRoute === 'ai-ops' || this.currentRoute === 'run-detail' || this.currentRoute.startsWith('runtime')
+          ${this.currentRoute.startsWith('things/') || this.currentRoute === 'chat' || this.currentRoute === 'workspace' || this.currentRoute === 'ai-ops' || this.currentRoute === 'run-detail' || this.currentRoute === 'harness' || this.currentRoute.startsWith('runtime')
             ? nothing
             : html`
                 <section class="content-header">
@@ -650,6 +727,7 @@ export class TinyIoTHubApp extends LitElement {
                     href=${item.hashRoute ? `#/${item.route}` : `/${item.route}`}
                     class="nav-item ${this.currentRoute === item.route ||
                     (item.route === 'things' && (this.currentRoute === 'things' || this.currentRoute.startsWith('things/'))) ||
+                    (item.route === 'harness' && this.currentRoute.startsWith('runtime')) ||
                     (item.hashRoute && this.currentRoute.startsWith(item.route))
                       ? 'active'
                       : ''}"
@@ -714,15 +792,28 @@ export class TinyIoTHubApp extends LitElement {
     if (base === 'ai-ops') return html`<view-ai-ops></view-ai-ops>`;
     if (base === 'run-detail')
       return html`<view-run-detail .runId=${this.runDetailId}></view-run-detail>`;
+    if (base === 'harness')
+      return html`<view-harness-overview
+        .route=${this.harnessRoute}
+      ></view-harness-overview>`;
     if (base === 'runtime') return html`<view-runtime-list></view-runtime-list>`;
     if (base === 'runtime-new') return html`<view-runtime-new></view-runtime-new>`;
     if (base === 'runtime-task' && this.runtimeRoute?.name === 'task') {
-      return html`<view-runtime-task
+      const taskView = html`<view-runtime-task
         .taskId=${this.runtimeRoute.taskId}
         .view=${this.runtimeRoute.view}
         .device=${this.runtimeRoute.device}
         .history=${this.runtimeRoute.history}
       ></view-runtime-task>`;
+      const returnTo =
+        this.harnessRoute?.name === 'task' ? this.harnessRoute.from : null;
+      if (!returnTo) return taskView;
+      return html`<div class="harness-task-view">
+        <div class="harness-task-return" style="padding: var(--space-3) var(--space-4) 0;">
+          <a href=${returnTo} style="color: var(--accent);">← 返回父级</a>
+        </div>
+        ${taskView}
+      </div>`;
     }
     return html`<div style="padding: 40px; text-align: center; color: var(--muted);">
       页面不存在
