@@ -25,9 +25,11 @@
 //! effective and what keeps a crash between permit and send from blindly
 //! re-sending: the recovery scanner fences the effect to `unknown` instead.
 //!
-//! `request_json` is internal dispatch input only; every transition payload
-//! emitted here carries the effect id, state, result, and request *digest*
-//! (never the raw request).
+//! `request_json` is internal dispatch input only. Event/SSE payloads emitted
+//! here carry the effect id, state, and Job result, never the raw request.
+//! Approval-consumption transitions also persist the Decision mutation (whose
+//! `subject_json` pre-dates this task); that is internal harness state, not an
+//! event payload.
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -57,11 +59,11 @@ pub const DISPATCH_INTERVAL: Duration = Duration::from_millis(250);
 /// Physical Job id derived from the Effect id. A dispatch attempt therefore
 /// reuses one physical identity instead of minting a new one.
 pub fn job_id_for(effect_id: &str) -> String {
-    format!("job:{effect_id}")
+    format!("effect:{effect_id}")
 }
 
 fn effect_id_from_job(job_id: &str) -> Option<&str> {
-    job_id.strip_prefix("job:")
+    job_id.strip_prefix("effect:")
 }
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
@@ -233,45 +235,6 @@ impl EffectDispatch {
         }
     }
 
-    fn projection(intent: &EffectIntent, job_id: &str, state: &str) -> JobProjection {
-        JobProjection {
-            job_id: job_id.to_string(),
-            task_id: intent.task_id.clone(),
-            run_id: intent.run_id.clone(),
-            state: state.to_string(),
-            result_json: None,
-            external_ref: Some(job_id.to_string()),
-            ended_at: None,
-        }
-    }
-
-    fn projection_row(
-        workspace_id: &str,
-        intent: &EffectIntent,
-        request: &EffectRequest,
-        job_id: &str,
-        now: chrono::DateTime<Utc>,
-    ) -> DeviceJob {
-        DeviceJob {
-            id: job_id.to_string(),
-            workspace_id: workspace_id.to_string(),
-            device_id: request.device_id.clone(),
-            tool: intent.tool_name.clone(),
-            args_json: request.args_json.clone(),
-            state: DeviceJobState::Accepted,
-            stop_requested_at: None,
-            progress_json: None,
-            result_json: None,
-            task_id: Some(intent.task_id.clone()),
-            run_id: Some(intent.run_id.clone()),
-            tool_call_id: Some(intent.tool_call_id.clone()),
-            driver_call_id: None,
-            timeout_ms: 0,
-            started_at: now,
-            ended_at: None,
-        }
-    }
-
     async fn transition_from_prepared_not_applied(
         &self,
         workspace_id: &str,
@@ -369,7 +332,16 @@ impl EffectDispatch {
                 external_ref: None,
                 result: Some(reason),
                 job: None,
-                wake: None,
+                wake: Some(WakeProjection {
+                    task_id: current.task_id.clone(),
+                    wake_id: format!("dispatch:{}:not_applied:wake", current.effect_id),
+                    signal_json: json!({
+                        "effectId": current.effect_id,
+                        "state": EffectState::NotApplied.as_str(),
+                    })
+                    .to_string(),
+                    created_at: Utc::now(),
+                }),
             },
         )
         .map_err(|error| error.to_string())?;
@@ -453,7 +425,7 @@ impl EffectDispatch {
             }
         }
 
-        let Some(request) = EffectRequest::parse(intent).ok() else {
+        if EffectRequest::parse(intent).is_err() {
             let reason =
                 json!({"reason": "invalid_request", "error": "effect request is missing deviceId or argsJson"});
             if let Some(decision) = item.decision.as_ref() {
@@ -493,41 +465,30 @@ impl EffectDispatch {
                 not_applied: 1,
                 ..DispatchReport::default()
             });
-        };
+        }
 
         let job_id = job_id_for(&intent.effect_id);
         let now = Utc::now();
-        let projection_row = Self::projection_row(workspace_id, intent, &request, &job_id, now);
-        // The transition carries a JobProjection, so the workspace projection
-        // row must exist before the transition applies. It is removed again if
-        // no physical Job is ever submitted.
-        self.db
-            .upsert_workspace_job_projection(workspace_id, &projection_row)
-            .await
-            .map_err(|error| error.to_string())?;
-
         let transition_id = format!("dispatch:{}:{}", intent.effect_id, uuid::Uuid::new_v4());
         let permit = match item.decision.as_ref() {
             Some(decision) => {
                 let mut transition = reduce_recovery(
                     intent,
                     Some(decision),
-                    Some(&job_id),
+                    None,
                     &transition_id,
                     now,
                     &item.task_state,
                     RecoveryFact::ConsumeApproval,
                 )
                 .map_err(|error| error.to_string())?;
+                // No Job exists yet; the Job store writes the workspace row on
+                // submit. Carrying a JobProjection here would require a
+                // pre-submit upsert, which can clobber a concurrent pass's row.
+                transition.job = None;
                 if let Some(effect) = &mut transition.effect {
                     effect.external_ref = Some(job_id.clone());
                     effect.result = None;
-                }
-                if let Some(job) = &mut transition.job {
-                    job.state = DeviceJobState::Accepted.as_str().to_string();
-                    job.result_json = None;
-                    job.ended_at = None;
-                    job.external_ref = Some(job_id.clone());
                 }
                 transition
             }
@@ -540,39 +501,36 @@ impl EffectDispatch {
                     occurred_at: now,
                     external_ref: Some(job_id.clone()),
                     result: None,
-                    job: Some(Self::projection(intent, &job_id, DeviceJobState::Accepted.as_str())),
+                    job: None,
                     wake: None,
                 },
             )
             .map_err(|error| error.to_string())?,
         };
 
-        if let Err(error) = self.apply(workspace_id, permit).await {
-            // A concurrent pass won the CAS (or the store is unavailable). Do
-            // not send; drop our projection row only if the Effect is still
-            // Prepared, so a winner's row is never removed.
-            let still_prepared = self
-                .db
-                .effect_intent(workspace_id, &intent.effect_id)
-                .await
-                .ok()
-                .flatten()
-                .is_some_and(|current| current.state == EffectState::Prepared);
-            if still_prepared {
-                let _ = self.db.delete_workspace_job_projection(workspace_id, &job_id).await;
-            }
-            return Err(error);
-        }
+        // A concurrent pass may win the CAS (or the store is unavailable); do
+        // not send. No workspace Job row exists yet: the Job store only writes
+        // it after a successful submit.
+        self.apply(workspace_id, permit).await?;
 
         let controls = WorkflowControls::new(self.db.clone(), workspace_id);
-        let permitted = controls
-            .dispatch_permitted(&intent.effect_id)
-            .await
-            .map_err(|error| error.to_string())?;
+        let permitted = match controls.dispatch_permitted(&intent.effect_id).await {
+            Ok(permitted) => permitted,
+            Err(error) => {
+                // The permit is committed but the gate cannot be evaluated; no
+                // send occurred, so settle deterministically.
+                self.transition_dispatching_not_applied(
+                    workspace_id,
+                    intent,
+                    json!({"reason": "dispatch_gate_error", "error": error.to_string()}),
+                )
+                .await?;
+                return Err(error.to_string());
+            }
+        };
         if !permitted {
             self.transition_dispatching_not_applied(workspace_id, intent, json!({"reason": "dispatch_not_permitted"}))
                 .await?;
-            let _ = self.db.delete_workspace_job_projection(workspace_id, &job_id).await;
             return Ok(DispatchReport {
                 blocked: 1,
                 ..DispatchReport::default()
@@ -582,12 +540,20 @@ impl EffectDispatch {
         let sender = self.sender();
         match sender.submit(workspace_id, intent).await {
             Ok(job) => {
-                // Refresh the projection with the submitted Job's real
-                // timeout/start time. The physical identity is unchanged.
-                self.db
-                    .upsert_workspace_job_projection(workspace_id, &job)
-                    .await
-                    .map_err(|error| error.to_string())?;
+                // A cancel may have been requested after the permit gate but
+                // before the submit. Re-check the Effect and stop the Job we
+                // just created when it moved out of `dispatching`.
+                if let Ok(Some(current)) = self.db.effect_intent(workspace_id, &intent.effect_id).await
+                    && current.state != EffectState::Dispatching
+                    && let Err(error) = self.jobs.stop(workspace_id, &intent.task_id, &job.id).await
+                {
+                    tracing::warn!(
+                        %workspace_id,
+                        job_id = %job.id,
+                        %error,
+                        "post-submit cancel stop failed"
+                    );
+                }
                 self.publish(workspace_id);
                 Ok(DispatchReport {
                     dispatched: 1,
@@ -601,7 +567,6 @@ impl EffectDispatch {
                     json!({"reason": "dispatch_validation", "error": message}),
                 )
                 .await?;
-                let _ = self.db.delete_workspace_job_projection(workspace_id, &job_id).await;
                 Ok(DispatchReport {
                     not_applied: 1,
                     ..DispatchReport::default()
@@ -610,22 +575,17 @@ impl EffectDispatch {
             Err(DeviceJobError::ExecutionConflict) => {
                 self.transition_dispatching_not_applied(workspace_id, intent, json!({"reason": "execution_conflict"}))
                     .await?;
-                let _ = self.db.delete_workspace_job_projection(workspace_id, &job_id).await;
                 Ok(DispatchReport {
                     not_applied: 1,
                     ..DispatchReport::default()
                 })
             }
             Err(DeviceJobError::Conflict(message)) => {
-                // The deterministic Job id already exists: reuse it when it is
-                // the same physical identity, otherwise fail closed. Never
-                // submit a second device action.
+                // Store-level dedupe: the deterministic Job id already exists.
+                // Reuse it only when the frozen identity matches; never
+                // re-invoke the worker and never delete a live Job row.
                 match self.jobs.job(workspace_id, &job_id).await {
                     Ok(Some(existing)) if same_job_identity(&existing, workspace_id, intent) => {
-                        self.db
-                            .upsert_workspace_job_projection(workspace_id, &existing)
-                            .await
-                            .map_err(|error| error.to_string())?;
                         self.publish(workspace_id);
                         Ok(DispatchReport {
                             dispatched: 1,
@@ -634,20 +594,34 @@ impl EffectDispatch {
                     }
                     Ok(_) => {
                         tracing::warn!(%workspace_id, %job_id, %message, "dispatch job identity conflict");
-                        let _ = self.db.delete_workspace_job_projection(workspace_id, &job_id).await;
-                        Err(format!("dispatch job identity conflict: {message}"))
+                        self.transition_dispatching_not_applied(
+                            workspace_id,
+                            intent,
+                            json!({"reason": "dispatch_identity_conflict", "error": message}),
+                        )
+                        .await?;
+                        Ok(DispatchReport {
+                            not_applied: 1,
+                            ..DispatchReport::default()
+                        })
                     }
                     Err(error) => Err(error.to_string()),
                 }
             }
             Err(error) => {
-                // Storage failure: no worker call was made (the Job row could
-                // not be created), but the permit is already committed. The
-                // recovery scanner owns the resulting `dispatching` Effect.
-                tracing::warn!(%workspace_id, %job_id, %error, "device job submit failed; recovery owns the effect");
-                let _ = self.db.delete_workspace_job_projection(workspace_id, &job_id).await;
+                // Storage failure: the deterministic Job row could not be
+                // created, so the worker was never called. Settle the permit
+                // deterministically instead of stranding `dispatching` with no
+                // Job for a recovery scanner that does not exist yet.
+                tracing::warn!(%workspace_id, %job_id, %error, "device job submit failed");
+                self.transition_dispatching_not_applied(
+                    workspace_id,
+                    intent,
+                    json!({"reason": "dispatch_storage", "error": error.to_string()}),
+                )
+                .await?;
                 Ok(DispatchReport {
-                    blocked: 1,
+                    not_applied: 1,
                     ..DispatchReport::default()
                 })
             }
@@ -656,6 +630,17 @@ impl EffectDispatch {
 
     /// One bounded pass over one workspace's active Effects.
     pub async fn dispatch_workspace(&self, workspace_id: &str) -> Result<DispatchReport, String> {
+        self.dispatch_scope(workspace_id, None).await
+    }
+
+    /// One bounded pass scoped to a single Task. Approval answers use this so
+    /// an admin request cannot block on unrelated Effects' arbitration
+    /// timeouts.
+    pub async fn dispatch_task(&self, workspace_id: &str, task_id: &str) -> Result<DispatchReport, String> {
+        self.dispatch_scope(workspace_id, Some(task_id)).await
+    }
+
+    async fn dispatch_scope(&self, workspace_id: &str, task_id: Option<&str>) -> Result<DispatchReport, String> {
         self.db
             .guard_recovery_matrix(workspace_id)
             .await
@@ -669,6 +654,9 @@ impl EffectDispatch {
         for item in items {
             if item.intent.state != EffectState::Prepared {
                 // Only Prepared Effects can acquire a new dispatch permit.
+                continue;
+            }
+            if task_id.is_some_and(|task_id| item.intent.task_id != task_id) {
                 continue;
             }
             match self.dispatch_prepared(workspace_id, &item).await {
@@ -688,6 +676,103 @@ impl EffectDispatch {
             }
         }
         Ok(report)
+    }
+
+    /// One-time startup reconciliation for Effects stranded by a crash between
+    /// the dispatch permit and the Job row. It must run once, not on the
+    /// periodic pass: `EffectRecovery::recover_workspace` fences every
+    /// `dispatching` Effect it sees, which would fence live in-flight Jobs.
+    ///
+    /// - `dispatching` with no Job row: the send never happened -> `not_applied`.
+    /// - `dispatching` with a terminal Job: settle from the Job fact.
+    /// - `dispatching` with an active Job: leave it to the Job/worker.
+    /// - `cancelling` with no Job row: cancel settled before any send.
+    pub async fn reconcile_startup(&self) {
+        let workspaces = match self.db.find_all_workspace_ids().await {
+            Ok(workspaces) => workspaces,
+            Err(error) => {
+                tracing::warn!(%error, "startup effect reconciliation workspace listing failed");
+                return;
+            }
+        };
+        for workspace_id in workspaces {
+            if let Err(error) = self.reconcile_workspace(&workspace_id).await {
+                tracing::warn!(%workspace_id, %error, "startup effect reconciliation failed");
+            }
+        }
+    }
+
+    async fn reconcile_workspace(&self, workspace_id: &str) -> Result<(), String> {
+        let items = self
+            .db
+            .list_effect_recovery(workspace_id)
+            .await
+            .map_err(|error| error.to_string())?;
+        for item in items {
+            match item.intent.state {
+                EffectState::Dispatching => {
+                    let job_id = job_id_for(&item.intent.effect_id);
+                    match self.jobs.job(workspace_id, &job_id).await {
+                        Ok(Some(job)) if job.state.is_terminal() => {
+                            self.settle_job(workspace_id, &job_id).await?;
+                        }
+                        Ok(Some(_)) => {}
+                        Ok(None) => {
+                            self.transition_dispatching_not_applied(
+                                workspace_id,
+                                &item.intent,
+                                json!({"reason": "dispatch_crash_no_job"}),
+                            )
+                            .await?;
+                        }
+                        Err(error) => return Err(error.to_string()),
+                    }
+                }
+                EffectState::Cancelling => {
+                    let job_id = job_id_for(&item.intent.effect_id);
+                    match self.jobs.job(workspace_id, &job_id).await {
+                        Ok(Some(job)) if job.state.is_terminal() => {
+                            self.settle_job(workspace_id, &job_id).await?;
+                        }
+                        Ok(None) => self.settle_cancelled_before_send(workspace_id, &item.intent).await?,
+                        Ok(Some(_)) => {}
+                        Err(error) => return Err(error.to_string()),
+                    }
+                }
+                _ => {}
+            }
+        }
+        Ok(())
+    }
+
+    async fn settle_cancelled_before_send(&self, workspace_id: &str, intent: &EffectIntent) -> Result<(), String> {
+        let now = Utc::now();
+        let transition = reduce(
+            &Self::harness_state(workspace_id, intent, EffectState::Cancelling, intent.state_version),
+            &HarnessFact {
+                transition_id: format!("reconcile:{}:cancelled", intent.effect_id),
+                effect_id: intent.effect_id.clone(),
+                next: EffectState::Cancelled,
+                occurred_at: now,
+                external_ref: None,
+                result: Some(json!({"reason": "cancelled_before_send"})),
+                job: None,
+                wake: Some(WakeProjection {
+                    task_id: intent.task_id.clone(),
+                    wake_id: format!("reconcile:{}:cancelled:wake", intent.effect_id),
+                    signal_json: json!({
+                        "effectId": intent.effect_id,
+                        "state": EffectState::Cancelled.as_str(),
+                    })
+                    .to_string(),
+                    created_at: now,
+                }),
+            },
+        )
+        .map_err(|error| error.to_string())?;
+        self.apply(workspace_id, transition).await?;
+        self.publish(workspace_id);
+        Ok(())
     }
 
     /// Settle one completed physical Job into its Effect. Reads the Job from
@@ -789,6 +874,14 @@ impl EffectDispatch {
                 "state": job.state.as_str(),
             })
         });
+        // A definitive device completion after a stop request is recorded as
+        // `cancelled`; keep the Job projection state aligned with the Effect
+        // instead of leaving a `done` Job under a `cancelled` Effect.
+        let projected_job_state = if next == EffectState::Cancelled && job.state == DeviceJobState::Done {
+            DeviceJobState::Cancelled.as_str()
+        } else {
+            job.state.as_str()
+        };
         let wake = WakeProjection {
             task_id: intent.task_id.clone(),
             wake_id: format!("settle:{}:wake", intent.effect_id),
@@ -812,7 +905,7 @@ impl EffectDispatch {
                     job_id: job.id.clone(),
                     task_id: intent.task_id.clone(),
                     run_id: intent.run_id.clone(),
-                    state: job.state.as_str().to_string(),
+                    state: projected_job_state.to_string(),
                     result_json: Some(result),
                     external_ref: Some(job.id.clone()),
                     ended_at: job.ended_at.or(Some(now)),
@@ -851,6 +944,9 @@ impl EffectDispatch {
     /// Bounded periodic recovery pass. The handle is aborted by the
     /// `ThingAgentManager` on drop, like the wake router.
     pub async fn run(self: Arc<Self>) {
+        // Startup-only crash reconciliation. The periodic pass must not fence
+        // live `dispatching` Effects.
+        self.reconcile_startup().await;
         let mut interval = tokio::time::interval(DISPATCH_INTERVAL);
         interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
         loop {
@@ -927,6 +1023,8 @@ mod tests {
     use async_trait::async_trait;
     use chrono::Utc;
     use serde_json::{Value, json};
+    use tinyiothub_core::agent_task::TaskWake;
+    use tinyiothub_core::device_job::{DeviceJob, DeviceJobError, DeviceJobState};
     use tinyiothub_core::error::Error;
     use tinyiothub_core::models::thing_command::ThingCommand;
     use tinyiothub_runtime::access::resources::{ResourceClaim, ResourceResolver, device_claim};
@@ -934,6 +1032,7 @@ mod tests {
     use tinyiothub_runtime::arbitration::ArbitrationRegistry;
     use tinyiothub_runtime::job::service::{JobFinal, JobService};
     use tinyiothub_runtime::job::worker_adapter::{JobDeviceWorker, JobResultSink, JobWorkerLocator};
+    use tinyiothub_runtime::ports::DeviceJobStore;
     use tinyiothub_storage::Db;
     use tinyiothub_storage::test_helpers::{WorkspaceFixture, fixture_workspace};
 
@@ -978,7 +1077,103 @@ mod tests {
         }
     }
 
-    struct Validator;
+    /// Store wrapper that fails the Job insert, exercising the submit
+    /// `Storage` path after the dispatching permit is committed.
+    struct FailCreateStore(Arc<dyn DeviceJobStore>);
+
+    #[async_trait]
+    impl DeviceJobStore for FailCreateStore {
+        async fn create_job(&self, _job: &DeviceJob) -> Result<(), DeviceJobError> {
+            Err(DeviceJobError::Storage("injected create failure".into()))
+        }
+
+        async fn get_job(&self, workspace_id: &str, job_id: &str) -> Result<Option<DeviceJob>, DeviceJobError> {
+            self.0.get_job(workspace_id, job_id).await
+        }
+
+        async fn get_job_by_id(&self, job_id: &str) -> Result<Option<DeviceJob>, DeviceJobError> {
+            self.0.get_job_by_id(job_id).await
+        }
+
+        async fn get_task_job(
+            &self,
+            workspace_id: &str,
+            task_id: &str,
+            job_id: &str,
+        ) -> Result<Option<DeviceJob>, DeviceJobError> {
+            self.0.get_task_job(workspace_id, task_id, job_id).await
+        }
+
+        async fn get_job_by_tool_call(
+            &self,
+            workspace_id: &str,
+            tool_call_id: &str,
+        ) -> Result<Option<DeviceJob>, DeviceJobError> {
+            self.0.get_job_by_tool_call(workspace_id, tool_call_id).await
+        }
+
+        async fn submit_approved_job(&self, job: &DeviceJob) -> Result<(Option<DeviceJob>, bool), DeviceJobError> {
+            self.0.submit_approved_job(job).await
+        }
+
+        async fn mark_running(&self, job_id: &str, driver_call_id: &str) -> Result<DeviceJob, DeviceJobError> {
+            self.0.mark_running(job_id, driver_call_id).await
+        }
+
+        async fn finish_job(
+            &self,
+            job_id: &str,
+            state: DeviceJobState,
+            result: &Value,
+            wake: Option<&TaskWake>,
+        ) -> Result<bool, DeviceJobError> {
+            self.0.finish_job(job_id, state, result, wake).await
+        }
+
+        async fn update_progress(&self, job_id: &str, progress: &Value) -> Result<bool, DeviceJobError> {
+            self.0.update_progress(job_id, progress).await
+        }
+
+        async fn request_stop(
+            &self,
+            workspace_id: &str,
+            task_id: &str,
+            job_id: &str,
+        ) -> Result<DeviceJob, DeviceJobError> {
+            self.0.request_stop(workspace_id, task_id, job_id).await
+        }
+
+        async fn active_jobs(
+            &self,
+            workspace_id: Option<&str>,
+            unknown_only: bool,
+        ) -> Result<Vec<DeviceJob>, DeviceJobError> {
+            self.0.active_jobs(workspace_id, unknown_only).await
+        }
+    }
+
+    async fn ad_hoc_dispatch(
+        workspace: &WorkspaceFixture,
+        store: Arc<dyn DeviceJobStore>,
+    ) -> (Arc<EffectDispatch>, Arc<RecordingWorker>) {
+        let db = Arc::new(workspace.db.clone());
+        let worker = Arc::new(RecordingWorker::default());
+        let jobs = JobService::new(
+            store,
+            Arc::new(RecordingWorkers { worker: worker.clone() }),
+            Arc::new(Validator::default()),
+            Arc::new(Resources),
+            Arc::new(ArbitrationRegistry::default()),
+        );
+        (Arc::new(EffectDispatch::new(db, jobs)), worker)
+    }
+
+    #[derive(Default)]
+    struct Validator {
+        /// Test hook: request cancellation while submit is between the permit
+        /// gate and the worker call.
+        cancel_on_validate: Option<(Arc<Mutex<Option<Arc<Db>>>>, String)>,
+    }
 
     #[async_trait]
     impl AccessCallValidator for Validator {
@@ -991,6 +1186,15 @@ mod tests {
         ) -> Result<ValidatedCall, CallError> {
             if thing_id == "missing" {
                 return Err(CallError::NoDeclaration(thing_id.to_string()));
+            }
+            if let Some((slot, effect_id)) = &self.cancel_on_validate {
+                let db = { slot.lock().expect("validator db").clone() };
+                if let Some(db) = db {
+                    super::super::EffectRecovery::new(db)
+                        .request_cancellation(WS, effect_id)
+                        .await
+                        .expect("cancel during validate");
+                }
             }
             Ok(ValidatedCall {
                 tool: tinyiothub_core::driver::manifest::ManifestTool {
@@ -1043,8 +1247,51 @@ mod tests {
         dispatch: Arc<EffectDispatch>,
     }
 
+    async fn seed_effect_in(workspace: &WorkspaceFixture, effect_id: &str, task_state: &str, request_json: Value) {
+        let pool = workspace.workspace_pool().await;
+        sqlx::query(
+            "INSERT INTO agent_tasks (id, run_id, state, state_version, execution_mode)
+             VALUES (?, ?, ?, 1, 'production')",
+        )
+        .bind(effect_id)
+        .bind(format!("run-{effect_id}"))
+        .bind(task_state)
+        .execute(&pool)
+        .await
+        .expect("task");
+        sqlx::query("INSERT INTO agent_runs (id, task_id, state) VALUES (?, ?, 'running')")
+            .bind(format!("run-{effect_id}"))
+            .bind(effect_id)
+            .execute(&pool)
+            .await
+            .expect("run");
+        sqlx::query(
+            "INSERT INTO effect_intents
+                (effect_id, session_id, task_id, run_id, tool_call_id, tool_name, request_json,
+                 request_digest, idempotency_key, external_ref, state, state_version, result_json,
+                 created_at, updated_at)
+             VALUES (?, 'session-1', ?, ?, ?, 'set_level', ?, ?, ?, NULL, 'prepared', 1, NULL, ?, ?)",
+        )
+        .bind(effect_id)
+        .bind(effect_id)
+        .bind(format!("run-{effect_id}"))
+        .bind(format!("call-{effect_id}"))
+        .bind(request_json.to_string())
+        .bind(format!("digest-{effect_id}"))
+        .bind(effect_id)
+        .bind(Utc::now().to_rfc3339())
+        .bind(Utc::now().to_rfc3339())
+        .execute(&pool)
+        .await
+        .expect("effect");
+    }
+
     impl Fixture {
         async fn new() -> Self {
+            Self::new_with(Arc::new(Validator::default())).await
+        }
+
+        async fn new_with(validator: Arc<dyn AccessCallValidator>) -> Self {
             let workspace = fixture_workspace(WS).await;
             let db = Arc::new(workspace.db.clone());
             let worker = Arc::new(RecordingWorker::default());
@@ -1054,7 +1301,7 @@ mod tests {
                     crate::shared::runtime_ports::DbDeviceJobStore::new(workspace.db.clone()),
                 )),
                 Arc::new(RecordingWorkers { worker: worker.clone() }),
-                Arc::new(Validator),
+                validator,
                 Arc::new(Resources),
                 Arc::new(ArbitrationRegistry::default()),
             );
@@ -1073,42 +1320,7 @@ mod tests {
         }
 
         async fn seed(&self, effect_id: &str, task_state: &str, request_json: Value) {
-            let pool = self.workspace.workspace_pool().await;
-            sqlx::query(
-                "INSERT INTO agent_tasks (id, run_id, state, state_version, execution_mode)
-                 VALUES (?, ?, ?, 1, 'production')",
-            )
-            .bind(effect_id)
-            .bind(format!("run-{effect_id}"))
-            .bind(task_state)
-            .execute(&pool)
-            .await
-            .expect("task");
-            sqlx::query("INSERT INTO agent_runs (id, task_id, state) VALUES (?, ?, 'running')")
-                .bind(format!("run-{effect_id}"))
-                .bind(effect_id)
-                .execute(&pool)
-                .await
-                .expect("run");
-            sqlx::query(
-                "INSERT INTO effect_intents
-                    (effect_id, session_id, task_id, run_id, tool_call_id, tool_name, request_json,
-                     request_digest, idempotency_key, external_ref, state, state_version, result_json,
-                     created_at, updated_at)
-                 VALUES (?, 'session-1', ?, ?, ?, 'set_level', ?, ?, ?, NULL, 'prepared', 1, NULL, ?, ?)",
-            )
-            .bind(effect_id)
-            .bind(effect_id)
-            .bind(format!("run-{effect_id}"))
-            .bind(format!("call-{effect_id}"))
-            .bind(request_json.to_string())
-            .bind(format!("digest-{effect_id}"))
-            .bind(effect_id)
-            .bind(Utc::now().to_rfc3339())
-            .bind(Utc::now().to_rfc3339())
-            .execute(&pool)
-            .await
-            .expect("effect");
+            seed_effect_in(&self.workspace, effect_id, task_state, request_json).await;
         }
 
         async fn seed_decision(&self, effect_id: &str, state: &str, answer: Option<&str>) {
@@ -1440,6 +1652,201 @@ mod tests {
             .expect("workspace job");
         assert_eq!(job_state, "done");
         let _ = Duration::from_millis(1);
+        fixture.workspace.close().await;
+    }
+
+    #[tokio::test]
+    async fn concurrent_dispatch_passes_send_exactly_once() {
+        let fixture = Fixture::new().await;
+        fixture
+            .seed(
+                "effect-race-pass",
+                "running",
+                json!({"deviceId":"device-1","argsJson":{"level":7}}),
+            )
+            .await;
+        let dispatch = fixture.dispatch.clone();
+        let (left, right) = tokio::join!(dispatch.dispatch_workspace(WS), dispatch.dispatch_workspace(WS));
+        let dispatched = left.expect("left pass").dispatched + right.expect("right pass").dispatched;
+        assert_eq!(dispatched, 1, "the permit CAS must admit one send");
+        assert_eq!(fixture.worker.submitted.lock().expect("submissions").len(), 1);
+        assert_eq!(fixture.workspace_jobs().await, 1);
+        assert_eq!(fixture.effect("effect-race-pass").await.0, "dispatching");
+        fixture.workspace.close().await;
+    }
+
+    #[tokio::test]
+    async fn retried_submit_reuses_the_job_and_does_not_recall_the_worker() {
+        let fixture = Fixture::new().await;
+        fixture
+            .seed(
+                "effect-retry",
+                "running",
+                json!({"deviceId":"device-1","argsJson":{"level":7}}),
+            )
+            .await;
+        let intent = fixture
+            .db
+            .effect_intent(WS, "effect-retry")
+            .await
+            .expect("effect read")
+            .expect("effect");
+        let sender = fixture.dispatch.sender();
+        let first = sender.submit(WS, &intent).await.expect("first submit");
+        assert_eq!(first.id, job_id_for("effect-retry"));
+        let second = sender
+            .submit(WS, &intent)
+            .await
+            .expect_err("repeat submit must not send");
+        assert!(
+            matches!(second, DeviceJobError::Conflict(_)),
+            "store-level dedupe must return Conflict: {second:?}"
+        );
+        assert_eq!(fixture.worker.submitted.lock().expect("submissions").len(), 1);
+        fixture.workspace.close().await;
+    }
+
+    #[tokio::test]
+    async fn cancel_between_gate_and_submit_stops_the_created_job() {
+        let slot: Arc<Mutex<Option<Arc<Db>>>> = Arc::new(Mutex::new(None));
+        let fixture = Fixture::new_with(Arc::new(Validator {
+            cancel_on_validate: Some((slot.clone(), "effect-race".into())),
+        }))
+        .await;
+        *slot.lock().expect("slot") = Some(fixture.db.clone());
+        fixture
+            .seed(
+                "effect-race",
+                "running",
+                json!({"deviceId":"device-1","argsJson":{"level":7}}),
+            )
+            .await;
+
+        let report = fixture.dispatch.dispatch_workspace(WS).await.expect("dispatch");
+        assert_eq!(report.dispatched, 1);
+        let job_id = job_id_for("effect-race");
+        let job = fixture
+            .jobs
+            .job(WS, &job_id)
+            .await
+            .expect("job read")
+            .expect("created job");
+        assert!(
+            job.stop_requested_at.is_some(),
+            "a cancel that wins the gate-vs-submit race must stop the new Job"
+        );
+        assert_eq!(fixture.effect("effect-race").await.0, "cancelling");
+        fixture.workspace.close().await;
+    }
+
+    #[tokio::test]
+    async fn submit_storage_failure_settles_not_applied_instead_of_stranding_dispatching() {
+        let workspace = fixture_workspace(WS).await;
+        seed_effect_in(
+            &workspace,
+            "effect-storage",
+            "running",
+            json!({"deviceId":"device-1","argsJson":{"level":7}}),
+        )
+        .await;
+        let db = Arc::new(workspace.db.clone());
+        let inner = Arc::new(crate::shared::runtime_ports::HarnessAwareDeviceJobStore::new(
+            db.clone(),
+            crate::shared::runtime_ports::DbDeviceJobStore::new(workspace.db.clone()),
+        ));
+        let (dispatch, worker) = ad_hoc_dispatch(&workspace, Arc::new(FailCreateStore(inner))).await;
+
+        let report = dispatch.dispatch_workspace(WS).await.expect("dispatch");
+        assert_eq!(report.not_applied, 1);
+        let (state, _, external_ref, result): (String, i64, Option<String>, Option<String>) =
+            sqlx::query_as("SELECT state, state_version, external_ref, result_json FROM effect_intents WHERE effect_id = 'effect-storage'")
+                .fetch_one(&workspace.workspace_pool().await)
+                .await
+                .expect("effect");
+        assert_eq!(state, "not_applied");
+        assert!(external_ref.is_none());
+        assert!(
+            result
+                .as_deref()
+                .is_some_and(|value| value.contains("dispatch_storage")),
+            "{result:?}"
+        );
+        assert!(worker.submitted.lock().expect("submissions").is_empty());
+        let jobs: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM device_jobs")
+            .fetch_one(&workspace.workspace_pool().await)
+            .await
+            .expect("job count");
+        assert_eq!(jobs, 0);
+        workspace.close().await;
+    }
+
+    #[tokio::test]
+    async fn startup_reconciliation_settles_dispatching_without_a_job() {
+        let fixture = Fixture::new().await;
+        fixture
+            .seed(
+                "effect-crash",
+                "running",
+                json!({"deviceId":"device-1","argsJson":{"level":7}}),
+            )
+            .await;
+        let pool = fixture.workspace.workspace_pool().await;
+        sqlx::query(
+            "UPDATE effect_intents SET state = 'dispatching', state_version = 2, external_ref = ?
+             WHERE effect_id = 'effect-crash'",
+        )
+        .bind(job_id_for("effect-crash"))
+        .execute(&pool)
+        .await
+        .expect("crash state");
+
+        fixture.dispatch.reconcile_startup().await;
+        let (state, _, external_ref, result) = fixture.effect("effect-crash").await;
+        assert_eq!(state, "not_applied");
+        assert!(external_ref.is_none());
+        assert!(
+            result
+                .as_deref()
+                .is_some_and(|value| value.contains("dispatch_crash_no_job")),
+            "{result:?}"
+        );
+        assert!(fixture.worker.submitted.lock().expect("submissions").is_empty());
+        fixture.workspace.close().await;
+    }
+
+    #[tokio::test]
+    async fn done_after_stop_projects_the_job_as_cancelled() {
+        let fixture = Fixture::new().await;
+        fixture
+            .seed(
+                "effect-done-stop",
+                "running",
+                json!({"deviceId":"device-1","argsJson":{"level":7}}),
+            )
+            .await;
+        fixture.dispatch.dispatch_workspace(WS).await.expect("dispatch");
+        let job_id = job_id_for("effect-done-stop");
+        super::super::EffectRecovery::new(fixture.db.clone())
+            .request_cancellation(WS, "effect-done-stop")
+            .await
+            .expect("request cancellation");
+        fixture
+            .jobs
+            .finish(&job_id, JobFinal::Done(json!({"level": 7})))
+            .await
+            .expect("done after stop");
+        fixture.dispatch.settle_job(WS, &job_id).await.expect("settle");
+
+        assert_eq!(fixture.effect("effect-done-stop").await.0, "cancelled");
+        let job_state: String = sqlx::query_scalar("SELECT state FROM device_jobs WHERE id = ?")
+            .bind(&job_id)
+            .fetch_one(&fixture.workspace.workspace_pool().await)
+            .await
+            .expect("workspace job");
+        assert_eq!(
+            job_state, "cancelled",
+            "the Job projection must agree with the cancelled Effect"
+        );
         fixture.workspace.close().await;
     }
 }

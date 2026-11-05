@@ -247,7 +247,7 @@ impl DeviceJobStore for DbDeviceJobStore {
     }
 }
 
-/// `DeviceJobStore` that routes Harness Effect Jobs (`job:<effect-id>`) to the
+/// `DeviceJobStore` that routes Harness Effect Jobs (`effect:<effect-id>`) to the
 /// owning workspace `device_jobs` projection.
 ///
 /// Task 19C1 dispatches Harness Effects through the single existing
@@ -268,7 +268,7 @@ fn job_storage(error: tinyiothub_storage::error::DbError) -> DeviceJobError {
 }
 
 fn is_harness_job(job_id: &str) -> bool {
-    job_id.starts_with("job:")
+    job_id.starts_with("effect:")
 }
 
 impl HarnessAwareDeviceJobStore {
@@ -284,7 +284,7 @@ impl HarnessAwareDeviceJobStore {
         if let Some(workspace_id) = self.workspaces.get(job_id) {
             return Ok(Some(workspace_id.clone()));
         }
-        let Some(effect_id) = job_id.strip_prefix("job:") else {
+        let Some(effect_id) = job_id.strip_prefix("effect:") else {
             return Ok(None);
         };
         for workspace_id in self
@@ -321,10 +321,15 @@ impl DeviceJobStore for HarnessAwareDeviceJobStore {
         if !is_harness_job(&job.id) {
             return self.legacy.create_job(job).await;
         }
+        // Insert-only: a deterministic id that already exists is a Conflict so
+        // a retried submit cannot reach the worker again.
         self.db
-            .upsert_workspace_job_projection(&job.workspace_id, job)
+            .insert_workspace_job_projection(&job.workspace_id, job)
             .await
-            .map_err(job_storage)?;
+            .map_err(|error| match error {
+                tinyiothub_storage::error::DbError::Conflict { message } => DeviceJobError::Conflict(message),
+                other => DeviceJobError::Storage(other.to_string()),
+            })?;
         self.workspaces.insert(job.id.clone(), job.workspace_id.clone());
         Ok(())
     }
@@ -1296,6 +1301,75 @@ mod runtime_job_event_tests {
             started_at: chrono::Utc::now(),
             ended_at: None,
         }
+    }
+
+    /// H1 regression: legacy Task-owned `invoke_action` ids also start with
+    /// `job:` (`job:{run_id}:{thing_id}:{seq}`). The adapter must leave them on
+    /// the platform store and preserve the `TaskWake` and runtime event.
+    #[tokio::test]
+    async fn legacy_job_prefixed_ids_stay_on_the_platform_store_with_their_wake() {
+        let (db, _recorder, _hub) = fixture().await;
+        db.create_workspace_store("ws-job").await.expect("workspace store");
+        let legacy = DbDeviceJobStore::new((*db).clone());
+        let store = HarnessAwareDeviceJobStore::new(db.clone(), DbDeviceJobStore::new((*db).clone()));
+
+        let mut job = job();
+        job.id = "job:run-1:dev-1:1".into();
+        job.tool_call_id = Some("call-legacy".into());
+        store.create_job(&job).await.expect("legacy create");
+
+        let wake = TaskWake {
+            task_id: "task-1".into(),
+            event_id: format!("device_job:{}:done", job.id),
+            signal_json: serde_json::json!({"workspace_id":"ws-job","kind":"device_job_terminal"}).to_string(),
+            dispatch_state: tinyiothub_core::agent_task::WakeDispatchState::Pending,
+            created_at: chrono::Utc::now(),
+            dispatched_at: None,
+            resolved_at: None,
+        };
+        assert!(
+            store
+                .finish_job(
+                    &job.id,
+                    DeviceJobState::Done,
+                    &serde_json::json!({"ok": true}),
+                    Some(&wake),
+                )
+                .await
+                .expect("legacy finish")
+        );
+
+        let platform_state: String = sqlx::query_scalar("SELECT state FROM device_jobs WHERE id = ?")
+            .bind(&job.id)
+            .fetch_one(db.pool())
+            .await
+            .expect("platform job");
+        assert_eq!(platform_state, "done");
+        assert!(
+            legacy.get_job("ws-job", &job.id).await.expect("legacy read").is_some(),
+            "the legacy writer owns this Job"
+        );
+        assert!(
+            db.workspace_job("ws-job", &job.id)
+                .await
+                .expect("workspace read")
+                .is_none(),
+            "a legacy `job:` id must not be routed to the workspace store"
+        );
+        let wakes: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM task_wake_outbox WHERE event_id = ?")
+            .bind(&wake.event_id)
+            .fetch_one(db.pool())
+            .await
+            .expect("legacy wake");
+        assert_eq!(wakes, 1, "the legacy TaskWake must be preserved");
+        let events: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM hub_ledger WHERE kind = 'runtime.v1' AND payload LIKE '%' || ? || '%'",
+        )
+        .bind(&job.id)
+        .fetch_one(db.pool())
+        .await
+        .expect("legacy runtime event");
+        assert!(events >= 1, "the legacy Job runtime event must be preserved");
     }
 
     #[tokio::test]

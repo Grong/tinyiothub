@@ -173,9 +173,9 @@ async fn decide(
     // the recovery interval; denial settles the Effect to `not_applied` in the
     // same pass.
     if let Some(dispatch) = &state.effect_dispatch
-        && let Err(error) = dispatch.dispatch_workspace(&workspace_id).await
+        && let Err(error) = dispatch.dispatch_task(&workspace_id, &task_id).await
     {
-        tracing::warn!(%workspace_id, %error, "effect dispatch after approval answer failed");
+        tracing::warn!(%workspace_id, %task_id, %error, "effect dispatch after approval answer failed");
     }
     let projection = match state.db.harness_runtime_projection(&workspace_id, &task_id).await {
         Ok(Some(projection)) => projection,
@@ -1675,6 +1675,31 @@ mod tests {
             assert_eq!(before.blocked, 1, "{action}");
             assert!(worker.submitted.lock().expect("submissions").is_empty(), "{action}");
 
+            // An unrelated Prepared Effect on another Task: the answer-driven
+            // pass must be scoped to the answered Task and leave it alone.
+            let pool = fixture.db.workspace_pool_for_testing(WS).await.expect("workspace pool");
+            sqlx::query(
+                "INSERT INTO agent_tasks (id, run_id, state, state_version, execution_mode)
+                 VALUES ('task-unrelated', 'run-u', 'running', 1, 'production')",
+            )
+            .execute(&pool)
+            .await
+            .expect("unrelated task");
+            sqlx::query(
+                "INSERT INTO effect_intents
+                    (effect_id, session_id, task_id, run_id, tool_call_id, tool_name, request_json,
+                     request_digest, idempotency_key, external_ref, state, state_version, result_json,
+                     created_at, updated_at)
+                 VALUES ('effect-unrelated', 'session-1', 'task-unrelated', 'run-u', 'call-u',
+                         'set_level', '{\"deviceId\":\"device-1\",\"argsJson\":{\"level\":7}}',
+                         'digest-u', 'effect-unrelated', NULL, 'prepared', 1, NULL, ?, ?)",
+            )
+            .bind(Utc::now())
+            .bind(Utc::now())
+            .execute(&pool)
+            .await
+            .expect("unrelated effect");
+
             let app = fixture.app_with_dispatch(dispatch);
             let (status, body) = post_to(
                 &app,
@@ -1700,10 +1725,19 @@ mod tests {
                 expected_jobs,
                 "{action}"
             );
+            let unrelated_state: String =
+                sqlx::query_scalar("SELECT state FROM effect_intents WHERE effect_id = 'effect-unrelated'")
+                    .fetch_one(&pool)
+                    .await
+                    .expect("unrelated effect");
+            assert_eq!(
+                unrelated_state, "prepared",
+                "{action}: an answer must not dispatch another Task's Effect"
+            );
             if expected_jobs == 1 {
                 assert_eq!(
                     external_ref.as_deref(),
-                    Some("job:effect-1"),
+                    Some("effect:effect-1"),
                     "dispatch must record the deterministic Job identity"
                 );
             } else {

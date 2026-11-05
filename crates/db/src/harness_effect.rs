@@ -829,14 +829,53 @@ impl Db {
             .transpose()
     }
 
+    /// Insert one Harness Effect Job into the owning workspace generation.
+    ///
+    /// Insert-only: a repeated deterministic id is a Conflict, so a retried
+    /// submit cannot silently overwrite (or re-invoke a worker for) a Job that
+    /// already exists.
+    pub async fn insert_workspace_job_projection(&self, workspace_id: &str, job: &DeviceJob) -> Result<()> {
+        let pool = self.workspace_pool(workspace_id).await?;
+        let inserted = sqlx::query(
+            "INSERT INTO device_jobs
+                (id, workspace_id, device_id, tool, args_json, state, stop_requested_at,
+                 progress_json, result_json, task_id, run_id, tool_call_id, driver_call_id,
+                 timeout_ms, started_at, ended_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        )
+        .bind(&job.id)
+        .bind(workspace_id)
+        .bind(&job.device_id)
+        .bind(&job.tool)
+        .bind(serde_json::to_string(&job.args_json)?)
+        .bind(job.state.as_str())
+        .bind(job.stop_requested_at.map(|value| value.to_rfc3339()))
+        .bind(job.progress_json.as_ref().map(serde_json::to_string).transpose()?)
+        .bind(job.result_json.as_ref().map(serde_json::to_string).transpose()?)
+        .bind(&job.task_id)
+        .bind(&job.run_id)
+        .bind(&job.tool_call_id)
+        .bind(&job.driver_call_id)
+        .bind(i64::try_from(job.timeout_ms).unwrap_or(i64::MAX))
+        .bind(job.started_at.to_rfc3339())
+        .bind(job.ended_at.map(|value| value.to_rfc3339()))
+        .execute(&pool)
+        .await;
+        match inserted {
+            Ok(_) => Ok(()),
+            Err(sqlx::Error::Database(database)) if database.is_unique_violation() => Err(DbError::Conflict {
+                message: format!("workspace job {} already exists", job.id),
+            }),
+            Err(error) => Err(error.into()),
+        }
+    }
+
     /// Upsert the workspace `device_jobs` projection for one physical Job.
     ///
-    /// Harness Effect Jobs (`job:<effect-id>`) are stored in the owning
+    /// Harness Effect Jobs (`effect:<effect-id>`) are stored in the owning
     /// workspace generation, not the platform table; only legacy Jobs keep the
-    /// platform writer until Task 19C3 centralizes the store. The row is
-    /// inserted before the `prepared -> dispatching` permit so the transition
-    /// can carry the `JobProjection`, then refreshed with the submitted Job's
-    /// real timeout and start time.
+    /// platform writer until Task 19C3 centralizes the store. Used for state
+    /// updates after the insert-only create.
     pub async fn upsert_workspace_job_projection(&self, workspace_id: &str, job: &DeviceJob) -> Result<()> {
         let pool = self.workspace_pool(workspace_id).await?;
         sqlx::query(
@@ -862,7 +901,7 @@ impl Db {
                  ended_at = excluded.ended_at",
         )
         .bind(&job.id)
-        .bind(&job.workspace_id)
+        .bind(workspace_id)
         .bind(&job.device_id)
         .bind(&job.tool)
         .bind(serde_json::to_string(&job.args_json)?)
