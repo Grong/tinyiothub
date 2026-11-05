@@ -183,15 +183,19 @@ export function getHarnessSupervisor(
 }
 
 /**
- * Confirm exactly one original dead wake. The server reuses the original
- * event ID; callers never pass a replacement or bulk list.
+ * Confirm exactly one original dead wake. The outbox identity is
+ * `(task_id, event_id)`; callers never pass a replacement or bulk list.
  */
 export function retryHarnessDeadWake(
   workspaceId: string,
+  taskId: string,
   eventId: string,
-): Promise<ApiResponse<{ eventId: string; state: string; retriedBy: string }>> {
+): Promise<ApiResponse<{ taskId: string; eventId: string; state: string; retriedBy: string }>> {
   return ApiClient.post(
-    harnessPath(workspaceId, `/supervisor/dead-wakes/${encodeURIComponent(eventId)}/retry`),
+    harnessPath(
+      workspaceId,
+      `/supervisor/dead-wakes/${encodeURIComponent(taskId)}/${encodeURIComponent(eventId)}/retry`,
+    ),
     {},
   );
 }

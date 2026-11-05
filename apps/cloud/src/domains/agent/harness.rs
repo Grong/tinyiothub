@@ -39,8 +39,8 @@ use crate::domains::agent::host::handler::is_admin;
 use crate::domains::agent::runtime::tasks::error_response;
 use crate::domains::agent::tools::resolve_capabilities;
 use crate::domains::agent::workflows::{
-    DryRunInput, ScriptedDryRunExecutor, SupervisorHealth, TemplateInput, WorkflowDryRun, WorkflowService,
-    builtin_templates, next_wake_at,
+    DryRunInput, RetryOutcome, ScriptedDryRunExecutor, SupervisorHealth, TemplateInput, WorkflowDryRun,
+    WorkflowService, builtin_templates, next_wake_at,
 };
 
 const DEFAULT_ATTENTION_LIMIT: i64 = 5;
@@ -90,7 +90,7 @@ where
         .route("/{workspace_id}/harness/simulations/{task_id}", get(get_simulation))
         .route("/{workspace_id}/harness/supervisor", get(get_supervisor_health))
         .route(
-            "/{workspace_id}/harness/supervisor/dead-wakes/{event_id}/retry",
+            "/{workspace_id}/harness/supervisor/dead-wakes/{task_id}/{event_id}/retry",
             post(retry_supervisor_dead_wake),
         )
 }
@@ -523,23 +523,28 @@ pub async fn get_supervisor_health(
 pub async fn retry_supervisor_dead_wake(
     State(state): State<AgentState>,
     Extension(claims): Extension<Claims>,
-    Path((workspace_id, event_id)): Path<(String, String)>,
+    Path((workspace_id, task_id, event_id)): Path<(String, String, String)>,
 ) -> Response {
     if let Err(response) = check_agent_admin_response(&state, &claims, &workspace_id).await {
         return response;
     }
     let health = supervisor_health(&state, &workspace_id);
-    match health.retry_dead_wake(&workspace_id, &event_id, &claims.user_id).await {
-        Ok(true) => ApiResponseBuilder::success(json!({
+    match health
+        .retry_dead_wake(&workspace_id, &task_id, &event_id, &claims.user_id)
+        .await
+    {
+        Ok(RetryOutcome::Retried | RetryOutcome::AlreadyPending) => ApiResponseBuilder::success(json!({
+            "taskId": task_id,
             "eventId": event_id,
             "state": "pending",
             "retriedBy": claims.user_id,
         }))
         .into_response(),
-        Ok(false) => error_response(StatusCode::NOT_FOUND, "Dead wake 不存在"),
+        Ok(RetryOutcome::TargetNotEligible) => error_response(StatusCode::CONFLICT, "目标 Task 已结束或不可重试"),
+        Ok(RetryOutcome::NotFound) => error_response(StatusCode::NOT_FOUND, "Dead wake 不存在"),
         Err(DbError::Validation { message }) => error_response(StatusCode::BAD_REQUEST, message),
         Err(error) => {
-            tracing::error!(%workspace_id, %event_id, %error, "retry Supervisor dead wake failed");
+            tracing::error!(%workspace_id, %task_id, %event_id, %error, "retry Supervisor dead wake failed");
             error_response(StatusCode::SERVICE_UNAVAILABLE, "Wake retry 失败")
         }
     }
@@ -1396,6 +1401,7 @@ mod tests {
         let fixture = fixture_workspace(workspace_id).await;
         let (mut app_state, pool) = setup_test_app_with_pool().await;
         seed_test_workspace(&pool, "tenant-1", workspace_id).await;
+        seed_test_workspace(&pool, "tenant-1", "ws-supervisor-member-nostore").await;
         seed_test_workspace(&pool, "tenant-2", "ws-supervisor-other").await;
         app_state.db = Arc::new(fixture.db.clone());
         let app = axum::Router::new()
@@ -1412,9 +1418,23 @@ mod tests {
         assert_eq!(body["result"]["readOnly"], true);
         assert_eq!(body["result"]["deadWakes"].as_array().unwrap().len(), 0);
 
-        let retry_uri = format!("{base}/dead-wakes/event-original/retry");
+        let retry_uri = format!("{base}/dead-wakes/task-original/event-original/retry");
         let (status, body) = send(&app, "POST", Some(&member), &retry_uri, Some(json!({}))).await;
         assert_eq!(status, StatusCode::FORBIDDEN, "{body}");
+
+        // A member is rejected on a same-tenant workspace that has no store;
+        // the permission gate must run before any store open.
+        let member_uri =
+            "/api/v1/workspaces/ws-supervisor-member-nostore/harness/supervisor/dead-wakes/task-x/event-x/retry";
+        let (status, body) = send(&app, "POST", Some(&member), member_uri, Some(json!({}))).await;
+        assert_eq!(status, StatusCode::FORBIDDEN, "{body}");
+        assert!(
+            !fixture
+                .root
+                .join("data/agents/ws-supervisor-member-nostore/harness/harness.db")
+                .exists(),
+            "a member retry must be rejected before the workspace store is opened"
+        );
 
         let (status, body) = get(&app, Some(&admin), &base).await;
         assert_eq!(status, StatusCode::OK, "{body}");
@@ -1437,7 +1457,7 @@ mod tests {
             &app,
             "POST",
             Some(&admin),
-            "/api/v1/workspaces/ws-supervisor-other/harness/supervisor/dead-wakes/event/retry",
+            "/api/v1/workspaces/ws-supervisor-other/harness/supervisor/dead-wakes/task/event/retry",
             Some(json!({})),
         )
         .await;

@@ -14,7 +14,7 @@ use tinyiothub_storage::{Db, DbError};
 
 pub use dry_run::{DryRunInput, DryRunResult, ScriptedDryRunExecutor, WorkflowDryRun};
 pub use health::{
-    DEFAULT_DUE_GRACE, DEFAULT_TICK_DEADLINE, DeadWakeSummary, StalledReason, SupervisorHealth,
+    DEFAULT_DUE_GRACE, DEFAULT_TICK_DEADLINE, DeadWakeSummary, RetryOutcome, StalledReason, SupervisorHealth,
     SupervisorHealthSnapshot, SupervisorStatus,
 };
 pub use runner::{MainCoordinator, SubagentRunner};

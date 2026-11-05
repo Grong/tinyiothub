@@ -15,6 +15,11 @@ interface InlineResult {
   message: string;
 }
 
+/** Outbox identity is `(task_id, event_id)`; event IDs alone may collide. */
+function wakeKey(row: Pick<HarnessDeadWake, 'taskId' | 'eventId'>): string {
+  return `${row.taskId}\u0000${row.eventId}`;
+}
+
 @customElement('view-harness-supervisor')
 export class HarnessSupervisorView extends LitElement {
   @property() workspaceId = getWorkspaceId() ?? '';
@@ -80,22 +85,26 @@ export class HarnessSupervisorView extends LitElement {
     }
   }
 
-  private retry(eventId: string): void {
-    void this.performRetry(eventId);
+  private retry(row: HarnessDeadWake): void {
+    void this.performRetry(row);
   }
 
-  private async performRetry(eventId: string): Promise<void> {
-    if (this.retrying[eventId]) return;
-    this.retrying = { ...this.retrying, [eventId]: true };
-    const previous = this.results[eventId];
-    this.results = { ...this.results, [eventId]: { kind: 'success', message: '' } };
+  private async performRetry(row: HarnessDeadWake): Promise<void> {
+    // The outbox identity is (task_id, event_id); two Tasks may legitimately
+    // carry the same event ID, so per-row state must use the composite key.
+    const key = wakeKey(row);
+    const eventId = row.eventId;
+    if (this.retrying[key]) return;
+    this.retrying = { ...this.retrying, [key]: true };
+    const previous = this.results[key];
+    this.results = { ...this.results, [key]: { kind: 'success', message: '' } };
     try {
-      await retryHarnessDeadWake(this.workspaceId, eventId);
+      await retryHarnessDeadWake(this.workspaceId, row.taskId, eventId);
       // The original row stays in the list: the durable fact is that the
       // same event identity is now pending, not that the row was replaced.
       this.results = {
         ...this.results,
-        [eventId]: {
+        [key]: {
           kind: 'success',
           message: `已按原事件 ${eventId} 重新排队，状态：等待调度。`,
         },
@@ -105,7 +114,7 @@ export class HarnessSupervisorView extends LitElement {
       const message = error instanceof ApiError ? error.message : '重试失败';
       this.results = {
         ...this.results,
-        [eventId]:
+        [key]:
           previous?.kind === 'error' && previous.message === message
             ? previous
             : {
@@ -115,7 +124,7 @@ export class HarnessSupervisorView extends LitElement {
       };
     } finally {
       const next = { ...this.retrying };
-      delete next[eventId];
+      delete next[key];
       this.retrying = next;
     }
   }
@@ -204,11 +213,12 @@ export class HarnessSupervisorView extends LitElement {
   }
 
   private renderDeadWakeRow(row: HarnessDeadWake): unknown {
-    const retrying = this.retrying[row.eventId] === true;
-    const result = this.results[row.eventId];
+    const key = wakeKey(row);
+    const retrying = this.retrying[key] === true;
+    const result = this.results[key];
     const canRetry = this.data?.canRetry === true;
     return html`
-      <li class="harness-supervisor__wake" data-dead-wake=${row.eventId}>
+      <li class="harness-supervisor__wake" data-dead-wake=${row.eventId} data-task-id=${row.taskId}>
         <div class="harness-supervisor__wake-head">
           <div>
             <p class="harness-supervisor__wake-id">原事件 ${row.eventId}</p>
@@ -221,7 +231,7 @@ export class HarnessSupervisorView extends LitElement {
                   class="btn harness-supervisor__retry"
                   ?disabled=${retrying}
                   aria-busy=${retrying ? 'true' : 'false'}
-                  @click=${() => this.retry(row.eventId)}
+                  @click=${() => this.retry(row)}
                 >
                   ${retrying ? '重试中…' : '按原事件重试'}
                 </button>`
@@ -232,7 +242,7 @@ export class HarnessSupervisorView extends LitElement {
           失败原因：${row.failureReason ?? '未记录原因'}
         </p>
         <p class="harness-supervisor__wake-time">
-          进入 dead：${formatHarnessTime(row.createdAt)}
+          创建时间：${formatHarnessTime(row.createdAt)}
           ${
             row.retriedBy
               ? html` · 上次重试：${row.retriedBy}（${formatHarnessTime(row.retriedAt)}）`

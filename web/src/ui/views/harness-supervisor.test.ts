@@ -70,11 +70,11 @@ function response(result: HarnessSupervisor) {
   return { code: 0, msg: '', result };
 }
 
-function retryResponse(eventId = 'event-original') {
+function retryResponse(taskId = 'task-original', eventId = 'event-original') {
   return {
     code: 0,
     msg: '',
-    result: { eventId, state: 'pending', retriedBy: 'admin-user' },
+    result: { taskId, eventId, state: 'pending', retriedBy: 'admin-user' },
   };
 }
 
@@ -182,7 +182,7 @@ describe('harness supervisor health', () => {
     const button = retryButton();
     expect(button).not.toBeNull();
     button?.click();
-    expect(retryDeadWake).toHaveBeenCalledWith('ws_1', 'event-original');
+    expect(retryDeadWake).toHaveBeenCalledWith('ws_1', 'task-original', 'event-original');
     await settle();
 
     expect(view.textContent).toContain('已按原事件 event-original 重新排队');
@@ -214,6 +214,34 @@ describe('harness supervisor health', () => {
     release(retryResponse());
     await settle();
     expect(retryButton()?.disabled).toBe(false);
+  });
+
+  it('keys retry state by task and event when event IDs collide', async () => {
+    let release: (value: ReturnType<typeof retryResponse>) => void = () => {};
+    retryDeadWake.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          release = resolve;
+        }),
+    );
+    await mount(
+      payload({
+        deadWakes: [deadWake(), deadWake({ eventId: 'event-original', taskId: 'task-second' })],
+      }),
+    );
+
+    const buttons = Array.from(
+      view.querySelectorAll<HTMLButtonElement>('[data-dead-wake="event-original"] button'),
+    );
+    expect(buttons).toHaveLength(2);
+    buttons[0].click();
+    await settle();
+    expect(buttons[0].disabled).toBe(true);
+    expect(buttons[1].disabled).toBe(false);
+
+    release(retryResponse('task-original', 'event-original'));
+    await settle();
+    expect(retryDeadWake).toHaveBeenCalledWith('ws_1', 'task-original', 'event-original');
   });
 
   it('keeps a persistent inline error and re-enables the row after failure', async () => {

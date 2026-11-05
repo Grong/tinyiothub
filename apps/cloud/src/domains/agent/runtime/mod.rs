@@ -464,6 +464,10 @@ impl TaskStore for DbTaskStore {
         self.db.mark_wake(task_id, event_id, state).await
     }
 
+    async fn mark_wake_dead(&self, task_id: &str, event_id: &str, reason: &str) -> Result<(), TaskStoreError> {
+        self.db.mark_wake_dead(task_id, event_id, reason).await
+    }
+
     async fn requeue_with_finalize_intent(&self, intent: &TaskFinalizeIntent) -> Result<(), TaskStoreError> {
         self.db.requeue_with_finalize_intent(intent).await
     }

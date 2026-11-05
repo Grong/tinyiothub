@@ -129,6 +129,7 @@ describe("app router · canonical Harness hash routes", () => {
       name: "workflows",
       workflowId: "wf:1",
       creating: false,
+      version: null,
     });
 
     window.location.hash = "#/harness/tasks";

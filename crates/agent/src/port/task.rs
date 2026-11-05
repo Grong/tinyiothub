@@ -44,6 +44,13 @@ pub trait TaskStore: Send + Sync {
     async fn claim_pending_wakes(&self, limit: i64) -> Result<Vec<TaskWake>, TaskStoreError>;
     async fn recover_claimed_wakes(&self) -> Result<usize, TaskStoreError>;
     async fn mark_wake(&self, task_id: &str, event_id: &str, state: WakeDispatchState) -> Result<(), TaskStoreError>;
+    /// Mark a wake dead together with a bounded failure reason. Stores that do
+    /// not persist reasons may keep the default delegation; the production
+    /// store overrides it so the Supervisor panel never shows an unexplained
+    /// dead wake.
+    async fn mark_wake_dead(&self, task_id: &str, event_id: &str, _reason: &str) -> Result<(), TaskStoreError> {
+        self.mark_wake(task_id, event_id, WakeDispatchState::Dead).await
+    }
     /// Atomically persist a finalize intent and put its wake back on the
     /// outbox. The clear of `dispatched_at` is what makes a later Dispatched
     /// acknowledgement from the original claim a no-op.

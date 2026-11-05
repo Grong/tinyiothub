@@ -873,6 +873,37 @@ impl Db {
         Ok(())
     }
 
+    /// Mark a wake dead together with the bounded failure reason. Kept
+    /// separate from [`Self::mark_wake`] so every non-dead transition keeps
+    /// its existing signature and guards.
+    pub async fn mark_wake_dead(&self, task_id: &str, event_id: &str, reason: &str) -> Result<(), TaskStoreError> {
+        let now = Utc::now();
+        let affected = sqlx::query(
+            "UPDATE task_wake_outbox
+             SET dispatch_state = 'dead', resolved_at = ?, dead_reason = ?
+             WHERE task_id = ? AND event_id = ? AND resolved_at IS NULL",
+        )
+        .bind(now)
+        .bind(reason)
+        .bind(task_id)
+        .bind(event_id)
+        .execute(self.pool())
+        .await
+        .map_err(unavailable)?
+        .rows_affected();
+        if affected == 1 {
+            tracing::info!(
+                metric = "runtime_outbox_marked",
+                %task_id,
+                %event_id,
+                state = "dead",
+                reason,
+                "wake outbox marked"
+            );
+        }
+        Ok(())
+    }
+
     /// Stage the finalize intent and requeue its wake in one transaction. The
     /// wake update runs first so SQLite takes the write lock before reading,
     /// and clearing `dispatched_at` means the original dispatch's later
@@ -1398,7 +1429,8 @@ impl Db {
                 });
             }
             sqlx::query(
-                "UPDATE task_wake_outbox SET dispatch_state = 'dead', resolved_at = ?
+                "UPDATE task_wake_outbox
+                 SET dispatch_state = 'dead', resolved_at = ?, failure_reason = 'cancelled'
                  WHERE task_id = ? AND dispatch_state = 'pending'",
             )
             .bind(now.to_rfc3339())

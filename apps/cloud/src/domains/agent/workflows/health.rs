@@ -19,6 +19,8 @@ use tinyiothub_storage::harness_supervisor::{
     DeadWakeRetryOutcome, HarnessDeadWakeRow, SupervisorMetricsRow, SupervisorStateRow,
 };
 
+pub use tinyiothub_storage::harness_supervisor::DeadWakeRetryOutcome as RetryOutcome;
+
 use super::next_wake_at;
 
 /// A tick that starts and does not finish within this window is stalled.
@@ -193,26 +195,29 @@ impl SupervisorHealth {
         Ok(rows.into_iter().map(DeadWakeSummary::from).collect())
     }
 
-    /// Confirm the original dead wake only. The original event identity is
-    /// reused, so a repeated confirmation returns the same pending fact and
-    /// no bulk or replacement retry path exists.
-    pub async fn retry_dead_wake(&self, workspace_id: &str, event_id: &str, actor: &str) -> Result<bool, DbError> {
+    /// Confirm the original dead wake only. The outbox identity is
+    /// `(task_id, event_id)`; the original event identity is reused, so a
+    /// repeated confirmation returns the same pending fact and no bulk or
+    /// replacement retry path exists. A terminal/cancelling/interrupted target
+    /// Task is refused because its wake may have died from cancellation.
+    pub async fn retry_dead_wake(
+        &self,
+        workspace_id: &str,
+        task_id: &str,
+        event_id: &str,
+        actor: &str,
+    ) -> Result<DeadWakeRetryOutcome, DbError> {
         if workspace_id != self.workspace_id {
-            return Ok(false);
+            return Ok(DeadWakeRetryOutcome::NotFound);
         }
         if actor.trim().is_empty() {
             return Err(DbError::Validation {
                 message: "retry actor must not be blank".to_string(),
             });
         }
-        match self
-            .db
-            .retry_harness_dead_wake(workspace_id, event_id, actor.trim(), Utc::now())
-            .await?
-        {
-            DeadWakeRetryOutcome::Retried | DeadWakeRetryOutcome::AlreadyPending => Ok(true),
-            DeadWakeRetryOutcome::NotFound => Ok(false),
-        }
+        self.db
+            .retry_harness_dead_wake(workspace_id, task_id, event_id, actor.trim(), Utc::now())
+            .await
     }
 
     fn evaluate(
@@ -297,9 +302,10 @@ impl SupervisorHealth {
         reason: Option<StalledReason>,
         now: DateTime<Utc>,
     ) -> SupervisorHealthSnapshot {
+        let no_active_work = metrics.active_mains == 0 && metrics.active_subagents == 0 && metrics.pending_wakes == 0;
         let status = match reason {
             Some(_) => SupervisorStatus::Stalled,
-            None if metrics.enabled_workflows == 0 => SupervisorStatus::Idle,
+            None if metrics.enabled_workflows == 0 && no_active_work => SupervisorStatus::Idle,
             None => SupervisorStatus::Healthy,
         };
         SupervisorHealthSnapshot {

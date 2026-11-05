@@ -137,7 +137,13 @@ impl WakeRouter {
                         %error,
                         "Task wake dispatch failed"
                     );
-                    self.store.mark_wake(&wake.task_id, &wake.event_id, state).await?;
+                    if state == WakeDispatchState::Dead {
+                        self.store
+                            .mark_wake_dead(&wake.task_id, &wake.event_id, "dispatch_failed")
+                            .await?;
+                    } else {
+                        self.store.mark_wake(&wake.task_id, &wake.event_id, state).await?;
+                    }
                 }
             }
         }

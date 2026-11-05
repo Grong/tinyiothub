@@ -9,7 +9,10 @@ use chrono::{DateTime, SecondsFormat, Utc};
 use sqlx::SqlSafeStr;
 use tinyiothub_core::harness::HarnessEventInput;
 
-use crate::{Db, error::Result};
+use crate::{
+    Db,
+    error::{DbError, Result},
+};
 
 pub(crate) fn migration() -> sqlx::migrate::Migration {
     sqlx::migrate::Migration::new(
@@ -22,7 +25,10 @@ pub(crate) fn migration() -> sqlx::migrate::Migration {
 }
 
 fn timestamp(value: DateTime<Utc>) -> String {
-    value.to_rfc3339_opts(SecondsFormat::Secs, true)
+    // Millisecond precision keeps a tick start distinguishable from the
+    // previous completion inside the same second. A 1 s scheduler interval
+    // always advances this field, so an unfinished tick is detectable.
+    value.to_rfc3339_opts(SecondsFormat::Millis, true)
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, sqlx::FromRow)]
@@ -71,8 +77,19 @@ pub enum DeadWakeRetryOutcome {
     Retried,
     /// The original row was already pending; this is the same durable fact.
     AlreadyPending,
-    /// No dead or pending row with this event identity exists.
+    /// No dead or pending row with this task/event identity exists.
     NotFound,
+    /// The target Task is terminal, cancelling, or interrupted. Retrying a
+    /// cancellation-produced dead wake would replay work the user stopped.
+    TargetNotEligible,
+}
+
+/// Task states for which a dead wake must never be re-pended.
+fn dead_wake_target_eligible(state: &str) -> bool {
+    !matches!(
+        state,
+        "completed" | "failed" | "cancelled" | "cancelling" | "interrupted"
+    )
 }
 
 impl Db {
@@ -103,8 +120,11 @@ impl Db {
         Ok(tick_seq)
     }
 
-    /// A successful tick clears the last error. Recovery from a stalled state
-    /// is decided by [`Db::record_supervisor_transition`].
+    /// A completed tick (successful or failed) ends an unfinished tick, so a
+    /// tick-deadline stall recovers on the next completed tick even if that
+    /// tick recorded an error. `last_error` is cleared only on success;
+    /// recovery from a stalled state is decided by
+    /// [`Db::record_supervisor_transition`].
     pub async fn complete_supervisor_tick(&self, workspace_id: &str, completed_at: DateTime<Utc>) -> Result<()> {
         let pool = self.workspace_pool(workspace_id).await?;
         sqlx::query(
@@ -228,45 +248,70 @@ impl Db {
         Ok(rows)
     }
 
-    /// Retry exactly the supplied original event ID. The outbox primary key
-    /// stays unchanged; no replacement event or bulk mutation is possible.
+    /// Retry exactly one original outbox row identified by
+    /// `(task_id, event_id)`. The outbox primary key stays unchanged; no
+    /// replacement event or bulk mutation is possible. A terminal or
+    /// cancelling target Task is refused rather than blindly replayed.
     pub async fn retry_harness_dead_wake(
         &self,
         workspace_id: &str,
+        task_id: &str,
         event_id: &str,
         actor: &str,
         now: DateTime<Utc>,
     ) -> Result<DeadWakeRetryOutcome> {
         let pool = self.workspace_pool(workspace_id).await?;
+        let row = sqlx::query_as::<_, (Option<String>, String)>(
+            "SELECT t.state, w.dispatch_state
+             FROM task_wake_outbox w
+             LEFT JOIN agent_tasks t ON t.id = w.task_id
+             WHERE w.task_id = ? AND w.event_id = ?",
+        )
+        .bind(task_id)
+        .bind(event_id)
+        .fetch_optional(&pool)
+        .await?;
+        let Some((task_state, dispatch_state)) = row else {
+            return Ok(DeadWakeRetryOutcome::NotFound);
+        };
+        let Some(task_state) = task_state else {
+            return Ok(DeadWakeRetryOutcome::TargetNotEligible);
+        };
+        if !dead_wake_target_eligible(&task_state) {
+            return Ok(DeadWakeRetryOutcome::TargetNotEligible);
+        }
+        if dispatch_state == "pending" {
+            return Ok(DeadWakeRetryOutcome::AlreadyPending);
+        }
+        if dispatch_state != "dead" {
+            return Ok(DeadWakeRetryOutcome::NotFound);
+        }
         let affected = sqlx::query(
             "UPDATE task_wake_outbox
              SET dispatch_state = 'pending', dispatched_at = NULL, resolved_at = NULL,
                  retried_by = ?, retried_at = ?
-             WHERE event_id = ? AND dispatch_state = 'dead'",
+             WHERE task_id = ? AND event_id = ? AND dispatch_state = 'dead'",
         )
         .bind(actor)
         .bind(timestamp(now))
+        .bind(task_id)
         .bind(event_id)
         .execute(&pool)
         .await?
         .rows_affected();
-        if affected > 0 {
-            tracing::info!(
-                metric = "harness_dead_wake_retried",
-                %workspace_id,
-                %event_id,
-                %actor,
-                "Harness dead wake retried"
-            );
-            return Ok(DeadWakeRetryOutcome::Retried);
+        if affected != 1 {
+            return Err(DbError::Conflict {
+                message: format!("dead wake ({task_id}, {event_id}) changed during retry"),
+            });
         }
-        let state = sqlx::query_scalar::<_, String>("SELECT dispatch_state FROM task_wake_outbox WHERE event_id = ?")
-            .bind(event_id)
-            .fetch_optional(&pool)
-            .await?;
-        match state.as_deref() {
-            Some("pending") => Ok(DeadWakeRetryOutcome::AlreadyPending),
-            _ => Ok(DeadWakeRetryOutcome::NotFound),
-        }
+        tracing::info!(
+            metric = "harness_dead_wake_retried",
+            %workspace_id,
+            %task_id,
+            %event_id,
+            %actor,
+            "Harness dead wake retried"
+        );
+        Ok(DeadWakeRetryOutcome::Retried)
     }
 }
