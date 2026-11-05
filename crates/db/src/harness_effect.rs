@@ -4,8 +4,8 @@ use serde_json::Value;
 use sha2::Digest;
 use sqlx::{SqlSafeStr, SqliteConnection, SqlitePool};
 use tinyiothub_core::harness::{
-    Decision, DecisionKind, DecisionMutation, DecisionState, EffectIntent, EffectState, Transition,
-    TransitionPrecondition,
+    CommandKind, CommandState, Decision, DecisionKind, DecisionMutation, DecisionState, EffectIntent, EffectState,
+    ExecutionMode, HarnessEventInput, Transition, TransitionPrecondition,
 };
 
 use crate::{
@@ -30,6 +30,143 @@ pub struct EffectRecoveryItem {
     pub job_id: Option<String>,
     pub task_active: bool,
     pub task_state: String,
+}
+
+/// One persisted row outside the listed Effect × Decision × Command recovery
+/// matrix. The spec requires these combinations to fail closed: audit
+/// `recovery.invalid_state`, mark the workspace unavailable, and never
+/// dispatch, consume, or silently repair into a runnable state.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct InvalidRecoveryState {
+    pub effect_id: Option<String>,
+    pub session_id: String,
+    pub run_id: Option<String>,
+    pub task_id: Option<String>,
+    pub execution_mode: ExecutionMode,
+    pub effect_state: Option<String>,
+    pub recovery_from: Option<String>,
+    pub decision_kind: Option<String>,
+    pub decision_state: Option<String>,
+    pub decision_answer: Option<String>,
+    pub command_id: Option<String>,
+    pub command_kind: Option<String>,
+    pub command_state: Option<String>,
+    pub reason: String,
+}
+
+impl InvalidRecoveryState {
+    fn identity(&self) -> String {
+        if let Some(effect_id) = &self.effect_id {
+            format!(
+                "{effect_id}:{}:{}:{}",
+                self.effect_state.as_deref().unwrap_or("unknown"),
+                self.decision_state.as_deref().unwrap_or("none"),
+                self.decision_answer.as_deref().unwrap_or("none")
+            )
+        } else {
+            format!(
+                "{}:{}",
+                self.command_id.as_deref().unwrap_or("command"),
+                self.command_state.as_deref().unwrap_or("unknown")
+            )
+        }
+    }
+}
+
+/// Pure classifier for one persisted Effect × Decision pair. `Ok(())` means
+/// the pair is explicitly listed in the recovery matrix; `Err` carries the
+/// reason written into `recovery.invalid_state`.
+pub(crate) fn classify_effect_decision(
+    effect_state: EffectState,
+    recovery_from: Option<EffectState>,
+    decision: Option<(DecisionKind, DecisionState, Option<&str>)>,
+) -> std::result::Result<(), String> {
+    if effect_state != EffectState::Unknown && recovery_from.is_some() {
+        return Err(format!(
+            "recovery_from is only valid on an unknown effect, found {}",
+            effect_state.as_str()
+        ));
+    }
+    if effect_state == EffectState::Unknown && recovery_from.is_some_and(|origin| origin != EffectState::Cancelling) {
+        return Err(format!(
+            "unknown effect cannot recover from {}",
+            recovery_from.map(EffectState::as_str).unwrap_or_default()
+        ));
+    }
+    let Some((kind, state, answer)) = decision else {
+        return Ok(());
+    };
+    let answer_in = |allowed: &[&str]| answer.is_some_and(|value| allowed.contains(&value));
+    match effect_state {
+        EffectState::Prepared => match (kind, state) {
+            (DecisionKind::ToolApproval, DecisionState::Requested) if answer.is_none() => Ok(()),
+            (DecisionKind::ToolApproval, DecisionState::Answered) if answer_in(&["approved", "denied"]) => Ok(()),
+            // Closed approvals keep the prior answer as audit history; the
+            // terminal state itself is the only authority. They can never be
+            // consumed into a dispatch permit.
+            (DecisionKind::ToolApproval, DecisionState::Expired | DecisionState::Withdrawn) => Ok(()),
+            _ => Err(format!(
+                "prepared effect cannot pair with {}/{}",
+                kind.as_str(),
+                state.as_str()
+            )),
+        },
+        EffectState::Dispatching => match (kind, state) {
+            // A reconciliation row may already exist when recovery fenced the
+            // dispatch permit; the recovery path promotes the effect to
+            // unknown first and never re-sends from prepared.
+            (DecisionKind::EffectReconciliation, DecisionState::Requested) if answer.is_none() => Ok(()),
+            (DecisionKind::EffectReconciliation, DecisionState::Answered) if answer_in(&["applied", "not_applied"]) => {
+                Ok(())
+            }
+            (DecisionKind::ToolApproval, DecisionState::Consumed) if answer_in(&["approved", "denied"]) => Ok(()),
+            _ => Err(format!(
+                "dispatching effect cannot pair with {}/{}",
+                kind.as_str(),
+                state.as_str()
+            )),
+        },
+        EffectState::Cancelling => match (kind, state) {
+            (DecisionKind::ToolApproval, DecisionState::Consumed) if answer_in(&["approved", "denied"]) => Ok(()),
+            (DecisionKind::EffectReconciliation, DecisionState::Requested) if answer.is_none() => Ok(()),
+            _ => Err(format!(
+                "cancelling effect cannot pair with {}/{}",
+                kind.as_str(),
+                state.as_str()
+            )),
+        },
+        EffectState::Unknown => match (kind, state) {
+            (DecisionKind::EffectReconciliation, DecisionState::Requested) if answer.is_none() => Ok(()),
+            (DecisionKind::EffectReconciliation, DecisionState::Answered) if answer_in(&["applied", "not_applied"]) => {
+                Ok(())
+            }
+            (DecisionKind::ToolApproval, DecisionState::Consumed) if answer_in(&["approved", "denied"]) => Ok(()),
+            _ => Err(format!(
+                "unknown effect cannot pair with {}/{}",
+                kind.as_str(),
+                state.as_str()
+            )),
+        },
+        EffectState::Completed
+        | EffectState::Failed
+        | EffectState::NotApplied
+        | EffectState::Cancelled
+        | EffectState::CancelledUnknown => match (kind, state) {
+            (DecisionKind::ToolApproval, DecisionState::Consumed) if answer_in(&["approved", "denied"]) => Ok(()),
+            // Terminal effects keep whatever answer the closed approval had;
+            // it is audit history and cannot re-open a dispatch permit.
+            (DecisionKind::ToolApproval, DecisionState::Expired | DecisionState::Withdrawn) => Ok(()),
+            (DecisionKind::EffectReconciliation, DecisionState::Consumed) if answer_in(&["applied", "not_applied"]) => {
+                Ok(())
+            }
+            (DecisionKind::EffectReconciliation, DecisionState::Withdrawn) => Ok(()),
+            _ => Err(format!(
+                "terminal effect cannot pair with {}/{}",
+                kind.as_str(),
+                state.as_str()
+            )),
+        },
+    }
 }
 
 #[derive(Debug, sqlx::FromRow)]
@@ -652,6 +789,7 @@ async fn apply_writes(
 
 impl Db {
     pub async fn workflow_dispatch_permitted(&self, workspace_id: &str, effect_id: &str) -> Result<bool> {
+        self.guard_recovery_matrix(workspace_id).await?;
         let pool = self.workspace_pool(workspace_id).await?;
         sqlx::query_scalar::<_, bool>(
             "SELECT EXISTS(
@@ -730,6 +868,154 @@ impl Db {
         Ok(items)
     }
 
+    /// Scan every persisted Effect × Decision pair and every command row for
+    /// a combination the recovery matrix does not list. Returns the first
+    /// offending row without mutating anything.
+    pub async fn find_invalid_recovery_state(&self, workspace_id: &str) -> Result<Option<InvalidRecoveryState>> {
+        let pool = self.workspace_pool(workspace_id).await?;
+        let effects = sqlx::query_as::<_, (String, String, String, String, String, Option<String>, String)>(
+            "SELECT e.effect_id, e.session_id, e.run_id, e.task_id, e.state, e.recovery_from,
+                    COALESCE((SELECT task.execution_mode FROM agent_tasks task WHERE task.id = e.task_id),
+                             'production')
+             FROM effect_intents e
+             ORDER BY e.created_at, e.effect_id",
+        )
+        .fetch_all(&pool)
+        .await?;
+        for (effect_id, session_id, run_id, task_id, effect_state, recovery_from, execution_mode) in effects {
+            let state = EffectState::from_db(&effect_state);
+            let raw_recovery_from = recovery_from;
+            let parsed_recovery_from = raw_recovery_from.as_deref().and_then(EffectState::from_db);
+            let execution_mode = if execution_mode == "simulation" {
+                ExecutionMode::Simulation
+            } else {
+                ExecutionMode::Production
+            };
+            let decision = sqlx::query_as::<_, (String, String, Option<String>)>(
+                "SELECT kind, state, answer FROM decisions WHERE effect_id = ?
+                 ORDER BY CASE kind WHEN 'effect_reconciliation' THEN 0 ELSE 1 END, created_at DESC LIMIT 1",
+            )
+            .bind(&effect_id)
+            .fetch_optional(&pool)
+            .await?;
+            let issue = |reason: String| InvalidRecoveryState {
+                effect_id: Some(effect_id.clone()),
+                session_id: session_id.clone(),
+                run_id: Some(run_id.clone()),
+                task_id: Some(task_id.clone()),
+                execution_mode,
+                effect_state: Some(effect_state.clone()),
+                recovery_from: raw_recovery_from.clone(),
+                decision_kind: decision.as_ref().map(|row| row.0.clone()),
+                decision_state: decision.as_ref().map(|row| row.1.clone()),
+                decision_answer: decision.as_ref().and_then(|row| row.2.clone()),
+                command_id: None,
+                command_kind: None,
+                command_state: None,
+                reason,
+            };
+            let Some(state) = state else {
+                return Ok(Some(issue(format!("unknown persisted effect state {effect_state}"))));
+            };
+            if raw_recovery_from.is_some() && parsed_recovery_from.is_none() {
+                return Ok(Some(issue(format!(
+                    "unknown persisted recovery_from {}",
+                    raw_recovery_from.as_deref().unwrap_or_default()
+                ))));
+            }
+            let parsed_decision = match &decision {
+                Some((kind, state, answer)) => match (DecisionKind::from_db(kind), DecisionState::from_db(state)) {
+                    (Some(kind), Some(state)) => Some((kind, state, answer.as_deref())),
+                    _ => {
+                        return Ok(Some(issue(format!("unknown persisted decision {kind}/{state}"))));
+                    }
+                },
+                None => None,
+            };
+            if let Err(reason) = classify_effect_decision(state, parsed_recovery_from, parsed_decision) {
+                return Ok(Some(issue(reason)));
+            }
+        }
+
+        let commands = sqlx::query_as::<_, (i64, String, String, String, String, String)>(
+            "SELECT seq, command_id, kind, state, target_task_id, target_run_id FROM commands ORDER BY seq",
+        )
+        .fetch_all(&pool)
+        .await?;
+        for (seq, command_id, kind, state, target_task_id, target_run_id) in commands {
+            if CommandKind::from_db(&kind).is_none() || CommandState::from_db(&state).is_none() {
+                return Ok(Some(InvalidRecoveryState {
+                    effect_id: None,
+                    session_id: format!("supervisor:{workspace_id}"),
+                    run_id: Some(target_run_id),
+                    task_id: Some(target_task_id),
+                    execution_mode: ExecutionMode::Production,
+                    effect_state: None,
+                    recovery_from: None,
+                    decision_kind: None,
+                    decision_state: None,
+                    decision_answer: None,
+                    command_id: Some(command_id),
+                    command_kind: Some(kind),
+                    command_state: Some(state),
+                    reason: format!("unknown persisted command state (seq {seq})"),
+                }));
+            }
+        }
+        Ok(None)
+    }
+
+    /// Fail-closed guard for every dispatch/consume/recovery entry point:
+    /// audit the first invalid row, then mark the workspace unavailable so no
+    /// later call can dispatch or consume from it.
+    pub async fn guard_recovery_matrix(&self, workspace_id: &str) -> Result<()> {
+        let Some(issue) = self.find_invalid_recovery_state(workspace_id).await? else {
+            return Ok(());
+        };
+        self.flag_invalid_recovery_state(workspace_id, &issue).await?;
+        Err(DbError::Internal(format!("recovery.invalid_state: {}", issue.reason)))
+    }
+
+    /// Write the durable `recovery.invalid_state` audit event and mark the
+    /// workspace unavailable. The event is idempotent and never repairable
+    /// into a runnable state.
+    pub async fn flag_invalid_recovery_state(&self, workspace_id: &str, issue: &InvalidRecoveryState) -> Result<()> {
+        let payload = serde_json::json!({
+            "effectId": issue.effect_id,
+            "effectState": issue.effect_state,
+            "recoveryFrom": issue.recovery_from,
+            "decisionKind": issue.decision_kind,
+            "decisionState": issue.decision_state,
+            "decisionAnswer": issue.decision_answer,
+            "commandId": issue.command_id,
+            "commandKind": issue.command_kind,
+            "commandState": issue.command_state,
+            "reason": issue.reason,
+        });
+        let payload_json = serde_json::to_string(&payload)?;
+        let input = HarnessEventInput {
+            event_id: format!("recovery.invalid_state:{}", issue.identity()),
+            workspace_id: workspace_id.to_string(),
+            session_id: issue.session_id.clone(),
+            execution_mode: issue.execution_mode,
+            run_id: issue.run_id.clone(),
+            task_id: issue.task_id.clone(),
+            event_type: "recovery.invalid_state".to_string(),
+            occurred_at: Utc::now(),
+            cause_id: None,
+            schema_v: 1,
+            payload_digest: format!("{:x}", sha2::Sha256::digest(payload_json.as_bytes())),
+            payload_json: payload,
+        };
+        let recorded = self.append_session_event(&input).await;
+        if let Err(error) = recorded
+            && !matches!(error, DbError::Conflict { .. })
+        {
+            return Err(error);
+        }
+        self.mark_workspace_unavailable(workspace_id, &issue.reason).await
+    }
+
     pub async fn answer_effect_reconciliation(
         &self,
         workspace_id: &str,
@@ -743,6 +1029,7 @@ impl Db {
                 message: "reconciliation answer or actor is invalid".to_string(),
             });
         }
+        self.guard_recovery_matrix(workspace_id).await?;
         let pool = self.workspace_pool(workspace_id).await?;
         let evidence = sanitize_evidence(evidence);
         let mut tx = pool.begin().await?;
@@ -881,6 +1168,7 @@ impl Db {
     }
 
     pub async fn expire_harness_decisions(&self, workspace_id: &str, now: DateTime<Utc>) -> Result<u64> {
+        self.guard_recovery_matrix(workspace_id).await?;
         let pool = self.workspace_pool(workspace_id).await?;
         let due = sqlx::query_as::<_, DecisionRow>(
             "SELECT decision_id, kind, state, session_id, run_id, task_id, effect_id, subject_json,
@@ -1153,9 +1441,10 @@ pub(crate) mod tests {
 
     use chrono::{DateTime, Utc};
     use serde_json::json;
+    use sqlx::SqlitePool;
     use tinyiothub_core::harness::{
-        EffectMutation, EffectState, ExecutionMode, HarnessEventInput, JobProjection, Transition,
-        TransitionPrecondition, WakeProjection,
+        DecisionKind, DecisionState, EffectMutation, EffectState, ExecutionMode, HarnessEventInput, JobProjection,
+        Transition, TransitionPrecondition, WakeProjection,
     };
 
     use crate::{Db, DbError};
@@ -1570,6 +1859,418 @@ pub(crate) mod tests {
             .expect("job state");
         assert_eq!(effect_version, 4);
         assert_eq!(job_state, "running");
+        fixture.close().await;
+    }
+
+    async fn reset_seeded_effect(fixture: &Fixture, state: EffectState) {
+        sqlx::query("DELETE FROM effect_intents")
+            .execute(&fixture.pool().await)
+            .await
+            .expect("clear seeded effect");
+        sqlx::query("DELETE FROM device_jobs")
+            .execute(&fixture.pool().await)
+            .await
+            .expect("clear seeded job");
+        fixture.seed_effect(state, 4).await;
+    }
+
+    async fn seed_decision(
+        fixture: &Fixture,
+        effect_id: &str,
+        kind: DecisionKind,
+        state: DecisionState,
+        answer: Option<&str>,
+        expires_at: Option<&str>,
+    ) {
+        sqlx::query(
+            "INSERT INTO decisions
+                (decision_id, kind, state, session_id, run_id, task_id, effect_id, subject_json,
+                 options_json, created_at, updated_at, expires_at, answer, answer_actor,
+                 answer_event_id, consumed_at, consumed_by)
+             VALUES (?, ?, ?, 'session-1', 'run-1', 'task-1', ?, '{}', '[]',
+                     '2026-11-03T00:00:00Z', '2026-11-03T00:00:00Z', ?, ?, ?, NULL,
+                     CASE WHEN ? = 'consumed' THEN '2026-11-03T00:00:00Z' END,
+                     CASE WHEN ? = 'consumed' THEN 'operator' END)",
+        )
+        .bind(format!("decision-{effect_id}-{}", state.as_str()))
+        .bind(kind.as_str())
+        .bind(state.as_str())
+        .bind(effect_id)
+        .bind(expires_at)
+        .bind(answer)
+        .bind(answer)
+        .bind(state.as_str())
+        .bind(state.as_str())
+        .execute(&fixture.pool().await)
+        .await
+        .expect("seed decision");
+    }
+
+    fn listed_recovery_cases() -> Vec<(EffectState, Option<(DecisionKind, DecisionState, Option<&'static str>)>)> {
+        use DecisionKind::{EffectReconciliation, ToolApproval};
+        use DecisionState::{Answered, Consumed, Expired, Requested, Withdrawn};
+        let mut cases = vec![
+            (EffectState::Prepared, None),
+            (EffectState::Prepared, Some((ToolApproval, Requested, None))),
+            (EffectState::Prepared, Some((ToolApproval, Answered, Some("approved")))),
+            (EffectState::Prepared, Some((ToolApproval, Answered, Some("denied")))),
+            (EffectState::Prepared, Some((ToolApproval, Expired, None))),
+            (EffectState::Prepared, Some((ToolApproval, Withdrawn, None))),
+            (EffectState::Dispatching, None),
+            (
+                EffectState::Dispatching,
+                Some((ToolApproval, Consumed, Some("approved"))),
+            ),
+            (EffectState::Dispatching, Some((ToolApproval, Consumed, Some("denied")))),
+            (EffectState::Dispatching, Some((EffectReconciliation, Requested, None))),
+            (
+                EffectState::Dispatching,
+                Some((EffectReconciliation, Answered, Some("applied"))),
+            ),
+            (
+                EffectState::Dispatching,
+                Some((EffectReconciliation, Answered, Some("not_applied"))),
+            ),
+            (EffectState::Cancelling, None),
+            (
+                EffectState::Cancelling,
+                Some((ToolApproval, Consumed, Some("approved"))),
+            ),
+            (EffectState::Cancelling, Some((ToolApproval, Consumed, Some("denied")))),
+            (EffectState::Cancelling, Some((EffectReconciliation, Requested, None))),
+            (EffectState::Unknown, None),
+            (EffectState::Unknown, Some((ToolApproval, Consumed, Some("approved")))),
+            (EffectState::Unknown, Some((ToolApproval, Consumed, Some("denied")))),
+            (EffectState::Unknown, Some((EffectReconciliation, Requested, None))),
+            (
+                EffectState::Unknown,
+                Some((EffectReconciliation, Answered, Some("applied"))),
+            ),
+            (
+                EffectState::Unknown,
+                Some((EffectReconciliation, Answered, Some("not_applied"))),
+            ),
+        ];
+        for terminal in [
+            EffectState::Completed,
+            EffectState::Failed,
+            EffectState::NotApplied,
+            EffectState::Cancelled,
+            EffectState::CancelledUnknown,
+        ] {
+            cases.push((terminal, None));
+            cases.push((terminal, Some((ToolApproval, Consumed, Some("approved")))));
+            cases.push((terminal, Some((ToolApproval, Consumed, Some("denied")))));
+            cases.push((terminal, Some((ToolApproval, Expired, None))));
+            cases.push((terminal, Some((ToolApproval, Withdrawn, None))));
+            cases.push((terminal, Some((EffectReconciliation, Consumed, Some("applied")))));
+            cases.push((terminal, Some((EffectReconciliation, Consumed, Some("not_applied")))));
+            cases.push((terminal, Some((EffectReconciliation, Withdrawn, None))));
+        }
+        cases
+    }
+
+    #[tokio::test]
+    async fn harness_recovery_matrix_accepts_every_listed_combination() {
+        for (effect_state, decision) in listed_recovery_cases() {
+            let fixture = Fixture::new().await;
+            reset_seeded_effect(&fixture, effect_state).await;
+            if let Some((kind, state, answer)) = decision {
+                seed_decision(&fixture, "effect-1", kind, state, answer, None).await;
+            }
+            let issue = fixture
+                .db
+                .find_invalid_recovery_state("ws-effects")
+                .await
+                .expect("classify matrix");
+            assert!(
+                issue.is_none(),
+                "listed combination was rejected: {effect_state:?} {decision:?}: {:?}",
+                issue.map(|issue| issue.reason)
+            );
+            fixture.close().await;
+        }
+    }
+
+    #[tokio::test]
+    async fn harness_recovery_matrix_rejects_unlisted_effect_decision_combinations() {
+        use DecisionKind::{EffectReconciliation, Other, ToolApproval};
+        use DecisionState::{Answered, Consumed, Expired, Requested, Withdrawn};
+        let invalid = vec![
+            (EffectState::Prepared, Some((EffectReconciliation, Requested, None))),
+            (EffectState::Prepared, Some((ToolApproval, Consumed, Some("approved")))),
+            (EffectState::Prepared, Some((Other, Requested, None))),
+            (EffectState::Dispatching, Some((ToolApproval, Requested, None))),
+            (
+                EffectState::Dispatching,
+                Some((ToolApproval, Answered, Some("approved"))),
+            ),
+            (EffectState::Dispatching, Some((Other, Answered, Some("applied")))),
+            (
+                EffectState::Cancelling,
+                Some((ToolApproval, Answered, Some("approved"))),
+            ),
+            (
+                EffectState::Cancelling,
+                Some((EffectReconciliation, Answered, Some("applied"))),
+            ),
+            (EffectState::Cancelling, Some((Other, Consumed, None))),
+            (EffectState::Unknown, Some((ToolApproval, Requested, None))),
+            (EffectState::Unknown, Some((ToolApproval, Answered, Some("approved")))),
+            (EffectState::Unknown, Some((EffectReconciliation, Expired, None))),
+            (EffectState::Unknown, Some((EffectReconciliation, Withdrawn, None))),
+            (
+                EffectState::Unknown,
+                Some((EffectReconciliation, Answered, Some("approved"))),
+            ),
+            (EffectState::Unknown, Some((Other, Requested, None))),
+            (EffectState::Completed, Some((EffectReconciliation, Requested, None))),
+            (
+                EffectState::Completed,
+                Some((EffectReconciliation, Answered, Some("applied"))),
+            ),
+            (EffectState::Completed, Some((ToolApproval, Requested, None))),
+            (EffectState::Completed, Some((ToolApproval, Answered, Some("approved")))),
+            (EffectState::Completed, Some((Other, Requested, None))),
+            (EffectState::Failed, Some((EffectReconciliation, Requested, None))),
+        ];
+        for (effect_state, decision) in invalid {
+            let fixture = Fixture::new().await;
+            reset_seeded_effect(&fixture, effect_state).await;
+            let (kind, state, answer) = decision.expect("decision case");
+            seed_decision(&fixture, "effect-1", kind, state, answer, None).await;
+            let issue = fixture
+                .db
+                .find_invalid_recovery_state("ws-effects")
+                .await
+                .expect("classify matrix")
+                .unwrap_or_else(|| panic!("unlisted combination was accepted: {effect_state:?} {kind:?}/{state:?}"));
+            assert!(!issue.reason.is_empty());
+            fixture.close().await;
+        }
+    }
+
+    #[tokio::test]
+    async fn harness_recovery_matrix_rejects_corrupt_persisted_states() {
+        let fixture = Fixture::new().await;
+        sqlx::query("INSERT INTO commands
+                (command_id, kind, target_task_id, target_run_id, actor, payload_json, created_at, expires_at, state)
+             VALUES ('cmd-corrupt', 'steer', 'task-1', 'run-1', 'operator', '{}', '2026-11-03T00:00:00Z', NULL, 'paused')")
+            .execute(&fixture.pool().await)
+            .await
+            .expect("seed corrupt command");
+        let issue = fixture
+            .db
+            .find_invalid_recovery_state("ws-effects")
+            .await
+            .expect("classify matrix")
+            .expect("unknown persisted command state is not a valid matrix row");
+        assert!(issue.command_state.as_deref() == Some("paused"));
+        fixture.close().await;
+    }
+
+    // Each command kind is valid in each terminal/requested state; the matrix
+    // only rejects values outside the persisted enum, never a listed row.
+    #[tokio::test]
+    async fn harness_recovery_matrix_accepts_every_persisted_command_kind_and_state() {
+        let fixture = Fixture::new().await;
+        let kinds = ["steer", "interrupt", "pause", "cancel", "queue"];
+        let states = ["requested", "consumed", "rejected", "superseded", "expired"];
+        for (kind_index, kind) in kinds.iter().enumerate() {
+            for (state_index, state) in states.iter().enumerate() {
+                sqlx::query(
+                    "INSERT INTO commands
+                        (command_id, kind, target_task_id, target_run_id, actor, payload_json,
+                         created_at, expires_at, state)
+                     VALUES (?, ?, 'task-1', 'run-1', 'operator', '{}',
+                             '2026-11-03T00:00:00Z', NULL, ?)",
+                )
+                .bind(format!("cmd-{kind_index}-{state_index}"))
+                .bind(kind)
+                .bind(state)
+                .execute(&fixture.pool().await)
+                .await
+                .expect("seed listed command state");
+            }
+        }
+        let issue = fixture
+            .db
+            .find_invalid_recovery_state("ws-effects")
+            .await
+            .expect("classify matrix");
+        assert!(
+            issue.is_none(),
+            "listed command kinds/states must stay recoverable: {issue:?}"
+        );
+        fixture.close().await;
+
+        let unknown_kind = Fixture::new().await;
+        sqlx::query(
+            "INSERT INTO commands
+                (command_id, kind, target_task_id, target_run_id, actor, payload_json,
+                 created_at, expires_at, state)
+             VALUES ('cmd-unknown-kind', 'mystery', 'task-1', 'run-1', 'operator', '{}',
+                     '2026-11-03T00:00:00Z', NULL, 'requested')",
+        )
+        .execute(&unknown_kind.pool().await)
+        .await
+        .expect("seed unknown command kind");
+        let issue = unknown_kind
+            .db
+            .find_invalid_recovery_state("ws-effects")
+            .await
+            .expect("classify matrix")
+            .expect("unknown command kind is invalid");
+        assert_eq!(issue.command_kind.as_deref(), Some("mystery"));
+        unknown_kind.close().await;
+    }
+
+    #[tokio::test]
+    async fn harness_recovery_matrix_rejects_unknown_persisted_effect_and_decision_states() {
+        let unknown_effect = Fixture::new().await;
+        sqlx::query("UPDATE effect_intents SET state = 'mystery' WHERE effect_id = 'effect-1'")
+            .execute(&unknown_effect.pool().await)
+            .await
+            .expect("corrupt effect state");
+        let issue = unknown_effect
+            .db
+            .find_invalid_recovery_state("ws-effects")
+            .await
+            .expect("classify matrix")
+            .expect("unknown effect state is invalid");
+        assert!(issue.reason.contains("unknown persisted effect state"), "{issue:?}");
+        unknown_effect.close().await;
+
+        let unknown_decision = Fixture::new().await;
+        sqlx::query(
+            "INSERT INTO decisions
+                (decision_id, kind, state, session_id, run_id, task_id, effect_id, subject_json,
+                 options_json, created_at, updated_at, expires_at)
+             VALUES ('decision-corrupt', 'mystery', 'requested', 'session-1', 'run-1', 'task-1',
+                     'effect-1', '{}', '[]', '2026-11-03T00:00:00Z', '2026-11-03T00:00:00Z', NULL)",
+        )
+        .execute(&unknown_decision.pool().await)
+        .await
+        .expect("corrupt decision rows");
+        let issue = unknown_decision
+            .db
+            .find_invalid_recovery_state("ws-effects")
+            .await
+            .expect("classify matrix")
+            .expect("unknown decision state is invalid");
+        assert!(issue.reason.contains("unknown persisted decision"), "{issue:?}");
+        unknown_decision.close().await;
+    }
+
+    #[tokio::test]
+    async fn harness_recovery_matrix_validates_recovery_from_origin() {
+        let valid = Fixture::new().await;
+        reset_seeded_effect(&valid, EffectState::Unknown).await;
+        sqlx::query("UPDATE effect_intents SET recovery_from = 'cancelling' WHERE effect_id = 'effect-1'")
+            .execute(&valid.pool().await)
+            .await
+            .expect("cancelling origin");
+        seed_decision(
+            &valid,
+            "effect-1",
+            DecisionKind::EffectReconciliation,
+            DecisionState::Requested,
+            None,
+            None,
+        )
+        .await;
+        let issue = valid
+            .db
+            .find_invalid_recovery_state("ws-effects")
+            .await
+            .expect("classify matrix");
+        assert!(issue.is_none(), "cancelling origin must stay recoverable: {issue:?}");
+        valid.close().await;
+
+        for origin in ["prepared", "dispatching", "completed"] {
+            let invalid = Fixture::new().await;
+            reset_seeded_effect(&invalid, EffectState::Unknown).await;
+            sqlx::query("UPDATE effect_intents SET recovery_from = ? WHERE effect_id = 'effect-1'")
+                .bind(origin)
+                .execute(&invalid.pool().await)
+                .await
+                .expect("invalid origin");
+            let issue = invalid
+                .db
+                .find_invalid_recovery_state("ws-effects")
+                .await
+                .expect("classify matrix")
+                .unwrap_or_else(|| panic!("recovery_from={origin} must be rejected on unknown"));
+            assert!(issue.reason.contains("recover from"), "unexpected reason: {issue:?}");
+            invalid.close().await;
+        }
+    }
+
+    #[tokio::test]
+    async fn harness_recovery_invalid_state_writes_event_and_blocks_dispatch_and_consume() {
+        let fixture = Fixture::new().await;
+        reset_seeded_effect(&fixture, EffectState::Prepared).await;
+        seed_decision(
+            &fixture,
+            "effect-1",
+            DecisionKind::EffectReconciliation,
+            DecisionState::Requested,
+            None,
+            None,
+        )
+        .await;
+        sqlx::query("INSERT INTO commands
+                (command_id, kind, target_task_id, target_run_id, actor, payload_json, created_at, expires_at, state)
+             VALUES ('cmd-blocked', 'steer', 'task-1', 'run-1', 'operator', '{}', '2026-11-03T00:00:00Z', NULL, 'requested')")
+            .execute(&fixture.pool().await)
+            .await
+            .expect("seed command");
+        let db_path = fixture.db.workspace_store_root.join("ws-effects/harness/harness.db");
+
+        let error = fixture
+            .db
+            .guard_recovery_matrix("ws-effects")
+            .await
+            .expect_err("invalid persisted combination must fail closed");
+        assert!(
+            error.to_string().contains("recovery.invalid_state"),
+            "unexpected error: {error}"
+        );
+        let error = fixture
+            .db
+            .workflow_dispatch_permitted("ws-effects", "effect-1")
+            .await
+            .expect_err("dispatch is forbidden after invalid state");
+        assert!(error.to_string().contains("unavailable"), "unexpected error: {error}");
+        let error = fixture
+            .db
+            .consume_next_command("ws-effects", "task-1", at())
+            .await
+            .expect_err("command consume is forbidden after invalid state");
+        assert!(error.to_string().contains("unavailable"), "unexpected error: {error}");
+
+        // Read the raw workspace file after the pool was closed: the durable
+        // audit event exists and both persisted states were left untouched.
+        let raw = SqlitePool::connect(&format!("sqlite:{}", db_path.display()))
+            .await
+            .expect("raw workspace database");
+        let events: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM session_events WHERE type = 'recovery.invalid_state'")
+                .fetch_one(&raw)
+                .await
+                .expect("invalid state event");
+        let effect_state: String = sqlx::query_scalar("SELECT state FROM effect_intents WHERE effect_id = 'effect-1'")
+            .fetch_one(&raw)
+            .await
+            .expect("effect untouched");
+        let command_state: String = sqlx::query_scalar("SELECT state FROM commands WHERE command_id = 'cmd-blocked'")
+            .fetch_one(&raw)
+            .await
+            .expect("command untouched");
+        raw.close().await;
+        assert_eq!(events, 1);
+        assert_eq!(effect_state, "prepared");
+        assert_eq!(command_state, "requested");
         fixture.close().await;
     }
 }

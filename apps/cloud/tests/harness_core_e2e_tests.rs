@@ -526,6 +526,207 @@ async fn effect_recovery_restore_fences_prepared_and_approved_without_replay() {
 }
 
 #[tokio::test]
+async fn effect_recovery_invalid_matrix_fails_closed_without_dispatch_consume_or_repair() {
+    let fixture = fixture().await;
+    seed_effect(&fixture, "effect-invalid", EffectState::Prepared, "running").await;
+    seed_decision(
+        &fixture,
+        "effect-invalid",
+        "effect_reconciliation",
+        DecisionState::Requested,
+        None,
+        None,
+    )
+    .await;
+    sqlx::query(
+        "INSERT INTO commands
+            (command_id, kind, target_task_id, target_run_id, actor, payload_json, created_at, expires_at, state)
+         VALUES ('cmd-invalid-matrix', 'steer', 'effect-invalid', 'run-effect-invalid', 'operator',
+                 '{\"guidance\":\"continue\"}', ?, NULL, 'requested')",
+    )
+    .bind(at().to_rfc3339())
+    .execute(&fixture.workspace_pool().await)
+    .await
+    .expect("seed requested command");
+
+    let reconciler = ScriptedReconciler::new(ReconcileOutcome::Settled(json!({"replayed": true})));
+    let host = EffectRecovery::new(Arc::new(fixture.db.clone()));
+    let error = host
+        .recover_workspace(WS, RecoveryMode::Restart, &reconciler)
+        .await
+        .expect_err("unlisted persisted combination must fail closed");
+    assert!(error.contains("recovery.invalid_state"), "unexpected error: {error}");
+    assert!(
+        reconciler.calls.lock().expect("calls").is_empty(),
+        "an invalid matrix row must be rejected before reconciliation"
+    );
+    let second = host
+        .recover_workspace(WS, RecoveryMode::Restart, &reconciler)
+        .await
+        .expect_err("unavailable workspace cannot retry recovery");
+    assert!(second.contains("unavailable"), "unexpected error: {second}");
+
+    let raw = sqlx::SqlitePool::connect(&format!("sqlite:{}", fixture.database_path().display()))
+        .await
+        .expect("raw workspace database");
+    let invalid_events: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM session_events WHERE type = 'recovery.invalid_state'")
+            .fetch_one(&raw)
+            .await
+            .expect("invalid state event");
+    let effect_state: String =
+        sqlx::query_scalar("SELECT state FROM effect_intents WHERE effect_id = 'effect-invalid'")
+            .fetch_one(&raw)
+            .await
+            .expect("effect state");
+    let decision_state: String = sqlx::query_scalar("SELECT state FROM decisions WHERE effect_id = 'effect-invalid'")
+        .fetch_one(&raw)
+        .await
+        .expect("decision state");
+    let command_state: String =
+        sqlx::query_scalar("SELECT state FROM commands WHERE command_id = 'cmd-invalid-matrix'")
+            .fetch_one(&raw)
+            .await
+            .expect("command state");
+    let dispatching_events: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM session_events WHERE type = 'effect.dispatching'")
+            .fetch_one(&raw)
+            .await
+            .expect("dispatch events");
+    raw.close().await;
+    assert_eq!(invalid_events, 1);
+    assert_eq!(effect_state, "prepared");
+    assert_eq!(decision_state, "requested");
+    assert_eq!(command_state, "requested");
+    assert_eq!(dispatching_events, 0);
+    fixture.close().await;
+}
+
+#[tokio::test]
+async fn effect_recovery_restore_journal_never_replays_a_completed_external_action() {
+    let fixture = fixture().await;
+    seed_effect(&fixture, "effect-stale-backup", EffectState::Prepared, "running").await;
+    let backups = fixture.root.join("data/agents").join(WS).join("harness/backups");
+    tokio::fs::create_dir_all(&backups).await.expect("backups directory");
+    let backup = backups.join("stale-backup.db");
+    sqlx::query("VACUUM INTO ?")
+        .bind(backup.to_string_lossy().to_string())
+        .execute(&fixture.workspace_pool().await)
+        .await
+        .expect("self-contained backup");
+
+    // The outside world completes the action after the backup was taken.
+    sqlx::query(
+        "UPDATE effect_intents SET state = 'completed', result_json = '{\"position\":3}'
+         WHERE effect_id = 'effect-stale-backup'",
+    )
+    .execute(&fixture.workspace_pool().await)
+    .await
+    .expect("external action completes after backup");
+    sqlx::query("UPDATE device_jobs SET state = 'done' WHERE id = 'job-effect-stale-backup'")
+        .execute(&fixture.workspace_pool().await)
+        .await
+        .expect("external job completion");
+
+    fixture
+        .db
+        .restore_workspace_store(WS, &backup)
+        .await
+        .expect("journaled restore");
+    // The restored generation intentionally regresses to the pre-action row.
+    assert_eq!(effect_state(&fixture, "effect-stale-backup").await.0, "prepared");
+
+    let reconciler = ScriptedReconciler::new(ReconcileOutcome::Settled(json!({"position": 3})));
+    let host = EffectRecovery::new(Arc::new(fixture.db.clone()));
+    let report = host
+        .recover_workspace(WS, RecoveryMode::Restore, &reconciler)
+        .await
+        .expect("restore fences and reconciles");
+    assert!(
+        report.dispatch_permits.is_empty(),
+        "a restored prepared effect must never regain a dispatch permit"
+    );
+    assert_eq!(reconciler.calls.lock().expect("calls").len(), 1);
+    assert_eq!(effect_state(&fixture, "effect-stale-backup").await.0, "completed");
+    assert_eq!(event_count(&fixture, "effect.dispatching").await, 0);
+    assert_eq!(wake_count(&fixture, "effect-stale-backup").await, 1);
+
+    host.recover_workspace(WS, RecoveryMode::Restart, &reconciler)
+        .await
+        .expect("terminal recovery is a no-op");
+    assert_eq!(wake_count(&fixture, "effect-stale-backup").await, 1);
+    fixture.close().await;
+}
+
+#[tokio::test]
+async fn effect_recovery_startup_journal_selects_one_complete_generation_before_recovery() {
+    let fixture = fixture().await;
+    seed_effect(&fixture, "effect-startup-journal", EffectState::Dispatching, "running").await;
+    let base = fixture.root.join("data/agents").join(WS);
+    let live = base.join("harness");
+    let rollback = base.join("harness.rollback");
+    let restore = base.join("harness.restore");
+    tokio::fs::create_dir_all(&restore)
+        .await
+        .expect("create restore staging");
+    sqlx::query("VACUUM INTO ?")
+        .bind(restore.join("harness.db").to_string_lossy().to_string())
+        .execute(&fixture.workspace_pool().await)
+        .await
+        .expect("stage a self-contained restore generation");
+    fixture
+        .db
+        .close_workspace_store(WS)
+        .await
+        .expect("close store for crash simulation");
+    tokio::fs::rename(&live, &rollback)
+        .await
+        .expect("simulate live->rollback rename");
+    sqlx::query(
+        "INSERT INTO harness_restore_journal
+            (workspace_id, epoch, phase, backup_path, rollback_path, restore_path, updated_at)
+         VALUES (?, 1, 'live_renamed', ?, ?, ?, ?)",
+    )
+    .bind(WS)
+    .bind(base.join("harness/backups/snapshot.db").to_string_lossy().to_string())
+    .bind(rollback.to_string_lossy().to_string())
+    .bind(restore.to_string_lossy().to_string())
+    .bind(at().to_rfc3339())
+    .execute(fixture.db.pool())
+    .await
+    .expect("persist crashed restore journal");
+
+    // A crashed process restarts with an empty workspace-store cache; reuse
+    // only the platform registry pool.
+    let restarted = tinyiothub_storage::Db::new(fixture.db.pool().clone())
+        .with_workspace_store_root(fixture.root.join("data/agents"));
+    tinyiothub_cloud::bootstrap::reconcile_harness_runs(&restarted).await;
+
+    assert!(live.join("harness.db").is_file(), "startup must finish the swap");
+    assert!(
+        !rollback.exists(),
+        "startup recovery keeps exactly one complete generation"
+    );
+    let journal: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM harness_restore_journal WHERE workspace_id = ?")
+        .bind(WS)
+        .fetch_one(fixture.db.pool())
+        .await
+        .expect("journal cleared");
+    assert_eq!(journal, 0);
+    let effect_state: String = sqlx::query_scalar("SELECT state FROM effect_intents WHERE effect_id = ?")
+        .bind("effect-startup-journal")
+        .fetch_one(&restarted.workspace_pool_for_testing(WS).await.expect("recovered store"))
+        .await
+        .expect("recovered store readable");
+    assert_eq!(effect_state, "dispatching");
+    restarted
+        .close_workspace_store(WS)
+        .await
+        .expect("close restarted store");
+    fixture.close().await;
+}
+
+#[tokio::test]
 async fn effect_recovery_tool_approval_expiry_settles_prepared_effect_atomically() {
     let fixture = fixture().await;
     seed_effect(&fixture, "effect-expired", EffectState::Prepared, "running").await;

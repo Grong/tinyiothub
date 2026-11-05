@@ -340,6 +340,13 @@ pub async fn reconcile_zombie_runs(db: &Db, runtime: &AgentRuntime) {
 /// without a store is skipped, so recovery never creates empty stores.
 pub async fn reconcile_harness_runs(db: &Db) {
     let now = chrono::Utc::now();
+    match db.recover_restore_journals().await {
+        Ok(outcomes) if !outcomes.is_empty() => {
+            info!(count = outcomes.len(), "startup restore journal recovery completed");
+        }
+        Ok(_) => {}
+        Err(error) => warn!(%error, "startup restore journal recovery failed"),
+    }
     match db.find_all_workspace_ids().await {
         Ok(workspace_ids) => {
             for workspace_id in workspace_ids {

@@ -139,6 +139,7 @@ impl WorkflowControls {
     }
 
     pub async fn cancel(&self, task_id: &str) -> Result<(), DbError> {
+        self.db.guard_recovery_matrix(&self.workspace_id).await?;
         let task_ids = self.db.cancel_workflow_task(&self.workspace_id, task_id).await?;
         if task_ids.is_empty() {
             return Ok(());

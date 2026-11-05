@@ -378,7 +378,8 @@ impl Db {
             .join(workspace_id)
             .join("harness")
             .join("harness.db");
-        if !tokio::fs::try_exists(&path).await.unwrap_or(false) {
+        let pending_restore = self.restore_journal_row(workspace_id).await?.is_some();
+        if !pending_restore && !tokio::fs::try_exists(&path).await.unwrap_or(false) {
             return Ok(Vec::new());
         }
         let pool = self.workspace_pool(workspace_id).await?;

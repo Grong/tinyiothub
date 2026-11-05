@@ -542,6 +542,7 @@ impl Db {
         target_task_id: &str,
         now: DateTime<Utc>,
     ) -> Result<Option<HarnessCommand>> {
+        self.guard_recovery_matrix(workspace_id).await?;
         let pool = self.workspace_pool(workspace_id).await?;
         consume_once(&pool, workspace_id, target_task_id, now).await
     }
@@ -1040,6 +1041,88 @@ mod tests {
             .await
             .expect("task version");
         assert_eq!(version, 1);
+        fixture.close().await;
+    }
+
+    #[tokio::test]
+    async fn harness_command_invalid_recovery_matrix_blocks_consume_without_side_effects() {
+        let fixture = Fixture::new().await;
+        fixture.seed_target("task-invalid", "running", "running").await;
+        sqlx::query(
+            "INSERT INTO effect_intents
+                (effect_id, session_id, task_id, run_id, tool_call_id, tool_name, request_json,
+                 request_digest, idempotency_key, external_ref, state, recovery_from, state_version,
+                 result_json, created_at, updated_at)
+             VALUES ('effect-invalid', 'session-1', 'task-invalid', 'run-task-invalid', 'call-1',
+                     'set_speed', '{}', 'digest-1', 'effect-invalid', NULL, 'prepared', NULL, 1,
+                     NULL, ?, ?)",
+        )
+        .bind(at().to_rfc3339())
+        .bind(at().to_rfc3339())
+        .execute(&fixture.pool().await)
+        .await
+        .expect("seed invalid effect");
+        sqlx::query(
+            "INSERT INTO decisions
+                (decision_id, kind, state, session_id, run_id, task_id, effect_id, subject_json,
+                 options_json, created_at, updated_at, expires_at, answer, answer_actor,
+                 answer_event_id, consumed_at, consumed_by)
+             VALUES ('decision-invalid', 'effect_reconciliation', 'requested', 'session-1',
+                     'run-task-invalid', 'task-invalid', 'effect-invalid', '{}', '[]', ?, ?, NULL,
+                     NULL, NULL, NULL, NULL, NULL)",
+        )
+        .bind(at().to_rfc3339())
+        .bind(at().to_rfc3339())
+        .execute(&fixture.pool().await)
+        .await
+        .expect("seed invalid decision");
+        fixture
+            .request(command(
+                "cmd-invalid",
+                CommandKind::Steer,
+                "task-invalid",
+                json!({"guidance":"next"}),
+            ))
+            .await;
+
+        let error = fixture
+            .db
+            .consume_next_command(WS, "task-invalid", at())
+            .await
+            .expect_err("invalid persisted matrix blocks command consume");
+        assert!(
+            error.to_string().contains("recovery.invalid_state"),
+            "unexpected error: {error}"
+        );
+
+        let raw = sqlx::SqlitePool::connect(&format!(
+            "sqlite:{}",
+            fixture
+                .root
+                .join("data/agents")
+                .join(WS)
+                .join("harness/harness.db")
+                .display()
+        ))
+        .await
+        .expect("raw workspace database");
+        let command_state: String = sqlx::query_scalar("SELECT state FROM commands WHERE command_id = 'cmd-invalid'")
+            .fetch_one(&raw)
+            .await
+            .expect("command untouched");
+        let consumed_events: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM session_events WHERE type = 'command.consumed'")
+                .fetch_one(&raw)
+                .await
+                .expect("no consume event");
+        let wake_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM task_wake_outbox")
+            .fetch_one(&raw)
+            .await
+            .expect("no wake");
+        raw.close().await;
+        assert_eq!(command_state, "requested");
+        assert_eq!(consumed_events, 0);
+        assert_eq!(wake_count, 0);
         fixture.close().await;
     }
 }

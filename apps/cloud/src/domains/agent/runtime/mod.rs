@@ -202,6 +202,12 @@ impl EffectRecovery {
         mode: RecoveryMode,
         reconciler: &dyn EffectReconciler,
     ) -> Result<RecoveryReport, String> {
+        // Fail closed on any persisted row outside the listed recovery
+        // matrix before a single dispatch permit or decision consume occurs.
+        self.db
+            .guard_recovery_matrix(workspace_id)
+            .await
+            .map_err(|error| error.to_string())?;
         let items = self
             .db
             .list_effect_recovery(workspace_id)
@@ -291,6 +297,10 @@ impl EffectRecovery {
     }
 
     pub async fn request_cancellation(&self, workspace_id: &str, effect_id: &str) -> Result<(), String> {
+        self.db
+            .guard_recovery_matrix(workspace_id)
+            .await
+            .map_err(|error| error.to_string())?;
         if self
             .db
             .effect_intent(workspace_id, effect_id)

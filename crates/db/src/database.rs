@@ -34,6 +34,14 @@ impl Db {
         }
     }
 
+    /// Test-only: point at an isolated workspace root while sharing the
+    /// platform pool. Used to simulate a process restart (fresh store map).
+    #[cfg(any(test, feature = "testing"))]
+    pub fn with_workspace_store_root(mut self, root: std::path::PathBuf) -> Self {
+        self.workspace_store_root = root;
+        self
+    }
+
     #[cfg(any(test, feature = "testing"))]
     pub fn with_runtime_projection_probe(
         &self,

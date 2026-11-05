@@ -4,9 +4,11 @@ use std::{
     sync::Arc,
 };
 
+use chrono::{DateTime, Utc};
 use sqlx::{
     SqlSafeStr, SqlitePool,
     migrate::{Migration, MigrationType, Migrator},
+    sqlite::SqliteConnectOptions,
 };
 #[cfg(test)]
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -37,6 +39,68 @@ pub(crate) struct WorkspaceStoreTestHooks {
     pub open_started: Notify,
     pub open_release: Notify,
     pub fail_open: AtomicBool,
+}
+
+/// Restore journal phase. Each phase is persisted to the platform registry
+/// before (and after) the corresponding filesystem rename, so a crash can be
+/// classified without opening either SQLite generation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RestorePhase {
+    /// Journal exists; live generation untouched, staging not yet validated.
+    Prepared,
+    /// Self-contained restore generation validated in `harness.restore/`.
+    Staged,
+    /// Live directory atomically renamed to `harness.rollback/`.
+    LiveRenamed,
+    /// `harness.restore/` atomically renamed to `harness/`.
+    Swapped,
+}
+
+impl RestorePhase {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Prepared => "prepared",
+            Self::Staged => "staged",
+            Self::LiveRenamed => "live_renamed",
+            Self::Swapped => "swapped",
+        }
+    }
+
+    pub fn from_db(value: &str) -> Option<Self> {
+        Some(match value {
+            "prepared" => Self::Prepared,
+            "staged" => Self::Staged,
+            "live_renamed" => Self::LiveRenamed,
+            "swapped" => Self::Swapped,
+            _ => return None,
+        })
+    }
+}
+
+/// One platform-registry restore journal row. Paths are diagnostic only:
+/// recovery always derives canonical paths from the registered workspace id.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RestoreJournalRow {
+    pub workspace_id: String,
+    pub epoch: i64,
+    pub phase: String,
+    pub backup_path: String,
+    pub rollback_path: String,
+    pub restore_path: String,
+    pub updated_at: String,
+}
+
+/// Outcome of classifying one journal row at startup.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RestoreRecovery {
+    /// The staged restore generation won and now serves as `harness/`.
+    CompletedForward,
+    /// The complete live generation was kept (restore had not started).
+    KeptLive,
+    /// The retained generation was restored after an incomplete swap.
+    RolledBack,
+    /// No complete generation exists; the workspace stays unavailable.
+    Unavailable,
 }
 
 pub(crate) fn default_workspace_store_root() -> PathBuf {
@@ -77,6 +141,44 @@ pub(crate) fn validate_workspace_id(workspace_id: &str) -> Result<()> {
         });
     }
     Ok(())
+}
+
+async fn sqlite_generation_is_complete(path: &Path) -> bool {
+    if !tokio::fs::try_exists(path).await.unwrap_or(false) {
+        return false;
+    }
+    // Open read-write without creation so a crashed WAL generation can be
+    // recovered and checked. The connection never sees another directory's
+    // -wal/-shm; it only validates the files inside `path`'s own directory.
+    let options = SqliteConnectOptions::new().filename(path).create_if_missing(false);
+    let Ok(pool) = SqlitePool::connect_with(options).await else {
+        return false;
+    };
+    let check = sqlx::query_scalar::<_, String>("PRAGMA integrity_check")
+        .fetch_one(&pool)
+        .await;
+    // SQLite accepts a zero-byte or freshly created file as an empty database
+    // and reports `integrity_check = ok`. A harness generation always carries
+    // migrated tables, so require at least one table; otherwise a crash before
+    // the copy wrote any bytes could select an empty generation over a good
+    // rollback generation.
+    let tables = sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM sqlite_master WHERE type = 'table'")
+        .fetch_one(&pool)
+        .await;
+    pool.close().await;
+    matches!(check, Ok(value) if value == "ok") && matches!(tables, Ok(count) if count > 0)
+}
+
+async fn directory_generation_is_complete(directory: &Path) -> bool {
+    sqlite_generation_is_complete(&directory.join("harness.db")).await
+}
+
+async fn remove_directory_if_present(directory: &Path) -> std::io::Result<()> {
+    match tokio::fs::remove_dir_all(directory).await {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(error),
+    }
 }
 
 async fn open_workspace_store(db: &Db, _workspace_id: &str, path: &Path) -> Result<SqlitePool> {
@@ -132,6 +234,29 @@ impl Db {
         workspace_id: &str,
         state: &mut WorkspaceStoreState,
     ) -> Result<SqlitePool> {
+        // A restore may have crashed between any two renames. Classify the
+        // journal before opening a generation so a partial swap can never mix
+        // a DB with another generation's WAL/SHM.
+        match self.restore_journal_row(workspace_id).await {
+            Ok(Some(row)) => match self.recover_restore_journal(&row).await {
+                Ok(RestoreRecovery::Unavailable) => {
+                    *state = WorkspaceStoreState::Unavailable;
+                    return Err(DbError::Internal(format!(
+                        "workspace restore has no complete generation: {workspace_id}"
+                    )));
+                }
+                Ok(RestoreRecovery::CompletedForward | RestoreRecovery::KeptLive | RestoreRecovery::RolledBack) => {}
+                Err(error) => {
+                    *state = WorkspaceStoreState::Unavailable;
+                    return Err(error);
+                }
+            },
+            Ok(None) => {}
+            Err(error) => {
+                *state = WorkspaceStoreState::Unavailable;
+                return Err(error);
+            }
+        }
         let path = self.workspace_store_root.join(workspace_id).join("harness/harness.db");
         match open_workspace_store(self, workspace_id, &path).await {
             Ok(pool) => {
@@ -201,6 +326,435 @@ impl Db {
             pool.close().await;
         }
         Ok(())
+    }
+
+    /// Degrade one workspace without touching any other. Used by the restore
+    /// failure contract and by `recovery.invalid_state`: the pool is closed so
+    /// no later dispatch or consume can reach an invalid persisted state.
+    pub async fn mark_workspace_unavailable(&self, workspace_id: &str, reason: &str) -> Result<()> {
+        let entry = self.workspace_store_entry(workspace_id).await;
+        let mut state = entry.lock().await;
+        let previous = std::mem::replace(&mut *state, WorkspaceStoreState::Unavailable);
+        if let WorkspaceStoreState::Available(pool) = previous {
+            pool.close().await;
+        }
+        tracing::error!(workspace_id, reason, "workspace marked unavailable");
+        Ok(())
+    }
+
+    pub async fn restore_journal_row(&self, workspace_id: &str) -> Result<Option<RestoreJournalRow>> {
+        let row = sqlx::query_as::<_, (String, i64, String, String, String, String, String)>(
+            "SELECT workspace_id, epoch, phase, backup_path, rollback_path, restore_path, updated_at
+             FROM harness_restore_journal WHERE workspace_id = ?",
+        )
+        .bind(workspace_id)
+        .fetch_optional(self.pool())
+        .await?;
+        Ok(row.map(|row| RestoreJournalRow {
+            workspace_id: row.0,
+            epoch: row.1,
+            phase: row.2,
+            backup_path: row.3,
+            rollback_path: row.4,
+            restore_path: row.5,
+            updated_at: row.6,
+        }))
+    }
+
+    async fn next_restore_epoch(&self, workspace_id: &str) -> Result<i64> {
+        let epoch: Option<i64> = sqlx::query_scalar("SELECT epoch FROM harness_restore_journal WHERE workspace_id = ?")
+            .bind(workspace_id)
+            .fetch_optional(self.pool())
+            .await?;
+        Ok(epoch.unwrap_or(0) + 1)
+    }
+
+    async fn write_restore_journal(
+        &self,
+        workspace_id: &str,
+        epoch: i64,
+        phase: RestorePhase,
+        backup_path: &Path,
+        updated_at: DateTime<Utc>,
+    ) -> Result<()> {
+        let base = self.workspace_store_root.join(workspace_id);
+        sqlx::query(
+            "INSERT INTO harness_restore_journal
+                (workspace_id, epoch, phase, backup_path, rollback_path, restore_path, updated_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?)
+             ON CONFLICT(workspace_id) DO UPDATE SET
+                epoch = excluded.epoch,
+                phase = excluded.phase,
+                backup_path = excluded.backup_path,
+                rollback_path = excluded.rollback_path,
+                restore_path = excluded.restore_path,
+                updated_at = excluded.updated_at",
+        )
+        .bind(workspace_id)
+        .bind(epoch)
+        .bind(phase.as_str())
+        .bind(backup_path.to_string_lossy().to_string())
+        .bind(base.join("harness.rollback").to_string_lossy().to_string())
+        .bind(base.join("harness.restore").to_string_lossy().to_string())
+        .bind(updated_at.to_rfc3339())
+        .execute(self.pool())
+        .await?;
+        Ok(())
+    }
+
+    async fn clear_restore_journal(&self, workspace_id: &str) -> Result<()> {
+        sqlx::query("DELETE FROM harness_restore_journal WHERE workspace_id = ?")
+            .bind(workspace_id)
+            .execute(self.pool())
+            .await?;
+        Ok(())
+    }
+
+    /// Classify one journal row using only complete-directory evidence. The
+    /// selected generation is moved into `harness/` with full-directory
+    /// atomic renames; a corrupt journal or a missing staging copy falls back
+    /// to the retained generation instead of mixing WAL files.
+    async fn recover_restore_journal(&self, row: &RestoreJournalRow) -> Result<RestoreRecovery> {
+        let base = self.workspace_store_root.join(&row.workspace_id);
+        let live = base.join("harness");
+        let rollback = base.join("harness.rollback");
+        let restore = base.join("harness.restore");
+        let live_ok = directory_generation_is_complete(&live).await;
+        let rollback_ok = directory_generation_is_complete(&rollback).await;
+        let restore_ok = directory_generation_is_complete(&restore).await;
+        let phase = RestorePhase::from_db(&row.phase);
+
+        let rename_into = |source: &Path, target: &Path| {
+            let source = source.to_path_buf();
+            let target = target.to_path_buf();
+            async move {
+                tokio::fs::rename(&source, &target)
+                    .await
+                    .map_err(|error| DbError::Internal(format!("restore rename failed: {error}")))
+            }
+        };
+
+        let outcome = match phase {
+            Some(RestorePhase::Prepared | RestorePhase::Staged) if live_ok => {
+                remove_directory_if_present(&restore)
+                    .await
+                    .map_err(|error| DbError::Internal(format!("restore cleanup failed: {error}")))?;
+                remove_directory_if_present(&rollback)
+                    .await
+                    .map_err(|error| DbError::Internal(format!("restore cleanup failed: {error}")))?;
+                RestoreRecovery::KeptLive
+            }
+            Some(RestorePhase::Prepared | RestorePhase::Staged) => {
+                if restore_ok {
+                    remove_directory_if_present(&live)
+                        .await
+                        .map_err(|error| DbError::Internal(format!("restore cleanup failed: {error}")))?;
+                    rename_into(&restore, &live).await?;
+                    remove_directory_if_present(&rollback)
+                        .await
+                        .map_err(|error| DbError::Internal(format!("restore cleanup failed: {error}")))?;
+                    RestoreRecovery::CompletedForward
+                } else if rollback_ok {
+                    remove_directory_if_present(&live)
+                        .await
+                        .map_err(|error| DbError::Internal(format!("restore cleanup failed: {error}")))?;
+                    rename_into(&rollback, &live).await?;
+                    RestoreRecovery::RolledBack
+                } else {
+                    return Ok(RestoreRecovery::Unavailable);
+                }
+            }
+            Some(RestorePhase::LiveRenamed) => {
+                if live_ok {
+                    // The forward rename completed even though the phase write
+                    // did not; the live directory is already the new generation.
+                    remove_directory_if_present(&rollback)
+                        .await
+                        .map_err(|error| DbError::Internal(format!("restore cleanup failed: {error}")))?;
+                    remove_directory_if_present(&restore)
+                        .await
+                        .map_err(|error| DbError::Internal(format!("restore cleanup failed: {error}")))?;
+                    RestoreRecovery::KeptLive
+                } else if restore_ok {
+                    remove_directory_if_present(&live)
+                        .await
+                        .map_err(|error| DbError::Internal(format!("restore cleanup failed: {error}")))?;
+                    rename_into(&restore, &live).await?;
+                    remove_directory_if_present(&rollback)
+                        .await
+                        .map_err(|error| DbError::Internal(format!("restore cleanup failed: {error}")))?;
+                    RestoreRecovery::CompletedForward
+                } else if rollback_ok {
+                    remove_directory_if_present(&live)
+                        .await
+                        .map_err(|error| DbError::Internal(format!("restore cleanup failed: {error}")))?;
+                    rename_into(&rollback, &live).await?;
+                    remove_directory_if_present(&restore)
+                        .await
+                        .map_err(|error| DbError::Internal(format!("restore cleanup failed: {error}")))?;
+                    RestoreRecovery::RolledBack
+                } else {
+                    return Ok(RestoreRecovery::Unavailable);
+                }
+            }
+            Some(RestorePhase::Swapped) => {
+                if live_ok {
+                    remove_directory_if_present(&rollback)
+                        .await
+                        .map_err(|error| DbError::Internal(format!("restore cleanup failed: {error}")))?;
+                    remove_directory_if_present(&restore)
+                        .await
+                        .map_err(|error| DbError::Internal(format!("restore cleanup failed: {error}")))?;
+                    RestoreRecovery::KeptLive
+                } else if rollback_ok {
+                    remove_directory_if_present(&live)
+                        .await
+                        .map_err(|error| DbError::Internal(format!("restore cleanup failed: {error}")))?;
+                    rename_into(&rollback, &live).await?;
+                    remove_directory_if_present(&restore)
+                        .await
+                        .map_err(|error| DbError::Internal(format!("restore cleanup failed: {error}")))?;
+                    RestoreRecovery::RolledBack
+                } else if restore_ok {
+                    remove_directory_if_present(&live)
+                        .await
+                        .map_err(|error| DbError::Internal(format!("restore cleanup failed: {error}")))?;
+                    rename_into(&restore, &live).await?;
+                    RestoreRecovery::CompletedForward
+                } else {
+                    return Ok(RestoreRecovery::Unavailable);
+                }
+            }
+            None => {
+                // Corrupt journal: trust only complete directories. Keep the
+                // live generation when it is intact; otherwise fall back to
+                // the retained rollback generation, never a mixed WAL pair.
+                if live_ok {
+                    remove_directory_if_present(&rollback)
+                        .await
+                        .map_err(|error| DbError::Internal(format!("restore cleanup failed: {error}")))?;
+                    remove_directory_if_present(&restore)
+                        .await
+                        .map_err(|error| DbError::Internal(format!("restore cleanup failed: {error}")))?;
+                    RestoreRecovery::KeptLive
+                } else if rollback_ok {
+                    remove_directory_if_present(&live)
+                        .await
+                        .map_err(|error| DbError::Internal(format!("restore cleanup failed: {error}")))?;
+                    rename_into(&rollback, &live).await?;
+                    remove_directory_if_present(&restore)
+                        .await
+                        .map_err(|error| DbError::Internal(format!("restore cleanup failed: {error}")))?;
+                    RestoreRecovery::RolledBack
+                } else if restore_ok {
+                    remove_directory_if_present(&live)
+                        .await
+                        .map_err(|error| DbError::Internal(format!("restore cleanup failed: {error}")))?;
+                    rename_into(&restore, &live).await?;
+                    RestoreRecovery::CompletedForward
+                } else {
+                    return Ok(RestoreRecovery::Unavailable);
+                }
+            }
+        };
+        self.clear_restore_journal(&row.workspace_id).await?;
+        tracing::warn!(
+            workspace_id = %row.workspace_id,
+            phase = %row.phase,
+            ?outcome,
+            "restore journal recovered"
+        );
+        Ok(outcome)
+    }
+
+    /// Startup scan for every pending restore journal (R29). Other workspaces
+    /// keep serving throughout; a workspace without any complete generation
+    /// is marked unavailable and keeps its journal for operators.
+    pub async fn recover_restore_journals(&self) -> Result<Vec<(String, RestoreRecovery)>> {
+        let rows = sqlx::query_as::<_, (String, i64, String, String, String, String, String)>(
+            "SELECT workspace_id, epoch, phase, backup_path, rollback_path, restore_path, updated_at
+             FROM harness_restore_journal ORDER BY workspace_id",
+        )
+        .fetch_all(self.pool())
+        .await?;
+        let mut outcomes = Vec::with_capacity(rows.len());
+        for row in rows {
+            let row = RestoreJournalRow {
+                workspace_id: row.0,
+                epoch: row.1,
+                phase: row.2,
+                backup_path: row.3,
+                rollback_path: row.4,
+                restore_path: row.5,
+                updated_at: row.6,
+            };
+            let workspace_id = row.workspace_id.clone();
+            match self.recover_restore_journal(&row).await {
+                Ok(RestoreRecovery::Unavailable) => {
+                    self.mark_workspace_unavailable(&workspace_id, "restore journal has no complete DB generation")
+                        .await?;
+                    outcomes.push((workspace_id, RestoreRecovery::Unavailable));
+                }
+                Ok(outcome) => outcomes.push((workspace_id, outcome)),
+                Err(error) => {
+                    tracing::error!(%workspace_id, %error, "restore journal recovery failed");
+                    self.mark_workspace_unavailable(&workspace_id, "restore journal recovery failed")
+                        .await?;
+                    outcomes.push((workspace_id, RestoreRecovery::Unavailable));
+                }
+            }
+        }
+        Ok(outcomes)
+    }
+
+    /// Crash-safe independent restore (R29). The journal is persisted before
+    /// every directory rename; the workspace pool is closed first, the staged
+    /// backup is validated as a self-contained SQLite file, and full
+    /// directories (never individual DB/WAL files) are atomically renamed.
+    pub async fn restore_workspace_store(&self, workspace_id: &str, backup_path: &Path) -> Result<()> {
+        validate_workspace_id(workspace_id)?;
+        self.ensure_registered_workspace(workspace_id).await?;
+        let base = self.workspace_store_root.join(workspace_id);
+        tokio::fs::create_dir_all(&base)
+            .await
+            .map_err(|error| DbError::Internal(format!("create workspace directory failed: {error}")))?;
+        let canonical_base = tokio::fs::canonicalize(&base)
+            .await
+            .map_err(|error| DbError::Internal(format!("resolve workspace directory failed: {error}")))?;
+        let canonical_backup = tokio::fs::canonicalize(backup_path)
+            .await
+            .map_err(|error| DbError::Validation {
+                message: format!("restore backup is missing: {error}"),
+            })?;
+        if !canonical_backup.starts_with(&canonical_base) {
+            return Err(DbError::Validation {
+                message: "restore backup must live inside the workspace directory".to_string(),
+            });
+        }
+        if !sqlite_generation_is_complete(&canonical_backup).await {
+            return Err(DbError::Validation {
+                message: "restore backup failed the SQLite integrity check".to_string(),
+            });
+        }
+
+        let live = base.join("harness");
+        let rollback = base.join("harness.rollback");
+        let restore = base.join("harness.restore");
+        let entry = self.workspace_store_entry(workspace_id).await;
+        let mut state = entry.lock().await;
+        let previous = std::mem::replace(&mut *state, WorkspaceStoreState::Unavailable);
+        if let WorkspaceStoreState::Available(pool) = previous {
+            pool.close().await;
+        }
+        let epoch = self.next_restore_epoch(workspace_id).await?;
+        self.write_restore_journal(
+            workspace_id,
+            epoch,
+            RestorePhase::Prepared,
+            &canonical_backup,
+            Utc::now(),
+        )
+        .await?;
+
+        let attempt: Result<()> = async {
+            remove_directory_if_present(&restore)
+                .await
+                .map_err(|error| DbError::Internal(format!("restore staging cleanup failed: {error}")))?;
+            tokio::fs::create_dir_all(&restore)
+                .await
+                .map_err(|error| DbError::Internal(format!("restore staging directory failed: {error}")))?;
+            tokio::fs::copy(&canonical_backup, restore.join("harness.db"))
+                .await
+                .map_err(|error| DbError::Internal(format!("restore staging copy failed: {error}")))?;
+            if !directory_generation_is_complete(&restore).await {
+                return Err(DbError::Internal(
+                    "restore staging failed the SQLite integrity check".to_string(),
+                ));
+            }
+            self.write_restore_journal(workspace_id, epoch, RestorePhase::Staged, &canonical_backup, Utc::now())
+                .await?;
+            remove_directory_if_present(&rollback)
+                .await
+                .map_err(|error| DbError::Internal(format!("restore rollback cleanup failed: {error}")))?;
+            if tokio::fs::try_exists(&live)
+                .await
+                .map_err(|error| DbError::Internal(format!("check live directory failed: {error}")))?
+            {
+                tokio::fs::rename(&live, &rollback)
+                    .await
+                    .map_err(|error| DbError::Internal(format!("live directory rename failed: {error}")))?;
+            }
+            self.write_restore_journal(
+                workspace_id,
+                epoch,
+                RestorePhase::LiveRenamed,
+                &canonical_backup,
+                Utc::now(),
+            )
+            .await?;
+            tokio::fs::rename(&restore, &live)
+                .await
+                .map_err(|error| DbError::Internal(format!("restore directory rename failed: {error}")))?;
+            self.write_restore_journal(
+                workspace_id,
+                epoch,
+                RestorePhase::Swapped,
+                &canonical_backup,
+                Utc::now(),
+            )
+            .await?;
+            // Open directly: the normal open path would classify and clear the
+            // journal we are still using for rollback.
+            let database = live.join("harness.db");
+            let pool = open_workspace_store(self, workspace_id, &database).await?;
+            *state = WorkspaceStoreState::Available(pool);
+            Ok(())
+        }
+        .await;
+
+        match attempt {
+            Ok(()) => {
+                let _ = remove_directory_if_present(&rollback).await;
+                let _ = remove_directory_if_present(&restore).await;
+                self.clear_restore_journal(workspace_id).await?;
+                Ok(())
+            }
+            Err(error) => {
+                tracing::error!(workspace_id, %error, "workspace restore failed; rolling back");
+                // Select exactly one complete generation: prefer the retained
+                // rollback generation when the swap already started; otherwise
+                // keep the intact live one; otherwise finish a complete staged
+                // restore. Never open a partially replaced directory.
+                let generation_ready = if directory_generation_is_complete(&rollback).await {
+                    let _ = remove_directory_if_present(&live).await;
+                    tokio::fs::rename(&rollback, &live).await.is_ok() && directory_generation_is_complete(&live).await
+                } else if directory_generation_is_complete(&live).await {
+                    true
+                } else if directory_generation_is_complete(&restore).await {
+                    let _ = remove_directory_if_present(&live).await;
+                    tokio::fs::rename(&restore, &live).await.is_ok() && directory_generation_is_complete(&live).await
+                } else {
+                    false
+                };
+                let _ = remove_directory_if_present(&restore).await;
+                if generation_ready {
+                    // Reopen the retained generation so a successful rollback
+                    // leaves a usable workspace instead of stranding it as
+                    // unavailable until an explicit create.
+                    self.clear_restore_journal(workspace_id).await.ok();
+                    match open_workspace_store(self, workspace_id, &live.join("harness.db")).await {
+                        Ok(pool) => *state = WorkspaceStoreState::Available(pool),
+                        Err(reopen_error) => {
+                            tracing::error!(workspace_id, error = %reopen_error, "rolled-back store reopen failed");
+                            *state = WorkspaceStoreState::Unavailable;
+                        }
+                    }
+                } else {
+                    *state = WorkspaceStoreState::Unavailable;
+                }
+                Err(error)
+            }
+        }
     }
 }
 
@@ -505,5 +1059,505 @@ mod tests {
             error.to_string().contains("closed"),
             "closed tombstone was lost: {error}"
         );
+    }
+
+    async fn write_generation(directory: &Path, marker: &str) {
+        tokio::fs::create_dir_all(directory)
+            .await
+            .expect("create generation directory");
+        let path = directory.join("harness.db");
+        let pool = SqlitePool::connect(&format!("sqlite:{}?mode=rwc", path.display()))
+            .await
+            .expect("open generation database");
+        sqlx::query("CREATE TABLE generation_marker (value TEXT NOT NULL)")
+            .execute(&pool)
+            .await
+            .expect("create marker table");
+        sqlx::query("INSERT INTO generation_marker (value) VALUES (?)")
+            .bind(marker)
+            .execute(&pool)
+            .await
+            .expect("write marker");
+        pool.close().await;
+    }
+
+    async fn read_marker(directory: &Path) -> Option<String> {
+        let path = directory.join("harness.db");
+        if !tokio::fs::try_exists(&path).await.unwrap_or(false) {
+            return None;
+        }
+        let pool = SqlitePool::connect(&format!("sqlite:{}?mode=ro", path.display()))
+            .await
+            .ok()?;
+        let value = sqlx::query_scalar::<_, String>("SELECT value FROM generation_marker")
+            .fetch_one(&pool)
+            .await
+            .ok();
+        pool.close().await;
+        value
+    }
+
+    fn workspace_base(root: &Path, workspace_id: &str) -> PathBuf {
+        root.join("data/agents").join(workspace_id)
+    }
+
+    async fn insert_journal(fixture: &HarnessWorkspaceFixture, workspace_id: &str, phase: &str) {
+        let base = workspace_base(&fixture.root, workspace_id);
+        sqlx::query(
+            "INSERT INTO harness_restore_journal
+                (workspace_id, epoch, phase, backup_path, rollback_path, restore_path, updated_at)
+             VALUES (?, 1, ?, ?, ?, ?, '2026-11-05T00:00:00Z')",
+        )
+        .bind(workspace_id)
+        .bind(phase)
+        .bind(base.join("harness/backups/snapshot.db").to_string_lossy().to_string())
+        .bind(base.join("harness.rollback").to_string_lossy().to_string())
+        .bind(base.join("harness.restore").to_string_lossy().to_string())
+        .execute(fixture.db.pool())
+        .await
+        .expect("insert restore journal");
+    }
+
+    async fn journal_count(fixture: &HarnessWorkspaceFixture, workspace_id: &str) -> i64 {
+        sqlx::query_scalar("SELECT COUNT(*) FROM harness_restore_journal WHERE workspace_id = ?")
+            .bind(workspace_id)
+            .fetch_one(fixture.db.pool())
+            .await
+            .expect("journal count")
+    }
+
+    #[tokio::test]
+    async fn restore_journal_crash_before_rename_keeps_live_generation() {
+        let fixture = HarnessWorkspaceFixture::new(&["ws-journal-before"]).await;
+        let base = workspace_base(&fixture.root, "ws-journal-before");
+        write_generation(&base.join("harness"), "live-old").await;
+        write_generation(&base.join("harness.restore"), "restore-new").await;
+        insert_journal(&fixture, "ws-journal-before", "staged").await;
+
+        let outcomes = fixture.db.recover_restore_journals().await.expect("recover journal");
+        assert_eq!(outcomes.len(), 1);
+        assert_eq!(read_marker(&base.join("harness")).await.as_deref(), Some("live-old"));
+        assert!(
+            !tokio::fs::try_exists(base.join("harness.restore"))
+                .await
+                .expect("staging")
+        );
+        assert_eq!(journal_count(&fixture, "ws-journal-before").await, 0);
+        let pool = fixture
+            .db
+            .workspace_pool("ws-journal-before")
+            .await
+            .expect("live store");
+        pool.close().await;
+        fixture.close().await;
+    }
+
+    #[tokio::test]
+    async fn restore_journal_crash_between_renames_finishes_forward_when_restore_is_complete() {
+        let fixture = HarnessWorkspaceFixture::new(&["ws-journal-between"]).await;
+        let base = workspace_base(&fixture.root, "ws-journal-between");
+        write_generation(&base.join("harness.rollback"), "live-old").await;
+        write_generation(&base.join("harness.restore"), "restore-new").await;
+        insert_journal(&fixture, "ws-journal-between", "live_renamed").await;
+
+        fixture.db.recover_restore_journals().await.expect("recover journal");
+        assert_eq!(read_marker(&base.join("harness")).await.as_deref(), Some("restore-new"));
+        assert!(
+            !tokio::fs::try_exists(base.join("harness.rollback"))
+                .await
+                .expect("rollback")
+        );
+        assert_eq!(journal_count(&fixture, "ws-journal-between").await, 0);
+        fixture.close().await;
+    }
+
+    #[tokio::test]
+    async fn restore_journal_crash_between_renames_rolls_back_when_restore_is_missing() {
+        let fixture = HarnessWorkspaceFixture::new(&["ws-journal-missing"]).await;
+        let base = workspace_base(&fixture.root, "ws-journal-missing");
+        write_generation(&base.join("harness.rollback"), "live-old").await;
+        insert_journal(&fixture, "ws-journal-missing", "live_renamed").await;
+
+        fixture.db.recover_restore_journals().await.expect("recover journal");
+        assert_eq!(read_marker(&base.join("harness")).await.as_deref(), Some("live-old"));
+        assert_eq!(journal_count(&fixture, "ws-journal-missing").await, 0);
+        fixture.close().await;
+    }
+
+    #[tokio::test]
+    async fn restore_journal_crash_after_rename_keeps_the_new_complete_generation() {
+        let fixture = HarnessWorkspaceFixture::new(&["ws-journal-after"]).await;
+        let base = workspace_base(&fixture.root, "ws-journal-after");
+        write_generation(&base.join("harness"), "restore-new").await;
+        write_generation(&base.join("harness.rollback"), "live-old").await;
+        insert_journal(&fixture, "ws-journal-after", "swapped").await;
+
+        fixture.db.recover_restore_journals().await.expect("recover journal");
+        assert_eq!(read_marker(&base.join("harness")).await.as_deref(), Some("restore-new"));
+        assert!(
+            !tokio::fs::try_exists(base.join("harness.rollback"))
+                .await
+                .expect("rollback")
+        );
+        assert_eq!(journal_count(&fixture, "ws-journal-after").await, 0);
+        fixture.close().await;
+    }
+
+    // Crash window: live->rollback rename completed but the journal still
+    // says "staged". The complete restore generation must still win.
+    #[tokio::test]
+    async fn restore_journal_crash_after_first_rename_before_phase_write_finishes_forward() {
+        let fixture = HarnessWorkspaceFixture::new(&["ws-journal-gap-first"]).await;
+        let base = workspace_base(&fixture.root, "ws-journal-gap-first");
+        write_generation(&base.join("harness.rollback"), "live-old").await;
+        write_generation(&base.join("harness.restore"), "restore-new").await;
+        insert_journal(&fixture, "ws-journal-gap-first", "staged").await;
+
+        let outcomes = fixture.db.recover_restore_journals().await.expect("recover journal");
+        assert_eq!(outcomes.len(), 1);
+        assert_eq!(read_marker(&base.join("harness")).await.as_deref(), Some("restore-new"));
+        assert!(
+            !tokio::fs::try_exists(base.join("harness.rollback"))
+                .await
+                .expect("rollback")
+        );
+        assert_eq!(journal_count(&fixture, "ws-journal-gap-first").await, 0);
+        fixture.close().await;
+    }
+
+    // Crash window: restore->live rename completed but the journal still says
+    // "live_renamed". The new live generation is complete and must be kept.
+    #[tokio::test]
+    async fn restore_journal_crash_after_second_rename_before_phase_write_keeps_new_live() {
+        let fixture = HarnessWorkspaceFixture::new(&["ws-journal-gap-second"]).await;
+        let base = workspace_base(&fixture.root, "ws-journal-gap-second");
+        write_generation(&base.join("harness"), "restore-new").await;
+        write_generation(&base.join("harness.rollback"), "live-old").await;
+        insert_journal(&fixture, "ws-journal-gap-second", "live_renamed").await;
+
+        fixture.db.recover_restore_journals().await.expect("recover journal");
+        assert_eq!(read_marker(&base.join("harness")).await.as_deref(), Some("restore-new"));
+        assert!(
+            !tokio::fs::try_exists(base.join("harness.rollback"))
+                .await
+                .expect("rollback")
+        );
+        assert_eq!(journal_count(&fixture, "ws-journal-gap-second").await, 0);
+        fixture.close().await;
+    }
+
+    // Integrity selection also applies before the first rename: a corrupt live
+    // directory is never opened when the staged restore generation is intact.
+    #[tokio::test]
+    async fn restore_journal_prepared_with_corrupt_live_selects_complete_restore() {
+        let fixture = HarnessWorkspaceFixture::new(&["ws-journal-prepared"]).await;
+        let base = workspace_base(&fixture.root, "ws-journal-prepared");
+        tokio::fs::create_dir_all(base.join("harness"))
+            .await
+            .expect("create corrupt live directory");
+        tokio::fs::write(base.join("harness/harness.db"), b"not a sqlite database")
+            .await
+            .expect("corrupt live database");
+        write_generation(&base.join("harness.restore"), "restore-new").await;
+        insert_journal(&fixture, "ws-journal-prepared", "prepared").await;
+
+        fixture.db.recover_restore_journals().await.expect("recover journal");
+        assert_eq!(read_marker(&base.join("harness")).await.as_deref(), Some("restore-new"));
+        assert_eq!(journal_count(&fixture, "ws-journal-prepared").await, 0);
+        fixture.close().await;
+    }
+
+    #[tokio::test]
+    async fn restore_journal_with_every_generation_missing_keeps_the_journal() {
+        let fixture = HarnessWorkspaceFixture::new(&["ws-journal-empty"]).await;
+        insert_journal(&fixture, "ws-journal-empty", "swapped").await;
+
+        let outcomes = fixture.db.recover_restore_journals().await.expect("recover journal");
+        assert_eq!(outcomes.len(), 1);
+        assert_eq!(
+            outcomes[0].1,
+            super::RestoreRecovery::Unavailable,
+            "missing generations must stay unavailable"
+        );
+        assert_eq!(journal_count(&fixture, "ws-journal-empty").await, 1);
+        let error = fixture
+            .db
+            .workspace_pool("ws-journal-empty")
+            .await
+            .expect_err("missing generations never open");
+        assert!(error.to_string().contains("unavailable"), "unexpected error: {error}");
+        fixture.close().await;
+    }
+
+    // SQLite reports `integrity_check = ok` for a zero-byte file (it is a
+    // valid empty database). Such a generation is not complete: selecting it
+    // would silently replace a good retained generation with no harness data.
+    #[tokio::test]
+    async fn restore_journal_zero_length_live_never_beats_a_complete_rollback() {
+        let fixture = HarnessWorkspaceFixture::new(&["ws-journal-zero-live"]).await;
+        let base = workspace_base(&fixture.root, "ws-journal-zero-live");
+        tokio::fs::create_dir_all(base.join("harness"))
+            .await
+            .expect("create live directory");
+        tokio::fs::write(base.join("harness/harness.db"), b"")
+            .await
+            .expect("zero-length live database");
+        write_generation(&base.join("harness.rollback"), "live-old").await;
+        insert_journal(&fixture, "ws-journal-zero-live", "swapped").await;
+
+        fixture.db.recover_restore_journals().await.expect("recover journal");
+        assert_eq!(
+            read_marker(&base.join("harness")).await.as_deref(),
+            Some("live-old"),
+            "a zero-length live generation must not win over a complete rollback"
+        );
+        assert_eq!(journal_count(&fixture, "ws-journal-zero-live").await, 0);
+        fixture.close().await;
+    }
+
+    #[tokio::test]
+    async fn restore_journal_corruption_selects_a_complete_generation_and_never_mixes_wal() {
+        let fixture = HarnessWorkspaceFixture::new(&["ws-journal-corrupt"]).await;
+        let base = workspace_base(&fixture.root, "ws-journal-corrupt");
+        write_generation(&base.join("harness"), "live-old").await;
+        write_generation(&base.join("harness.restore"), "restore-new").await;
+        insert_journal(&fixture, "ws-journal-corrupt", "not-a-real-phase").await;
+
+        fixture
+            .db
+            .recover_restore_journals()
+            .await
+            .expect("recover corrupt journal");
+        assert_eq!(read_marker(&base.join("harness")).await.as_deref(), Some("live-old"));
+        assert_eq!(journal_count(&fixture, "ws-journal-corrupt").await, 0);
+        // A live generation that never had WAL mixed in stays self-contained.
+        assert!(
+            !tokio::fs::try_exists(base.join("harness/harness.db-wal"))
+                .await
+                .expect("wal")
+        );
+        fixture.close().await;
+    }
+
+    #[tokio::test]
+    async fn restore_journal_corrupt_live_rolls_back_to_the_retained_generation() {
+        let fixture = HarnessWorkspaceFixture::new(&["ws-journal-partial"]).await;
+        let base = workspace_base(&fixture.root, "ws-journal-partial");
+        tokio::fs::create_dir_all(base.join("harness"))
+            .await
+            .expect("create live directory");
+        tokio::fs::write(base.join("harness/harness.db"), b"not a sqlite database")
+            .await
+            .expect("corrupt live database");
+        write_generation(&base.join("harness.rollback"), "live-old").await;
+        insert_journal(&fixture, "ws-journal-partial", "garbage").await;
+
+        fixture
+            .db
+            .recover_restore_journals()
+            .await
+            .expect("recover corrupt journal");
+        assert_eq!(read_marker(&base.join("harness")).await.as_deref(), Some("live-old"));
+        fixture.close().await;
+    }
+
+    #[tokio::test]
+    async fn restore_journal_without_any_complete_generation_keeps_workspace_unavailable() {
+        let fixture = HarnessWorkspaceFixture::new(&["ws-journal-broken", "ws-journal-other"]).await;
+        let broken = workspace_base(&fixture.root, "ws-journal-broken");
+        tokio::fs::create_dir_all(broken.join("harness"))
+            .await
+            .expect("create broken live");
+        tokio::fs::write(broken.join("harness/harness.db"), b"corrupt")
+            .await
+            .expect("corrupt generation");
+        insert_journal(&fixture, "ws-journal-broken", "live_renamed").await;
+
+        fixture.db.recover_restore_journals().await.expect("recover journal");
+        let error = fixture
+            .db
+            .workspace_pool("ws-journal-broken")
+            .await
+            .expect_err("broken workspace stays unavailable");
+        assert!(error.to_string().contains("unavailable"), "unexpected error: {error}");
+        assert_eq!(journal_count(&fixture, "ws-journal-broken").await, 1);
+        assert_eq!(read_marker(&broken.join("harness")).await, None);
+
+        // Another workspace is unaffected and still opens.
+        let other = workspace_base(&fixture.root, "ws-journal-other");
+        write_generation(&other.join("harness"), "other").await;
+        let pool = fixture
+            .db
+            .workspace_pool("ws-journal-other")
+            .await
+            .expect("other store");
+        pool.close().await;
+        fixture.close().await;
+    }
+
+    #[tokio::test]
+    async fn restore_workspace_store_swaps_complete_directories_and_clears_the_journal() {
+        let fixture = HarnessWorkspaceFixture::new(&["ws-restore"]).await;
+        fixture
+            .db
+            .create_workspace_store("ws-restore")
+            .await
+            .expect("create store");
+        let base = workspace_base(&fixture.root, "ws-restore");
+        let backups = base.join("harness/backups");
+        tokio::fs::create_dir_all(&backups).await.expect("backups directory");
+        write_generation(&base.join("harness/backup-source"), "live-old").await;
+        write_generation(&base.join("harness/backup-source-new"), "restore-new").await;
+        let backup = backups.join("snapshot.db");
+        tokio::fs::copy(base.join("harness/backup-source-new/harness.db"), &backup)
+            .await
+            .expect("copy backup");
+
+        fixture
+            .db
+            .restore_workspace_store("ws-restore", &backup)
+            .await
+            .expect("restore workspace store");
+        assert_eq!(read_marker(&base.join("harness")).await.as_deref(), Some("restore-new"));
+        assert_eq!(journal_count(&fixture, "ws-restore").await, 0);
+        let pool = fixture.db.workspace_pool("ws-restore").await.expect("restored store");
+        pool.close().await;
+        fixture.close().await;
+    }
+
+    #[tokio::test]
+    async fn restore_workspace_store_rejects_a_corrupt_backup_without_touching_live() {
+        let fixture = HarnessWorkspaceFixture::new(&["ws-restore-bad"]).await;
+        fixture
+            .db
+            .create_workspace_store("ws-restore-bad")
+            .await
+            .expect("create store");
+        let base = workspace_base(&fixture.root, "ws-restore-bad");
+        let backups = base.join("harness/backups");
+        tokio::fs::create_dir_all(&backups).await.expect("backups directory");
+        let backup = backups.join("corrupt.db");
+        tokio::fs::write(&backup, b"not a database")
+            .await
+            .expect("write corrupt backup");
+        let marker: String =
+            sqlx::query_scalar("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'effect_intents'")
+                .fetch_one(&fixture.db.workspace_pool("ws-restore-bad").await.expect("live store"))
+                .await
+                .expect("live schema survived");
+        assert_eq!(marker, "effect_intents");
+
+        fixture
+            .db
+            .restore_workspace_store("ws-restore-bad", &backup)
+            .await
+            .expect_err("corrupt backup must be rejected");
+        assert_eq!(journal_count(&fixture, "ws-restore-bad").await, 0);
+        let pool = fixture.db.workspace_pool("ws-restore-bad").await.expect("live store");
+        let tables: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'effect_intents'")
+                .fetch_one(&pool)
+                .await
+                .expect("live schema intact");
+        assert_eq!(tables, 1);
+        fixture.close().await;
+    }
+
+    // A failure after the swap must roll back to the retained generation and
+    // reopen it; leaving the workspace permanently `Unavailable` after a
+    // successful rollback would strand a healthy store.
+    #[tokio::test]
+    async fn restore_workspace_store_failure_reopens_the_rolled_back_generation() {
+        let mut fixture = HarnessWorkspaceFixture::new(&["ws-restore-fail"]).await;
+        fixture
+            .db
+            .create_workspace_store("ws-restore-fail")
+            .await
+            .expect("create store");
+        let base = workspace_base(&fixture.root, "ws-restore-fail");
+        let backups = base.join("harness/backups");
+        tokio::fs::create_dir_all(&backups).await.expect("backups directory");
+        let backup = backups.join("snapshot.db");
+        sqlx::query("VACUUM INTO ?")
+            .bind(backup.to_string_lossy().to_string())
+            .execute(&fixture.db.workspace_pool("ws-restore-fail").await.expect("live store"))
+            .await
+            .expect("capture self-contained backup");
+
+        let hooks = Arc::new(WorkspaceStoreTestHooks::default());
+        fixture.db.workspace_store_test_hooks = Some(hooks.clone());
+        hooks.fail_open.store(true, Ordering::SeqCst);
+
+        let error = fixture
+            .db
+            .restore_workspace_store("ws-restore-fail", &backup)
+            .await
+            .expect_err("injected post-swap open failure must roll back");
+        assert!(
+            error.to_string().contains("injected workspace open failure"),
+            "unexpected error: {error}"
+        );
+        assert_eq!(journal_count(&fixture, "ws-restore-fail").await, 0);
+
+        let pool = fixture
+            .db
+            .workspace_pool("ws-restore-fail")
+            .await
+            .expect("rolled-back generation reopens");
+        let tables: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'effect_intents'")
+                .fetch_one(&pool)
+                .await
+                .expect("rolled-back schema intact");
+        assert_eq!(tables, 1);
+        pool.close().await;
+        fixture.close().await;
+    }
+
+    // A failure before the live directory is replaced (here: the staging path
+    // is a file) must keep the intact live generation usable in-process.
+    #[tokio::test]
+    async fn restore_workspace_store_failure_before_rename_keeps_the_intact_live_generation() {
+        let fixture = HarnessWorkspaceFixture::new(&["ws-restore-early"]).await;
+        fixture
+            .db
+            .create_workspace_store("ws-restore-early")
+            .await
+            .expect("create store");
+        let base = workspace_base(&fixture.root, "ws-restore-early");
+        let backups = base.join("harness/backups");
+        tokio::fs::create_dir_all(&backups).await.expect("backups directory");
+        let backup = backups.join("snapshot.db");
+        sqlx::query("VACUUM INTO ?")
+            .bind(backup.to_string_lossy().to_string())
+            .execute(&fixture.db.workspace_pool("ws-restore-early").await.expect("live store"))
+            .await
+            .expect("capture self-contained backup");
+        // `remove_dir_all` on a regular file fails before any rename, leaving
+        // the live generation untouched.
+        tokio::fs::write(base.join("harness.restore"), b"block staging cleanup")
+            .await
+            .expect("block staging path");
+
+        fixture
+            .db
+            .restore_workspace_store("ws-restore-early", &backup)
+            .await
+            .expect_err("staging cleanup failure aborts the restore");
+        assert_eq!(journal_count(&fixture, "ws-restore-early").await, 0);
+
+        let pool = fixture
+            .db
+            .workspace_pool("ws-restore-early")
+            .await
+            .expect("intact live generation stays usable");
+        let tables: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'effect_intents'")
+                .fetch_one(&pool)
+                .await
+                .expect("live schema intact");
+        assert_eq!(tables, 1);
+        pool.close().await;
+        fixture.close().await;
     }
 }

@@ -1395,6 +1395,97 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn harness_write_routes_reject_non_admin_or_cross_tenant_before_opening_the_workspace_store() {
+        let workspace_id = "ws-harness-admin-order";
+        let cross_tenant_id = "ws-harness-admin-cross-tenant";
+        let fixture = fixture_workspace(workspace_id).await;
+        let (mut app_state, pool) = setup_test_app_with_pool().await;
+        seed_test_workspace(&pool, "tenant-1", workspace_id).await;
+        seed_test_workspace(&pool, "tenant-2", cross_tenant_id).await;
+        // Fresh store cache over the same platform pool: the workspace stays
+        // registered, but any premature open would recreate the directory we
+        // remove below and fail the assertion.
+        app_state.db = Arc::new(
+            tinyiothub_storage::Db::new(fixture.db.pool().clone())
+                .with_workspace_store_root(fixture.root.join("data/agents")),
+        );
+        let app = axum::Router::new()
+            .nest("/api", crate::api::create_router(&app_state))
+            .with_state(app_state);
+        let harness_dir = fixture.root.join("data/agents").join(workspace_id).join("harness");
+        tokio::fs::remove_dir_all(&harness_dir)
+            .await
+            .expect("remove store so a premature open is observable");
+        let member = create_test_token("user-2", "tenant-1");
+        let base = format!("/api/v1/workspaces/{workspace_id}/harness");
+        let writes = [
+            ("POST", format!("{base}/workflows"), Some(workflow_body("成员尝试"))),
+            (
+                "PUT",
+                format!("{base}/workflows/wf%3A1"),
+                Some(update_body("成员编辑", 1, false)),
+            ),
+            (
+                "PUT",
+                format!("{base}/workflows/wf%3A1/enabled"),
+                Some(json!({"enabled": true})),
+            ),
+            (
+                "POST",
+                format!("{base}/workflow-templates/inspection/instantiate"),
+                Some(json!({"device_selector": {}, "source_selector": {}, "approval_policy": {}})),
+            ),
+            (
+                "POST",
+                format!("{base}/workflows/wf%3A1/versions/1/dry-run"),
+                Some(json!({"snapshot_seq": 1})),
+            ),
+            (
+                "POST",
+                format!("{base}/supervisor/dead-wakes/task%3A1/event%3A1/retry"),
+                None,
+            ),
+            (
+                "POST",
+                format!("{base}/compaction/replace"),
+                Some(json!({
+                    "projection_name": "task",
+                    "subject_id": "task:1",
+                    "last_seq": 1,
+                    "projection_version": 1,
+                    "expected_last_seq": 1,
+                    "expected_state_version": 1,
+                })),
+            ),
+        ];
+        for (method, uri, body) in &writes {
+            let (status, response) = send(&app, method, Some(&member), uri, body.clone()).await;
+            assert_eq!(status, StatusCode::FORBIDDEN, "{uri} must be admin-only: {response}");
+            assert!(
+                !harness_dir.exists(),
+                "non-admin write {uri} must be rejected before the workspace DB opens"
+            );
+        }
+        let cross_tenant = create_test_token("admin-user-002", "tenant-2");
+        let cross_tenant_dir = fixture.root.join("data/agents").join(cross_tenant_id);
+        for (method, uri, body) in &writes {
+            let cross_uri = uri.replacen(workspace_id, cross_tenant_id, 1);
+            let (status, response) = send(&app, method, Some(&cross_tenant), &cross_uri, body.clone()).await;
+            assert_eq!(
+                status,
+                StatusCode::FORBIDDEN,
+                "{cross_uri} must reject a cross-tenant request: {response}"
+            );
+            assert!(
+                !cross_tenant_dir.exists(),
+                "cross-tenant write {cross_uri} must be rejected before any workspace DB opens"
+            );
+        }
+        drop(app);
+        fixture.close().await;
+    }
+
+    #[tokio::test]
     async fn workflow_dry_run_is_admin_only_and_reads_only_a_fixed_revision_snapshot() {
         let workspace_id = "ws-dry-run-http";
         let (app, fixture) = workflow_test_app(workspace_id).await;
