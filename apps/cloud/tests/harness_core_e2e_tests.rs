@@ -1039,6 +1039,36 @@ async fn denied_answer_without_a_handler_wake_survives_restart_and_continues() {
 }
 
 #[tokio::test]
+async fn deduplicated_denial_reheals_a_lost_continuation_wake() {
+    let fixture = fixture_workspace(WS).await;
+    seed_expiry_task(&fixture, "task-heal", "effect-heal").await;
+    let db = Arc::new(fixture.db.clone());
+    db.harness_answer_tool_approval(WS, "task-heal", "decision-effect-heal", "denied", "user-1", at())
+        .await
+        .expect("first denial");
+    let event_id = "approval:decision-effect-heal:denied";
+    sqlx::query("DELETE FROM task_wake_outbox WHERE event_id = ?")
+        .bind(event_id)
+        .execute(&fixture.workspace_pool().await)
+        .await
+        .expect("simulate lost wake");
+    let answer = db
+        .harness_answer_tool_approval(WS, "task-heal", "decision-effect-heal", "denied", "user-1", at())
+        .await
+        .expect("deduplicated denial");
+    assert!(answer.deduplicated);
+    let signal: String = sqlx::query_scalar("SELECT signal_json FROM task_wake_outbox WHERE event_id = ?")
+        .bind(event_id)
+        .fetch_one(&fixture.workspace_pool().await)
+        .await
+        .expect("healed wake");
+    let signal: serde_json::Value = serde_json::from_str(&signal).expect("signal JSON");
+    assert_eq!(signal["kind"], "approval_decided");
+    assert_eq!(signal["outcome"], "denied");
+    fixture.close().await;
+}
+
+#[tokio::test]
 async fn cancelling_a_task_withdraws_a_requested_approval_and_settles_the_effect() {
     let fixture = fixture_workspace(WS).await;
     seed_expiry_task(&fixture, "task-cancel", "effect-cancel").await;

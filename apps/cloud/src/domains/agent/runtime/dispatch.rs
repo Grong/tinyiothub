@@ -73,8 +73,10 @@ fn effect_id_from_job(job_id: &str) -> Option<&str> {
 
 fn decision_outcome(decision: &Decision) -> &'static str {
     match (decision.state, decision.answer.as_deref()) {
-        (DecisionState::Answered, Some("approved")) => "approved",
-        (DecisionState::Answered, Some("denied")) => "denied",
+        // A consumed approval was still approved/denied; the prompt facts map
+        // it the same way, so the wake text must not say "closed".
+        (DecisionState::Answered | DecisionState::Consumed, Some("approved")) => "approved",
+        (DecisionState::Answered | DecisionState::Consumed, Some("denied")) => "denied",
         (DecisionState::Expired, _) => "expired",
         (DecisionState::Withdrawn, _) => "withdrawn",
         _ => "closed",
@@ -83,18 +85,20 @@ fn decision_outcome(decision: &Decision) -> &'static str {
 
 /// Parseable, deterministic continuation wake for an approval-linked Effect.
 /// The event id matches the answer/expiry transaction, so `ON CONFLICT` keeps
-/// exactly one wake across every path.
+/// exactly one wake across every path. `outcome` is explicit so a
+/// dispatch failure can say `not_applied` instead of falsely reporting the
+/// approval as executed.
 fn approval_continuation_wake(
     workspace_id: &str,
     intent: &EffectIntent,
     decision: Option<&Decision>,
+    outcome: &str,
     now: chrono::DateTime<Utc>,
 ) -> Option<WakeProjection> {
     let decision = decision?;
     if decision.kind != DecisionKind::ToolApproval {
         return None;
     }
-    let outcome = decision_outcome(decision);
     let wake_id = format!("approval:{}:{outcome}", decision.decision_id);
     Some(WakeProjection {
         task_id: intent.task_id.clone(),
@@ -320,7 +324,8 @@ impl EffectDispatch {
         if let Some(effect) = &mut transition.effect {
             effect.result = Some(reason);
         }
-        if let Some(wake) = approval_continuation_wake(workspace_id, intent, decision, Utc::now()) {
+        let outcome = decision.map(decision_outcome).unwrap_or("closed");
+        if let Some(wake) = approval_continuation_wake(workspace_id, intent, decision, outcome, Utc::now()) {
             transition.wake = Some(wake);
         }
         self.apply(workspace_id, transition).await?;
@@ -396,7 +401,8 @@ impl EffectDispatch {
             },
         )
         .map_err(|error| error.to_string())?;
-        if let Some(wake) = approval_continuation_wake(workspace_id, intent, decision, Utc::now()) {
+        // The approval was granted, but this pass did not apply the action.
+        if let Some(wake) = approval_continuation_wake(workspace_id, intent, decision, "not_applied", Utc::now()) {
             transition.wake = Some(wake);
         }
         self.apply(workspace_id, transition).await?;
@@ -1130,6 +1136,7 @@ mod tests {
     use tinyiothub_core::agent_task::TaskWake;
     use tinyiothub_core::device_job::{DeviceJob, DeviceJobError, DeviceJobState};
     use tinyiothub_core::error::Error;
+    use tinyiothub_core::harness::{Decision, DecisionKind, DecisionState};
     use tinyiothub_core::models::thing_command::ThingCommand;
     use tinyiothub_runtime::access::resources::{ResourceClaim, ResourceResolver, device_claim};
     use tinyiothub_runtime::access::validator::{AccessCallValidator, CallError, ValidatedCall};
@@ -1623,6 +1630,64 @@ mod tests {
             .expect("wake count");
         assert_eq!(count, 1);
         fixture.workspace.close().await;
+    }
+
+    #[tokio::test]
+    async fn approved_but_not_applied_reports_not_applied() {
+        let fixture = Fixture::new().await;
+        fixture
+            .seed("effect-fail", "running", json!({"argsJson":{"level":7}}))
+            .await;
+        fixture.seed_decision("effect-fail", "answered", Some("approved")).await;
+        let report = fixture.dispatch.dispatch_workspace(WS).await.expect("dispatch");
+        assert_eq!(report.not_applied, 1);
+        assert_eq!(fixture.effect("effect-fail").await.0, "not_applied");
+        let event_id = "approval:approval-effect-fail:not_applied";
+        let signal: String = sqlx::query_scalar("SELECT signal_json FROM task_wake_outbox WHERE event_id = ?")
+            .bind(event_id)
+            .fetch_one(&fixture.workspace.workspace_pool().await)
+            .await
+            .expect("not-applied continuation wake");
+        let signal: Value = serde_json::from_str(&signal).expect("signal JSON");
+        assert_eq!(signal["kind"], "approval_decided");
+        assert_eq!(
+            signal["outcome"], "not_applied",
+            "an approved but failed dispatch must not tell the model it was applied"
+        );
+        fixture.workspace.close().await;
+    }
+
+    #[test]
+    fn consumed_approval_keeps_its_answer_outcome() {
+        let at = Utc::now();
+        let decision = |state, answer: Option<&str>| Decision {
+            decision_id: "decision-1".into(),
+            kind: DecisionKind::ToolApproval,
+            state,
+            session_id: "session-1".into(),
+            run_id: "run-1".into(),
+            task_id: "task-1".into(),
+            effect_id: Some("effect-1".into()),
+            subject: json!({}),
+            options: json!([]),
+            created_at: at,
+            updated_at: at,
+            expires_at: None,
+            answer: answer.map(str::to_string),
+            answer_actor: None,
+            answer_event_id: None,
+            answer_evidence: None,
+            consumed_at: None,
+            consumed_by: None,
+        };
+        assert_eq!(
+            super::decision_outcome(&decision(DecisionState::Consumed, Some("approved"))),
+            "approved"
+        );
+        assert_eq!(
+            super::decision_outcome(&decision(DecisionState::Consumed, Some("denied"))),
+            "denied"
+        );
     }
 
     #[tokio::test]

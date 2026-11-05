@@ -585,15 +585,22 @@ impl TaskCoordinator {
                     .get("approval_id")
                     .and_then(serde_json::Value::as_str)
                     .unwrap_or("unknown");
+                let text = if outcome == "not_applied" {
+                    format!(
+                        "Approval {approval_id} was granted, but the device action was NOT applied. Do not report it as executed; continue after the recorded approval decision."
+                    )
+                } else {
+                    format!(
+                        "Approval {approval_id} is {outcome}. Continue after the recorded approval decision; do not re-issue the action unless the objective still requires it."
+                    )
+                };
                 WakeSignal {
                     workspace_id: task.workspace_id.clone(),
                     priority: crate::domains::agent::thing_agent::types::Priority::Normal,
                     dedup_key: Some(format!("task:{task_id}:approval:{wake_event_id}")),
                     source: crate::domains::agent::thing_agent::types::TriggerSource::UserDirective {
                         user_id: task.created_by.clone(),
-                        text: format!(
-                            "Approval {approval_id} is {outcome}. Continue after the recorded approval decision; do not re-issue the action unless the objective still requires it."
-                        ),
+                        text,
                         session_key: task.session_key.clone(),
                         source: Some("approval_decided".into()),
                         problem_key: None,

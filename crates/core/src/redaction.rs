@@ -68,25 +68,65 @@ fn key_tokens(key: &str) -> Vec<String> {
     tokens
 }
 
+/// Drop trailing ASCII digits so `password1`/`token123` still match their
+/// secret word.
+fn trim_trailing_digits(value: &str) -> &str {
+    value.trim_end_matches(|ch: char| ch.is_ascii_digit())
+}
+
 impl RedactionPolicy {
-    /// Whether a JSON object key holds secret material. Matching is
-    /// token-boundary-aware: `api_key`/`apiKey`/`key` match, while
-    /// `keywords`/`hotkey`/`monkey` do not.
+    /// Whether a JSON object key holds secret material.
+    ///
+    /// Matching is token-boundary-aware but still catches real-world key
+    /// variants: exact tokens (`api_key`, `key`), secret words with only
+    /// digits appended (`password123`, `token123`), compounds ending in a
+    /// multi-character secret word (`clientsecret`, `mysecret`,
+    /// `ACCESSTOKEN`, `PRIVATEKEY`), and plurals. Benign words that merely
+    /// contain `key` (`keywords`, `hotkey`, `monkey`) stay visible because the
+    /// bare `key` token is excluded from compound matching.
     pub fn is_sensitive_key(&self, key: &str) -> bool {
         let normalized = key.to_ascii_lowercase();
-        if self
+        let compact: Vec<String> = self
             .sensitive_keys
             .iter()
-            .any(|sensitive| normalized == sensitive.to_ascii_lowercase())
+            .map(|sensitive| {
+                sensitive
+                    .chars()
+                    .filter(|ch| ch.is_alphanumeric())
+                    .collect::<String>()
+                    .to_ascii_lowercase()
+            })
+            .collect();
+        if compact.iter().any(|sensitive| sensitive == &normalized) {
+            return true;
+        }
+        // Whole-key compound: only multi-character secret words participate so
+        // `monkey`/`hotkey`/`keywords` never match through the bare `key`.
+        let without_digits = trim_trailing_digits(&normalized);
+        if !without_digits.is_empty()
+            && compact
+                .iter()
+                .any(|sensitive| sensitive.len() >= 4 && without_digits.ends_with(sensitive.as_str()))
         {
             return true;
         }
         key_tokens(key).into_iter().any(|token| {
             let singular = token.strip_suffix('s').unwrap_or(&token);
-            self.sensitive_keys.iter().any(|sensitive| {
-                let sensitive = sensitive.to_ascii_lowercase();
-                sensitive == token || sensitive == singular
-            })
+            if self
+                .sensitive_keys
+                .iter()
+                .any(|sensitive| sensitive.eq_ignore_ascii_case(&token) || sensitive.eq_ignore_ascii_case(singular))
+            {
+                return true;
+            }
+            // A secret word with only digits appended (`password1`).
+            let token_word = trim_trailing_digits(&token);
+            !token_word.is_empty()
+                && token_word.len() < token.len()
+                && self
+                    .sensitive_keys
+                    .iter()
+                    .any(|sensitive| sensitive.eq_ignore_ascii_case(token_word))
         })
     }
 
@@ -163,6 +203,45 @@ mod tests {
         assert_eq!(redacted["key"], "[REDACTED]");
         assert_eq!(redacted["apiKey"], "[REDACTED]");
         assert_eq!(redacted["access_token"], "[REDACTED]");
+    }
+
+    #[test]
+    fn redacts_concatenated_numbered_and_case_variant_secret_keys() {
+        let policy = RedactionPolicy::default();
+        for key in [
+            "password1",
+            "password123",
+            "token123",
+            "clientsecret",
+            "mysecret",
+            "ACCESSTOKEN",
+            "PRIVATEKEY",
+            "apiKey1",
+            "keys",
+        ] {
+            assert!(policy.is_sensitive_key(key), "{key} must be redacted");
+        }
+        for key in ["keywords", "hotkey", "monkey", "monkey1", "hotkey123"] {
+            assert!(!policy.is_sensitive_key(key), "{key} must stay visible");
+        }
+        let redacted = policy.redact(&json!({
+            "password1": "p1",
+            "token123": "t1",
+            "clientsecret": "c1",
+            "ACCESSTOKEN": "a1",
+            "PRIVATEKEY": "k1",
+            "mysecret": "m1",
+            "keywords": ["visible"],
+            "hotkey": "visible",
+            "monkey": "visible",
+        }));
+        let text = redacted.to_string();
+        for leaked in ["\"p1\"", "\"t1\"", "\"c1\"", "\"a1\"", "\"k1\"", "\"m1\""] {
+            assert!(!text.contains(leaked), "leaked {leaked}: {text}");
+        }
+        assert_eq!(redacted["keywords"][0], "visible");
+        assert_eq!(redacted["hotkey"], "visible");
+        assert_eq!(redacted["monkey"], "visible");
     }
 
     #[test]
