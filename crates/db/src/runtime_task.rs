@@ -1453,6 +1453,26 @@ impl Db {
         Ok(task_ids)
     }
 
+    /// Non-terminal direct Subagents of a Task. Subagents never nest, so one
+    /// level is the whole tree; this is the cancel complement used when the
+    /// live coordinator, not the workspace cascade, transitions the root.
+    pub async fn harness_active_child_task_ids(
+        &self,
+        workspace_id: &str,
+        parent_task_id: &str,
+    ) -> DbResult<Vec<String>> {
+        let pool = self.workspace_pool(workspace_id).await?;
+        Ok(sqlx::query_scalar::<_, String>(
+            "SELECT id FROM agent_tasks
+             WHERE parent_task_id = ? AND execution_mode = 'production'
+               AND state NOT IN ('completed', 'failed', 'cancelled')
+             ORDER BY id",
+        )
+        .bind(parent_task_id)
+        .fetch_all(&pool)
+        .await?)
+    }
+
     pub async fn drain_workflow_cancellation(&self, workspace_id: &str) -> DbResult<()> {
         let pool = self.workspace_pool(workspace_id).await?;
         let mut tx = pool.begin().await?;

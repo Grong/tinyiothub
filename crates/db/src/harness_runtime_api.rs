@@ -372,9 +372,14 @@ impl crate::Db {
         let Some(task) = task else {
             return Ok(None);
         };
-        let cursor = sqlx::query_scalar::<_, i64>("SELECT COALESCE(MAX(seq), 0) FROM session_events")
-            .fetch_one(&mut *tx)
-            .await?;
+        // The cursor must name a production Event: `harness_cursor_known`
+        // rejects simulation seq values, so a MAX over every execution mode
+        // could issue a cursor the client cannot replay from.
+        let cursor = sqlx::query_scalar::<_, i64>(
+            "SELECT COALESCE(MAX(seq), 0) FROM session_events WHERE execution_mode = 'production'",
+        )
+        .fetch_one(&mut *tx)
+        .await?;
         let runs = sqlx::query_as::<_, TaskRunProjection>(
             "SELECT id, state AS status, COALESCE(runtime_outcome, '') AS outcome,
                     runtime_summary AS summary, runtime_created_at AS created_at
@@ -474,14 +479,16 @@ impl crate::Db {
         Ok(page.events.iter().map(harness_event_to_runtime).collect())
     }
 
-    /// Workspace high-watermark used by the SSE cursor contract.
+    /// Workspace high-watermark used by the SSE cursor contract. Simulation
+    /// Events are excluded for the same reason as the projection cursor: a
+    /// client can only resume from a production seq.
     pub async fn harness_event_high_watermark(&self, workspace_id: &str) -> Result<i64, DbError> {
         let pool = self.workspace_pool(workspace_id).await?;
-        Ok(
-            sqlx::query_scalar::<_, i64>("SELECT COALESCE(MAX(seq), 0) FROM session_events")
-                .fetch_one(&pool)
-                .await?,
+        Ok(sqlx::query_scalar::<_, i64>(
+            "SELECT COALESCE(MAX(seq), 0) FROM session_events WHERE execution_mode = 'production'",
         )
+        .fetch_one(&pool)
+        .await?)
     }
 
     /// A cursor is known only when it names a persisted production Event.
@@ -584,7 +591,81 @@ impl crate::Db {
                     deduplicated: true,
                 });
             }
-            DecisionState::Requested => {}
+            DecisionState::Requested => {
+                if current.expires_at.is_some_and(|expires_at| expires_at <= now) {
+                    // Expiry is enforced on the write path, not only by the
+                    // background sweeper: an approval that elapsed between
+                    // sweeps must never dispatch a device action. The sweeper
+                    // unwinds a still-Prepared Effect atomically; when it
+                    // refuses (the Effect already moved on) the decision alone
+                    // is recorded as expired below.
+                    tx.rollback().await?;
+                    if let Err(error) = self.expire_harness_decisions(workspace_id, now).await {
+                        tracing::warn!(
+                            %workspace_id,
+                            %approval_id,
+                            %error,
+                            "targeted approval expiry sweep failed; expiring the decision alone"
+                        );
+                    }
+                    let pool = self.workspace_pool(workspace_id).await?;
+                    let mut expired = current;
+                    if expired.state == DecisionState::Requested {
+                        let mut tx = pool.begin().await?;
+                        let payload = json!({"decisionId": approval_id, "kind": "tool_approval", "reason": "expired"});
+                        let payload_json = serde_json::to_string(&payload)?;
+                        let event = HarnessEventInput {
+                            event_id: format!("approval-expired:{approval_id}:decision"),
+                            workspace_id: workspace_id.to_string(),
+                            session_id: expired.session_id.clone(),
+                            execution_mode: ExecutionMode::Production,
+                            run_id: Some(expired.run_id.clone()),
+                            task_id: Some(task_id.to_string()),
+                            event_type: "decision.expired".to_string(),
+                            occurred_at: now,
+                            cause_id: None,
+                            schema_v: 1,
+                            payload_digest: format!("{:x}", Sha256::digest(payload_json.as_bytes())),
+                            payload_json: payload,
+                        };
+                        let updated = sqlx::query(
+                            "UPDATE decisions SET state = 'expired', updated_at = ?
+                             WHERE decision_id = ? AND state = 'requested'",
+                        )
+                        .bind(now)
+                        .bind(approval_id)
+                        .execute(&mut *tx)
+                        .await?
+                        .rows_affected();
+                        if updated == 1 {
+                            crate::harness_effect::insert_event(&mut tx, &event).await?;
+                        }
+                        tx.commit().await?;
+                        if updated == 1 {
+                            expired.state = DecisionState::Expired;
+                        }
+                    }
+                    // Re-read whenever the decision is still `requested`:
+                    // either the sweep left it alone or our CAS lost a race.
+                    if expired.state == DecisionState::Requested
+                        && let Some(decided) = sqlx::query_as::<_, DecisionRow>(sqlx::AssertSqlSafe(format!(
+                            "{DECISION_SELECT} WHERE decision_id = ? AND task_id = ? AND kind = 'tool_approval'"
+                        )))
+                        .bind(approval_id)
+                        .bind(task_id)
+                        .fetch_optional(&pool)
+                        .await?
+                        .map(DecisionRow::into_decision)
+                        .transpose()?
+                    {
+                        expired = decided;
+                    }
+                    return Ok(ApprovalAnswer {
+                        decision: expired,
+                        deduplicated: true,
+                    });
+                }
+            }
         }
         let event_id = format!("approval:{approval_id}:{answer}");
         let payload = json!({

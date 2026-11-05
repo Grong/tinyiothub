@@ -98,14 +98,18 @@ async fn stream(fixture: &ApiFixture, task_id: &str, after: i64) -> axum::respon
 async fn sse_frames(response: axum::response::Response, wanted: usize) -> Vec<Value> {
     let mut body = response.into_body().into_data_stream();
     let mut frames = Vec::new();
+    let mut buffer = String::new();
     while frames.len() < wanted {
         let chunk = tokio::time::timeout(std::time::Duration::from_secs(5), body.next())
             .await
             .expect("sse frame timeout")
             .expect("sse stream ended")
             .expect("sse chunk");
-        let text = String::from_utf8(chunk.to_vec()).expect("utf8");
-        for line in text.lines() {
+        // A frame may be split across chunks; keep the trailing partial line.
+        buffer.push_str(std::str::from_utf8(&chunk).expect("utf8"));
+        while let Some(end) = buffer.find('\n') {
+            let line = buffer[..end].trim_end_matches('\r').to_string();
+            buffer.drain(..=end);
             if let Some(data) = line.strip_prefix("data: ") {
                 frames.push(serde_json::from_str(data).expect("sse data"));
             }
@@ -390,4 +394,178 @@ async fn runtime_api_uses_harness_facts_and_never_writes_legacy_tables() {
         .await
         .expect("platform approvals");
     assert_eq!(platform_approvals, 0, "no platform approval writes may be produced");
+}
+
+/// M3: an approval whose TTL elapsed between sweeps must expire instead of
+/// dispatching the device action it was gating.
+#[tokio::test]
+async fn answering_an_elapsed_approval_expires_it_instead_of_dispatching() {
+    let fixture = fixture().await;
+    let (status, created) = post_task(&fixture, "expire approval", "expire-key").await;
+    assert_eq!(status, StatusCode::OK, "{created}");
+    let task_id = created["result"]["taskId"].as_str().expect("task id").to_string();
+
+    seed_effect_decision(
+        &fixture,
+        &task_id,
+        "effect-expired",
+        "call-expired",
+        "prepared",
+        "approval-expired",
+        "tool_approval",
+        "requested",
+    )
+    .await;
+    sqlx::query("UPDATE decisions SET expires_at = ? WHERE decision_id = 'approval-expired'")
+        .bind(Utc::now() - chrono::Duration::minutes(1))
+        .execute(&workspace_pool(&fixture).await)
+        .await
+        .expect("elapsed approval");
+
+    let (status, body) = post(
+        &fixture,
+        &format!("/api/v1/workspaces/{WS}/agent/tasks/{task_id}/approvals/approval-expired/approve"),
+        json!({}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["result"]["approval"]["state"], "expired");
+    assert_eq!(body["result"]["deduplicated"], true);
+
+    let pool = workspace_pool(&fixture).await;
+    let decision_state: String =
+        sqlx::query_scalar("SELECT state FROM decisions WHERE decision_id = 'approval-expired'")
+            .fetch_one(&pool)
+            .await
+            .expect("decision state");
+    assert_eq!(decision_state, "expired");
+    let effect_state: String =
+        sqlx::query_scalar("SELECT state FROM effect_intents WHERE effect_id = 'effect-expired'")
+            .fetch_one(&pool)
+            .await
+            .expect("effect state");
+    assert_eq!(effect_state, "not_applied", "the gated Effect must never dispatch");
+    let approved_events: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM session_events WHERE task_id = ? AND type = 'approval.approved'")
+            .bind(&task_id)
+            .fetch_one(&pool)
+            .await
+            .expect("approval events");
+    assert_eq!(approved_events, 0);
+}
+
+/// H1: the HTTP control must reach the in-process coordinator that owns the
+/// live Run and the physical Jobs, not only the workspace Task row.
+#[tokio::test]
+async fn http_cancel_stops_the_job_owned_by_the_live_coordinator() {
+    use tinyiothub_core::agent_task::{AgentTask, TaskStatus, TaskWake, WakeDispatchState};
+    use tinyiothub_core::device_job::{DeviceJob, DeviceJobState};
+
+    let (mut app_state, pool) = setup_test_app_with_pool().await;
+    seed_test_workspace(&pool, "tenant-1", WS).await;
+    seed_admin_role(&pool, "user-1").await;
+    app_state.db.create_workspace_store(WS).await.expect("workspace store");
+
+    let now = Utc::now();
+    let task = AgentTask {
+        id: "task-live-cancel".into(),
+        workspace_id: WS.into(),
+        idempotency_key: "live-cancel-key".into(),
+        objective: "cancel live device work".into(),
+        session_key: None,
+        created_by: "user-1".into(),
+        status: TaskStatus::WaitingJob,
+        current_run_id: None,
+        state_version: 0,
+        created_at: now,
+        updated_at: now,
+        ended_at: None,
+    };
+    let wake = TaskWake {
+        task_id: task.id.clone(),
+        event_id: "seed-live-cancel".into(),
+        signal_json: json!({"workspace_id": WS}).to_string(),
+        dispatch_state: WakeDispatchState::Dispatched,
+        created_at: now,
+        dispatched_at: Some(now),
+        resolved_at: Some(now),
+    };
+    // Platform reference row for the legacy Job FK, plus the workspace facts.
+    app_state
+        .db
+        .create_task_with_wake(&task, &wake)
+        .await
+        .expect("platform Task reference");
+    app_state
+        .db
+        .harness_create_task_with_wake(&task, &wake)
+        .await
+        .expect("workspace Task");
+
+    // Start the real production composition so `thing_agents` is wired. The
+    // Job is created afterwards: startup recovery deliberately interrupts every
+    // previously owned Job, which would hide the stop under test.
+    let mut services = crate::shared::service_manager::ServiceManager::new();
+    services.start_all(&mut app_state).await.expect("production services");
+    app_state
+        .db
+        .create_job(&DeviceJob {
+            id: "job-live-cancel".into(),
+            workspace_id: WS.into(),
+            device_id: "missing-worker".into(),
+            tool: "set_speed".into(),
+            args_json: json!({"speed": 2}),
+            state: DeviceJobState::Running,
+            stop_requested_at: None,
+            progress_json: None,
+            result_json: None,
+            task_id: Some(task.id.clone()),
+            run_id: Some("run-live-cancel".into()),
+            tool_call_id: Some("call-live-cancel".into()),
+            driver_call_id: Some("job-live-cancel".into()),
+            timeout_ms: 30_000,
+            started_at: now,
+            ended_at: None,
+        })
+        .await
+        .expect("running Job");
+
+    let db = app_state.db.clone();
+    let app = axum::Router::new()
+        .nest("/api", crate::api::create_router(&app_state))
+        .with_state(app_state);
+    let fixture = ApiFixture {
+        app,
+        db,
+        token: create_test_token("user-1", "tenant-1"),
+        pool,
+    };
+
+    let (status, body) = post(
+        &fixture,
+        &format!("/api/v1/workspaces/{WS}/agent/tasks/task-live-cancel/cancel"),
+        json!({}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let stopping = fixture
+        .db
+        .get_job(WS, "job-live-cancel")
+        .await
+        .expect("read Job")
+        .expect("Job");
+    assert!(
+        stopping.stop_requested_at.is_some(),
+        "POST /cancel must stop the live coordinator's Job, not only write the Task row"
+    );
+    assert_eq!(
+        fixture
+            .db
+            .harness_get_task(WS, "task-live-cancel")
+            .await
+            .expect("read Task")
+            .expect("Task")
+            .status,
+        tinyiothub_core::agent_task::TaskStatus::Cancelling
+    );
 }

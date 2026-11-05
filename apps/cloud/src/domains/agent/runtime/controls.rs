@@ -16,15 +16,33 @@ use super::RecoveryMode;
 use crate::domains::agent::AgentState;
 use crate::domains::agent::host::handler::agent_tasks::check_agent_admin_response;
 use crate::domains::agent::runtime::{projection, tasks::error_response};
+use crate::domains::agent::thing_agent::task::coordinator::TaskError;
+use tinyiothub_core::agent_task::TaskStoreError;
 
 fn control_error(error: DbError) -> Response {
     match error {
         DbError::NotFound { .. } => error_response(StatusCode::NOT_FOUND, "Task 不存在"),
-        DbError::Conflict { .. } | DbError::CasConflict { .. } | DbError::Validation { .. } => {
+        DbError::Validation { message } => error_response(StatusCode::CONFLICT, message),
+        DbError::Conflict { .. } | DbError::CasConflict { .. } => {
             error_response(StatusCode::CONFLICT, "Task 已并发更新")
         }
         other => {
             tracing::warn!(%other, "runtime Task control failed");
+            error_response(StatusCode::SERVICE_UNAVAILABLE, "Task 服务不可用")
+        }
+    }
+}
+
+/// Error mapping for controls that go through the in-process coordinator. The
+/// status codes match the workspace-store mapping so the HTTP contract does not
+/// depend on which owner answered.
+fn coordinator_error(error: TaskError) -> Response {
+    match error {
+        TaskError::NotFound => error_response(StatusCode::NOT_FOUND, "Task 不存在"),
+        TaskError::Store(TaskStoreError::Validation(message)) => error_response(StatusCode::CONFLICT, message),
+        TaskError::Store(TaskStoreError::ConcurrentUpdate) => error_response(StatusCode::CONFLICT, "Task 已并发更新"),
+        other => {
+            tracing::warn!(%other, "runtime Task coordinator control failed");
             error_response(StatusCode::SERVICE_UNAVAILABLE, "Task 服务不可用")
         }
     }
@@ -40,18 +58,23 @@ async fn pause_resume(
     if let Err(response) = check_agent_admin_response(&state, &claims, &workspace_id).await {
         return response;
     }
+    // Pause/resume are pure Task-state facts: neither aborts a live token nor
+    // cancels an Effect, so the workspace store is authoritative and complete.
+    // The coordinator's own resume would re-derive the waiting status from the
+    // legacy approval table, which this cutover no longer writes.
     let controls = WorkflowControls::new(state.db.clone(), &workspace_id);
     let result = if pause {
         controls.pause(&task_id).await
     } else {
         controls.resume(&task_id).await.map(|_| ())
-    };
+    }
+    .map_err(control_error);
     match result {
         Ok(_) => {
             state.harness_stream.notify(&workspace_id);
             projection::response(&state, &workspace_id, &task_id).await
         }
-        Err(error) => control_error(error),
+        Err(response) => response,
     }
 }
 
@@ -80,12 +103,31 @@ pub async fn cancel(
         return response;
     }
     let controls = WorkflowControls::new(state.db.clone(), &workspace_id);
-    match controls.cancel(&task_id).await {
-        Ok(_) => {
+    let result: Result<(), Response> = match state.thing_agents.as_ref() {
+        Some(manager) => {
+            // Cancel Workflow-owned children and in-flight Effects first; the
+            // coordinator cancels the Task itself last, because its terminal
+            // drain depends on physical Job outcomes the workspace cascade
+            // cannot see. Never run the workspace cascade over a Task the
+            // coordinator left `cancelling`: that cascade would declare it
+            // terminal while its Jobs are still stopping.
+            if let Err(error) = controls.cancel_remaining(&task_id).await {
+                return control_error(error);
+            }
+            match manager.cancel_task(&workspace_id, &task_id).await {
+                Ok(_) => Ok(()),
+                Err(TaskError::NotFound) => controls.cancel(&task_id).await.map_err(control_error),
+                Err(error) => Err(coordinator_error(error)),
+            }
+        }
+        None => controls.cancel(&task_id).await.map_err(control_error),
+    };
+    match result {
+        Ok(()) => {
             state.harness_stream.notify(&workspace_id);
             projection::response(&state, &workspace_id, &task_id).await
         }
-        Err(error) => control_error(error),
+        Err(response) => response,
     }
 }
 
@@ -98,29 +140,40 @@ pub async fn stop_job(
         return response;
     }
     let job_effect = match state.db.harness_task_job(&workspace_id, &task_id, &job_id).await {
-        Ok(Some(job_effect)) => job_effect,
-        Ok(None) => return error_response(StatusCode::NOT_FOUND, "Device Job 不存在"),
+        Ok(job_effect) => job_effect,
         Err(error) => return control_error(error),
     };
-    if let Some(effect) = &job_effect.effect {
+    if let Some(effect) = job_effect.as_ref().and_then(|job_effect| job_effect.effect.as_ref()) {
         let recovery = super::EffectRecovery::new(state.db.clone());
         if let Err(error) = recovery.request_cancellation(&workspace_id, &effect.effect_id).await {
             tracing::warn!(%workspace_id, %job_id, %error, "single Device Job effect stop failed");
             return error_response(StatusCode::SERVICE_UNAVAILABLE, "Device Job 服务不可用");
         }
     }
-    // The Harness job is authoritative. When the in-process worker manager is
-    // wired, ask it to stop the same Job identity; a manager that no longer
-    // knows this workspace job must not turn a committed Harness stop into 404.
-    if let Some(manager) = state.thing_agents.as_ref() {
-        match manager.stop_task_job(&workspace_id, &task_id, &job_id).await {
-            Ok(_) | Err(DeviceJobError::NotFound) => {}
+    // The Harness job is authoritative. The in-process worker manager can still
+    // own a Job the workspace projection does not have (legacy platform Jobs),
+    // so it is consulted in both cases; only when neither source knows the Job
+    // does the route answer 404.
+    match state.thing_agents.as_ref() {
+        Some(manager) => match manager.stop_task_job(&workspace_id, &task_id, &job_id).await {
+            Ok(_) => {}
+            // A manager that no longer knows this Job must not turn a
+            // committed Harness stop into 404.
+            Err(DeviceJobError::NotFound) if job_effect.is_some() => {}
+            Err(DeviceJobError::NotFound) => {
+                return error_response(StatusCode::NOT_FOUND, "Device Job 不存在");
+            }
             Err(DeviceJobError::Conflict(message)) | Err(DeviceJobError::Validation(message)) => {
                 return error_response(StatusCode::CONFLICT, message);
             }
             Err(error) => {
                 tracing::warn!(%error, "single Device Job stop failed");
                 return error_response(StatusCode::SERVICE_UNAVAILABLE, "Device Job 服务不可用");
+            }
+        },
+        None => {
+            if job_effect.is_none() {
+                return error_response(StatusCode::NOT_FOUND, "Device Job 不存在");
             }
         }
     }
@@ -160,6 +213,28 @@ impl WorkflowControls {
         if task_ids.is_empty() {
             return Ok(());
         }
+        self.cancel_effects(&task_ids).await?;
+        self.db.drain_workflow_cancellation(&self.workspace_id).await
+    }
+
+    /// Cancel the Workflow-owned part of an operator cancel when the live
+    /// coordinator owns the Task row: non-terminal Subagents and in-flight
+    /// Effects, but never the root Task transition or its terminal drain.
+    /// Subagents do not nest, so one level of children is the whole tree.
+    pub async fn cancel_remaining(&self, task_id: &str) -> Result<(), DbError> {
+        self.db.guard_recovery_matrix(&self.workspace_id).await?;
+        let mut task_ids = vec![task_id.to_string()];
+        for child in self
+            .db
+            .harness_active_child_task_ids(&self.workspace_id, task_id)
+            .await?
+        {
+            task_ids.extend(self.db.cancel_workflow_task(&self.workspace_id, &child).await?);
+        }
+        self.cancel_effects(&task_ids).await
+    }
+
+    async fn cancel_effects(&self, task_ids: &[String]) -> Result<(), DbError> {
         let recovery = super::EffectRecovery::new(self.db.clone());
         let items = self.db.list_effect_recovery(&self.workspace_id).await?;
         for item in items.into_iter().filter(|item| {
@@ -175,7 +250,7 @@ impl WorkflowControls {
                 .await
                 .map_err(DbError::Internal)?;
         }
-        self.db.drain_workflow_cancellation(&self.workspace_id).await
+        Ok(())
     }
 }
 

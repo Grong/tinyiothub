@@ -102,10 +102,6 @@ impl HarnessStreamHub {
         self.notifier(workspace_id).notify_waiters();
     }
 
-    pub fn publish(&self, event: &RuntimeEvent) {
-        self.notify(&event.workspace_id);
-    }
-
     pub fn metrics(&self) -> HarnessStreamMetrics {
         HarnessStreamMetrics {
             active_connections: self.connections.iter().map(|entry| *entry.value() as u64).sum(),
@@ -120,6 +116,18 @@ impl HarnessStreamHub {
 
     pub fn active_connections(&self, workspace_id: &str) -> usize {
         self.connections.get(workspace_id).map_or(0, |count| *count)
+    }
+
+    /// Where the tail resumes. A known caller cursor newer than the projection
+    /// snapshot means an Event committed between the projection read and the
+    /// cursor check; resuming after the newer of the two avoids re-delivering
+    /// Events the caller already acknowledged.
+    fn resume_cursor(cursor: i64, after: Option<i64>, unknown: bool) -> i64 {
+        if unknown {
+            cursor
+        } else {
+            after.map_or(cursor, |after| cursor.max(after))
+        }
     }
 
     pub async fn connect(
@@ -142,19 +150,20 @@ impl HarnessStreamHub {
                 .map_err(|error| error.to_string())?,
             None => false,
         };
+        let resume_cursor = Self::resume_cursor(cursor, after, unknown);
         let mut pending = VecDeque::new();
         if unknown {
             pending.push_back(RuntimeFrame::Resync {
                 snapshot: Box::new(projection),
                 cursor,
-                high_watermark: cursor,
+                high_watermark: resume_cursor,
                 reason: "unknown_cursor".into(),
             });
         } else {
             pending.push_back(RuntimeFrame::Snapshot {
                 snapshot: Box::new(projection),
                 cursor,
-                high_watermark: cursor,
+                high_watermark: resume_cursor,
             });
         }
         *self.connections.entry(workspace_id.to_string()).or_insert(0) += 1;
@@ -173,8 +182,8 @@ impl HarnessStreamHub {
             pending,
             replay_after: if unknown { None } else { after },
             replay_page: VecDeque::new(),
-            last_cursor: cursor,
-            high_watermark: cursor,
+            last_cursor: resume_cursor,
+            high_watermark: resume_cursor,
             seen: SeenEvents::default(),
             notify: self.notifier(workspace_id),
             ticker: tokio::time::interval(TAIL_INTERVAL),
@@ -356,9 +365,18 @@ impl HarnessConnection {
                 _ = self.notify.notified() => {}
             }
             // A projection drift can only come from a fact this tail has not
-            // observed yet; re-check before waiting again.
+            // observed yet; re-check before waiting again. Compare the newest
+            // pending state-bearing Event: when two transitions commit inside
+            // one idle interval, the older row's stateVersion is already
+            // stale against the current projection and would fake a resync.
             if let Ok(rows) = self.page(self.last_cursor).await
-                && let Some(event) = rows.first()
+                && let Some(event) = rows.iter().rev().find(|event| {
+                    event
+                        .data
+                        .get("stateVersion")
+                        .and_then(serde_json::Value::as_i64)
+                        .is_some()
+                })
                 && self.projection_mismatch(event).await.ok() == Some(true)
             {
                 let frame = self.resync("projection_mismatch").await?;
@@ -541,6 +559,119 @@ mod tests {
         };
         assert_eq!(event.event_id, "live-1");
         fixture.close().await;
+    }
+
+    async fn append_versioned(
+        db: &tinyiothub_storage::Db,
+        workspace_id: &str,
+        task_id: &str,
+        id: &str,
+        state_version: i64,
+    ) -> i64 {
+        db.append_session_event(&HarnessEventInput {
+            event_id: id.to_string(),
+            workspace_id: workspace_id.to_string(),
+            session_id: format!("task:{task_id}"),
+            execution_mode: ExecutionMode::Production,
+            run_id: None,
+            task_id: Some(task_id.to_string()),
+            event_type: "task.updated".to_string(),
+            occurred_at: Utc::now(),
+            cause_id: None,
+            schema_v: 1,
+            payload_digest: format!("digest-{id}"),
+            payload_json: json!({"stateVersion": state_version}),
+        })
+        .await
+        .expect("append")
+        .seq
+    }
+
+    /// The snapshot cursor is a production seq; a simulation Event committed
+    /// later must not move it, or the server would issue a cursor that
+    /// `harness_cursor_known` rejects on reconnect.
+    #[tokio::test]
+    async fn snapshot_cursor_never_names_a_simulation_event() {
+        let fixture = fixture_workspace("ws-harness-stream-cursor-mode").await;
+        let ws = "ws-harness-stream-cursor-mode";
+        seed_task(&fixture.db, ws, "task-1").await;
+        let production = append(&fixture.db, ws, "task-1", "event-production").await;
+        let simulation = fixture
+            .db
+            .append_session_event(&HarnessEventInput {
+                event_id: "event-simulation".to_string(),
+                workspace_id: ws.to_string(),
+                session_id: "task:task-1".to_string(),
+                execution_mode: ExecutionMode::Simulation,
+                run_id: None,
+                task_id: Some("task-1".to_string()),
+                event_type: "task.updated".to_string(),
+                occurred_at: Utc::now(),
+                cause_id: None,
+                schema_v: 1,
+                payload_digest: "digest-simulation".to_string(),
+                payload_json: json!({"stateVersion": 9}),
+            })
+            .await
+            .expect("simulation append")
+            .seq;
+        assert!(simulation > production, "simulation seq must trail the production seq");
+        let hub = Arc::new(HarnessStreamHub::default());
+        let mut connection = hub
+            .connect(Arc::new(fixture.db.clone()), ws, "task-1", None)
+            .await
+            .expect("connect");
+        let Some(super::RuntimeFrame::Snapshot {
+            cursor, high_watermark, ..
+        }) = connection.next_frame().await
+        else {
+            panic!("expected snapshot");
+        };
+        assert_eq!(cursor, production, "snapshot cursor must be a production seq");
+        assert_eq!(high_watermark, production);
+        assert_eq!(connection.last_cursor, production);
+        fixture.close().await;
+    }
+
+    /// Two state transitions committing inside one idle interval must not fake
+    /// a projection resync: the newest Event's stateVersion already matches the
+    /// projection.
+    #[tokio::test]
+    async fn two_transitions_in_one_interval_do_not_fake_a_projection_resync() {
+        let fixture = fixture_workspace("ws-harness-stream-multi-version").await;
+        let ws = "ws-harness-stream-multi-version";
+        seed_task(&fixture.db, ws, "task-1").await;
+        let hub = Arc::new(HarnessStreamHub::default());
+        let mut connection = hub
+            .connect(Arc::new(fixture.db.clone()), ws, "task-1", None)
+            .await
+            .expect("connect");
+        assert!(matches!(
+            connection.next_frame().await,
+            Some(super::RuntimeFrame::Snapshot { .. })
+        ));
+        append_versioned(&fixture.db, ws, "task-1", "event-v1", 1).await;
+        append_versioned(&fixture.db, ws, "task-1", "event-v2", 2).await;
+        sqlx::query("UPDATE agent_tasks SET state_version = 2 WHERE id = 'task-1'")
+            .execute(&fixture.db.workspace_pool_for_testing(ws).await.expect("pool"))
+            .await
+            .expect("project state version");
+        hub.notify(ws);
+        for expected in ["event-v1", "event-v2"] {
+            let Some(super::RuntimeFrame::Event { event, .. }) = connection.next_frame().await else {
+                panic!("expected the {expected} Event, not a resync");
+            };
+            assert_eq!(event.event_id, expected);
+        }
+        fixture.close().await;
+    }
+
+    #[test]
+    fn resume_cursor_never_rewinds_behind_a_known_caller_cursor() {
+        assert_eq!(HarnessStreamHub::resume_cursor(4, Some(7), false), 7);
+        assert_eq!(HarnessStreamHub::resume_cursor(4, Some(2), false), 4);
+        assert_eq!(HarnessStreamHub::resume_cursor(4, None, false), 4);
+        assert_eq!(HarnessStreamHub::resume_cursor(4, Some(7), true), 4);
     }
 
     #[test]
