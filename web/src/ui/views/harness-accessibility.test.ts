@@ -274,6 +274,7 @@ describe('Harness responsive and design-system contracts', () => {
     expect(overviewCss).toContain('@media (max-width: 599px)');
     expect(overviewCss).toContain('.harness-workflow-table');
     expect(overviewCss).toContain('.harness-workflow-table__field');
+    expect(overviewCss).not.toContain('attr(data-label)');
     expect(overviewCss).not.toContain('overflow-x: scroll');
     expect(overviewCss).not.toContain('overflow-x: auto');
     expect(overviewCss).toMatch(

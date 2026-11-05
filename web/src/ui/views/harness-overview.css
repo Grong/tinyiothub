@@ -417,15 +417,21 @@ view-harness-overview {
   }
 
   .harness-workflow-table td {
-    display: grid;
-    grid-template-columns: 6.5em minmax(0, 1fr);
-    gap: var(--space-1);
+    display: block;
     padding: var(--space-1) 0;
     border: 0;
   }
 
-  .harness-workflow-table td::before {
-    content: attr(data-label);
+  /* Single label mechanism: reveal the same span SRs already read. */
+  .harness-workflow-table td .harness-workflow-table__field {
+    position: static;
+    width: auto;
+    height: auto;
+    margin: 0;
+    padding: 0;
+    overflow: visible;
+    clip: auto;
+    display: block;
     color: var(--muted-foreground);
     font-size: 12px;
   }

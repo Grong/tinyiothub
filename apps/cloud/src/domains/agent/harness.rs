@@ -675,9 +675,14 @@ mod tests {
 
     #[tokio::test]
     async fn workflow_routes_reject_auth_and_tenant_before_opening_the_store() {
-        let (app_state, pool) = setup_test_app_with_pool().await;
+        // Metadata knows ws-1 and cross-tenant ws-2. The handler's store DB only
+        // registers ws-1, so a store-first regression for ws-2 lands on
+        // ensure_registered_workspace -> 404 instead of the expected 403.
+        let fixture = fixture_workspace("ws-1").await;
+        let (mut app_state, pool) = setup_test_app_with_pool().await;
         seed_test_workspace(&pool, "tenant-1", "ws-1").await;
         seed_test_workspace(&pool, "tenant-2", "ws-2").await;
+        app_state.db = Arc::new(fixture.db.clone());
         let app = axum::Router::new()
             .nest("/api", crate::api::create_router(&app_state))
             .with_state(app_state);
@@ -692,8 +697,16 @@ mod tests {
             Some(body.clone()),
         )
         .await;
-        // 403, not a store-open failure: tenant check runs first.
         assert_eq!(status, StatusCode::FORBIDDEN, "{response}");
+
+        // The rejected request must not create workflows or workspace artifacts.
+        let (status, listed) = get(&app, Some(&token), "/api/v1/workspaces/ws-1/harness/workflows").await;
+        assert_eq!(status, StatusCode::OK, "{listed}");
+        assert_eq!(listed["result"]["workflows"].as_array().unwrap().len(), 0);
+        assert!(
+            !fixture.root.join("data/agents/ws-2/harness/harness.db").exists(),
+            "cross-tenant request must not open or create the ws-2 store"
+        );
 
         let (status, response) = send(
             &app,
@@ -714,6 +727,9 @@ mod tests {
         )
         .await;
         assert_eq!(status, StatusCode::UNAUTHORIZED);
+
+        drop(app);
+        fixture.close().await;
     }
 
     #[tokio::test]

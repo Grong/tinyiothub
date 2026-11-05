@@ -367,24 +367,24 @@ export class HarnessOverviewView extends LitElement {
     return html`
       <tr class="harness-workflow" role="row" data-workflow-id=${workflow.workflowId}>
         <th scope="row" role="rowheader">工作流 ${workflow.objective}</th>
-        <td role="cell" data-label="启停">
+        <td role="cell">
           <span class="harness-workflow-table__field">启停：</span>
           ${renderHarnessStatus(workflow.enabled ? 'enabled' : 'disabled')}
         </td>
-        <td role="cell" data-label="触发">
+        <td role="cell">
           <span class="harness-workflow-table__field">触发：</span>${workflow.triggerLabel}
         </td>
-        <td role="cell" data-label="下一次">
+        <td role="cell">
           <span class="harness-workflow-table__field">下一次：</span>
           ${workflow.enabled ? formatHarnessTime(workflow.nextRunAt) : '未计划'}
         </td>
-        <td role="cell" data-label="最近结果">
+        <td role="cell">
           <span class="harness-workflow-table__field">最近结果：</span>${workflow.lastResult ?? '暂无'}
         </td>
-        <td role="cell" data-label="版本">
+        <td role="cell">
           <span class="harness-workflow-table__field">版本：</span>${workflow.version}
         </td>
-        <td role="cell" data-label="操作">
+        <td role="cell">
           <span class="harness-workflow-table__field">操作：</span>
           <a
             class="harness-workflow__action"
