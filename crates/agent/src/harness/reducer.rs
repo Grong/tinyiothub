@@ -33,6 +33,7 @@ pub fn reduce(state: &HarnessState, fact: &HarnessFact) -> Result<Transition, Ha
             transition_id: fact.transition_id.clone(),
             precondition,
             effect: None,
+            create_effect: None,
             event: None,
             additional_events: Vec::new(),
             decision: None,
@@ -77,6 +78,7 @@ pub fn reduce(state: &HarnessState, fact: &HarnessFact) -> Result<Transition, Ha
         precondition,
         effect: Some(EffectMutation {
             effect_id: state.effect_id.clone(),
+            insert_if_missing: false,
             state: fact.next,
             recovery_from: None,
             state_version: next_version,
@@ -84,6 +86,7 @@ pub fn reduce(state: &HarnessState, fact: &HarnessFact) -> Result<Transition, Ha
             result: fact.result.clone(),
             updated_at: fact.occurred_at,
         }),
+        create_effect: None,
         event: Some(event),
         additional_events: Vec::new(),
         decision: None,
@@ -404,6 +407,7 @@ pub fn reduce_recovery(
         precondition,
         effect: Some(EffectMutation {
             effect_id: intent.effect_id.clone(),
+            insert_if_missing: false,
             state: next,
             recovery_from: match &fact {
                 RecoveryFact::Fence if intent.state == EffectState::Cancelling => Some(EffectState::Cancelling),
@@ -416,6 +420,7 @@ pub fn reduce_recovery(
             result: result.clone(),
             updated_at: occurred_at,
         }),
+        create_effect: None,
         event: Some(event),
         additional_events,
         decision: decision_mutation,

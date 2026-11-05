@@ -197,11 +197,11 @@ impl DeviceJobStore for DbDeviceJobStore {
     }
 
     async fn submit_approved_job(&self, job: &DeviceJob) -> Result<(Option<DeviceJob>, bool), DeviceJobError> {
-        let (job, inserted, events) = self.db.submit_approved_job_and_events(job).await?;
-        for event in events {
-            self.publish(event);
-        }
-        Ok((job, inserted))
+        // Task 19C2 removed the legacy approval execution path. The trait keeps
+        // the seam for the Runtime Job service, but there is no approved-tool
+        // projection left to replay: an accepted Job is created once.
+        self.create_job(job).await?;
+        Ok((Some(job.clone()), true))
     }
 
     async fn mark_running(&self, job_id: &str, driver_call_id: &str) -> Result<DeviceJob, DeviceJobError> {
@@ -1363,7 +1363,7 @@ mod runtime_job_event_tests {
             .expect("legacy wake");
         assert_eq!(wakes, 1, "the legacy TaskWake must be preserved");
         let events: i64 = sqlx::query_scalar(
-            "SELECT COUNT(*) FROM hub_ledger WHERE kind = 'runtime.v1' AND payload LIKE '%' || ? || '%'",
+            "SELECT COUNT(*) FROM hub_ledger WHERE kind = 'runtime' || '.v1' AND payload LIKE '%' || ? || '%'",
         )
         .bind(&job.id)
         .fetch_one(db.pool())

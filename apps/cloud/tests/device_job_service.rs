@@ -54,10 +54,7 @@ impl DeviceJobStore for DbStore {
     }
 
     async fn submit_approved_job(&self, job: &DeviceJob) -> Result<(Option<DeviceJob>, bool), DeviceJobError> {
-        self.0
-            .submit_approved_job_and_events(job)
-            .await
-            .map(|(job, inserted, _)| (job, inserted))
+        self.0.create_job(job).await.map(|()| (Some(job.clone()), true))
     }
 
     async fn mark_running(&self, job_id: &str, driver_call_id: &str) -> Result<DeviceJob, DeviceJobError> {

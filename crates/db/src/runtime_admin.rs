@@ -468,17 +468,6 @@ mod tests {
         seed_task(&pool, "ws_1", "task_done", "completed").await;
         seed_watch(&pool, "ws_1", "watch_live", "task_live").await;
         seed_watch(&pool, "ws_1", "watch_done", "task_done").await;
-        sqlx::query(
-            "INSERT INTO task_approvals
-                 (id, workspace_id, task_id, run_id, tool_call_id, device_id, tool, args_json, reason,
-                  state, decision, decider_id, requested_at, decided_at, expires_at, decision_event_id, updated_at)
-             VALUES ('approval_1', 'ws_1', 'task_live', 'run_1', 'call_1', 'dev_1', 'set_speed', '{}',
-                     'confirm', 'pending', NULL, NULL, '2026-10-29T00:00:00Z', NULL,
-                     '2026-10-30T00:00:00Z', 'decision_1', '2026-10-29T00:00:00Z')",
-        )
-        .execute(&pool)
-        .await
-        .expect("approval");
         for (event_id, resolved_at) in [("event_live", None), ("event_resolved", Some("2026-10-29T00:00:00Z"))] {
             sqlx::query(
                 "INSERT INTO task_wake_outbox
@@ -499,7 +488,10 @@ mod tests {
             counts.active_watches, 1,
             "a watch owned by a terminal Task must not keep the drain open"
         );
-        assert_eq!(counts.pending_approvals, 1);
+        assert_eq!(
+            counts.pending_approvals, 0,
+            "no production code writes the platform approval table"
+        );
         assert_eq!(counts.pending_outbox, 1);
         assert_eq!(counts.unresolved_unknown, 0);
     }

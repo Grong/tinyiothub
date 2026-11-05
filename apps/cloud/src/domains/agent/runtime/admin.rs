@@ -677,18 +677,6 @@ mod tests {
         seed_owned_watch(&db, "watch-live", "task-admin").await;
         seed_owned_watch(&db, "watch-terminal", "task-terminal").await;
         sqlx::query(
-            "INSERT INTO task_approvals
-                 (id, workspace_id, task_id, run_id, tool_call_id, device_id, tool, args_json, reason,
-                  state, decision, decider_id, requested_at, decided_at, expires_at, decision_event_id, updated_at)
-             VALUES ('approval-http', ?, 'task-admin', 'run-1', 'call-1', 'dev-1', 'set_speed', '{}',
-                     'confirm', 'pending', NULL, NULL, '2026-10-29T00:00:00Z', NULL,
-                     '2026-10-30T00:00:00Z', 'decision-1', '2026-10-29T00:00:00Z')",
-        )
-        .bind(WS)
-        .execute(db.pool())
-        .await
-        .expect("approval");
-        sqlx::query(
             "INSERT INTO task_wake_outbox
                  (task_id, event_id, signal_json, dispatch_state, created_at, dispatched_at, resolved_at)
              VALUES ('task-admin', 'pending-http', '{\"workspace_id\":\"ws-runtime-admin\"}', 'pending',
@@ -704,7 +692,10 @@ mod tests {
         assert_eq!(status, StatusCode::OK, "drain: {body}");
         let drain = &body["result"]["drain"];
         assert_eq!(drain["activeWatches"], 1, "terminal Task watch must count zero: {body}");
-        assert_eq!(drain["pendingApprovals"], 1, "{body}");
+        assert_eq!(
+            drain["pendingApprovals"], 0,
+            "no production code writes the platform approval table: {body}"
+        );
         assert_eq!(drain["pendingOutbox"], 1, "{body}");
         assert_eq!(drain["unresolvedUnknown"], 1, "{body}");
         assert_eq!(body["result"]["canHideWorkbench"], false);

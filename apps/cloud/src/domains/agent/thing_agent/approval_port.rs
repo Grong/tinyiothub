@@ -1,57 +1,33 @@
+use std::sync::Arc;
+
 use async_trait::async_trait;
-use chrono::{DateTime, Utc};
-use tinyiothub_core::agent_task::{AgentTask, TaskWake};
-use tinyiothub_core::device_job::DeviceJobError;
-use tinyiothub_core::task_approval::{ApprovalDecision, DecisionOutcome, TaskApproval};
+use tinyiothub_core::agent_task::TaskStoreError;
 
-use crate::domains::agent::thing_agent::task::coordinator::TaskError;
+/// Read-only port for the single approval source: the workspace `decisions`
+/// table. The legacy platform `task_approvals` store has no writers and is not
+/// consulted for Task status.
+#[async_trait]
+pub trait PendingToolApproval: Send + Sync {
+    async fn has_requested_tool_approval(&self, workspace_id: &str, task_id: &str) -> Result<bool, TaskStoreError>;
+}
 
-#[derive(Debug, thiserror::Error, PartialEq, Eq)]
-pub enum ApprovalError {
-    #[error("approval not found")]
-    NotFound,
-    #[error("approval decision conflicts with the recorded decision")]
-    DecisionConflict,
-    #[error("approval storage unavailable: {0}")]
-    Storage(String),
-    #[error(transparent)]
-    Job(#[from] DeviceJobError),
-    #[error(transparent)]
-    Task(#[from] TaskError),
+#[derive(Clone)]
+pub struct HarnessPendingToolApproval {
+    db: Arc<tinyiothub_storage::Db>,
+}
+
+impl HarnessPendingToolApproval {
+    pub fn new(db: Arc<tinyiothub_storage::Db>) -> Self {
+        Self { db }
+    }
 }
 
 #[async_trait]
-pub trait TaskApprovalStore: Send + Sync {
-    async fn create_pending(&self, approval: &TaskApproval, expected_version: i64) -> Result<AgentTask, ApprovalError>;
-    async fn get_scoped(
-        &self,
-        workspace_id: &str,
-        task_id: &str,
-        approval_id: &str,
-    ) -> Result<Option<TaskApproval>, ApprovalError>;
-    async fn get_by_decision_event(
-        &self,
-        workspace_id: &str,
-        event_id: &str,
-    ) -> Result<Option<TaskApproval>, ApprovalError>;
-    async fn list_for_task(&self, workspace_id: &str, task_id: &str) -> Result<Vec<TaskApproval>, ApprovalError>;
-    async fn decide(
-        &self,
-        workspace_id: &str,
-        task_id: &str,
-        approval_id: &str,
-        decision: ApprovalDecision,
-        decider_id: &str,
-        now: DateTime<Utc>,
-        wake: &TaskWake,
-    ) -> Result<DecisionOutcome, ApprovalError>;
-    async fn list_recoverable(&self, workspace_id: Option<&str>) -> Result<Vec<TaskApproval>, ApprovalError>;
-    async fn expire_due(&self, now: DateTime<Utc>) -> Result<u64, ApprovalError>;
-    async fn cancel(
-        &self,
-        workspace_id: &str,
-        task_id: &str,
-        expected_version: i64,
-        now: DateTime<Utc>,
-    ) -> Result<AgentTask, ApprovalError>;
+impl PendingToolApproval for HarnessPendingToolApproval {
+    async fn has_requested_tool_approval(&self, workspace_id: &str, task_id: &str) -> Result<bool, TaskStoreError> {
+        self.db
+            .harness_has_requested_tool_approval(workspace_id, task_id)
+            .await
+            .map_err(|error| TaskStoreError::Unavailable(error.to_string()))
+    }
 }

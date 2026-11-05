@@ -154,6 +154,9 @@ rm -f "$EVIL_LEGACY_RS"
 printf 'pub fn evil() { task_approval_by_decision_event(); }\n' > "$EVIL_LEGACY_RS"
 expect_fails "legacy-writers (duplicate approval writer)" bash scripts/guards/legacy-writers.sh
 rm -f "$EVIL_LEGACY_RS"
+printf '%s\n' 'pub fn evil() { let _ = "INSERT INTO task_approvals VALUES (1)"; }' > "$EVIL_LEGACY_RS"
+expect_fails "legacy-writers (platform approval write)" bash scripts/guards/legacy-writers.sh
+rm -f "$EVIL_LEGACY_RS"
 EVIL_LEGACY_WEB=web/src/ui/views/selftest_legacy_evil.ts
 printf 'const associatedTools = new Set(["read_device"]);\n' > "$EVIL_LEGACY_WEB"
 CLEANUP+=("$EVIL_LEGACY_WEB")
@@ -161,6 +164,12 @@ expect_fails "legacy-writers (web tool allowlist)" bash scripts/guards/legacy-wr
 rm -f "$EVIL_LEGACY_WEB"
 printf 'const taskStatusLabels = { active: "Active" };\n' > "$EVIL_LEGACY_WEB"
 expect_fails "legacy-writers (web duplicate status map)" bash scripts/guards/legacy-writers.sh
+rm -f "$EVIL_LEGACY_WEB"
+printf 'const jobStates = ["accepted"];\n' > "$EVIL_LEGACY_WEB"
+expect_fails "legacy-writers (removed job state list)" bash scripts/guards/legacy-writers.sh
+rm -f "$EVIL_LEGACY_WEB"
+printf 'const terminalTasks = [];\n' > "$EVIL_LEGACY_WEB"
+expect_fails "legacy-writers (removed terminal task list)" bash scripts/guards/legacy-writers.sh
 rm -f "$EVIL_LEGACY_WEB"
 expect_passes "legacy-writers" bash scripts/guards/legacy-writers.sh
 

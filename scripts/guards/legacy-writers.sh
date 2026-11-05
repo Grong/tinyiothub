@@ -66,17 +66,17 @@ check_rust \
   '^(crates/db/src/(runtime_event|runtime_task|task_approval|device_job|watch|media_evidence|agent_runs)\.rs|apps/cloud/src/domains/agent/runtime/(stream|tasks)\.rs|apps/cloud/src/domains/agent/host/tools/thing/device\.rs|apps/cloud/src/domains/agent/tools/capabilities\.rs):'
 
 # ── Duplicate approval writers (platform task_approvals) ───
-# decisions is the Harness approval source. The old adapters may still mirror
-# legacy approvals until the Runtime API is retired.
+# decisions is the only Harness approval source (Task 19C2). The platform
+# table survives for the legacy read projection only; it has no writers.
 check_rust \
   "task approval writer outside the legacy adapter" \
   '(create_task_approval_and_events|decide_task_approval_and_event|expire_task_approvals_and_events|cancel_task_approvals_and_events|submit_approved_job_and_events|task_approval_by_decision_event|list_recoverable_task_approvals)' \
   '^(crates/db/src/task_approval\.rs|apps/cloud/src/domains/agent/runtime/approvals\.rs|apps/cloud/src/shared/runtime_ports\.rs):'
 
 check_rust \
-  "task_approvals write outside its owner" \
+  "platform task_approvals write" \
   '(INSERT INTO task_approvals|UPDATE task_approvals)' \
-  '^(crates/db/src/task_approval\.rs|crates/db/src/runtime_admin\.rs|apps/cloud/src/domains/agent/runtime/admin\.rs):'
+  '^__no_allow_list__$'
 
 # ── Independent platform Job state mutation ────────────────
 # The approved/legacy Job flow must go through the single device_job owner;
@@ -111,7 +111,7 @@ fi
 # exposed through runtime-status.ts. Tool/event allowlists are derived from
 # event facts, not a frontend Set.
 WEB_HITS=$(rg -n --glob '*.ts' --glob '!**/*.test.ts' \
-    '(const associatedTools|const toolEvents|const readOnlyTools|const eventTitles|const taskStatusLabels|const taskStatusTones)' \
+    '(const associatedTools|const toolEvents|const readOnlyTools|const eventTitles|const taskStatusLabels|const taskStatusTones|taskStatuses|jobStates|approvalStates|terminalTasks|pausableStatuses|cancellableStatuses|terminalStatuses)' \
     web/src 2>/dev/null || true)
 if [ -n "$WEB_HITS" ]; then
   echo "$WEB_HITS"

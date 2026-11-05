@@ -320,18 +320,15 @@ pub(crate) fn build_autonomous_tools(
         jobs: runtime.jobs.clone(),
         run_ctx: Some(run_ctx.clone()),
     };
-    tools.push(Box::new(
-        AutonomousInvokeActionTool::new(
-            inner,
-            policy_repo,
-            run_ctx,
-            pool.clone(),
-            workspace_id.to_string(),
-            event_bus,
-            throttle,
-        )
-        .with_task_approvals(runtime.task_approvals.clone()),
-    ));
+    tools.push(Box::new(AutonomousInvokeActionTool::new(
+        inner,
+        policy_repo,
+        run_ctx,
+        pool.clone(),
+        workspace_id.to_string(),
+        event_bus,
+        throttle,
+    )));
     tools
 }
 
@@ -566,15 +563,10 @@ mod tests {
     // facts, wake outbox rows and idempotency all go through SQLite.
 
     use crate::domains::agent::thing_agent::RunContextInner;
-    use crate::domains::agent::thing_agent::task::approval::{
-        ApprovalExecutor, ApprovalTasks, ApprovedJobs, ExecutionOutcome,
-    };
-    use crate::domains::agent::thing_agent::task::coordinator::{Advance, TaskError};
     use tinyiothub_core::agent_task::{AgentTask, TaskStatus, TaskWake, WakeDispatchState};
     use tinyiothub_core::device_job::DeviceJobState;
     use tinyiothub_core::driver::manifest::{ManifestTool, ToolKindDecl, ToolSafetyDecl, ToolTimeout};
     use tinyiothub_core::models::thing_command::ThingCommand;
-    use tinyiothub_core::task_approval::ApprovalDecision;
     use tinyiothub_runtime::access::resources::{ResourceClaim, ResourceResolver, device_claim};
     use tinyiothub_runtime::access::validator::{AccessCallValidator, CallError, ValidatedCall};
     use tinyiothub_runtime::arbitration::{ArbitrationRegistry, ResourceLease};
@@ -1100,16 +1092,62 @@ mod tests {
         }
     }
 
+    /// Task 19C2: a confirmation-gated Task tool call originates exactly one
+    /// requested `tool_approval` Decision in the workspace and no platform
+    /// approval row. Answering it lets the Effect dispatcher create exactly one
+    /// Job; the returned `approvalId` is the Decision id the HTTP route answers.
     #[tokio::test]
     async fn approval_gated_task_call_creates_zero_jobs_until_approval_then_exactly_one() {
-        let (_dir, pool) = file_pool().await;
-        let db = Arc::new(tinyiothub_storage::Db::new(pool.clone()));
-        seed_task_owned_device(&pool, &db, "ws-approve", "dev-1", "task-1", "run-1", true).await;
-        let worker = Arc::new(SubmittingWorker::default());
-        let jobs = job_service(&db, worker.clone());
-        let approvals: Arc<crate::domains::agent::runtime::approvals::DbApprovalStore> = Arc::new(
-            crate::domains::agent::runtime::approvals::DbApprovalStore::new(db.clone()),
+        let (dir, pool) = file_pool().await;
+        let db = Arc::new(
+            tinyiothub_storage::Db::new(pool.clone()).with_workspace_store_root(dir.path().join("data/agents")),
         );
+        seed_task_owned_device(&pool, &db, "ws-approve", "dev-1", "task-1", "run-1", true).await;
+        db.create_workspace_store("ws-approve").await.expect("workspace store");
+        // Production Tasks live in the workspace generation after 19C1. The
+        // Effect recovery query joins this row, and the tool re-checks the Run.
+        let now = chrono::Utc::now();
+        let task = AgentTask {
+            id: "task-1".into(),
+            workspace_id: "ws-approve".into(),
+            idempotency_key: "task-1-harness-key".into(),
+            objective: "approve a device action".into(),
+            session_key: None,
+            created_by: "user-1".into(),
+            status: TaskStatus::Active,
+            current_run_id: Some("run-1".into()),
+            state_version: 0,
+            created_at: now,
+            updated_at: now,
+            ended_at: None,
+        };
+        let wake = TaskWake {
+            task_id: "task-1".into(),
+            event_id: "harness-task-1-created".into(),
+            signal_json: serde_json::json!({"workspace_id":"ws-approve"}).to_string(),
+            dispatch_state: WakeDispatchState::Dispatched,
+            created_at: now,
+            dispatched_at: Some(now),
+            resolved_at: Some(now),
+        };
+        db.harness_create_task_with_wake(&task, &wake)
+            .await
+            .expect("harness Task");
+        let workspace = db
+            .workspace_pool_for_testing("ws-approve")
+            .await
+            .expect("workspace pool");
+        sqlx::query("INSERT INTO agent_runs (id, task_id, state) VALUES ('run-1', 'task-1', 'running')")
+            .execute(&workspace)
+            .await
+            .expect("run");
+
+        // Seed writes its own legacy Task event; the approval flow must add none.
+        let legacy_before: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM hub_ledger WHERE kind = 'runtime' || '.v1'")
+            .fetch_one(&pool)
+            .await
+            .expect("legacy events before");
+        let worker = Arc::new(SubmittingWorker::default());
         let tools = build_autonomous_tools(
             &pool,
             "ws-approve",
@@ -1119,8 +1157,7 @@ mod tests {
             Arc::new(ThrottleState::new(60)),
             &ThingToolContext {
                 pending_actions: Some(Arc::new(dashmap::DashMap::new())),
-                jobs: Some(jobs.clone()),
-                task_approvals: Some(approvals.clone()),
+                jobs: Some(job_service(&db, worker.clone())),
                 ..Default::default()
             },
         );
@@ -1129,99 +1166,93 @@ mod tests {
         let pending = call.execute(call_args()).await.expect("tool call");
         let pending_output: serde_json::Value = serde_json::from_str(&pending.output).expect("tool output");
         assert_eq!(pending_output["status"], "approval_pending", "{pending_output}");
-        assert_eq!(job_rows(&pool).await, 0, "no Job before human approval");
-        assert!(worker.submitted.lock().expect("submitted").is_empty());
-        let mut approvals_list = db
-            .list_task_approvals("ws-approve", "task-1")
-            .await
-            .expect("approval list");
-        assert_eq!(approvals_list.len(), 1);
-        let approval = approvals_list.pop().expect("approval");
-        assert_eq!(approval.run_id, "run-1");
-        assert_eq!(approval.device_id, "dev-1");
-        assert_eq!(approval.tool, "set_level");
-        assert_eq!(approval.args_json, serde_json::json!({"level":7}));
-
-        let now = chrono::Utc::now();
-        let decision_wake = TaskWake {
-            task_id: "task-1".into(),
-            event_id: approval.decision_event_id.clone(),
-            signal_json: serde_json::json!({
-                "kind":"approval_decided",
-                "workspace_id":"ws-approve",
-                "task_id":"task-1",
-                "approval_id":approval.id,
-            })
-            .to_string(),
-            dispatch_state: WakeDispatchState::Pending,
-            created_at: now,
-            dispatched_at: None,
-            resolved_at: None,
-        };
-        crate::domains::agent::thing_agent::approval_port::TaskApprovalStore::decide(
-            approvals.as_ref(),
-            "ws-approve",
-            "task-1",
-            &approval.id,
-            ApprovalDecision::Approve,
-            "user-1",
-            now,
-            &decision_wake,
-        )
-        .await
-        .expect("approve");
-
-        struct RecordedTasks;
-
-        #[async_trait]
-        impl ApprovalTasks for RecordedTasks {
-            async fn advance(&self, _task_id: &str, _event_id: &str) -> Result<Advance, TaskError> {
-                Ok(Advance::Recorded)
-            }
-        }
-
-        let approved_jobs: Arc<dyn ApprovedJobs> = Arc::new(jobs.clone());
-        let executor = ApprovalExecutor::new(approvals.clone(), approved_jobs, Arc::new(RecordedTasks));
-        let outcome = executor
-            .execute_decision(&approval.workspace_id, &approval.decision_event_id)
-            .await
-            .expect("approved execution");
-        let ExecutionOutcome::Job(job) = outcome else {
-            panic!("approved call must create exactly one Job");
-        };
-        assert_eq!(job.task_id.as_deref(), Some("task-1"));
-        assert_eq!(job.run_id.as_deref(), Some("run-1"));
-        assert_eq!(job.tool_call_id.as_deref(), Some(approval.tool_call_id.as_str()));
-        assert_eq!(job.state, DeviceJobState::Accepted);
-        assert_eq!(job_rows(&pool).await, 1);
         assert_eq!(
-            worker.submitted.lock().expect("submitted").as_slice(),
-            std::slice::from_ref(&job.id)
+            worker.submitted.lock().expect("submitted").len(),
+            0,
+            "no Job before approval"
+        );
+        let decisions: Vec<(String, String, String, Option<String>)> = sqlx::query_as(
+            "SELECT decision_id, kind, state, effect_id FROM decisions ORDER BY created_at, decision_id",
+        )
+        .fetch_all(&workspace)
+        .await
+        .expect("decisions");
+        assert_eq!(decisions.len(), 1, "one Decision per confirmation: {decisions:?}");
+        let (decision_id, kind, state, effect_id) = &decisions[0];
+        assert_eq!(kind, "tool_approval");
+        assert_eq!(state, "requested");
+        assert!(effect_id.is_some(), "the Decision must link its Prepared Effect");
+        assert_eq!(
+            pending_output["approvalId"].as_str(),
+            Some(decision_id.as_str()),
+            "the tool returns the Decision id the HTTP route answers"
+        );
+        let platform_approvals: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM task_approvals")
+            .fetch_one(&pool)
+            .await
+            .expect("platform approvals");
+        assert_eq!(platform_approvals, 0, "no platform approval writers remain");
+
+        let jobs = JobService::new(
+            Arc::new(crate::shared::runtime_ports::HarnessAwareDeviceJobStore::new(
+                db.clone(),
+                crate::shared::runtime_ports::DbDeviceJobStore::new(db.as_ref().clone()),
+            )),
+            Arc::new(OneWorker { worker: worker.clone() }),
+            Arc::new(AcceptAllValidator),
+            Arc::new(DeviceResources),
+            Arc::new(ArbitrationRegistry::default()),
+        );
+        let dispatch = crate::domains::agent::runtime::dispatch::EffectDispatch::new(db.clone(), jobs);
+        assert_eq!(
+            dispatch
+                .dispatch_task("ws-approve", "task-1")
+                .await
+                .expect("pre-answer pass")
+                .blocked,
+            1,
+            "a requested Decision blocks dispatch"
         );
 
-        // Replaying the approved decision re-uses the same frozen Job instead
-        // of submitting the side effect again.
-        let replay = executor
-            .execute_decision(&approval.workspace_id, &approval.decision_event_id)
-            .await
-            .expect("approved replay");
-        let ExecutionOutcome::Job(replayed) = replay else {
-            panic!("replay must return the existing Job");
-        };
-        assert_eq!(replayed.id, job.id);
-        assert_eq!(job_rows(&pool).await, 1);
+        db.harness_answer_tool_approval(
+            "ws-approve",
+            "task-1",
+            decision_id,
+            "approved",
+            "user-1",
+            chrono::Utc::now(),
+        )
+        .await
+        .expect("approve decision");
+        let report = dispatch.dispatch_task("ws-approve", "task-1").await.expect("dispatch");
+        assert_eq!(report.dispatched, 1);
         assert_eq!(worker.submitted.lock().expect("submitted").len(), 1);
-
-        JobResultSink::command_finished(&jobs, &job.id, true, None).await;
-        let wake_event = format!("device_job:{}:done", job.id);
-        assert_eq!(wake_rows(&pool, &wake_event).await, 1);
-        JobResultSink::command_finished(&jobs, &job.id, true, None).await;
-        assert_eq!(wake_rows(&pool, &wake_event).await, 1, "exactly-once completion wake");
-        let done = db
-            .get_job("ws-approve", &job.id)
+        let effect_state: String = sqlx::query_scalar("SELECT state FROM effect_intents WHERE effect_id = ?")
+            .bind(effect_id.as_ref().expect("effect id"))
+            .fetch_one(&workspace)
             .await
-            .expect("job read")
-            .expect("Job row");
-        assert_eq!(done.state, DeviceJobState::Done);
+            .expect("effect state");
+        assert_eq!(effect_state, "dispatching");
+        let workspace_jobs: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM device_jobs")
+            .fetch_one(&workspace)
+            .await
+            .expect("workspace jobs");
+        assert_eq!(workspace_jobs, 1, "exactly one approved Job");
+        let decided: (String, Option<String>) =
+            sqlx::query_as("SELECT state, answer FROM decisions WHERE decision_id = ?")
+                .bind(decision_id)
+                .fetch_one(&workspace)
+                .await
+                .expect("consumed decision");
+        assert_eq!(decided.0, "consumed");
+        assert_eq!(decided.1.as_deref(), Some("approved"));
+        let legacy_events: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM hub_ledger WHERE kind = 'runtime' || '.v1'")
+            .fetch_one(&pool)
+            .await
+            .expect("legacy events");
+        assert_eq!(
+            legacy_events, legacy_before,
+            "the approval flow adds no legacy runtime ledger event"
+        );
     }
 }

@@ -40,7 +40,6 @@ use crate::domains::agent::thing_agent::pushback::deliver;
 use crate::domains::agent::thing_agent::registry::RunRegistry;
 use crate::domains::agent::thing_agent::runner::{AgentHandle, RunContext, RunContextInner, Runner};
 use crate::domains::agent::thing_agent::scheduler::{EnqueueError, Scheduler, SchedulerHandle};
-use crate::domains::agent::thing_agent::task::approval::ApprovalExecutor;
 use crate::domains::agent::thing_agent::task::coordinator::{CancelOutcome, TaskCoordinator, TaskError};
 use crate::domains::agent::thing_agent::task::wake::WakeRouter;
 use crate::domains::agent::thing_agent::traits::{
@@ -55,9 +54,9 @@ use tinyiothub_core::agent_runs::format_summary;
 use tinyiothub_core::heartbeat::{HeartbeatTask, TrustConfig};
 use tinyiothub_policy::autonomy::AutonomyMode;
 
-/// How often the live Task runtime expires due approvals. Startup already
-/// sweeps once; this keeps a running process honest without a restart.
-const APPROVAL_EXPIRY_INTERVAL: Duration = Duration::from_secs(30);
+/// Cadence of the live Task runtime maintenance sweep (retained finalize
+/// intents). Approval expiry is owned by the Harness Effect dispatcher.
+const MAINTENANCE_INTERVAL: Duration = Duration::from_secs(30);
 
 /// Capacity of the per-workspace trigger→scheduler channel. Backpressure
 /// beyond this parks the thing-event trigger, which then lags the broadcast
@@ -86,7 +85,8 @@ pub trait AutonomousAgentProvider: Send + Sync {
 
 pub struct TaskRuntimeDeps {
     pub store: Arc<dyn tinyiothub_agent::port::task::TaskStore>,
-    pub approvals: Option<Arc<dyn crate::domains::agent::thing_agent::approval_port::TaskApprovalStore>>,
+    /// Read-only workspace Decision query backing `waiting_status`.
+    pub pending_tool_approvals: Option<Arc<dyn crate::domains::agent::thing_agent::approval_port::PendingToolApproval>>,
     pub watches: Arc<dyn tinyiothub_runtime::ports::WatchRuleStore>,
     pub jobs: Option<tinyiothub_runtime::job::service::JobService>,
     /// True when `store` is the workspace Harness adapter. Cancellation then
@@ -304,35 +304,20 @@ impl ThingAgentManager {
             self.deps.runner.clone(),
             self.deps.agent_provider.clone(),
         );
-        if let Some(approvals) = &deps.approvals {
-            coordinator = coordinator.with_approvals(approvals.clone());
+        if let Some(approvals) = &deps.pending_tool_approvals {
+            coordinator = coordinator.with_pending_tool_approvals(approvals.clone());
         }
         if deps.harness_task_store {
             coordinator = coordinator.with_harness_task_store();
         }
         let coordinator = Arc::new(coordinator);
         coordinator.recover().await?;
-        let approval_executor = match (deps.approvals, jobs) {
-            (Some(store), Some(jobs)) => {
-                let executor = Arc::new(ApprovalExecutor::new(store, Arc::new(jobs), coordinator.clone()));
-                executor
-                    .recover(None)
-                    .await
-                    .map_err(|error| tinyiothub_core::agent_task::TaskStoreError::Unavailable(error.to_string()))?;
-                Some(executor)
-            }
-            _ => None,
-        };
-        let mut router = WakeRouter::new(deps.store, coordinator.clone());
-        if let Some(executor) = approval_executor {
-            router = router.with_approvals(executor);
-        }
-        let router = Arc::new(router);
+        let router = Arc::new(WakeRouter::new(deps.store, coordinator.clone()));
         let router_task = tokio::spawn(async move {
             let mut interval = tokio::time::interval(Duration::from_millis(25));
             interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
-            let mut approval_expiry = tokio::time::interval(APPROVAL_EXPIRY_INTERVAL);
-            approval_expiry.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+            let mut maintenance = tokio::time::interval(MAINTENANCE_INTERVAL);
+            maintenance.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
             loop {
                 tokio::select! {
                     _ = interval.tick() => {
@@ -340,12 +325,7 @@ impl ThingAgentManager {
                             tracing::warn!(%error, "Task wake routing failed");
                         }
                     }
-                    _ = approval_expiry.tick() => {
-                        match router.expire_approvals(chrono::Utc::now()).await {
-                            Ok(0) => {}
-                            Ok(count) => tracing::info!(metric = "runtime_approval_expired", count, "approval expiry"),
-                            Err(error) => tracing::warn!(%error, "Approval expiry sweep failed"),
-                        }
+                    _ = maintenance.tick() => {
                         if let Err(error) = router.sweep_finalize_intents(chrono::Utc::now()).await {
                             tracing::warn!(%error, "Finalize intent sweep failed");
                         }
@@ -2610,7 +2590,7 @@ pub(crate) mod tests {
             .manager
             .start_task_runtime(crate::domains::agent::thing_agent::manager::TaskRuntimeDeps {
                 store,
-                approvals: None,
+                pending_tool_approvals: None,
                 watches: Arc::new(StubWatchRuleStore { rules: vec![] }),
                 jobs: None,
                 harness_task_store: false,
@@ -2639,7 +2619,7 @@ pub(crate) mod tests {
             .manager
             .start_task_runtime(TaskRuntimeDeps {
                 store,
-                approvals: None,
+                pending_tool_approvals: None,
                 watches: Arc::new(StubWatchRuleStore { rules: vec![] }),
                 jobs: None,
                 harness_task_store: false,
@@ -3001,7 +2981,7 @@ pub(crate) mod tests {
         manager
             .start_task_runtime(TaskRuntimeDeps {
                 store: store.clone(),
-                approvals: None,
+                pending_tool_approvals: None,
                 watches,
                 jobs: None,
                 harness_task_store: false,

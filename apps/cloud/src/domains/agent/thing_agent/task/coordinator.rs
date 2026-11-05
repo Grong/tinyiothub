@@ -15,7 +15,7 @@ use super::prompt::{build_task_prompt, escape_untrusted, terminal_job_result_blo
 use super::state::validate_transition;
 use crate::domains::agent::events::{AgentEventBus, AgentEventKind};
 use crate::domains::agent::thing_agent::active_runs::{ActiveRunGuard, ActiveRunRegistry};
-use crate::domains::agent::thing_agent::approval_port::TaskApprovalStore;
+use crate::domains::agent::thing_agent::approval_port::PendingToolApproval;
 use crate::domains::agent::thing_agent::manager::{AutonomousAgentProvider, fetch_workspace_snapshot};
 use crate::domains::agent::thing_agent::runner::{RunContext, Runner};
 use crate::domains::agent::thing_agent::types::WakeSignal;
@@ -59,7 +59,7 @@ const FINALIZE_STAGE_RETRY_DELAY_MS: u64 = 10;
 #[derive(Clone)]
 pub struct TaskCoordinator {
     store: Arc<dyn TaskStore>,
-    approvals: Option<Arc<dyn TaskApprovalStore>>,
+    pending_approvals: Option<Arc<dyn PendingToolApproval>>,
     /// When the Task facts live in the workspace Harness store, cancellation
     /// moves Task state through the port instead of the legacy platform
     /// approval transaction, so the two stores cannot disagree.
@@ -92,7 +92,7 @@ impl TaskCoordinator {
     ) -> Self {
         Self {
             store,
-            approvals: None,
+            pending_approvals: None,
             harness_task_store: false,
             jobs,
             watches,
@@ -106,8 +106,8 @@ impl TaskCoordinator {
         }
     }
 
-    pub fn with_approvals(mut self, approvals: Arc<dyn TaskApprovalStore>) -> Self {
-        self.approvals = Some(approvals);
+    pub fn with_pending_tool_approvals(mut self, approvals: Arc<dyn PendingToolApproval>) -> Self {
+        self.pending_approvals = Some(approvals);
         self
     }
 
@@ -154,23 +154,10 @@ impl TaskCoordinator {
     }
 
     async fn waiting_status(&self, workspace_id: &str, task_id: &str) -> Result<Option<TaskStatus>, TaskError> {
-        if let Some(approvals) = &self.approvals {
-            let pending = approvals
-                .list_for_task(workspace_id, task_id)
-                .await
-                .map_err(|error| TaskStoreError::Unavailable(error.to_string()))?
-                .iter()
-                .any(|approval| approval.state == tinyiothub_core::task_approval::ApprovalState::Pending);
-            let decided = !pending
-                && approvals
-                    .list_recoverable(Some(workspace_id))
-                    .await
-                    .map_err(|error| TaskStoreError::Unavailable(error.to_string()))?
-                    .iter()
-                    .any(|approval| approval.task_id == task_id);
-            if pending || decided {
-                return Ok(Some(TaskStatus::NeedsApproval));
-            }
+        if let Some(approvals) = &self.pending_approvals
+            && approvals.has_requested_tool_approval(workspace_id, task_id).await?
+        {
+            return Ok(Some(TaskStatus::NeedsApproval));
         }
         if let Some(jobs) = &self.jobs
             && !jobs
@@ -209,24 +196,14 @@ impl TaskCoordinator {
         }
         validate_transition(task.status, TaskStatus::Cancelling)
             .map_err(|error| TaskStoreError::Validation(error.to_string()))?;
-        let task = if !self.harness_task_store
-            && let Some(approvals) = &self.approvals
-        {
-            approvals
-                .cancel(workspace_id, task_id, task.state_version, chrono::Utc::now())
-                .await
-                .map_err(|error| TaskStoreError::Unavailable(error.to_string()))?
-        } else {
-            self.store
-                .transition_task(workspace_id, task_id, task.state_version, TaskStatus::Cancelling, None)
-                .await?
-        };
+        let task = self
+            .store
+            .transition_task(workspace_id, task_id, task.state_version, TaskStatus::Cancelling, None)
+            .await?;
         if let Some(run_id) = task.current_run_id.as_deref() {
             self.active_runs.cancel(run_id);
         }
-        if self.harness_task_store || self.approvals.is_none() {
-            self.store.resolve_task_wakes(task_id).await?;
-        }
+        self.store.resolve_task_wakes(task_id).await?;
         // Only now are the `Cancelling` transition and wake resolution both
         // durable. Dropping earlier would discard the only copy of an
         // unpersisted report when a failed cancel leaves the Task Active.
@@ -757,32 +734,14 @@ impl TaskCoordinator {
         if let Some(metrics) = snapshot_metrics {
             ctx.inner.write().await.snapshot = Some(metrics);
         }
-        let approval_facts = match &self.approvals {
-            Some(approvals) => approvals
-                .list_for_task(&task.workspace_id, &task.id)
-                .await
-                .map(|records| {
-                    records
-                        .into_iter()
-                        .map(|approval| super::prompt::TaskPromptApproval {
-                            approval_id: approval.id,
-                            status: approval.state.as_str().into(),
-                            detail: format!("{}: {}", approval.tool, approval.reason),
-                        })
-                        .collect()
-                })
-                .unwrap_or_else(|error| {
-                    tracing::warn!(task_id = %task.id, %error, "Task approval context read failed");
-                    vec![]
-                }),
-            None => vec![],
-        };
+        // Approval context now travels in the wake signal
+        // (`approval_decided`); the legacy platform projection is not read.
         let prompt = build_task_prompt(
             &task,
             &runs,
             &jobs,
             &watches,
-            &approval_facts,
+            &[],
             snapshot.as_deref().unwrap_or(""),
             Some(&signal),
             terminal_job.as_ref(),
@@ -1365,7 +1324,6 @@ pub(crate) mod tests {
     use tinyiothub_core::error::Error;
     use tinyiothub_core::models::thing::Thing;
     use tinyiothub_core::models::thing_command::ThingCommand;
-    use tinyiothub_core::task_approval::{ApprovalState, TaskApproval};
     use tinyiothub_core::watch::WatchRule;
     use tinyiothub_runtime::access::resources::ResourceResolver;
     use tinyiothub_runtime::access::validator::AccessCallValidator;
@@ -1382,7 +1340,7 @@ pub(crate) mod tests {
     use super::{Advance, TaskCoordinator, TaskError};
     use crate::domains::agent::events::{AgentEventBus, AgentEventKind};
     use crate::domains::agent::thing_agent::active_runs::{ActiveRunGuard, ActiveRunRegistry};
-    use crate::domains::agent::thing_agent::approval_port::{ApprovalError, TaskApprovalStore};
+    use crate::domains::agent::thing_agent::approval_port::PendingToolApproval;
     use crate::domains::agent::thing_agent::manager::AutonomousAgentProvider;
     use crate::domains::agent::thing_agent::runner::{AgentHandle, RunContext, RunContextInner, Runner};
     use crate::domains::agent::thing_agent::traits::DirectiveSink;
@@ -2333,86 +2291,54 @@ pub(crate) mod tests {
         }
     }
 
-    /// Reports one pending approval so a WaitingJob Task's implied next state
-    /// (NeedsApproval) is illegal — the unreachable branch diagnostic.
+    /// Reports one requested workspace Decision so a WaitingJob Task's implied
+    /// next state (NeedsApproval) is illegal — the unreachable branch diagnostic.
     struct PendingApprovals;
 
-    fn pending_approval() -> TaskApproval {
-        let now = Utc::now();
-        TaskApproval {
-            id: "approval_1".into(),
-            workspace_id: "ws_1".into(),
-            task_id: "task_1".into(),
-            run_id: "run_existing".into(),
-            tool_call_id: "call_1".into(),
-            device_id: "device_1".into(),
-            tool: "set_speed".into(),
-            args_json: json!({}),
-            reason: "approval required".into(),
-            state: ApprovalState::Pending,
-            decision: None,
-            decider_id: None,
-            requested_at: now,
-            decided_at: None,
-            expires_at: now + chrono::Duration::minutes(5),
-            decision_event_id: "decision_1".into(),
-            updated_at: now,
+    #[async_trait]
+    impl PendingToolApproval for PendingApprovals {
+        async fn has_requested_tool_approval(
+            &self,
+            _workspace_id: &str,
+            _task_id: &str,
+        ) -> Result<bool, tinyiothub_core::agent_task::TaskStoreError> {
+            Ok(true)
         }
     }
 
+    #[derive(Clone, Copy)]
+    struct ConstantPending(bool);
+
     #[async_trait]
-    impl TaskApprovalStore for PendingApprovals {
-        async fn create_pending(
-            &self,
-            _approval: &TaskApproval,
-            _expected_version: i64,
-        ) -> Result<AgentTask, ApprovalError> {
-            unreachable!("test fake only lists approvals")
-        }
-        async fn get_scoped(
+    impl PendingToolApproval for ConstantPending {
+        async fn has_requested_tool_approval(
             &self,
             _workspace_id: &str,
             _task_id: &str,
-            _approval_id: &str,
-        ) -> Result<Option<TaskApproval>, ApprovalError> {
-            unreachable!("test fake only lists approvals")
+        ) -> Result<bool, tinyiothub_core::agent_task::TaskStoreError> {
+            Ok(self.0)
         }
-        async fn get_by_decision_event(
-            &self,
-            _workspace_id: &str,
-            _event_id: &str,
-        ) -> Result<Option<TaskApproval>, ApprovalError> {
-            unreachable!("test fake only lists approvals")
-        }
-        async fn list_for_task(&self, _workspace_id: &str, _task_id: &str) -> Result<Vec<TaskApproval>, ApprovalError> {
-            Ok(vec![pending_approval()])
-        }
-        async fn decide(
-            &self,
-            _workspace_id: &str,
-            _task_id: &str,
-            _approval_id: &str,
-            _decision: tinyiothub_core::task_approval::ApprovalDecision,
-            _decider_id: &str,
-            _now: chrono::DateTime<Utc>,
-            _wake: &TaskWake,
-        ) -> Result<tinyiothub_core::task_approval::DecisionOutcome, ApprovalError> {
-            unreachable!("test fake only lists approvals")
-        }
-        async fn list_recoverable(&self, _workspace_id: Option<&str>) -> Result<Vec<TaskApproval>, ApprovalError> {
-            Ok(Vec::new())
-        }
-        async fn expire_due(&self, _now: chrono::DateTime<Utc>) -> Result<u64, ApprovalError> {
-            Ok(0)
-        }
-        async fn cancel(
-            &self,
-            _workspace_id: &str,
-            _task_id: &str,
-            _expected_version: i64,
-            _now: chrono::DateTime<Utc>,
-        ) -> Result<AgentTask, ApprovalError> {
-            unreachable!("test fake only lists approvals")
+    }
+
+    #[tokio::test]
+    async fn waiting_status_follows_the_requested_workspace_decision() {
+        for (pending, expected) in [(true, TaskStatus::NeedsApproval), (false, TaskStatus::Active)] {
+            let fixture = Fixture::new(task(TaskStatus::Paused));
+            let coordinator = Arc::new(
+                TaskCoordinator::new(
+                    fixture.store.clone(),
+                    None,
+                    fixture.watches.clone(),
+                    fixture.watch_cmds.clone(),
+                    fixture.events.clone(),
+                    fixture.active.clone(),
+                    Arc::new(Runner::new()),
+                    fixture.provider.clone(),
+                )
+                .with_pending_tool_approvals(Arc::new(ConstantPending(pending))),
+            );
+            let resumed = coordinator.resume("ws_1", "task_1").await.expect("resume");
+            assert_eq!(resumed.status, expected, "pending={pending}");
         }
     }
 
@@ -3214,7 +3140,7 @@ pub(crate) mod tests {
                 Arc::new(Runner::new()),
                 fixture.provider.clone(),
             )
-            .with_approvals(Arc::new(PendingApprovals)),
+            .with_pending_tool_approvals(Arc::new(PendingApprovals)),
         );
         let mut events = fixture.events.subscribe();
         coordinator

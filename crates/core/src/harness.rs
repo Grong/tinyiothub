@@ -506,6 +506,10 @@ pub struct TransitionPrecondition {
 #[serde(rename_all = "camelCase")]
 pub struct EffectMutation {
     pub effect_id: String,
+    /// Create the Effect when it does not exist yet. A creation transition uses
+    /// `expected_version = 0` and writes `state_version = 1`.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub insert_if_missing: bool,
     pub state: EffectState,
     pub recovery_from: Option<EffectState>,
     pub state_version: i64,
@@ -514,12 +518,49 @@ pub struct EffectMutation {
     pub updated_at: DateTime<Utc>,
 }
 
+fn is_false(value: &bool) -> bool {
+    !*value
+}
+
+#[derive(Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CreateEffect {
+    pub session_id: String,
+    pub task_id: String,
+    pub run_id: String,
+    pub tool_call_id: String,
+    pub tool_name: String,
+    #[serde(default, skip_serializing)]
+    pub request_json: Value,
+    pub request_digest: String,
+    pub idempotency_key: String,
+}
+
+impl std::fmt::Debug for CreateEffect {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("CreateEffect")
+            .field("session_id", &self.session_id)
+            .field("task_id", &self.task_id)
+            .field("run_id", &self.run_id)
+            .field("tool_call_id", &self.tool_call_id)
+            .field("tool_name", &self.tool_name)
+            .field("request_digest", &self.request_digest)
+            .field("idempotency_key", &self.idempotency_key)
+            .finish_non_exhaustive()
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Transition {
     pub transition_id: String,
     pub precondition: TransitionPrecondition,
     pub effect: Option<EffectMutation>,
+    /// Frozen identity for an `insert_if_missing` Effect creation. Omitted for
+    /// every transition that mutates an existing Effect.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub create_effect: Option<CreateEffect>,
     pub event: Option<HarnessEventInput>,
     pub additional_events: Vec<HarnessEventInput>,
     pub decision: Option<DecisionMutation>,

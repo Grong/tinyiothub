@@ -182,8 +182,6 @@ pub struct ThingToolContext {
     pub device_cache: Option<Arc<tinyiothub_storage::cache::ThingCache>>,
     pub data_server: Option<Arc<tinyiothub_runtime::DataServer>>,
     pub pending_actions: Option<Arc<PendingActionStore>>,
-    /// Durable approval origination for confirmation-gated Task tool calls.
-    pub task_approvals: Option<Arc<dyn crate::domains::agent::thing_agent::approval_port::TaskApprovalStore>>,
     /// E1 仲裁（Task 9）：跨 chat/自治 run 共享的每设备互斥锁注册表；
     /// None = 不仲裁。
     pub arbitration: Option<Arc<ArbitrationRegistry>>,

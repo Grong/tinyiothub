@@ -33,17 +33,20 @@
 
 use std::sync::Arc;
 
-use crate::domains::agent::thing_agent::approval_port::TaskApprovalStore;
 use crate::domains::agent::thing_agent::seams::policy::{DefaultPolicy, PolicyDecision, PolicyInput, PolicySeam};
 use crate::domains::agent::thing_agent::{ArbitrationRegistry, DEFAULT_LEASE_TTL, RunContextInner};
 use async_trait::async_trait;
 use serde::Deserialize;
 use serde_json::{Value, json};
+use sha2::Digest;
 use sqlx::SqlitePool;
 use tinyiothub_agent::port::attribution::{Attributable, Role, ToolKind};
 use tinyiothub_agent::port::tool::{Tool, ToolResult};
+use tinyiothub_core::harness::{
+    CreateEffect, Decision, DecisionKind, DecisionMutation, DecisionState, EffectMutation, EffectState, ExecutionMode,
+    HarnessEventInput, Transition, TransitionPrecondition,
+};
 use tinyiothub_core::models::event::EventLevel;
-use tinyiothub_core::task_approval::{ApprovalState, TaskApproval};
 use tinyiothub_policy::autonomy::AutonomyPolicy;
 use tinyiothub_runtime::access::resources::ResourceResolver;
 use tinyiothub_storage::Db;
@@ -240,7 +243,6 @@ pub struct AutonomousInvokeActionTool {
     workspace_id: String,
     event_bus: Arc<ThingEventBus>,
     throttle: Arc<ThrottleState>,
-    task_approvals: Option<Arc<dyn TaskApprovalStore>>,
     /// E2 Policy 接缝（None = 内置 gate_check）。
     policy_seam: Option<Arc<dyn PolicySeam>>,
 }
@@ -263,7 +265,6 @@ impl AutonomousInvokeActionTool {
             workspace_id,
             event_bus,
             throttle,
-            task_approvals: None,
             policy_seam: None,
         }
     }
@@ -274,17 +275,49 @@ impl AutonomousInvokeActionTool {
         self
     }
 
-    pub fn with_task_approvals(mut self, store: Option<Arc<dyn TaskApprovalStore>>) -> Self {
-        self.task_approvals = store;
-        self
-    }
-
     async fn task_identity(&self) -> Option<(String, String)> {
         let slot = self.run_ctx.read().await.clone()?;
         let ctx = slot.read().await;
         Some((ctx.task_id.clone()?, ctx.run_id.clone()))
     }
 
+    /// Stable identity for the approval Effect. The Run context owns the
+    /// session and Task/Run ids; the exact tool-call id is used when the
+    /// runner already recorded this call, otherwise a new id is minted. A
+    /// random fallback keeps the unique `(task_id, tool_call_id)` pair honest.
+    async fn approval_identity(&self, input: &Input) -> (String, String) {
+        let Some(slot) = self.run_ctx.read().await.clone() else {
+            return (self.workspace_id.clone(), tinyiothub_core::generate_id());
+        };
+        let ctx = slot.read().await;
+        let session_id = ctx
+            .task_session_key
+            .clone()
+            .or_else(|| ctx.task_id.clone())
+            .unwrap_or_else(|| self.workspace_id.clone());
+        let tool_call_id = ctx
+            .trace
+            .iter()
+            .rev()
+            .find(|entry| {
+                entry.output.is_none()
+                    && matches!(entry.name.as_str(), "call_device" | "invoke_action")
+                    && entry.args.get("thingId").and_then(Value::as_str) == Some(input.thing_id.as_str())
+                    && entry
+                        .args
+                        .get("action")
+                        .or_else(|| entry.args.get("actionName"))
+                        .and_then(Value::as_str)
+                        == Some(input.action_name.as_str())
+            })
+            .map(|entry| entry.id.clone())
+            .unwrap_or_else(tinyiothub_core::generate_id);
+        (session_id, tool_call_id)
+    }
+
+    /// Originate the single approval mechanism: one workspace transaction
+    /// inserts the Prepared Effect and its requested `tool_approval` Decision.
+    /// No platform `task_approvals` row is written.
     async fn request_task_approval(
         &self,
         inner_output: &str,
@@ -292,9 +325,6 @@ impl AutonomousInvokeActionTool {
         task_id: String,
         run_id: String,
     ) -> anyhow::Result<ToolResult> {
-        let Some(store) = &self.task_approvals else {
-            return tool_err("Task approval unavailable; action NOT dispatched".to_string());
-        };
         // The inner legacy token must not remain usable through the chat confirmation
         // endpoint. Task identity and frozen execution fields come from this validated
         // tool call, never from the in-memory PendingActionStore.
@@ -304,44 +334,138 @@ impl AutonomousInvokeActionTool {
         {
             self.inner.pending_actions.remove(&token);
         }
-        let task = self.policy_repo.get_task(&self.workspace_id, &task_id).await;
+        let task = self.policy_repo.harness_get_task(&self.workspace_id, &task_id).await;
         let Ok(Some(task)) = task else {
             return tool_err("Task approval unavailable; action NOT dispatched".to_string());
         };
         if task.workspace_id != self.workspace_id || task.current_run_id.as_deref() != Some(run_id.as_str()) {
             return tool_err("Task Run changed; action NOT dispatched".to_string());
         }
+        let (session_id, tool_call_id) = self.approval_identity(input).await;
         let now = chrono::Utc::now();
-        let approval = TaskApproval {
-            id: tinyiothub_core::generate_id(),
-            workspace_id: self.workspace_id.clone(),
-            task_id,
-            run_id,
-            tool_call_id: tinyiothub_core::generate_id(),
-            device_id: input.thing_id.clone(),
-            tool: input.action_name.clone(),
-            args_json: input.params.clone().unwrap_or_else(|| json!({})),
-            reason: "workspace action confirmation required".into(),
-            state: ApprovalState::Pending,
-            decision: None,
-            decider_id: None,
-            requested_at: now,
-            decided_at: None,
-            expires_at: now + chrono::Duration::from_std(CONFIRMATION_TTL)?,
-            decision_event_id: tinyiothub_core::generate_id(),
-            updated_at: now,
+        let args_json = input.params.clone().unwrap_or_else(|| json!({}));
+        let request_json = json!({
+            "deviceId": input.thing_id.clone(),
+            "argsJson": args_json.clone(),
+        });
+        let request_digest = format!("{:x}", sha2::Sha256::digest(request_json.to_string().as_bytes()));
+        let effect_id = format!("approval-effect:{task_id}:{tool_call_id}");
+        let decision_id = format!("approval-decision:{task_id}:{tool_call_id}");
+        let transition_id = format!("approval-request:{effect_id}");
+        let precondition = TransitionPrecondition {
+            effect_id: effect_id.clone(),
+            expected_state: EffectState::Prepared,
+            expected_version: 0,
         };
-        store
-            .create_pending(&approval, task.state_version)
+        let event_payload = json!({
+            "effectId": effect_id,
+            "state": EffectState::Prepared.as_str(),
+            "result": Value::Null,
+        });
+        let event = HarnessEventInput {
+            event_id: format!("{transition_id}:event"),
+            workspace_id: self.workspace_id.clone(),
+            session_id: session_id.clone(),
+            execution_mode: ExecutionMode::Production,
+            run_id: Some(run_id.clone()),
+            task_id: Some(task_id.clone()),
+            event_type: EffectState::Prepared.event_type().to_string(),
+            occurred_at: now,
+            cause_id: None,
+            schema_v: 1,
+            payload_digest: format!("{:x}", sha2::Sha256::digest(event_payload.to_string().as_bytes())),
+            payload_json: event_payload,
+        };
+        let decision_event_payload = json!({"decisionId": decision_id, "kind": DecisionKind::ToolApproval.as_str()});
+        let decision_event = HarnessEventInput {
+            event_id: format!("{transition_id}:decision"),
+            workspace_id: self.workspace_id.clone(),
+            session_id: session_id.clone(),
+            execution_mode: ExecutionMode::Production,
+            run_id: Some(run_id.clone()),
+            task_id: Some(task_id.clone()),
+            event_type: "decision.requested".to_string(),
+            occurred_at: now,
+            cause_id: None,
+            schema_v: 1,
+            payload_digest: format!(
+                "{:x}",
+                sha2::Sha256::digest(decision_event_payload.to_string().as_bytes())
+            ),
+            payload_json: decision_event_payload,
+        };
+        let decision = Decision {
+            decision_id: decision_id.clone(),
+            kind: DecisionKind::ToolApproval,
+            state: DecisionState::Requested,
+            session_id: session_id.clone(),
+            run_id: run_id.clone(),
+            task_id: task_id.clone(),
+            effect_id: Some(effect_id.clone()),
+            // Approval summary only: device, tool, frozen args, reason. The
+            // raw Effect request never reaches this row.
+            subject: json!({
+                "deviceId": input.thing_id.clone(),
+                "tool": input.action_name.clone(),
+                "argsJson": args_json,
+                "reason": "workspace action confirmation required",
+            }),
+            options: json!(["approved", "denied"]),
+            created_at: now,
+            updated_at: now,
+            expires_at: Some(now + chrono::Duration::from_std(CONFIRMATION_TTL)?),
+            answer: None,
+            answer_actor: None,
+            answer_event_id: None,
+            answer_evidence: None,
+            consumed_at: None,
+            consumed_by: None,
+        };
+        let transition = Transition {
+            transition_id,
+            precondition: precondition.clone(),
+            effect: Some(EffectMutation {
+                effect_id: effect_id.clone(),
+                insert_if_missing: true,
+                state: EffectState::Prepared,
+                recovery_from: None,
+                state_version: 1,
+                external_ref: None,
+                result: None,
+                updated_at: now,
+            }),
+            create_effect: Some(CreateEffect {
+                session_id,
+                task_id: task_id.clone(),
+                run_id,
+                tool_call_id,
+                tool_name: input.action_name.clone(),
+                request_json,
+                request_digest,
+                idempotency_key: effect_id.clone(),
+            }),
+            event: Some(event),
+            additional_events: vec![decision_event],
+            decision: Some(DecisionMutation {
+                decision,
+                expected_state: None,
+                insert_if_missing: true,
+            }),
+            run_task: None,
+            job: None,
+            wake: None,
+        };
+        self.policy_repo
+            .apply_workspace_transition(&self.workspace_id, &precondition, &transition)
             .await
             .map_err(|error| {
-                tracing::warn!(task_id = %task.id, approval_id = %approval.id, %error, "Task approval creation failed");
+                tracing::warn!(task_id = %task.id, %error, "Task approval creation failed");
                 anyhow::anyhow!("Task approval creation failed; action NOT dispatched")
             })?;
         tool_ok(json!({
             "status": "approval_pending",
-            "approvalId": approval.id,
-            "taskId": approval.task_id,
+            "approvalId": decision_id,
+            "taskId": task_id,
             "message": "操作已提交人工审批，批准后才会执行。"
         }))
     }
@@ -1042,7 +1166,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn task_tool_call_creates_durable_approval_before_any_dispatch() {
+    async fn task_tool_call_creates_one_requested_decision_before_any_dispatch() {
         let dir = tempfile::tempdir().expect("Task approval test directory");
         let options = sqlx::sqlite::SqliteConnectOptions::new()
             .filename(dir.path().join("task-approval.db"))
@@ -1057,12 +1181,15 @@ mod tests {
         tinyiothub_storage::migrations::run_migrations(&pool)
             .await
             .expect("Task approval migrations");
-        let db = Arc::new(Db::new(pool.clone()));
+        let db = Arc::new(Db::new(pool.clone()).with_workspace_store_root(dir.path().join("data/agents")));
         seed_thing(&pool, "ws-task-approval", "dev-task", "device").await;
         register_action(&pool, "dev-task", "reboot").await;
         db.save_autonomy_policy("ws-task-approval", &act_policy(), "test")
             .await
             .expect("policy");
+        db.create_workspace_store("ws-task-approval")
+            .await
+            .expect("workspace store");
         let now = chrono::Utc::now();
         let task = tinyiothub_core::agent_task::AgentTask {
             id: "task-tool-approval".into(),
@@ -1087,7 +1214,9 @@ mod tests {
             dispatched_at: Some(now),
             resolved_at: Some(now),
         };
-        db.create_task_with_wake(&task, &wake).await.expect("Task");
+        db.harness_create_task_with_wake(&task, &wake)
+            .await
+            .expect("harness Task");
         let ctx = Arc::new(RwLock::new(RunContextInner {
             run_id: "run-tool-approval".into(),
             workspace_id: "ws-task-approval".into(),
@@ -1105,9 +1234,6 @@ mod tests {
             Arc::new(ThrottleState::new(60)),
             &super::super::ThingToolContext {
                 pending_actions: Some(pending_actions.clone()),
-                task_approvals: Some(Arc::new(
-                    crate::domains::agent::runtime::approvals::DbApprovalStore::new(db.clone()),
-                )),
                 ..Default::default()
             },
         );
@@ -1119,32 +1245,57 @@ mod tests {
             .execute(json!({"thingId":"dev-task","action":"reboot","params":{"speed":1}}))
             .await
             .expect("tool call");
-        let approvals = db
-            .list_task_approvals("ws-task-approval", &task.id)
+        let output = output_json(&result);
+        assert_eq!(output["status"], "approval_pending", "{}", result.output);
+        let approval_id = output["approvalId"].as_str().expect("approvalId");
+        let workspace = db
+            .workspace_pool_for_testing("ws-task-approval")
             .await
-            .expect("approvals");
+            .expect("workspace pool");
+        let decisions: Vec<(String, String, String, Option<String>, String)> =
+            sqlx::query_as("SELECT decision_id, kind, state, effect_id, subject_json FROM decisions")
+                .fetch_all(&workspace)
+                .await
+                .expect("decisions");
         assert_eq!(
-            approvals.len(),
+            decisions.len(),
             1,
-            "tool call must originate a durable approval: {}",
+            "the tool call must originate exactly one Decision: {}",
             result.output
         );
-        let approval = &approvals[0];
-        assert_eq!(approval.run_id, "run-tool-approval");
-        assert_eq!(approval.device_id, "dev-task");
-        assert_eq!(approval.tool, "reboot");
-        assert_eq!(approval.args_json, json!({"speed":1}));
-        assert!(!approval.id.is_empty());
-        assert!(!approval.tool_call_id.is_empty());
-        assert!(!approval.decision_event_id.is_empty());
+        let (decision_id, kind, state, effect_id, subject) = &decisions[0];
+        assert_eq!(decision_id, approval_id);
+        assert_eq!(kind, "tool_approval");
+        assert_eq!(state, "requested");
+        assert!(effect_id.is_some());
+        let subject: Value = serde_json::from_str(subject).expect("subject JSON");
+        assert_eq!(subject["deviceId"], "dev-task");
+        assert_eq!(subject["tool"], "reboot");
+        assert_eq!(subject["argsJson"], json!({"speed":1}));
+        let requested: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM effect_intents WHERE effect_id = ? AND state = 'prepared' AND state_version = 1",
+        )
+        .bind(effect_id.as_ref().expect("effect id"))
+        .fetch_one(&workspace)
+        .await
+        .expect("prepared effect");
+        assert_eq!(requested, 1, "one Prepared Effect in the same transition");
+        let platform: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM task_approvals")
+            .fetch_one(&pool)
+            .await
+            .expect("platform approvals");
+        assert_eq!(platform, 0, "the platform approval table has no writers");
         let task = db
-            .get_task("ws-task-approval", &task.id)
+            .harness_get_task("ws-task-approval", &task.id)
             .await
             .expect("Task")
             .expect("Task row");
-        assert_eq!(task.status, tinyiothub_core::agent_task::TaskStatus::NeedsApproval);
-        let output = output_json(&result);
-        assert_eq!(output["status"], "approval_pending");
+        assert!(
+            db.harness_has_requested_tool_approval("ws-task-approval", &task.id)
+                .await
+                .expect("pending decision"),
+            "waiting_status sees the requested Decision"
+        );
         assert!(result.output.find("token").is_none());
         assert!(
             pending_actions.is_empty(),

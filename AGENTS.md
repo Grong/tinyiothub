@@ -161,12 +161,18 @@ Each Harness fact has exactly one writer. New code must use these paths:
 | Approvals / decisions | `decisions` (workspace DB) |
 | Commands / wakes | `commands` and `task_wake_outbox` |
 
-`hub_ledger` remains device telemetry. The pre-Harness platform Runtime writers
-(`runtime.v1` events, platform `task_approvals`, platform `device_jobs`, and
-platform Task/Run writes) are retained only behind the legacy adapters in
-`apps/cloud/src/domains/agent/runtime/` and
-`apps/cloud/src/shared/runtime_ports.rs`; they must not gain new callers.
-`scripts/guards/legacy-writers.sh` enforces that boundary and rejects new
+`hub_ledger` remains device telemetry. The platform `task_approvals` table has
+no writers at all: approvals are workspace `decisions` (Task 19C2). The
+pre-Harness platform Runtime writers that remain (`runtime.v1` events, platform
+`device_jobs`, and platform Task/Run writes) live only in the legacy adapters
+in `apps/cloud/src/domains/agent/runtime/` and
+`apps/cloud/src/shared/runtime_ports.rs`, plus their real writer sites in
+`crates/db/src/` (for example `device_job.rs`, `runtime_task.rs`,
+`runtime_event.rs`) and the host tool boundaries
+(`apps/cloud/src/domains/agent/tools/capabilities.rs`,
+`apps/cloud/src/domains/agent/host/tools/thing/device.rs`); they must not gain
+new callers. `scripts/guards/legacy-writers.sh` enforces that boundary, rejects
+every `INSERT INTO task_approvals` / `UPDATE task_approvals`, and rejects new
 frontend tool/event/status allowlists (status copy is single-sourced in
 `web/src/ui/views/harness-status.ts`).
 

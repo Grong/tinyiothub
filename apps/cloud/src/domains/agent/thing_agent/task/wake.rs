@@ -1,9 +1,8 @@
 use std::sync::Arc;
 
 use dashmap::DashMap;
-use tinyiothub_core::agent_task::{TaskStoreError, WakeDispatchState};
+use tinyiothub_core::agent_task::WakeDispatchState;
 
-use super::approval::{ApprovalExecutor, ExecutionOutcome};
 use super::coordinator::{Advance, TaskCoordinator, TaskError};
 use tinyiothub_agent::port::task::TaskStore;
 
@@ -12,7 +11,6 @@ const MAX_CONSECUTIVE_DISPATCH_FAILURES: u8 = 3;
 pub struct WakeRouter {
     store: Arc<dyn TaskStore>,
     coordinator: Arc<TaskCoordinator>,
-    approvals: Option<Arc<ApprovalExecutor>>,
     failures: DashMap<(String, String), u8>,
 }
 
@@ -21,26 +19,8 @@ impl WakeRouter {
         Self {
             store,
             coordinator,
-            approvals: None,
             failures: DashMap::new(),
         }
-    }
-
-    pub fn with_approvals(mut self, approvals: Arc<ApprovalExecutor>) -> Self {
-        self.approvals = Some(approvals);
-        self
-    }
-
-    /// Expire due approvals from the live routing loop. Returns the number of
-    /// approvals expired. The resulting decision wakes are claimed by `run`.
-    pub async fn expire_approvals(&self, now: chrono::DateTime<chrono::Utc>) -> Result<u64, TaskError> {
-        let Some(approvals) = &self.approvals else {
-            return Ok(0);
-        };
-        approvals
-            .expire_due_at(now)
-            .await
-            .map_err(|error| TaskStoreError::Unavailable(error.to_string()).into())
     }
 
     /// Emit the retained-intent gauge and prune only intents that are older
@@ -71,26 +51,10 @@ impl WakeRouter {
         let count = wakes.len();
         for wake in wakes {
             let key = (wake.task_id.clone(), wake.event_id.clone());
-            let signal = serde_json::from_str::<serde_json::Value>(&wake.signal_json).ok();
-            let approval_workspace = signal.as_ref().and_then(|signal| {
-                (signal.get("kind").and_then(serde_json::Value::as_str) == Some("approval_decided"))
-                    .then(|| signal.get("workspace_id").and_then(serde_json::Value::as_str))
-                    .flatten()
-                    .map(str::to_owned)
-            });
-            let result = if let (Some(workspace_id), Some(approvals)) = (approval_workspace.as_deref(), &self.approvals)
-            {
-                approvals
-                    .execute_decision(workspace_id, &wake.event_id)
-                    .await
-                    .map(|outcome| match outcome {
-                        ExecutionOutcome::Deferred => Advance::Deferred,
-                        ExecutionOutcome::Job(_) | ExecutionOutcome::NoExecution => Advance::Recorded,
-                    })
-                    .map_err(|error| TaskStoreError::Unavailable(error.to_string()).into())
-            } else {
-                self.coordinator.advance(&wake.task_id, &wake.event_id).await
-            };
+            // The HTTP approval answer already consumed the Decision and ran
+            // the Effect dispatch pass. Routing the wake only continues the
+            // Task conversation, exactly like every other wake kind.
+            let result = self.coordinator.advance(&wake.task_id, &wake.event_id).await;
             match result {
                 Ok(Advance::Deferred) => {
                     self.failures.remove(&key);

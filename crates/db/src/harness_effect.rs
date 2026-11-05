@@ -348,6 +348,25 @@ fn validate_transition(workspace_id: &str, expected: &TransitionPrecondition, tr
             Ok(())
         }
         (Some(effect), Some(event)) => {
+            if effect.insert_if_missing {
+                let frozen = transition.create_effect.as_ref().ok_or_else(|| DbError::Validation {
+                    message: "creating an effect requires its frozen request".to_string(),
+                })?;
+                if expected.expected_version != 0
+                    || effect.state_version != 1
+                    || effect.state != EffectState::Prepared
+                    || event.task_id.as_deref() != Some(frozen.task_id.as_str())
+                    || event.run_id.as_deref() != Some(frozen.run_id.as_str())
+                {
+                    return Err(DbError::Validation {
+                        message: "effect creation must start at version 1 in the prepared state".to_string(),
+                    });
+                }
+            } else if transition.create_effect.is_some() {
+                return Err(DbError::Validation {
+                    message: "create_effect is only valid with insert_if_missing".to_string(),
+                });
+            }
             if effect.effect_id != expected.effect_id
                 || effect.state_version != expected.expected_version + 1
                 || event.workspace_id != workspace_id
@@ -622,24 +641,82 @@ async fn apply_writes(
         message: "effect transition requires an event".to_string(),
     })?;
 
-    let updated = sqlx::query(
-        "UPDATE effect_intents
-         SET state = ?, recovery_from = ?, state_version = ?, external_ref = ?, result_json = ?, updated_at = ?
-         WHERE effect_id = ? AND state = ? AND state_version = ?",
-    )
-    .bind(effect.state.as_str())
-    .bind(effect.recovery_from.map(EffectState::as_str))
-    .bind(effect.state_version)
-    .bind(&effect.external_ref)
-    .bind(effect.result.as_ref().map(serde_json::to_string).transpose()?)
-    .bind(effect.updated_at.to_rfc3339())
-    .bind(&effect.effect_id)
-    .bind(transition.precondition.expected_state.as_str())
-    .bind(transition.precondition.expected_version)
-    .execute(&mut *connection)
-    .await?
-    .rows_affected();
+    let updated = if effect.insert_if_missing {
+        let frozen = transition.create_effect.as_ref().ok_or_else(|| DbError::Validation {
+            message: "creating an effect requires its frozen request".to_string(),
+        })?;
+        sqlx::query(
+            "INSERT INTO effect_intents
+                (effect_id, session_id, task_id, run_id, tool_call_id, tool_name, request_json,
+                 request_digest, idempotency_key, external_ref, state, recovery_from, state_version,
+                 result_json, created_at, updated_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             ON CONFLICT(effect_id) DO NOTHING",
+        )
+        .bind(&effect.effect_id)
+        .bind(&frozen.session_id)
+        .bind(&frozen.task_id)
+        .bind(&frozen.run_id)
+        .bind(&frozen.tool_call_id)
+        .bind(&frozen.tool_name)
+        .bind(frozen.request_json.to_string())
+        .bind(&frozen.request_digest)
+        .bind(&frozen.idempotency_key)
+        .bind(&effect.external_ref)
+        .bind(effect.state.as_str())
+        .bind(effect.recovery_from.map(EffectState::as_str))
+        .bind(effect.state_version)
+        .bind(effect.result.as_ref().map(serde_json::to_string).transpose()?)
+        .bind(effect.updated_at.to_rfc3339())
+        .bind(effect.updated_at.to_rfc3339())
+        .execute(&mut *connection)
+        .await?
+        .rows_affected()
+    } else {
+        sqlx::query(
+            "UPDATE effect_intents
+             SET state = ?, recovery_from = ?, state_version = ?, external_ref = ?, result_json = ?, updated_at = ?
+             WHERE effect_id = ? AND state = ? AND state_version = ?",
+        )
+        .bind(effect.state.as_str())
+        .bind(effect.recovery_from.map(EffectState::as_str))
+        .bind(effect.state_version)
+        .bind(&effect.external_ref)
+        .bind(effect.result.as_ref().map(serde_json::to_string).transpose()?)
+        .bind(effect.updated_at.to_rfc3339())
+        .bind(&effect.effect_id)
+        .bind(transition.precondition.expected_state.as_str())
+        .bind(transition.precondition.expected_version)
+        .execute(&mut *connection)
+        .await?
+        .rows_affected()
+    };
     if updated != 1 {
+        if effect.insert_if_missing {
+            // A retried creation transition is a no-op only when the frozen
+            // identity already exists at exactly the version and digest this
+            // transition would have written. A different request for the same
+            // Effect id is a conflict, never an overwrite.
+            let current = current_version(connection, &effect.effect_id).await?;
+            let stored_digest: Option<String> =
+                sqlx::query_scalar("SELECT request_digest FROM effect_intents WHERE effect_id = ?")
+                    .bind(&effect.effect_id)
+                    .fetch_optional(&mut *connection)
+                    .await?;
+            if current == Some((effect.state, effect.state_version))
+                && transition
+                    .create_effect
+                    .as_ref()
+                    .and_then(|frozen| stored_digest.as_deref().map(|digest| digest == frozen.request_digest))
+                    .unwrap_or(false)
+            {
+                return Ok(ApplyOutcome {
+                    transition_id: transition.transition_id.clone(),
+                    deduplicated: true,
+                    state_version: effect.state_version,
+                });
+            }
+        }
         let current = current_version(connection, &effect.effect_id).await?;
         return Err(DbError::CasConflict {
             message: format!(
@@ -1804,6 +1881,7 @@ pub(crate) mod tests {
             },
             effect: Some(EffectMutation {
                 effect_id: "effect-1".to_string(),
+                insert_if_missing: false,
                 state: EffectState::Completed,
                 recovery_from: None,
                 state_version: expected_version + 1,
@@ -1811,6 +1889,7 @@ pub(crate) mod tests {
                 result: Some(json!({"confirmed": true})),
                 updated_at: at(),
             }),
+            create_effect: None,
             event: Some(HarnessEventInput {
                 event_id: format!("{id}:event"),
                 workspace_id: "ws-effects".to_string(),
@@ -1855,6 +1934,7 @@ pub(crate) mod tests {
                 expected_version: 4,
             },
             effect: None,
+            create_effect: None,
             event: None,
             additional_events: Vec::new(),
             decision: None,

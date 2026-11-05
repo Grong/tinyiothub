@@ -454,6 +454,26 @@ impl crate::Db {
         }))
     }
 
+    /// Whether the Task has an unanswered `tool_approval` Decision in its
+    /// workspace. This is the single approval source; the platform
+    /// `task_approvals` table is no longer written.
+    pub async fn harness_has_requested_tool_approval(
+        &self,
+        workspace_id: &str,
+        task_id: &str,
+    ) -> Result<bool, DbError> {
+        let pool = self.workspace_pool(workspace_id).await?;
+        Ok(sqlx::query_scalar::<_, bool>(
+            "SELECT EXISTS(
+                 SELECT 1 FROM decisions
+                 WHERE task_id = ? AND kind = 'tool_approval' AND state = 'requested'
+             )",
+        )
+        .bind(task_id)
+        .fetch_one(&pool)
+        .await?)
+    }
+
     /// Ascending event page strictly after `after`, bounded by the existing
     /// Harness page contract (256 rows).
     pub async fn harness_task_events_after(

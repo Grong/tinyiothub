@@ -56,6 +56,11 @@ use super::harness_stream::HarnessStreamHub;
 /// 250 ms per-workspace sweep is a bounded recovery pass, not a hot loop.
 pub const DISPATCH_INTERVAL: Duration = Duration::from_millis(250);
 
+/// Requested `tool_approval` Decisions expire on this cadence. The sweep moves
+/// an overdue Effect to `not_applied`, so an unanswered approval can never
+/// block a Task forever.
+pub const APPROVAL_EXPIRY_INTERVAL: Duration = Duration::from_secs(30);
+
 /// Physical Job id derived from the Effect id. A dispatch attempt therefore
 /// reuses one physical identity instead of minting a new one.
 pub fn job_id_for(effect_id: &str) -> String {
@@ -965,11 +970,14 @@ impl EffectDispatch {
         self.reconcile_startup().await;
         let mut interval = tokio::time::interval(DISPATCH_INTERVAL);
         interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+        let mut expiry = tokio::time::interval(APPROVAL_EXPIRY_INTERVAL);
+        expiry.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
         loop {
-            tokio::select! {
-                _ = interval.tick() => {}
-                _ = self.notify.notified() => {}
-            }
+            let sweep_expired = tokio::select! {
+                _ = interval.tick() => false,
+                _ = expiry.tick() => true,
+                _ = self.notify.notified() => false,
+            };
             let workspaces = match self.db.find_all_workspace_ids().await {
                 Ok(workspaces) => workspaces,
                 Err(error) => {
@@ -978,6 +986,17 @@ impl EffectDispatch {
                 }
             };
             for workspace_id in workspaces {
+                if sweep_expired {
+                    match self.db.expire_harness_decisions(&workspace_id, Utc::now()).await {
+                        Ok(0) => {}
+                        Ok(count) => {
+                            tracing::info!(metric = "harness_approval_expired", %workspace_id, count, "approval expired");
+                        }
+                        Err(error) => {
+                            tracing::warn!(%workspace_id, %error, "approval expiry sweep failed");
+                        }
+                    }
+                }
                 if let Err(error) = self.dispatch_workspace(&workspace_id).await {
                     tracing::warn!(%workspace_id, %error, "effect dispatch pass failed");
                 }
@@ -1408,7 +1427,7 @@ mod tests {
         }
 
         async fn platform_runtime_events(&self) -> i64 {
-            sqlx::query_scalar("SELECT COUNT(*) FROM hub_ledger WHERE kind = 'runtime.v1'")
+            sqlx::query_scalar("SELECT COUNT(*) FROM hub_ledger WHERE kind = 'runtime' || '.v1'")
                 .fetch_one(self.db.pool())
                 .await
                 .expect("platform runtime events")

@@ -446,12 +446,6 @@ impl ServiceManager {
                                 device_cache: Some(app_state.device_cache.clone()),
                                 data_server: app_state.data_server.clone(),
                                 pending_actions: Some(app_state.pending_actions.clone()),
-                                task_approvals: Some(Arc::new(
-                                    crate::domains::agent::runtime::approvals::DbApprovalStore::new(
-                                        app_state.db.clone(),
-                                    )
-                                    .with_recorder(app_state.runtime_recorder.clone()),
-                                )),
                                 arbitration: Some(app_state.arbitration.clone()),
                                 live: Some(live_summary.clone()),
                                 event_bus: Some(app_state.event_bus.clone()),
@@ -703,9 +697,10 @@ impl ServiceManager {
                     store: Arc::new(crate::domains::agent::runtime::harness_store::HarnessTaskStore::new(
                         app_state.db.clone(),
                     )),
-                    approvals: Some(Arc::new(
-                        crate::domains::agent::runtime::approvals::DbApprovalStore::new(app_state.db.clone())
-                            .with_recorder(app_state.runtime_recorder.clone()),
+                    pending_tool_approvals: Some(Arc::new(
+                        crate::domains::agent::thing_agent::approval_port::HarnessPendingToolApproval::new(
+                            app_state.db.clone(),
+                        ),
                     )),
                     watches: Arc::new(
                         crate::shared::runtime_ports::WatchRuleStoreAdapter::new((*app_state.db).clone())
