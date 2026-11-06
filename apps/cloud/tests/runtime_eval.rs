@@ -15,7 +15,7 @@ use rig_core::message::{
     DocumentSourceKind, Image, ImageMediaType, Message, ToolCallId, ToolResult as RigToolResult, ToolResultContent,
     UserContent,
 };
-use serde_json::json;
+use serde_json::{Value, json};
 use tinyiothub_agent::adapters::rig::provider::PortModelAsRig;
 use tinyiothub_agent::harness::{
     EffectReconciler, HarnessError, ReconcileOutcome, SubagentExecutor, TaskOutcome, reduce,
@@ -36,10 +36,10 @@ use tinyiothub_cloud::domains::agent::thing_agent::runner::{AgentHandle, RunCont
 use tinyiothub_cloud::domains::agent::thing_agent::task::coordinator::TaskCoordinator;
 use tinyiothub_cloud::domains::agent::thing_agent::task::prompt::{TaskPromptApproval, build_task_prompt};
 use tinyiothub_cloud::domains::agent::thing_agent::types::{Priority, TriggerSource, WakeSignal};
-use tinyiothub_cloud::shared::runtime_ports::{DbDeviceJobStore, WatchRuleStoreAdapter};
+use tinyiothub_cloud::shared::runtime_ports::WatchRuleStoreAdapter;
 use tinyiothub_core::agent_runs::{Outcome, RunReport};
 use tinyiothub_core::agent_task::{AgentTask, TaskStatus, TaskWake, WakeDispatchState};
-use tinyiothub_core::device_job::{DeviceJob, DeviceJobState};
+use tinyiothub_core::device_job::{DeviceJob, DeviceJobError, DeviceJobState};
 use tinyiothub_core::error::Error;
 use tinyiothub_core::harness::{
     DeviceFactsSnapshot, EffectIntent, EffectState, ExecutionMode, HarnessFact, HarnessState, WorkflowDefinition,
@@ -52,6 +52,7 @@ use tinyiothub_runtime::access::validator::{AccessCallValidator, CallError, Vali
 use tinyiothub_runtime::arbitration::{ArbitrationRegistry, ResourceLease};
 use tinyiothub_runtime::job::service::{JobRequest, JobService};
 use tinyiothub_runtime::job::worker_adapter::{JobDeviceWorker, JobWorkerLocator};
+use tinyiothub_runtime::ports::DeviceJobStore;
 use tinyiothub_storage::test_helpers::{WorkspaceFixture, fixture_workspace};
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
@@ -491,6 +492,100 @@ async fn db_fixture() -> (Arc<Db>, RuntimeRecorder, Arc<RuntimeStreamHub>) {
     (db, recorder, hub)
 }
 
+/// Legacy platform Job store used only by this eval. Task 19C3 removed the
+/// production adapter; the eval still measures the pre-cutover
+/// `local_job_to_ui_frame` latency and is retired with runtime.v1 in 19C4.
+struct LegacyDbJobStore {
+    db: Db,
+    recorder: RuntimeRecorder,
+}
+
+impl LegacyDbJobStore {
+    fn publish(&self, event: tinyiothub_storage::runtime_event::RuntimeEvent) {
+        self.recorder.publish(event);
+    }
+}
+
+#[async_trait]
+impl DeviceJobStore for LegacyDbJobStore {
+    async fn create_job(&self, job: &DeviceJob) -> Result<(), DeviceJobError> {
+        let event = self.db.create_job_and_event(job).await?;
+        self.publish(event);
+        Ok(())
+    }
+
+    async fn get_job(&self, workspace_id: &str, job_id: &str) -> Result<Option<DeviceJob>, DeviceJobError> {
+        self.db.get_job(workspace_id, job_id).await
+    }
+
+    async fn get_job_by_id(&self, job_id: &str) -> Result<Option<DeviceJob>, DeviceJobError> {
+        self.db.get_job_by_id(job_id).await
+    }
+
+    async fn get_task_job(
+        &self,
+        workspace_id: &str,
+        task_id: &str,
+        job_id: &str,
+    ) -> Result<Option<DeviceJob>, DeviceJobError> {
+        self.db.get_task_job(workspace_id, task_id, job_id).await
+    }
+
+    async fn get_job_by_tool_call(
+        &self,
+        workspace_id: &str,
+        tool_call_id: &str,
+    ) -> Result<Option<DeviceJob>, DeviceJobError> {
+        self.db.get_job_by_tool_call(workspace_id, tool_call_id).await
+    }
+
+    async fn submit_approved_job(&self, job: &DeviceJob) -> Result<(Option<DeviceJob>, bool), DeviceJobError> {
+        self.db.create_job(job).await.map(|()| (Some(job.clone()), true))
+    }
+
+    async fn mark_running(&self, job_id: &str, driver_call_id: &str) -> Result<DeviceJob, DeviceJobError> {
+        let (job, event) = self.db.mark_running_and_event(job_id, driver_call_id).await?;
+        self.publish(event);
+        Ok(job)
+    }
+
+    async fn finish_job(
+        &self,
+        job_id: &str,
+        state: DeviceJobState,
+        result: &Value,
+        wake: Option<&TaskWake>,
+    ) -> Result<bool, DeviceJobError> {
+        let (finished, event) = self.db.finish_job_and_event(job_id, state, result, wake).await?;
+        if let Some(event) = event {
+            self.publish(event);
+        }
+        Ok(finished)
+    }
+
+    async fn update_progress(&self, job_id: &str, progress: &Value) -> Result<bool, DeviceJobError> {
+        let (revision, event) = self.db.update_progress_revision_and_event(job_id, progress).await?;
+        if let Some(event) = event {
+            self.publish(event);
+        }
+        Ok(revision.is_some())
+    }
+
+    async fn request_stop(&self, workspace_id: &str, task_id: &str, job_id: &str) -> Result<DeviceJob, DeviceJobError> {
+        let (job, event) = self.db.request_stop_and_event(workspace_id, task_id, job_id).await?;
+        self.publish(event);
+        Ok(job)
+    }
+
+    async fn active_jobs(
+        &self,
+        workspace_id: Option<&str>,
+        unknown_only: bool,
+    ) -> Result<Vec<DeviceJob>, DeviceJobError> {
+        self.db.active_jobs(workspace_id, unknown_only).await
+    }
+}
+
 fn task() -> AgentTask {
     let now = Utc::now();
     AgentTask {
@@ -714,7 +809,10 @@ async fn local_job_to_ui_frame_under_one_second() {
         .create_task_with_wake(&task(), &wake(TriggerSource::Timer))
         .await
         .expect("create task");
-    let job_store = DbDeviceJobStore::new((*db).clone()).with_recorder(recorder.clone());
+    let job_store = LegacyDbJobStore {
+        db: (*db).clone(),
+        recorder: recorder.clone(),
+    };
     let jobs = JobService::new(
         Arc::new(job_store),
         Arc::new(NoopWorkers(Arc::new(NoopWorker))),

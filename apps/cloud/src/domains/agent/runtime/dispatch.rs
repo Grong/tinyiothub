@@ -1421,10 +1421,7 @@ mod tests {
             let db = Arc::new(workspace.db.clone());
             let worker = Arc::new(RecordingWorker::default());
             let jobs = JobService::new(
-                Arc::new(crate::shared::runtime_ports::HarnessAwareDeviceJobStore::new(
-                    db.clone(),
-                    crate::shared::runtime_ports::DbDeviceJobStore::new(workspace.db.clone()),
-                )),
+                Arc::new(crate::shared::runtime_ports::WorkspaceDeviceJobStore::new(db.clone())),
                 Arc::new(RecordingWorkers { worker: worker.clone() }),
                 validator,
                 Arc::new(Resources),
@@ -2101,10 +2098,7 @@ mod tests {
         )
         .await;
         let db = Arc::new(workspace.db.clone());
-        let inner = Arc::new(crate::shared::runtime_ports::HarnessAwareDeviceJobStore::new(
-            db.clone(),
-            crate::shared::runtime_ports::DbDeviceJobStore::new(workspace.db.clone()),
-        ));
+        let inner = Arc::new(crate::shared::runtime_ports::WorkspaceDeviceJobStore::new(db.clone()));
         let (dispatch, worker) = ad_hoc_dispatch(&workspace, Arc::new(FailCreateStore(inner))).await;
 
         let report = dispatch.dispatch_workspace(WS).await.expect("dispatch");

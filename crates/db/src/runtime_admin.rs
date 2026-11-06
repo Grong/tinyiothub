@@ -131,15 +131,7 @@ async fn status_counts(
 
 impl Db {
     pub async fn runtime_drain_counts(&self, workspace_id: Option<&str>) -> Result<RuntimeDrainCounts, DeviceJobError> {
-        let (
-            nonterminal_tasks,
-            active_runs,
-            active_jobs,
-            active_watches,
-            pending_approvals,
-            pending_outbox,
-            unresolved_unknown,
-        ): (i64, i64, i64, i64, i64, i64, i64) = sqlx::query_as(
+        let (nonterminal_tasks, active_runs, active_watches, pending_outbox): (i64, i64, i64, i64) = sqlx::query_as(
             "SELECT
                (SELECT COUNT(*) FROM agent_tasks t
                  WHERE (? IS NULL OR t.workspace_id = ?)
@@ -148,30 +140,15 @@ impl Db {
                  WHERE (? IS NULL OR t.workspace_id = ?)
                    AND t.current_run_id IS NOT NULL
                    AND t.status NOT IN ('completed', 'failed', 'cancelled')),
-               (SELECT COUNT(*) FROM device_jobs j
-                 WHERE (? IS NULL OR j.workspace_id = ?) AND j.state IN ('accepted', 'running')),
                (SELECT COUNT(*) FROM watch_rules w
                  JOIN agent_tasks t ON t.id = w.owner_task_id
                  WHERE (? IS NULL OR w.workspace_id = ?) AND w.owner_task_id IS NOT NULL
                    AND t.status NOT IN ('completed', 'failed', 'cancelled')),
-               -- The platform task_approvals table has no writers since 19C2.
-               -- Counting a pre-upgrade orphan would pin the drain forever.
-               0,
                (SELECT COUNT(*) FROM task_wake_outbox o
                  JOIN agent_tasks t ON t.id = o.task_id
                  WHERE (? IS NULL OR t.workspace_id = ?)
-                   AND o.dispatch_state = 'pending' AND o.resolved_at IS NULL),
-               (SELECT COUNT(*) FROM device_jobs j
-                 WHERE (? IS NULL OR j.workspace_id = ?)
-                   AND j.state IN ('cancelled_unknown', 'interrupted')
-                   AND NOT EXISTS (
-                     SELECT 1 FROM runtime_unknown_dispositions d WHERE d.job_id = j.id
-                   ))",
+                   AND o.dispatch_state = 'pending' AND o.resolved_at IS NULL)",
         )
-        .bind(workspace_id)
-        .bind(workspace_id)
-        .bind(workspace_id)
-        .bind(workspace_id)
         .bind(workspace_id)
         .bind(workspace_id)
         .bind(workspace_id)
@@ -183,14 +160,18 @@ impl Db {
         .fetch_one(self.pool())
         .await
         .map_err(storage)?;
+        // Jobs are workspace facts since 19C3; the platform table has no writer.
+        let (active_jobs, unresolved_unknown) = self.workspace_job_counts(workspace_id).await?;
         Ok(RuntimeDrainCounts {
             nonterminal_tasks: count(nonterminal_tasks),
             active_runs: count(active_runs),
-            active_jobs: count(active_jobs),
+            active_jobs,
             active_watches: count(active_watches),
-            pending_approvals: count(pending_approvals),
+            // The platform task_approvals table has no writers since 19C2.
+            // Counting a pre-upgrade orphan would pin the drain forever.
+            pending_approvals: 0,
             pending_outbox: count(pending_outbox),
-            unresolved_unknown: count(unresolved_unknown),
+            unresolved_unknown,
         })
     }
 
@@ -217,13 +198,8 @@ impl Db {
             workspace_id,
         )
         .await?;
-        let job_rows = status_counts(
-            self,
-            "SELECT state, COUNT(*) FROM device_jobs
-             WHERE (? IS NULL OR workspace_id = ?) GROUP BY state",
-            workspace_id,
-        )
-        .await?;
+        // Jobs are workspace facts since 19C3.
+        let job_rows = self.workspace_job_state_counts(workspace_id).await?;
         let (watch_active, watch_total): (i64, i64) = sqlx::query_as(
             "SELECT
                COALESCE(SUM(CASE WHEN owner_task_id IS NOT NULL THEN 1 ELSE 0 END), 0),
@@ -341,53 +317,8 @@ impl Db {
         disposition: &str,
         recorded_by: &str,
     ) -> Result<UnknownDispositionOutcome, DeviceJobError> {
-        // Write-first: the INSERT ... SELECT atomically validates the Job state
-        // and records the disposition without holding a read snapshot first.
-        let affected = sqlx::query(
-            "INSERT OR IGNORE INTO runtime_unknown_dispositions
-                 (job_id, workspace_id, task_id, device_id, disposition, recorded_by, recorded_at)
-             SELECT id, workspace_id, task_id, device_id, ?, ?, ?
-             FROM device_jobs
-             WHERE workspace_id = ? AND id = ? AND state IN ('cancelled_unknown', 'interrupted')",
-        )
-        .bind(disposition)
-        .bind(recorded_by)
-        .bind(chrono::Utc::now())
-        .bind(workspace_id)
-        .bind(job_id)
-        .execute(self.pool())
-        .await
-        .map_err(storage)?
-        .rows_affected();
-        if affected == 1 {
-            let device_id: Option<String> =
-                sqlx::query_scalar("SELECT device_id FROM runtime_unknown_dispositions WHERE job_id = ?")
-                    .bind(job_id)
-                    .fetch_optional(self.pool())
-                    .await
-                    .map_err(storage)?;
-            tracing::info!(
-                metric = "runtime_unknown_disposition",
-                %workspace_id,
-                %job_id,
-                device_id = ?device_id,
-                "unknown Job disposition recorded"
-            );
-            return Ok(UnknownDispositionOutcome::Recorded);
-        }
-        let row: Option<(String,)> = sqlx::query_as("SELECT state FROM device_jobs WHERE workspace_id = ? AND id = ?")
-            .bind(workspace_id)
-            .bind(job_id)
-            .fetch_optional(self.pool())
+        self.record_workspace_unknown_disposition(workspace_id, job_id, disposition, recorded_by)
             .await
-            .map_err(storage)?;
-        let Some((state,)) = row else {
-            return Ok(UnknownDispositionOutcome::NotFound);
-        };
-        if state != "cancelled_unknown" && state != "interrupted" {
-            return Ok(UnknownDispositionOutcome::NotUnknown);
-        }
-        Ok(UnknownDispositionOutcome::AlreadyRecorded)
     }
 }
 
@@ -470,7 +401,12 @@ mod tests {
             .expect("wake");
         }
 
-        let counts = Db::new(pool).runtime_drain_counts(Some("ws_1")).await.expect("drain");
+        let root = std::env::temp_dir().join(format!("tinyiothub-runtime-admin-{}", uuid::Uuid::new_v4()));
+        let mut db = Db::new(pool);
+        db.workspace_store_root = root.join("data/agents");
+        db.create_workspace_store("ws_1").await.expect("workspace store");
+        let counts = db.runtime_drain_counts(Some("ws_1")).await.expect("drain");
+        let _ = tokio::fs::remove_dir_all(&root).await;
         assert_eq!(counts.nonterminal_tasks, 1);
         assert_eq!(
             counts.active_watches, 1,

@@ -1,10 +1,21 @@
+//! Platform `device_jobs` compatibility surface.
+//!
+//! Task 19C3 moved the production Device Job lifecycle to the workspace Harness
+//! generation ([`crate::harness_job`]). The platform table, its `agent_tasks`
+//! FK, and these read helpers remain for diagnostics and fixture parity, but
+//! the platform *writers* are compiled only for tests (`cfg(test)` or the
+//! `testing` feature). No production composition can reach them.
+
 use chrono::{DateTime, Utc};
 use serde_json::Value;
+#[cfg(any(test, feature = "testing"))]
 use sqlx::{Sqlite, Transaction};
+#[cfg(any(test, feature = "testing"))]
 use tinyiothub_core::agent_task::TaskWake;
 use tinyiothub_core::device_job::{DeviceJob, DeviceJobError, DeviceJobState};
 
 use crate::Db;
+#[cfg(any(test, feature = "testing"))]
 use crate::runtime_event::{append_runtime_event_tx, job_event};
 
 #[derive(Debug, sqlx::FromRow)]
@@ -63,6 +74,7 @@ pub(crate) fn storage(error: impl std::fmt::Display) -> DeviceJobError {
     DeviceJobError::Storage(error.to_string())
 }
 
+#[cfg(any(test, feature = "testing"))]
 fn create_error(error: sqlx::Error) -> DeviceJobError {
     if matches!(&error, sqlx::Error::Database(db) if db.is_unique_violation()) {
         DeviceJobError::Conflict(error.to_string())
@@ -88,6 +100,7 @@ async fn find_job_by_id(
     .transpose()
 }
 
+#[cfg(any(test, feature = "testing"))]
 async fn insert_job_wake(tx: &mut Transaction<'_, Sqlite>, wake: &TaskWake) -> Result<(), DeviceJobError> {
     sqlx::query(
         "INSERT INTO task_wake_outbox
@@ -107,6 +120,7 @@ async fn insert_job_wake(tx: &mut Transaction<'_, Sqlite>, wake: &TaskWake) -> R
     Ok(())
 }
 
+#[cfg(any(test, feature = "testing"))]
 fn validate_job_wake(job: &DeviceJob, wake: &TaskWake) -> Result<(), DeviceJobError> {
     if job.task_id.as_deref() != Some(wake.task_id.as_str()) {
         return Err(DeviceJobError::Validation("job and wake task id differ".to_string()));
@@ -124,6 +138,7 @@ fn validate_job_wake(job: &DeviceJob, wake: &TaskWake) -> Result<(), DeviceJobEr
 /// Single owner of platform `device_jobs` writes. Legacy approval flows call
 /// this helper inside their own transaction instead of repeating the INSERT,
 /// so Job state can only enter the table through this module.
+#[cfg(any(test, feature = "testing"))]
 pub(crate) async fn insert_job_projection(
     connection: &mut sqlx::SqliteConnection,
     job: &DeviceJob,
@@ -169,10 +184,12 @@ pub(crate) async fn insert_job_projection(
 }
 
 impl Db {
+    #[cfg(any(test, feature = "testing"))]
     pub async fn create_job(&self, job: &DeviceJob) -> Result<(), DeviceJobError> {
         self.create_job_and_event(job).await.map(|_| ())
     }
 
+    #[cfg(any(test, feature = "testing"))]
     pub async fn create_job_and_event(
         &self,
         job: &DeviceJob,
@@ -253,12 +270,14 @@ impl Db {
         .transpose()
     }
 
+    #[cfg(any(test, feature = "testing"))]
     pub async fn mark_running(&self, job_id: &str, driver_call_id: &str) -> Result<DeviceJob, DeviceJobError> {
         self.mark_running_and_event(job_id, driver_call_id)
             .await
             .map(|(job, _)| job)
     }
 
+    #[cfg(any(test, feature = "testing"))]
     pub async fn mark_running_and_event(
         &self,
         job_id: &str,
@@ -296,6 +315,7 @@ impl Db {
         )))
     }
 
+    #[cfg(any(test, feature = "testing"))]
     pub async fn finish_job(
         &self,
         job_id: &str,
@@ -308,6 +328,7 @@ impl Db {
             .map(|(finished, _)| finished)
     }
 
+    #[cfg(any(test, feature = "testing"))]
     pub async fn finish_job_and_event(
         &self,
         job_id: &str,
@@ -368,10 +389,12 @@ impl Db {
         Ok((true, Some(event)))
     }
 
+    #[cfg(any(test, feature = "testing"))]
     pub async fn update_progress(&self, job_id: &str, progress: &Value) -> Result<bool, DeviceJobError> {
         Ok(self.update_progress_revision(job_id, progress).await?.is_some())
     }
 
+    #[cfg(any(test, feature = "testing"))]
     pub async fn update_progress_revision(
         &self,
         job_id: &str,
@@ -382,6 +405,7 @@ impl Db {
             .map(|(revision, _)| revision)
     }
 
+    #[cfg(any(test, feature = "testing"))]
     pub async fn update_progress_revision_and_event(
         &self,
         job_id: &str,
@@ -426,6 +450,7 @@ impl Db {
         Ok((Some(revision), Some(event)))
     }
 
+    #[cfg(any(test, feature = "testing"))]
     pub async fn request_stop(
         &self,
         workspace_id: &str,
@@ -437,6 +462,7 @@ impl Db {
             .map(|(job, _)| job)
     }
 
+    #[cfg(any(test, feature = "testing"))]
     pub async fn request_stop_and_event(
         &self,
         workspace_id: &str,

@@ -509,7 +509,7 @@ async fn http_cancel_stops_the_job_owned_by_the_live_coordinator() {
     services.start_all(&mut app_state).await.expect("production services");
     app_state
         .db
-        .create_job(&DeviceJob {
+        .create_workspace_job(&DeviceJob {
             id: "job-live-cancel".into(),
             workspace_id: WS.into(),
             device_id: "missing-worker".into(),
@@ -564,7 +564,7 @@ async fn http_cancel_stops_the_job_owned_by_the_live_coordinator() {
     assert_eq!(status, StatusCode::OK, "{body}");
     let stopping = fixture
         .db
-        .get_job(WS, "job-live-cancel")
+        .get_workspace_job(WS, "job-live-cancel")
         .await
         .expect("read Job")
         .expect("Job");

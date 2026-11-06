@@ -126,6 +126,9 @@ pub(crate) fn task_event(task: &AgentTask, event_type: &str, event_id: String) -
     }
 }
 
+/// Legacy platform Job event builder. The production Job writer was removed in
+/// Task 19C3; only the test-only platform fixture store still emits these.
+#[cfg(any(test, feature = "testing"))]
 pub(crate) fn job_event(job: &DeviceJob, suffix: &str, data: Value) -> RuntimeEventInput {
     let mut payload = serde_json::json!({
         "id": job.id,

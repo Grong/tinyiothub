@@ -87,7 +87,7 @@ check_rust \
 check_rust \
   "device_jobs write outside the Job owner" \
   '(INSERT INTO device_jobs|UPDATE device_jobs)' \
-  '^(crates/db/src/(device_job|harness_effect)\.rs|apps/cloud/src/domains/agent/host/autonomous_factory\.rs|apps/cloud/src/domains/agent/runtime/api_cutover_tests\.rs):'
+  '^(crates/db/src/(device_job|harness_effect|harness_job)\.rs|apps/cloud/src/domains/agent/host/autonomous_factory\.rs|apps/cloud/src/domains/agent/runtime/api_cutover_tests\.rs):'
 # task_approval.rs deliberately has no device_jobs SQL: it calls
 # crate::device_job::insert_job_projection inside its own transaction.
 

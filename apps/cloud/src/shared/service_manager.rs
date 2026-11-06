@@ -144,11 +144,12 @@ impl ServiceManager {
         ));
         data_server.set_sampler(sampler);
 
+        // Task 19C3: the workspace Harness generation is the only Job truth.
+        // `JobService` still owns arbitration/workers/recovery; only its store
+        // binding changed.
         let task_jobs = tinyiothub_runtime::job::service::JobService::new(
-            Arc::new(crate::shared::runtime_ports::HarnessAwareDeviceJobStore::new(
+            Arc::new(crate::shared::runtime_ports::WorkspaceDeviceJobStore::new(
                 app_state.db.clone(),
-                crate::shared::runtime_ports::DbDeviceJobStore::new((*app_state.db).clone())
-                    .with_recorder(app_state.runtime_recorder.clone()),
             )),
             Arc::new(tinyiothub_runtime::job::worker_adapter::DataServerJobWorkers::new(
                 data_server.as_ref().clone(),
@@ -1014,13 +1015,7 @@ mod tests {
             dispatched_at: Some(now),
             resolved_at: Some(now),
         };
-        // The production Task store is the workspace Harness generation. The
-        // legacy JobService still owns the platform `device_jobs` table, whose
-        // `task_id` FK points at the platform `agent_tasks`; keep a minimal
-        // reference row until Task 19C migrates that Job path.
-        db.create_task_with_wake(&task, &wake)
-            .await
-            .expect("seed platform Task reference");
+        // Task 19C3: Tasks and Jobs both live in the workspace generation.
         db.harness_create_task_with_wake(&task, &wake).await.expect("seed Task");
     }
 
@@ -1072,7 +1067,7 @@ mod tests {
         seed_task(&app_state.db, "task_cancel", TaskStatus::WaitingJob).await;
         app_state
             .db
-            .create_job(&job("job_recovery", "task_recovery"))
+            .create_workspace_job(&job("job_recovery", "task_recovery"))
             .await
             .expect("seed recovery Job");
 
@@ -1084,7 +1079,7 @@ mod tests {
 
         let recovered = app_state
             .db
-            .get_job("ws_1", "job_recovery")
+            .get_workspace_job("ws_1", "job_recovery")
             .await
             .expect("read recovered Job")
             .expect("recovered Job");
@@ -1096,7 +1091,7 @@ mod tests {
 
         app_state
             .db
-            .create_job(&job("job_cancel", "task_cancel"))
+            .create_workspace_job(&job("job_cancel", "task_cancel"))
             .await
             .expect("seed active cancellation Job");
         let manager = app_state.thing_agents.clone().expect("production ThingAgentManager");
@@ -1109,7 +1104,7 @@ mod tests {
         );
         let stopping = app_state
             .db
-            .get_job("ws_1", "job_cancel")
+            .get_workspace_job("ws_1", "job_cancel")
             .await
             .expect("read stopping Job")
             .expect("stopping Job");
@@ -1131,7 +1126,8 @@ mod tests {
 
         app_state
             .db
-            .finish_job(
+            .finish_workspace_job(
+                "ws_1",
                 "job_cancel",
                 DeviceJobState::CancelledUnknown,
                 &json!({"reason":"driver outcome unknown"}),

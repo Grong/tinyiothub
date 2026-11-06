@@ -684,7 +684,9 @@ mod tests {
 
     fn job_service(db: &tinyiothub_storage::Db, worker: Arc<SubmittingWorker>) -> JobService {
         JobService::new(
-            Arc::new(crate::shared::runtime_ports::DbDeviceJobStore::new(db.clone())),
+            Arc::new(crate::shared::runtime_ports::WorkspaceDeviceJobStore::new(
+                std::sync::Arc::new(db.clone()),
+            )),
             Arc::new(OneWorker { worker }),
             Arc::new(AcceptAllValidator),
             Arc::new(DeviceResources),
@@ -785,17 +787,36 @@ mod tests {
         (dir, pool)
     }
 
-    async fn job_rows(pool: &SqlitePool) -> i64 {
+    /// Task 19C3: Jobs and their terminal wakes live in the workspace
+    /// generation, so the fixture needs an isolated Harness root.
+    async fn workspace_db() -> (tempfile::TempDir, Arc<tinyiothub_storage::Db>, SqlitePool) {
+        let dir = tempfile::tempdir().expect("workspace root");
+        let pool = test_pool().await;
+        let db = Arc::new(
+            tinyiothub_storage::Db::new(pool.clone()).with_workspace_store_root(dir.path().join("data/agents")),
+        );
+        (dir, db, pool)
+    }
+
+    async fn job_rows(db: &tinyiothub_storage::Db, workspace_id: &str) -> i64 {
         sqlx::query_scalar("SELECT COUNT(*) FROM device_jobs")
-            .fetch_one(pool)
+            .fetch_one(
+                &db.workspace_pool_for_testing(workspace_id)
+                    .await
+                    .expect("workspace pool"),
+            )
             .await
             .expect("job count")
     }
 
-    async fn wake_rows(pool: &SqlitePool, event_id: &str) -> i64 {
+    async fn wake_rows(db: &tinyiothub_storage::Db, workspace_id: &str, event_id: &str) -> i64 {
         sqlx::query_scalar("SELECT COUNT(*) FROM task_wake_outbox WHERE event_id = ?")
             .bind(event_id)
-            .fetch_one(pool)
+            .fetch_one(
+                &db.workspace_pool_for_testing(workspace_id)
+                    .await
+                    .expect("workspace pool"),
+            )
             .await
             .expect("wake count")
     }
@@ -814,9 +835,9 @@ mod tests {
 
     #[tokio::test]
     async fn task_owned_autonomous_call_creates_one_durable_job_and_one_completion_wake() {
-        let pool = test_pool().await;
-        let db = Arc::new(tinyiothub_storage::Db::new(pool.clone()));
+        let (_dir, db, pool) = workspace_db().await;
         seed_task_owned_device(&pool, &db, "ws-jobs", "dev-1", "task-1", "run-1", false).await;
+        db.create_workspace_store("ws-jobs").await.expect("workspace store");
         let worker = Arc::new(SubmittingWorker::default());
         let jobs = job_service(&db, worker.clone());
         let tools = build_autonomous_tools(
@@ -846,7 +867,7 @@ mod tests {
             "exactly one worker submission"
         );
         let job = db
-            .get_job("ws-jobs", "job:run-1:dev-1:1")
+            .get_workspace_job("ws-jobs", "job:run-1:dev-1:1")
             .await
             .expect("job read")
             .expect("durable Job row");
@@ -856,14 +877,14 @@ mod tests {
         assert_eq!(job.tool, "set_level");
         assert_eq!(job.args_json, serde_json::json!({"level":7}));
         assert_eq!(job.state, DeviceJobState::Accepted);
-        assert_eq!(job_rows(&pool).await, 1);
+        assert_eq!(job_rows(&db, "ws-jobs").await, 1);
 
         // Retry of the same tool call resolves to the same durable Job.
         let retry = call.execute(call_args()).await.expect("retry");
         let retry_output: serde_json::Value = serde_json::from_str(&retry.output).expect("retry output");
         assert_eq!(retry_output["jobId"], "job:run-1:dev-1:1");
         assert_eq!(retry_output["deduplicated"], true, "{retry_output}");
-        assert_eq!(job_rows(&pool).await, 1, "retry must not create a second Job");
+        assert_eq!(job_rows(&db, "ws-jobs").await, 1, "retry must not create a second Job");
         assert_eq!(
             worker.submitted.lock().expect("submitted").len(),
             1,
@@ -874,16 +895,16 @@ mod tests {
         // creates exactly one Task wake; replay is a no-op.
         JobResultSink::command_finished(&jobs, "job:run-1:dev-1:1", true, None).await;
         let done = db
-            .get_job("ws-jobs", "job:run-1:dev-1:1")
+            .get_workspace_job("ws-jobs", "job:run-1:dev-1:1")
             .await
             .expect("job read")
             .expect("terminal Job");
         assert_eq!(done.state, DeviceJobState::Done);
         let wake_event = "device_job:job:run-1:dev-1:1:done";
-        assert_eq!(wake_rows(&pool, wake_event).await, 1);
+        assert_eq!(wake_rows(&db, "ws-jobs", wake_event).await, 1);
         let signal: String = sqlx::query_scalar("SELECT signal_json FROM task_wake_outbox WHERE event_id = ?")
             .bind(wake_event)
-            .fetch_one(&pool)
+            .fetch_one(&db.workspace_pool_for_testing("ws-jobs").await.expect("workspace pool"))
             .await
             .expect("wake signal");
         let signal: serde_json::Value = serde_json::from_str(&signal).expect("wake signal JSON");
@@ -900,8 +921,8 @@ mod tests {
             .expect("duplicate finish");
         assert!(!replay.transitioned);
         assert!(!replay.wake_created);
-        assert_eq!(wake_rows(&pool, wake_event).await, 1);
-        assert_eq!(job_rows(&pool).await, 1);
+        assert_eq!(wake_rows(&db, "ws-jobs", wake_event).await, 1);
+        assert_eq!(job_rows(&db, "ws-jobs").await, 1);
 
         // JobService only enqueues the wake; the Task status is still owned by
         // the coordinator/router contract.
@@ -914,9 +935,9 @@ mod tests {
 
     #[tokio::test]
     async fn recovered_run_reuses_an_in_flight_job_instead_of_submitting_a_duplicate() {
-        let pool = test_pool().await;
-        let db = Arc::new(tinyiothub_storage::Db::new(pool.clone()));
+        let (_dir, db, pool) = workspace_db().await;
         seed_task_owned_device(&pool, &db, "ws-recover", "dev-1", "task-1", "run-old", false).await;
+        db.create_workspace_store("ws-recover").await.expect("workspace store");
         let worker = Arc::new(SubmittingWorker::default());
         let jobs = job_service(&db, worker.clone());
         jobs.submit(tinyiothub_runtime::job::service::JobRequest {
@@ -954,7 +975,11 @@ mod tests {
         for state in ["accepted", "running", "interrupted", "cancelled_unknown"] {
             sqlx::query("UPDATE device_jobs SET state = ? WHERE id = 'job:run-old:dev-1:1'")
                 .bind(state)
-                .execute(&pool)
+                .execute(
+                    &db.workspace_pool_for_testing("ws-recover")
+                        .await
+                        .expect("workspace pool"),
+                )
                 .await
                 .expect("set in-flight state");
             let output = call.execute(call_args()).await.expect("recovered call");
@@ -971,7 +996,7 @@ mod tests {
                 "{state}: status must be derived from the physical Job state: {output}"
             );
             assert_eq!(output["deduplicated"], true, "{state}: {output}");
-            assert_eq!(job_rows(&pool).await, 1, "{state} must not create a Job");
+            assert_eq!(job_rows(&db, "ws-recover").await, 1, "{state} must not create a Job");
             assert!(
                 worker.submitted.lock().expect("submitted").is_empty(),
                 "{state} must not resubmit the device command"
@@ -981,14 +1006,18 @@ mod tests {
         // A terminal Job is history, not an in-flight call: a legitimate repeat
         // action still dispatches exactly one new Job.
         sqlx::query("UPDATE device_jobs SET state = 'done' WHERE id = 'job:run-old:dev-1:1'")
-            .execute(&pool)
+            .execute(
+                &db.workspace_pool_for_testing("ws-recover")
+                    .await
+                    .expect("workspace pool"),
+            )
             .await
             .expect("set terminal state");
         let output = call.execute(call_args()).await.expect("repeat call");
         let output: serde_json::Value = serde_json::from_str(&output.output).expect("tool output");
         assert_eq!(output["jobId"], "job:run-2:dev-1:1", "{output}");
         assert!(output.get("deduplicated").is_none(), "{output}");
-        assert_eq!(job_rows(&pool).await, 2);
+        assert_eq!(job_rows(&db, "ws-recover").await, 2);
         assert_eq!(
             worker.submitted.lock().expect("submitted").as_slice(),
             ["job:run-2:dev-1:1".to_string()]
@@ -997,9 +1026,9 @@ mod tests {
 
     #[tokio::test]
     async fn recovery_dedupe_only_matches_the_exact_device_tool_and_arguments() {
-        let pool = test_pool().await;
-        let db = Arc::new(tinyiothub_storage::Db::new(pool.clone()));
+        let (_dir, db, pool) = workspace_db().await;
         seed_task_owned_device(&pool, &db, "ws-exact", "dev-1", "task-1", "run-old", false).await;
+        db.create_workspace_store("ws-exact").await.expect("workspace store");
         sqlx::query("INSERT INTO things (id, name, workspace_id, thing_type) VALUES ('dev-2', 'Thing dev-2', 'ws-exact', 'device')")
             .execute(&pool)
             .await
@@ -1092,7 +1121,7 @@ mod tests {
                 "{label}: the action must be submitted"
             );
             assert_eq!(
-                job_rows(&pool).await,
+                job_rows(&db, "ws-exact").await,
                 match label {
                     "different arguments" => 2,
                     "different device" => 3,
@@ -1232,10 +1261,7 @@ mod tests {
         assert_eq!(decisions, 2, "only the two distinct calls created rows");
 
         let jobs = JobService::new(
-            Arc::new(crate::shared::runtime_ports::HarnessAwareDeviceJobStore::new(
-                db.clone(),
-                crate::shared::runtime_ports::DbDeviceJobStore::new(db.as_ref().clone()),
-            )),
+            Arc::new(crate::shared::runtime_ports::WorkspaceDeviceJobStore::new(db.clone())),
             Arc::new(OneWorker { worker: worker.clone() }),
             Arc::new(AcceptAllValidator),
             Arc::new(DeviceResources),

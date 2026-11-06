@@ -283,9 +283,8 @@ mod tests {
         fn job_service(&self, worker: Arc<RecordingWorker>) -> tinyiothub_runtime::job::service::JobService {
             let access = self.access();
             tinyiothub_runtime::job::service::JobService::new(
-                Arc::new(crate::shared::runtime_ports::HarnessAwareDeviceJobStore::new(
+                Arc::new(crate::shared::runtime_ports::WorkspaceDeviceJobStore::new(
                     self.db.clone(),
-                    crate::shared::runtime_ports::DbDeviceJobStore::new(self.db.as_ref().clone()),
                 )),
                 Arc::new(RecordingWorkers { worker }),
                 access.clone(),

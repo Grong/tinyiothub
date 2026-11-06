@@ -365,7 +365,7 @@ async fn upsert_finalize_intent(
 impl Db {
     /// Registered workspaces that already own a Harness generation. Recovery
     /// must not create empty stores for workspaces that have not migrated.
-    async fn harness_workspaces(&self) -> Result<Vec<String>, TaskStoreError> {
+    pub(crate) async fn harness_workspaces(&self) -> Result<Vec<String>, TaskStoreError> {
         let ids = self.find_all_workspace_ids().await.map_err(unavailable)?;
         let mut workspaces = Vec::new();
         for workspace_id in ids {
@@ -395,7 +395,7 @@ impl Db {
 
     /// Open a workspace store for a cross-workspace scan. One unreadable
     /// workspace must not fail a runtime-wide sweep (F4).
-    async fn try_workspace_pool(&self, workspace_id: &str) -> Option<sqlx::SqlitePool> {
+    pub(crate) async fn try_workspace_pool(&self, workspace_id: &str) -> Option<sqlx::SqlitePool> {
         match self.workspace_pool(workspace_id).await {
             Ok(pool) => Some(pool),
             Err(error) => {

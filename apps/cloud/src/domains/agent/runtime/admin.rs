@@ -191,7 +191,12 @@ pub async fn list_jobs(
     if let Err(response) = check_admin_read_access(&state, &claims, query.workspace_id.as_deref()).await {
         return response;
     }
-    match state.db.active_jobs(query.workspace_id.as_deref(), unknown).await {
+    // Jobs are workspace facts since 19C3; the platform table has no writer.
+    match state
+        .db
+        .active_workspace_jobs(query.workspace_id.as_deref(), unknown)
+        .await
+    {
         Ok(jobs) => ApiResponseBuilder::success(json!({"jobs": jobs})).into_response(),
         Err(error) => {
             tracing::error!(%error, "list runtime diagnostic Jobs failed");
@@ -493,7 +498,10 @@ mod tests {
         .execute(&pool)
         .await
         .expect("grant");
-        let db = tinyiothub_storage::Db::new(pool);
+        // Share the AppState's isolated workspace root: 19C3 Jobs live in the
+        // workspace Harness generation, not the platform pool.
+        let db = (*app_state.db).clone();
+        db.create_workspace_store(WS).await.expect("workspace store");
         let now = Utc::now();
         db.create_task_with_wake(
             &AgentTask {
@@ -600,10 +608,11 @@ mod tests {
     }
 
     async fn insert_unknown_job(db: &tinyiothub_storage::Db, id: &str) {
-        db.create_job(&job(id, DeviceJobState::Running))
+        db.create_workspace_job(&job(id, DeviceJobState::Running))
             .await
             .expect("unknown insert");
-        db.finish_job(
+        db.finish_workspace_job(
+            WS,
             id,
             DeviceJobState::CancelledUnknown,
             &json!({"reason":"cancel_unknown"}),
@@ -727,11 +736,15 @@ mod tests {
         assert_eq!(body["result"]["drain"]["unresolvedUnknown"], 0);
         assert_eq!(body["result"]["physicalStateReplayed"], false);
         assert_eq!(
-            db.get_job(WS, "unknown-drain").await.expect("get").expect("job").state,
+            db.get_workspace_job(WS, "unknown-drain")
+                .await
+                .expect("get")
+                .expect("job")
+                .state,
             DeviceJobState::CancelledUnknown,
             "disposition must never rewrite or replay the Job"
         );
-        let jobs = db.active_jobs(Some(WS), true).await.expect("unknown jobs");
+        let jobs = db.active_workspace_jobs(Some(WS), true).await.expect("unknown jobs");
         assert_eq!(jobs.len(), 1);
 
         let (status, body) = post_json(
@@ -757,7 +770,7 @@ mod tests {
         assert_eq!(status, StatusCode::NOT_FOUND);
 
         let known = job("known-drain", DeviceJobState::Running);
-        db.create_job(&known).await.expect("known job");
+        db.create_workspace_job(&known).await.expect("known job");
         let (status, _) = post_json(
             &app,
             &admin,
@@ -771,10 +784,11 @@ mod tests {
     #[tokio::test]
     async fn drain_counts_interrupted_unknown_until_dispositioned() {
         let (app, db, admin, _) = fixture().await;
-        db.create_job(&job("interrupted-drain", DeviceJobState::Running))
+        db.create_workspace_job(&job("interrupted-drain", DeviceJobState::Running))
             .await
             .expect("interrupted insert");
-        db.finish_job(
+        db.finish_workspace_job(
+            WS,
             "interrupted-drain",
             DeviceJobState::Interrupted,
             &json!({"reason":"worker call lost"}),
@@ -802,7 +816,7 @@ mod tests {
         assert_eq!(body["result"]["drain"]["unresolvedUnknown"], 0);
         assert_eq!(body["result"]["physicalStateReplayed"], false);
         assert_eq!(
-            db.get_job(WS, "interrupted-drain")
+            db.get_workspace_job(WS, "interrupted-drain")
                 .await
                 .expect("get")
                 .expect("job")
@@ -1091,12 +1105,13 @@ mod tests {
     #[tokio::test]
     async fn admin_job_diagnostics_expose_active_and_unknown_without_replay() {
         let (app, db, admin, _) = fixture().await;
-        db.create_job(&job("active-job", DeviceJobState::Running))
+        db.create_workspace_job(&job("active-job", DeviceJobState::Running))
             .await
             .expect("active");
         let unknown = job("unknown-job", DeviceJobState::Running);
-        db.create_job(&unknown).await.expect("unknown insert");
-        db.finish_job(
+        db.create_workspace_job(&unknown).await.expect("unknown insert");
+        db.finish_workspace_job(
+            WS,
             "unknown-job",
             DeviceJobState::CancelledUnknown,
             &json!({"reason":"cancel_unknown"}),
@@ -1117,7 +1132,11 @@ mod tests {
         assert_eq!(body["result"]["jobs"].as_array().expect("jobs").len(), 1);
         assert_eq!(body["result"]["jobs"][0]["id"], "unknown-job");
         assert_eq!(
-            db.get_job(WS, "unknown-job").await.expect("get").expect("job").state,
+            db.get_workspace_job(WS, "unknown-job")
+                .await
+                .expect("get")
+                .expect("job")
+                .state,
             DeviceJobState::CancelledUnknown
         );
 

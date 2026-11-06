@@ -4,8 +4,9 @@ use std::time::Duration;
 use async_trait::async_trait;
 use chrono::Utc;
 use serde_json::{Value, json};
+use tinyiothub_cloud::shared::runtime_ports::WorkspaceDeviceJobStore;
 use tinyiothub_core::agent_task::{AgentTask, TaskStatus, TaskWake, WakeDispatchState};
-use tinyiothub_core::device_job::{DeviceJob, DeviceJobError, DeviceJobState};
+use tinyiothub_core::device_job::DeviceJobState;
 use tinyiothub_core::driver::manifest::{ManifestTool, ToolKindDecl, ToolSafetyDecl, ToolTimeout};
 use tinyiothub_core::error::Error;
 use tinyiothub_core::models::thing_command::ThingCommand;
@@ -16,77 +17,8 @@ use tinyiothub_runtime::arbitration::{ArbitrationRegistry, ResourceLease};
 use tinyiothub_runtime::event_bus::EventBus;
 use tinyiothub_runtime::job::service::{JobFinal, JobRequest, JobService, JobWait};
 use tinyiothub_runtime::job::worker_adapter::{DataServerJobWorkers, JobDeviceWorker, JobWorkerLocator};
-use tinyiothub_runtime::ports::DeviceJobStore;
 use tinyiothub_storage::Db;
 use tinyiothub_storage::cache::ThingCache;
-
-struct DbStore(Db);
-
-#[async_trait]
-impl DeviceJobStore for DbStore {
-    async fn create_job(&self, job: &DeviceJob) -> Result<(), DeviceJobError> {
-        self.0.create_job(job).await
-    }
-
-    async fn get_job(&self, workspace_id: &str, job_id: &str) -> Result<Option<DeviceJob>, DeviceJobError> {
-        self.0.get_job(workspace_id, job_id).await
-    }
-
-    async fn get_job_by_id(&self, job_id: &str) -> Result<Option<DeviceJob>, DeviceJobError> {
-        self.0.get_job_by_id(job_id).await
-    }
-
-    async fn get_task_job(
-        &self,
-        workspace_id: &str,
-        task_id: &str,
-        job_id: &str,
-    ) -> Result<Option<DeviceJob>, DeviceJobError> {
-        self.0.get_task_job(workspace_id, task_id, job_id).await
-    }
-
-    async fn get_job_by_tool_call(
-        &self,
-        workspace_id: &str,
-        tool_call_id: &str,
-    ) -> Result<Option<DeviceJob>, DeviceJobError> {
-        self.0.get_job_by_tool_call(workspace_id, tool_call_id).await
-    }
-
-    async fn submit_approved_job(&self, job: &DeviceJob) -> Result<(Option<DeviceJob>, bool), DeviceJobError> {
-        self.0.create_job(job).await.map(|()| (Some(job.clone()), true))
-    }
-
-    async fn mark_running(&self, job_id: &str, driver_call_id: &str) -> Result<DeviceJob, DeviceJobError> {
-        self.0.mark_running(job_id, driver_call_id).await
-    }
-
-    async fn finish_job(
-        &self,
-        job_id: &str,
-        state: DeviceJobState,
-        result: &Value,
-        wake: Option<&TaskWake>,
-    ) -> Result<bool, DeviceJobError> {
-        self.0.finish_job(job_id, state, result, wake).await
-    }
-
-    async fn update_progress(&self, job_id: &str, progress: &Value) -> Result<bool, DeviceJobError> {
-        self.0.update_progress(job_id, progress).await
-    }
-
-    async fn request_stop(&self, workspace_id: &str, task_id: &str, job_id: &str) -> Result<DeviceJob, DeviceJobError> {
-        self.0.request_stop(workspace_id, task_id, job_id).await
-    }
-
-    async fn active_jobs(
-        &self,
-        workspace_id: Option<&str>,
-        unknown_only: bool,
-    ) -> Result<Vec<DeviceJob>, DeviceJobError> {
-        self.0.active_jobs(workspace_id, unknown_only).await
-    }
-}
 
 struct Validator(u64);
 
@@ -195,13 +127,15 @@ async fn seed_task(db: &Db, task_id: &str) {
         dispatched_at: None,
         resolved_at: None,
     };
-    db.create_task_with_wake(&task, &wake).await.expect("seed task");
+    db.harness_create_task_with_wake(&task, &wake).await.expect("seed task");
 }
 
 async fn wake_count(db: &Db, task_id: &str) -> i64 {
+    // 19C3: terminal wakes live in the workspace Harness generation.
+    let pool = db.workspace_pool_for_testing("ws_1").await.expect("workspace pool");
     sqlx::query_scalar("SELECT COUNT(*) FROM task_wake_outbox WHERE task_id = ? AND event_id LIKE 'device_job:%'")
         .bind(task_id)
-        .fetch_one(db.pool())
+        .fetch_one(&pool)
         .await
         .expect("count job wakes")
 }
@@ -234,13 +168,15 @@ async fn service_terminal_results_and_wakes_use_real_db() {
         .execute(&pool)
         .await
         .expect("seed workspace");
-    let db = Db::new(pool);
+    let root = std::env::temp_dir().join(format!("tinyiothub-device-job-service-{}", uuid::Uuid::new_v4()));
+    let db = Db::new(pool).with_workspace_store_root(root.join("data/agents"));
+    db.create_workspace_store("ws_1").await.expect("workspace store");
     for task_id in ["task_done", "task_cancelled", "task_timeout"] {
         seed_task(&db, task_id).await;
     }
 
     let service = JobService::new(
-        Arc::new(DbStore(Db::new(db.pool().clone()))),
+        Arc::new(WorkspaceDeviceJobStore::new(Arc::new(db.clone()))),
         Arc::new(Workers),
         Arc::new(Validator(30)),
         Arc::new(Resources),
@@ -286,6 +222,7 @@ async fn service_terminal_results_and_wakes_use_real_db() {
     };
     assert_eq!(expired.state, DeviceJobState::Failed);
     assert_eq!(wake_count(&db, "task_timeout").await, 1);
+    let _ = tokio::fs::remove_dir_all(&root).await;
 }
 
 #[tokio::test]
@@ -298,7 +235,7 @@ async fn production_data_server_and_job_service_do_not_retain_each_other() {
         Arc::new(EventBus::new()),
     ));
     let service = Arc::new(JobService::new(
-        Arc::new(DbStore(db)),
+        Arc::new(WorkspaceDeviceJobStore::new(Arc::new(db))),
         Arc::new(DataServerJobWorkers::new(data_server.as_ref().clone())),
         Arc::new(Validator(30)),
         Arc::new(Resources),
