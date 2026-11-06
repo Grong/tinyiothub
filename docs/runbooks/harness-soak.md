@@ -18,7 +18,7 @@ Chinese/English status words follow the product mapping used elsewhere:
 
 ## 1. Scope and evidence boundary
 
-1. Record the run as **method only** until the final table in section 7.4 is
+1. Record the run as **method only** until the final table in section 7.5 is
    filled with raw artifacts. Until then the only honest statement is
    "有验证方法，尚未执行 24h soak".
 2. A short integration or performance run is not a soak. Cross-run claims are
@@ -50,7 +50,7 @@ in from memory.
 | Workspaces | Count, plus non-secret workspace IDs and the workspace-to-device mapping |
 | DB / WAL | `journal_mode=WAL`, `synchronous`, `busy_timeout`, `page_size`, `cache_size`, `wal_autocheckpoint`, and the per-workspace path layout (`data/agents/<workspace_id>/harness/harness.db`) |
 | Idle pools | `maxConnections`, `minConnections`, `acquireTimeout`, `idleTimeout`, and the observed idle physical connection count per workspace after settle |
-| `restore_journal` | The initial `restore_journal` state per workspace: epoch, phase, and `updated_at`. A non-empty or unreadable journal at start is a precondition failure |
+| `restore_journal` | Per-workspace `restore_journal` (epoch, phase, `updated_at`) must be recovered to a terminal journal state before start; fail only if it stays unreadable or unrecoverable. Record the recovered state |
 
 Also record the host time source, timezone, and whether NTP was active, because
 scheduled vs actual wake timing is compared across process restarts.
@@ -114,23 +114,33 @@ payloads.
 
 Inject each fault at a recorded time. For every drill capture a pre-snapshot,
 the exact injection, the post-snapshot, and the resulting durable facts.
-`scheduled` injection time and `actual` injection time are separate columns.
+`Scheduled injection` is the planned UTC time and `Actual injection` is when the
+injection really occurred. `Expected outcome` is written before the run;
+`Actual outcome` and `Open issues` are filled only from the post-drill
+snapshot. Every drill artifact must carry a lowercase expected vs actual
+comparison, and an expected vs actual mismatch fails the soak (section 6).
+Because the soak is not executed in this change, every scheduled/actual/outcome
+cell below is `—`.
 
-| # | Drill | Injection | Expected outcome | Evidence that proves it |
-| --- | --- | --- | --- | --- |
-| 1 | SQLite lock contention | Hold a write transaction on one workspace store past `busy_timeout` | Bounded wait then a fail-closed error; no partial transaction; other workspaces stay available; no duplicate effect | Busy/locked counts, error lines, `PRAGMA integrity_check`, effect rows |
-| 2 | Slow disk | Add fsync/write latency to the workspace filesystem | Latency rises within a bounded margin; no silent loss; WAL grows and replays; no wrong terminal state | Write latency samples, DB/WAL bytes, replay result, integrity check |
-| 3 | SSE disconnect | Drop the client connection mid-stream, then reconnect with the last cursor | Reconnect resumes with no gap or duplicate; `resync` only for an unknown cursor | Client cursor list, `resyncs`, `duplicatesDropped`, event IDs before/after |
-| 4 | Clean restart | Send SIGTERM during idle and during an active Run | Graceful stop; in-flight Run becomes `interrupted`; exactly one `run.interrupted`; no duplicate Job or effect | `run.interrupted` rows, process exit, Job/effect identity counts |
-| 5 | Crash restart | SIGKILL during `dispatching`, before and after the physical send | `dispatching` becomes `unknown` with a reconciliation decision in the same transaction; Run stays blocked; no blind resend; `restore_journal` remains consistent | `effect.unknown` + decision IDs, simulator log, `restore_journal` phase, restart logs |
-| 6 | Duplicate job result | Deliver the same terminal result twice for one Job | One terminal transition, one event, one wake; the second result returns the current terminal state without a new wake | Job/effect rows, event IDs, wake count, simulator log |
-| 7 | Compaction | Trigger context compaction and a projection snapshot compare/replace during live appends | Post-compaction behavior is equivalent to the canonical projection; no fact lost; a mismatch/`StaleAppend` keeps the newer snapshot and dispatches nothing | Compare result, boundary/hash, post-compaction event replay, dispatch count (zero) |
-| 8 | Rebuild from durable facts | Stop dispatch and rebuild the projection from `session_events` | Rebuilt canonical state equals the pre-rebuild projection at the same high-watermark; no effect dispatched; if an append races the rebuild, the result is `StaleAppend` and no replacement snapshot is written | Rebuild duration, boundary seq, projection equality, `StaleAppend`, snapshot rows |
-| 9 | Restore across a workspace DB swap | Restore an older backup while the external action may have completed after the backup | All non-terminal effects are promoted to `unknown`/recovery-required; Run pauses, wake stays, Command is not consumed; reconcile before any new dispatch; **no duplicate device action** | `restore_journal` epoch/phase, post-restore effect states, reconciliation decision, simulator command log |
+| # | Drill | Injection | Scheduled injection | Actual injection | Expected outcome | Actual outcome | Evidence | Open issues |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| 1 | SQLite lock contention | Hold a write transaction on one workspace store past `busy_timeout` | — | — | Bounded wait then a fail-closed error; no partial transaction; other workspaces stay available; no duplicate effect | — | Busy/locked counts, error lines, `PRAGMA integrity_check`, effect rows | — |
+| 2 | Slow disk | Add fsync/write latency to the workspace filesystem | — | — | Latency rises within a bounded margin; no silent loss; WAL grows and replays; no wrong terminal state | — | Write latency samples, DB/WAL bytes, replay result, integrity check | — |
+| 3 | SSE disconnect | Drop the client connection mid-stream, then reconnect with the last cursor | — | — | Reconnect resumes with no gap or duplicate; `resync` only for an unknown cursor | — | Client cursor list, `resyncs`, `duplicatesDropped`, event IDs before/after | — |
+| 4 | Clean restart | Send SIGTERM during idle and during an active Run | — | — | Graceful stop; in-flight Run becomes `interrupted`; exactly one `run.interrupted`; no duplicate Job or effect | — | `run.interrupted` rows, process exit, Job/effect identity counts | — |
+| 5 | Crash restart | SIGKILL during `dispatching`, before and after the physical send | — | — | `dispatching` becomes `unknown` with a reconciliation decision in the same transaction; Run stays blocked; no blind resend; `restore_journal` remains consistent | — | `effect.unknown` + decision IDs, simulator log, `restore_journal` phase, restart logs | — |
+| 6 | Duplicate job result | Deliver the same terminal result twice for one Job | — | — | One terminal transition, one event, one wake; the second result returns the current terminal state without a new wake | — | Job/effect rows, event IDs, wake count, simulator log | — |
+| 7 | Compaction | Trigger context compaction and a projection snapshot compare/replace during live appends | — | — | Post-compaction behavior is equivalent to the canonical projection; no fact lost; a mismatch/`StaleAppend` keeps the newer snapshot and dispatches nothing | — | Compare result, boundary/hash, post-compaction event replay, dispatch count (zero) | — |
+| 8 | Rebuild from durable facts | Stop dispatch and rebuild the projection from `session_events` | — | — | Rebuilt canonical state equals the pre-rebuild projection at the same high-watermark; no effect dispatched; if an append races the rebuild, the result is `StaleAppend` and no replacement snapshot is written | — | Rebuild duration, boundary seq, projection equality, `StaleAppend`, snapshot rows | — |
+| 9 | Restore across a workspace DB swap | Restore an older backup while the external action may have completed after the backup | — | — | All non-terminal effects are promoted to `unknown`/recovery-required; Run pauses, wake stays, Command is not consumed; reconcile before any new dispatch; **no duplicate device action** | — | `restore_journal` epoch/phase, post-restore effect states, reconciliation decision, simulator command log | — |
+| 10 | Provider connection drop | Drop the controlled-provider connection during a model call, then restore it | — | — | Bounded, classified provider error; Run blocks or retries per policy without repeating any device effect; no silent success; reconnect resumes the scenario | — | Per-call error record, Run/effect rows, simulator log, reconnect log | — |
 
 Drills 5 and 9 are the duplicate-action probes: the simulator log must show one
 physical command for the logical action even though the process or the database
-was replaced.
+was replaced. Drill 10 additionally checks that a provider disconnect is never
+converted into a silent success or a repeated effect. This covers the spec's
+"provider 断连" drill; the SSE disconnect in drill 3 is a client-stream fault,
+not a provider outage.
 
 ## 6. Failure criteria
 
@@ -180,7 +190,7 @@ metrics-<elapsed>s.json          # 60 s cadence snapshot
 host-<elapsed>s.json             # 5 min RSS / DB / WAL / pool snapshot
 db-<elapsed>s.json               # sizes, integrity, WAL frames
 events-<elapsed>s.jsonl          # exported session_events or effect/decision rows
-fault-<nn>-<drill>.json          # pre/post snapshots and injection record
+fault-<nn>-<drill>.json          # injection, expected vs actual outcome, open issues
 logs/cloud.log                   # service log, UTC timestamps
 logs/simulator.log               # physical command log
 final-summary.json               # pass/fail table with actual numbers
@@ -208,7 +218,34 @@ command/query that produced it.
 Keep every raw value. Do not replace a per-workspace or per-run value with a
 fleet total; totals can be derived later from the raw files.
 
-### 7.3 Log excerpt template
+### 7.3 Fault artifact template
+
+Every `fault-<nn>-<drill>.json` must use these fields. A missing
+`actual_outcome` or `open_issues` makes the capture incomplete; record an empty
+list, not an omitted field.
+
+```json
+{
+  "drill": "<nn>-<name>",
+  "scheduled_injection": "<UTC ISO-8601 or null>",
+  "actual_injection": "<UTC ISO-8601 or null>",
+  "expected_outcome": "<copied from the timeline before the run>",
+  "actual_outcome": "<observed result>",
+  "expected_vs_actual_evidence": [
+    "<query/event IDs/simulator log lines that show the comparison>"
+  ],
+  "open_issues": [],
+  "pre_snapshot": "<path>",
+  "post_snapshot": "<path>",
+  "captured_at": "<UTC ISO-8601 with offset>"
+}
+```
+
+`actual_outcome` describes what the run did, not what was hoped for.
+`expected_vs_actual_evidence` must point at raw rows or log lines, not a
+summary. `open_issues` lists unresolved questions even when the drill passes.
+
+### 7.4 Log excerpt template
 
 ```text
 <UTC timestamp> <level> <event name> <field=value ...>
@@ -217,7 +254,7 @@ fleet total; totals can be derived later from the raw files.
 Quote the exact line. Redact secrets and payload bodies before storage. A
 paraphrase is not a log excerpt.
 
-### 7.4 Final pass/fail table
+### 7.5 Final pass/fail table
 
 Fill this only after the run ends. Until then every cell is `—` and the run is
 "not executed in this change"; do not invent numbers.
@@ -234,7 +271,7 @@ Fill this only after the run ends. Until then every cell is `—` and the run is
 | SSE `resync` | no silent gap or duplicate | — | `stream` gauges, client cursors | — |
 | DB/WAL bytes and latency | recorded on cadence | — | `db-*.json`, `metrics-*.json` | — |
 | Memory / idle pools | recorded on cadence | — | `host-*.json` | — |
-| Fault drills 1–9 | expected outcome met | — | `fault-*.json` | — |
+| Fault drills 1–10 | expected vs actual outcome matches | — | `fault-*.json` | — |
 
 ## 8. What this soak does not prove
 
@@ -261,3 +298,8 @@ Fill this only after the run ends. Until then every cell is `—` and the run is
 
 - 2026-11-03: initial method. Not executed in this change; no 24h process was
   started and no soak result is claimed.
+- 2026-11-06, fix round 1: added scheduled/actual injection, actual outcome,
+  and open issues to the drill timeline and the `fault-*.json` template;
+  relaxed the `restore_journal` precondition to "recover to a terminal journal
+  state"; added the provider-connection-drop drill (drill 10); made the
+  expected vs actual pairing explicit in the drill prose.
