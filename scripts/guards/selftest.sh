@@ -190,6 +190,24 @@ expect_fails "legacy-writers (un-gated platform Job writer)" bash scripts/guards
 cp "$DEVICE_JOB_BAK" crates/db/src/device_job.rs
 rm -f "$DEVICE_JOB_BAK"
 DEVICE_JOB_BAK=""
+# 19C3 round 2: a non-fn item between gated functions must not inherit the
+# previous fn's gate.
+DEVICE_JOB_BAK=$(mktemp)
+cp crates/db/src/device_job.rs "$DEVICE_JOB_BAK"
+printf '\n#[cfg(any(test, feature = "testing"))]\npub fn guard_selftest_gated() {}\nconst GUARD_SELFTEST: &str = "INSERT INTO device_jobs VALUES (1)";\n' >> crates/db/src/device_job.rs
+expect_fails "legacy-writers (write in a non-fn item after a gated fn)" bash scripts/guards/legacy-writers.sh
+cp "$DEVICE_JOB_BAK" crates/db/src/device_job.rs
+rm -f "$DEVICE_JOB_BAK"
+DEVICE_JOB_BAK=""
+# 19C3 round 2: an extra attribute between the gate and the item must keep the
+# gate (otherwise gated code false-positives).
+DEVICE_JOB_BAK=$(mktemp)
+cp crates/db/src/device_job.rs "$DEVICE_JOB_BAK"
+printf '\n#[cfg(any(test, feature = "testing"))]\n#[allow(dead_code)]\npub fn guard_selftest_extra_attr() { let _ = "INSERT INTO device_jobs VALUES (1)"; }\n' >> crates/db/src/device_job.rs
+expect_passes "legacy-writers (extra attribute after the test gate)" bash scripts/guards/legacy-writers.sh
+cp "$DEVICE_JOB_BAK" crates/db/src/device_job.rs
+rm -f "$DEVICE_JOB_BAK"
+DEVICE_JOB_BAK=""
 AUTONOMOUS_FACTORY_BAK=$(mktemp)
 cp apps/cloud/src/domains/agent/host/autonomous_factory.rs "$AUTONOMOUS_FACTORY_BAK"
 sed -i.bak '1a\

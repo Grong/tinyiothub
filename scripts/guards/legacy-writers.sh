@@ -97,16 +97,27 @@ check_rust \
 # #[cfg(any(test, feature = "testing"))]; otherwise un-gating the writer would
 # silently reintroduce a production platform write.
 DEVICE_JOB_UNGATED=$(awk '
-  /^[[:space:]]*#\[cfg\(any\(test, feature = "testing"\)\)\]/ { pending = 1; next }
+  # Attributes accumulate: an extra #[allow]/#[inline] between the gate and
+  # the item must not clear the pending gate. Only the item line consumes it.
+  /^[[:space:]]*#\[/ {
+    if ($0 ~ /#\[cfg\(any\(test, feature = "testing"\)\)\]/) pending = 1
+    next
+  }
   /^[[:space:]]*$/ { next }
   {
-    if ($0 ~ /^[[:space:]]*(pub(\([a-z]+\))?[[:space:]]+)?(async[[:space:]]+)?fn[[:space:]]/) {
+    match($0, /^[[:space:]]*/)
+    indent = RLENGTH
+    is_fn = ($0 ~ /^[[:space:]]*(pub(\([a-z]+\))?[[:space:]]+)?(async[[:space:]]+)?fn[[:space:]]/)
+    is_item = ($0 ~ /^[[:space:]]*(pub(\([a-z]+\))?[[:space:]]+)?(const|static|type|struct|enum|trait|impl|mod|use|macro_rules!)[[:space:]!]/)
+    # Only module/impl-level items change the gate. Statements inside a
+    # function body keep the gate of their enclosing fn.
+    if (indent <= 4 && (is_fn || is_item)) {
       gated = pending
+      pending = 0
     }
     if ($0 ~ /(INSERT INTO device_jobs|UPDATE device_jobs)/ && !gated) {
       print FILENAME ":" FNR ":" $0
     }
-    pending = 0
   }
 ' crates/db/src/device_job.rs)
 if [ -n "$DEVICE_JOB_UNGATED" ]; then

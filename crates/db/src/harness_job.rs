@@ -37,6 +37,32 @@ fn try_job(row: DeviceJobRow) -> Result<DeviceJob, DeviceJobError> {
     DeviceJob::try_from(row)
 }
 
+/// Result of one cross-workspace Job-id lookup.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct WorkspaceJobOwner {
+    /// The unique readable workspace that owns the Job, if any.
+    pub workspace_id: Option<String>,
+    /// Workspace stores that could not be opened or queried.
+    pub skipped: usize,
+}
+
+/// Open a workspace generation for a sweep read. Missing generations are
+/// skipped silently; an unreadable generation is skipped with a per-workspace
+/// warning (Task 19C3 Low: keep the 19A/19B operator signal).
+async fn sweep_pool(db: &Db, workspace_id: &str) -> Option<SqlitePool> {
+    match db.try_existing_workspace_pool(workspace_id).await {
+        Ok(pool) => pool,
+        Err(error) => {
+            tracing::warn!(
+                %workspace_id,
+                %error,
+                "workspace harness store unreadable; skipping during store sweep"
+            );
+            None
+        }
+    }
+}
+
 fn validate_wake(job: &DeviceJob, wake: &TaskWake) -> Result<(), DeviceJobError> {
     if job.task_id.as_deref() != Some(wake.task_id.as_str()) {
         return Err(DeviceJobError::Validation("job and wake task id differ".to_string()));
@@ -306,14 +332,19 @@ impl Db {
         .transpose()
     }
 
-    /// Resolve the workspace that owns a Job id. Cross-workspace sweeps degrade
-    /// per unreadable workspace, but an absent or mutation-bound lookup fails
-    /// closed: an unreadable workspace could be the owner (Task 19A N1).
-    pub async fn find_workspace_for_job(&self, job_id: &str, mutating: bool) -> Result<Option<String>, DeviceJobError> {
+    /// Resolve the workspace that owns a Job id.
+    ///
+    /// One unreadable workspace must not stall Jobs in every other workspace
+    /// (design: a single workspace failure only marks that workspace
+    /// unavailable). The lookup therefore fails closed only when there is
+    /// **no readable match**: an unreadable workspace could be the owner
+    /// (Task 19A N1). A unique readable match proceeds and warns; two readable
+    /// matches are still an ambiguity error.
+    pub async fn find_workspace_for_job(&self, job_id: &str) -> Result<WorkspaceJobOwner, DeviceJobError> {
         let mut matched: Option<String> = None;
         let mut skipped = 0usize;
         for workspace_id in self.harness_workspaces().await.map_err(storage)? {
-            let Some(pool) = self.try_existing_workspace_pool(&workspace_id).await.ok().flatten() else {
+            let Some(pool) = sweep_pool(self, &workspace_id).await else {
                 skipped += 1;
                 continue;
             };
@@ -337,12 +368,22 @@ impl Db {
                 }
             }
         }
-        if skipped > 0 && (matched.is_none() || mutating) {
+        if matched.is_none() && skipped > 0 {
             return Err(DeviceJobError::Storage(format!(
-                "device job {job_id}: {skipped} workspace store(s) unreadable; refusing cross-workspace lookup"
+                "device job {job_id}: no readable workspace match; {skipped} store(s) unreadable"
             )));
         }
-        Ok(matched)
+        if matched.is_some() && skipped > 0 {
+            tracing::warn!(
+                %job_id,
+                skipped,
+                "device job lookup used the unique readable match while other workspace stores were unreadable"
+            );
+        }
+        Ok(WorkspaceJobOwner {
+            workspace_id: matched,
+            skipped,
+        })
     }
 
     pub async fn mark_workspace_job_running(
@@ -544,7 +585,7 @@ impl Db {
             }
             None => {
                 for workspace_id in self.harness_workspaces().await.map_err(storage)? {
-                    let Some(pool) = self.try_existing_workspace_pool(&workspace_id).await.ok().flatten() else {
+                    let Some(pool) = sweep_pool(self, &workspace_id).await else {
                         continue;
                     };
                     match active_jobs_pool(&pool, unknown_only).await {
@@ -580,7 +621,7 @@ impl Db {
                 let mut active = 0u64;
                 let mut unresolved = 0u64;
                 for workspace_id in self.harness_workspaces().await.map_err(storage)? {
-                    let Some(pool) = self.try_existing_workspace_pool(&workspace_id).await.ok().flatten() else {
+                    let Some(pool) = sweep_pool(self, &workspace_id).await else {
                         continue;
                     };
                     match job_counts_pool(&pool).await {
@@ -616,7 +657,7 @@ impl Db {
             None => {
                 let mut counts: std::collections::BTreeMap<String, i64> = std::collections::BTreeMap::new();
                 for workspace_id in self.harness_workspaces().await.map_err(storage)? {
-                    let Some(pool) = self.try_existing_workspace_pool(&workspace_id).await.ok().flatten() else {
+                    let Some(pool) = sweep_pool(self, &workspace_id).await else {
                         continue;
                     };
                     match job_state_counts_pool(&pool).await {
@@ -995,19 +1036,15 @@ mod tests {
         let ids: Vec<&str> = active.iter().map(|job| job.id.as_str()).collect();
         assert_eq!(ids, ["job-a", "job-b"], "a corrupt workspace is skipped, not fatal");
 
-        // A pure read can still return the unique readable match.
-        assert_eq!(
-            db.find_workspace_for_job("job-a", false).await.expect("read lookup"),
-            Some("ws-a".to_string())
-        );
-        // The unreadable workspace may be the owner: point reads must not fail open.
+        // A unique readable match proceeds even while another workspace is
+        // unreadable; one bad workspace must not stall every other workspace.
+        let owner = db.find_workspace_for_job("job-a").await.expect("read lookup");
+        assert_eq!(owner.workspace_id, Some("ws-a".to_string()));
+        assert_eq!(owner.skipped, 1);
+        // With no readable match the unreadable workspace could be the owner:
+        // point reads must not fail open.
         assert!(matches!(
-            db.find_workspace_for_job("job-corrupt", false).await,
-            Err(DeviceJobError::Storage(_))
-        ));
-        // Mutations must fail closed whenever any workspace is unreadable.
-        assert!(matches!(
-            db.find_workspace_for_job("job-a", true).await,
+            db.find_workspace_for_job("job-corrupt").await,
             Err(DeviceJobError::Storage(_))
         ));
         fixture.close().await;
@@ -1025,7 +1062,7 @@ mod tests {
             .expect("job b");
 
         assert!(matches!(
-            db.find_workspace_for_job("job-dup", false).await,
+            db.find_workspace_for_job("job-dup").await,
             Err(DeviceJobError::Storage(message)) if message.contains("more than one workspace")
         ));
         fixture.close().await;

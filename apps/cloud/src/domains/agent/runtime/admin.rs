@@ -1112,6 +1112,67 @@ mod tests {
         assert_eq!(status, StatusCode::BAD_REQUEST);
     }
 
+    /// 19C3 M1 end-to-end: the admin outbox route lists a dead workspace
+    /// `device_job_terminal` wake and retries it through the workspace store.
+    #[tokio::test]
+    async fn admin_outbox_lists_and_retries_a_workspace_job_wake() {
+        let (app, db, admin, _) = fixture().await;
+        let job = job("job-workspace", DeviceJobState::Running);
+        db.create_workspace_job(&job).await.expect("workspace job");
+        let wake = TaskWake {
+            task_id: "task-admin".into(),
+            event_id: "device_job:job-workspace:done".into(),
+            signal_json: json!({
+                "kind": "device_job_terminal",
+                "workspace_id": WS,
+                "job_id": "job-workspace"
+            })
+            .to_string(),
+            dispatch_state: WakeDispatchState::Pending,
+            created_at: Utc::now(),
+            dispatched_at: None,
+            resolved_at: None,
+        };
+        db.finish_workspace_job(
+            WS,
+            "job-workspace",
+            DeviceJobState::Done,
+            &json!({"ok": true}),
+            Some(&wake),
+        )
+        .await
+        .expect("terminal job");
+        db.harness_mark_wake_dead("task-admin", "device_job:job-workspace:done", "dispatch_failed")
+            .await
+            .expect("dead workspace wake");
+
+        let outbox_uri = format!("/api/v1/admin/runtime/outbox?state=dead&workspaceId={WS}");
+        let (status, body) = request(&app, &admin, "GET", &outbox_uri).await;
+        assert_eq!(status, StatusCode::OK, "outbox: {body}");
+        let outbox = body["result"]["outbox"].as_array().expect("outbox array");
+        let workspace_wake = outbox
+            .iter()
+            .find(|wake| wake["eventId"] == "device_job:job-workspace:done")
+            .expect("the workspace Job wake must be listed");
+        assert_eq!(workspace_wake["workspaceId"], WS);
+        assert!(
+            outbox.iter().any(|wake| wake["eventId"] == "dead-original"),
+            "the platform dead wake is still listed"
+        );
+
+        let retry_uri = format!("/api/v1/admin/runtime/outbox/device_job:job-workspace:done/retry?workspaceId={WS}");
+        let (status, body) = request(&app, &admin, "POST", &retry_uri).await;
+        assert_eq!(status, StatusCode::OK, "retry: {body}");
+        assert_eq!(body["result"]["state"], "pending");
+        let counts = db.workspace_job_wake_counts(Some(WS)).await.expect("wake counts");
+        assert_eq!((counts.pending, counts.dead), (1, 0), "the workspace wake was retried");
+        let dead = db.workspace_dead_wakes(Some(WS), 200).await.expect("dead list");
+        assert!(
+            !dead.iter().any(|wake| wake.event_id == "device_job:job-workspace:done"),
+            "a retried wake is no longer dead"
+        );
+    }
+
     fn job(id: &str, state: DeviceJobState) -> DeviceJob {
         DeviceJob {
             id: id.into(),
