@@ -1477,10 +1477,14 @@ async fn startup_recovery_does_not_start_a_run_before_the_unknown_fence() {
     let prompts = Arc::new(Mutex::new(Vec::new()));
     let (store, coordinator, router) = task_runtime_with_jobs(&db, prompts.clone(), Some(restart_jobs.clone()));
 
-    // Production order: Job recovery -> Task recovery -> Effect fence. Task
-    // recovery must not start a Run while the Effect is still dispatching.
+    // Manager production order: Job recovery -> Effect fence -> Task recovery.
+    // The fence must settle the indeterminate Job and pause the Task before
+    // recovery can start a Run.
     restart_jobs.recover().await.expect("job recovery");
-    coordinator.recover().await.expect("task recovery");
+    let restarted = Arc::new(EffectDispatch::new(db.clone(), restart_jobs.clone()));
+    restarted.reconcile_startup().await;
+    assert_eq!(effect_state(&fixture, "effect-fence").await.0, "unknown");
+    assert_eq!(decision_state(&fixture, "effect-fence").await.0, "requested");
     assert!(
         restart_worker.submitted.lock().expect("submissions").is_empty(),
         "startup recovery must not resend the physical action"
@@ -1497,16 +1501,21 @@ async fn startup_recovery_does_not_start_a_run_before_the_unknown_fence() {
     assert_eq!(task.status, tinyiothub_core::agent_task::TaskStatus::Paused);
     assert!(task.current_run_id.is_none());
 
-    // The fence settles the indeterminate Job to unknown + one Decision.
-    let restarted = Arc::new(EffectDispatch::new(db.clone(), restart_jobs));
-    restarted.reconcile_startup().await;
-    assert_eq!(effect_state(&fixture, "effect-fence").await.0, "unknown");
-    assert_eq!(decision_state(&fixture, "effect-fence").await.0, "requested");
+    coordinator.recover().await.expect("task recovery");
+    assert!(
+        restart_worker.submitted.lock().expect("submissions").is_empty(),
+        "Task recovery must not resend the physical action"
+    );
+    assert!(
+        prompts.lock().expect("prompts").is_empty(),
+        "Task recovery must not start a Run for a fenced Task"
+    );
 
-    // Resume before the operator answer must keep the pause.
+    // Resume before the operator answer must keep the pause and name the
+    // reconciliation conflict.
     let blocked = db.resume_workflow_task(WS, "task-fence").await;
     assert!(
-        matches!(blocked, Err(tinyiothub_storage::DbError::Conflict { .. })),
+        matches!(blocked, Err(tinyiothub_storage::DbError::Validation { .. })),
         "resume before reconciliation must conflict: {blocked:?}"
     );
     let still_paused = store
@@ -1549,6 +1558,85 @@ async fn startup_recovery_does_not_start_a_run_before_the_unknown_fence() {
     assert!(
         restart_worker.submitted.lock().expect("submissions").is_empty(),
         "the continuation must never re-send the physical action"
+    );
+    assert_eq!(dead_wake_count(&fixture).await, 0);
+    fixture.close().await;
+}
+
+#[tokio::test]
+async fn approved_but_undispatched_prepared_effect_blocks_recovery_runs() {
+    let fixture = fixture_workspace(WS).await;
+    seed_expiry_task(&fixture, "task-undispatched", "effect-undispatched").await;
+    let db = Arc::new(fixture.db.clone());
+
+    // The approval answer commits, then the process crashes before the
+    // dispatcher consumes it: Prepared Effect + Answered approved Decision.
+    db.harness_answer_tool_approval(
+        WS,
+        "task-undispatched",
+        "decision-effect-undispatched",
+        "approved",
+        "user-1",
+        at(),
+    )
+    .await
+    .expect("answer approval");
+    assert_eq!(effect_state(&fixture, "effect-undispatched").await.0, "prepared");
+    assert_eq!(
+        decision_state(&fixture, "effect-undispatched").await,
+        ("answered".to_string(), Some("approved".to_string()))
+    );
+
+    let worker = Arc::new(E2eWorker::default());
+    let jobs = e2e_job_service(&db, worker.clone());
+    let dispatch = Arc::new(EffectDispatch::new(db.clone(), jobs.clone()));
+    let prompts = Arc::new(Mutex::new(Vec::new()));
+    let (store, coordinator, router) = task_runtime_with_jobs(&db, prompts.clone(), Some(jobs.clone()));
+
+    // Production restart order: Job recovery -> Task recovery. The pending
+    // dispatch is a wait, so no Run starts; the Task stays Active so the
+    // dispatcher can still consume the approval.
+    jobs.recover().await.expect("job recovery");
+    coordinator.recover().await.expect("task recovery");
+    assert!(
+        worker.submitted.lock().expect("submissions").is_empty(),
+        "recovery must not dispatch or resend before the dispatcher acts"
+    );
+    assert!(
+        prompts.lock().expect("prompts").is_empty(),
+        "no Run may start before the approved dispatch is consumed"
+    );
+    let task = store
+        .get_task(WS, "task-undispatched")
+        .await
+        .expect("task read")
+        .expect("task row");
+    assert_eq!(task.status, tinyiothub_core::agent_task::TaskStatus::Active);
+    assert!(task.current_run_id.is_none());
+
+    // The dispatcher consumes the answered approval and submits exactly one Job.
+    let report = dispatch.dispatch_task(WS, "task-undispatched").await.expect("dispatch");
+    assert_eq!(report.dispatched, 1);
+    assert_eq!(worker.submitted.lock().expect("submissions").len(), 1);
+    let job_id = job_id_for("effect-undispatched");
+
+    // The Job terminal fact settles the Effect and writes the continuation wake.
+    let sink = HarnessJobResultSink::new(jobs.clone(), dispatch.clone());
+    JobResultSink::command_finished(&sink, &job_id, true, None).await;
+    assert_eq!(effect_state(&fixture, "effect-undispatched").await.0, "completed");
+
+    // The approval wake is consumed without a Run while the Job exists; the Job
+    // terminal wake starts exactly one continuation.
+    router.run(64).await.expect("route wakes");
+    assert_eq!(
+        wait_for_task_completion(&store, "task-undispatched").await,
+        tinyiothub_core::agent_task::TaskStatus::Completed
+    );
+    assert_eq!(prompts.lock().expect("prompts").len(), 1, "one continuation Run");
+    assert_eq!(
+        worker.submitted.lock().expect("submissions").len(),
+        1,
+        "no duplicate physical send"
     );
     assert_eq!(dead_wake_count(&fixture).await, 0);
     fixture.close().await;

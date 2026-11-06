@@ -1138,6 +1138,44 @@ impl Db {
         Ok(wait != 0)
     }
 
+    /// True when the Task owns a non-terminal `prepared` Effect whose physical
+    /// dispatch is still pending: no Decision yet, a requested approval, or an
+    /// answered-but-unconsumed **approved** approval. Recovery must not start a
+    /// Run (the action is already committed/queued), but the Task must stay
+    /// `Active` so the dispatcher can act (it refuses to dispatch paused
+    /// Tasks). An answered denied/expired/withdrawn approval is excluded: no
+    /// physical action is pending, and the dispatcher will settle it
+    /// `not_applied`.
+    pub async fn task_dispatch_wait(&self, workspace_id: &str, task_id: &str) -> Result<bool> {
+        let pool = self.workspace_pool(workspace_id).await?;
+        let wait: i64 = sqlx::query_scalar(
+            "SELECT EXISTS(
+                 SELECT 1 FROM effect_intents e
+                 JOIN agent_tasks t ON t.id = e.task_id
+                 WHERE e.task_id = ? AND t.execution_mode = 'production'
+                   AND e.state = 'prepared'
+                   AND (
+                     NOT EXISTS (
+                       SELECT 1 FROM decisions d
+                       WHERE d.effect_id = e.effect_id AND d.kind = 'tool_approval'
+                     )
+                     OR EXISTS (
+                       SELECT 1 FROM decisions d
+                       WHERE d.effect_id = e.effect_id AND d.kind = 'tool_approval'
+                         AND (
+                           d.state = 'requested'
+                           OR (d.state = 'answered' AND d.answer = 'approved')
+                         )
+                     )
+                   )
+             )",
+        )
+        .bind(task_id)
+        .fetch_one(&pool)
+        .await?;
+        Ok(wait != 0)
+    }
+
     /// True when the Task owns a `requested`/`answered` (unconsumed)
     /// `effect_reconciliation` Decision. Resume must keep the pause until the
     /// recovery pass consumes it. A merely in-flight (`dispatching`) Effect is

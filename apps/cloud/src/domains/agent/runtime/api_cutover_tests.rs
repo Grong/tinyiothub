@@ -404,6 +404,46 @@ async fn runtime_api_uses_harness_facts_and_never_writes_legacy_tables() {
     assert_eq!(platform_approvals, 0, "no platform approval writes may be produced");
 }
 
+#[tokio::test]
+async fn resume_conflict_names_effect_reconciliation() {
+    let fixture = fixture().await;
+    let (status, created) = post_task(&fixture, "wait for reconciliation", "resume-conflict-key").await;
+    assert_eq!(status, StatusCode::OK, "{created}");
+    let task_id = created["result"]["taskId"].as_str().expect("task id").to_string();
+    seed_effect_decision(
+        &fixture,
+        &task_id,
+        "effect-resume-conflict",
+        "call-resume-conflict",
+        "unknown",
+        "reconcile-resume",
+        "effect_reconciliation",
+        "requested",
+    )
+    .await;
+
+    let (status, paused) = post(
+        &fixture,
+        &format!("/api/v1/workspaces/{WS}/agent/tasks/{task_id}/pause"),
+        json!({}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{paused}");
+
+    let (status, body) = post(
+        &fixture,
+        &format!("/api/v1/workspaces/{WS}/agent/tasks/{task_id}/resume"),
+        json!({}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CONFLICT, "{body}");
+    let message = body.to_string();
+    assert!(
+        message.contains("reconciliation"),
+        "resume conflict must name the reconciliation wait: {message}"
+    );
+}
+
 /// M3: an approval whose TTL elapsed between sweeps must expire instead of
 /// dispatching the device action it was gating.
 #[tokio::test]

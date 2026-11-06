@@ -181,6 +181,13 @@ impl TaskStore for HarnessTaskStore {
             .map_err(|error| TaskStoreError::Unavailable(error.to_string()))
     }
 
+    async fn task_dispatch_wait(&self, workspace_id: &str, task_id: &str) -> Result<bool, TaskStoreError> {
+        self.db
+            .task_dispatch_wait(workspace_id, task_id)
+            .await
+            .map_err(|error| TaskStoreError::Unavailable(error.to_string()))
+    }
+
     async fn task_reconciliation_wait(&self, workspace_id: &str, task_id: &str) -> Result<bool, TaskStoreError> {
         self.db
             .task_reconciliation_wait(workspace_id, task_id)

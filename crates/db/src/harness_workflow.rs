@@ -1062,8 +1062,10 @@ impl Db {
         // resolved. The periodic recovery pass consumes an answered Decision;
         // until then the ordinary resume route keeps the Task paused.
         if self.task_reconciliation_wait(workspace_id, task_id).await? {
-            return Err(DbError::Conflict {
-                message: format!("task {task_id} is waiting for effect reconciliation"),
+            return Err(DbError::Validation {
+                message: format!(
+                    "task {task_id} is waiting for effect reconciliation; answer the reconciliation before resuming"
+                ),
             });
         }
         let pool = self.workspace_pool(workspace_id).await?;

@@ -204,11 +204,20 @@ POST /api/v1/workspaces/{workspace_id}/agent/effects/{effect_id}/reconcile
 
 The answer and its continuation wake are committed immediately. The periodic
 (and startup) recovery pass consumes the answer into the Effect
-(`completed` / `not_applied`) when the Task can advance. A paused Task keeps the
-committed answer until an operator resumes it
-(`POST .../agent/tasks/{task_id}/resume`); the recovery pass then consumes it
-and the pending continuation runs. Never answer from inference: `applied`
-asserts the device action executed, `not_applied` asserts it did not.
+(`completed` / `not_applied`) even while the Task is paused; the Task itself
+stays paused. Resume is refused with a 409 whose message names the
+reconciliation wait until that consumption has happened (normally within one
+dispatch interval). The operator order is therefore:
+
+1. answer the reconciliation;
+2. wait for the Effect to leave `unknown` (the Harness attention item clears and
+   the Decision becomes `consumed`);
+3. resume the Task (`POST .../agent/tasks/{task_id}/resume`); the pending
+   continuation then runs.
+
+A resume attempted between steps 1 and 2 is not lost; it returns the
+reconciliation conflict and can be retried. Never answer from inference:
+`applied` asserts the device action executed, `not_applied` asserts it did not.
 
 ### 6.2 Stuck `dispatching` after a transient settle failure
 

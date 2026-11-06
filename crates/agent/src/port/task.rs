@@ -91,6 +91,13 @@ pub trait TaskStore: Send + Sync {
     async fn task_effect_wait(&self, _workspace_id: &str, _task_id: &str) -> Result<bool, TaskStoreError> {
         Ok(false)
     }
+    /// True when the Task owns a `prepared` Effect whose physical dispatch is
+    /// still pending (no Decision, a requested approval, or an
+    /// answered-but-unconsumed approved approval). Recovery must not start a
+    /// Run, but the Task stays Active so the dispatcher can act.
+    async fn task_dispatch_wait(&self, _workspace_id: &str, _task_id: &str) -> Result<bool, TaskStoreError> {
+        Ok(false)
+    }
     /// True when the Task owns a `requested`/`answered` (unconsumed)
     /// `effect_reconciliation` Decision. Resume must keep the pause until the
     /// reconciliation is consumed; an in-flight `dispatching` Effect alone does

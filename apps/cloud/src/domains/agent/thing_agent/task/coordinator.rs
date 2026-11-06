@@ -174,6 +174,14 @@ impl TaskCoordinator {
         {
             return Ok(Some(TaskStatus::WaitingJob));
         }
+        // M1: a Prepared Effect whose dispatch is still pending (no Decision,
+        // a requested approval, or an approved-but-unconsumed approval) is a
+        // waiting relation that resolves to Active. Recovery must not start a
+        // Run, but the Task must stay dispatchable because the dispatcher
+        // refuses paused Tasks.
+        if self.store.task_dispatch_wait(workspace_id, task_id).await? {
+            return Ok(Some(TaskStatus::Active));
+        }
         // N1: a dispatching/unknown Effect or an unconsumed reconciliation
         // Decision is a waiting relation. Startup recovery must pause the Task
         // instead of starting a Run that could re-issue the device action.
@@ -552,11 +560,14 @@ impl TaskCoordinator {
                 self.finish_cancellation(&task).await?;
                 return Ok(Advance::Recorded);
             }
-            // N1: never start or steer a Run while the Effect outcome is
-            // unresolved or a reconciliation answer is still unconsumed. The
-            // periodic recovery pass consumes an answered Decision; the wake
-            // stays pending and is retried afterwards.
-            if self.store.task_effect_wait(workspace_id, task_id).await? {
+            // N1/M1: never start or steer a Run while the Effect outcome is
+            // unresolved, a reconciliation answer is still unconsumed, or a
+            // Prepared dispatch is still pending. The periodic recovery pass
+            // consumes an answered Decision and the dispatcher submits the
+            // Job; the wake stays pending and is retried afterwards.
+            if self.store.task_effect_wait(workspace_id, task_id).await?
+                || self.store.task_dispatch_wait(workspace_id, task_id).await?
+            {
                 return Ok(Advance::Deferred);
             }
             let mut terminal_job: Option<DeviceJob> = None;
