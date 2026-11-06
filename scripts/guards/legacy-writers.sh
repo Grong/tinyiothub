@@ -62,7 +62,7 @@ check_rust() {
 production_lines() {
   # One Python process per check, not per file.
   # shellcheck disable=SC2046
-  python3 scripts/guards/production_scope.py $(rg --files crates apps/cloud -g '*.rs' \
+  PYTHONDONTWRITEBYTECODE=1 python3 scripts/guards/production_scope.py $(rg --files crates apps/cloud -g '*.rs' \
     -g '!**/target/**' -g '!**/tests/**' -g '!**/benches/**' -g '!**/*_tests.rs')
 }
 

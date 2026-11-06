@@ -1722,7 +1722,7 @@ pub(crate) mod tests {
     use sqlx::SqlitePool;
     use tinyiothub_core::harness::{
         DecisionKind, DecisionState, EffectMutation, EffectState, ExecutionMode, HarnessEventInput, JobProjection,
-        Transition, TransitionPrecondition, WakeProjection,
+        RunTaskProjection, Transition, TransitionPrecondition, WakeProjection,
     };
 
     use super::{InvalidRecoveryState, classify_effect_decision};
@@ -2032,6 +2032,69 @@ pub(crate) mod tests {
             .await
             .expect("state");
         assert_eq!(state, "completed");
+        fixture.close().await;
+    }
+
+    #[tokio::test]
+    async fn effect_transition_drain_prunes_parent_and_child_device_projections() {
+        let fixture = Fixture::new().await;
+        let pool = fixture.pool().await;
+        sqlx::query(
+            "INSERT INTO agent_tasks (id, run_id, state, state_version, execution_mode)
+             VALUES ('task-1', 'run-1', 'cancelling', 4, 'production')",
+        )
+        .execute(&pool)
+        .await
+        .expect("cancelling parent");
+        sqlx::query(
+            "INSERT INTO agent_tasks (id, run_id, state, state_version, execution_mode, parent_task_id)
+             VALUES ('task-child', 'run-child', 'cancelling', 1, 'production', 'task-1')",
+        )
+        .execute(&pool)
+        .await
+        .expect("cancelling child");
+        sqlx::query(
+            "INSERT INTO agent_runs (id, task_id, state, execution_mode)
+             VALUES ('run-1', 'task-1', 'running', 'production')",
+        )
+        .execute(&pool)
+        .await
+        .expect("run");
+        for task_id in ["task-1", "task-child"] {
+            sqlx::query(
+                "INSERT INTO runtime_device_state (workspace_id, task_id, device_id, state_json, updated_at)
+                 VALUES ('ws-effects', ?, 'dev-drain', '{}', 'now')",
+            )
+            .bind(task_id)
+            .execute(fixture.db.pool())
+            .await
+            .expect("projection");
+        }
+
+        let mut drain = transition("transition-drain", 4);
+        drain.run_task = Some(RunTaskProjection {
+            run_id: "run-1".to_string(),
+            run_state: "completed".to_string(),
+            task_id: "task-1".to_string(),
+            task_state: "completed".to_string(),
+        });
+        fixture
+            .db
+            .apply_workspace_transition("ws-effects", &expected(4), &drain)
+            .await
+            .expect("effect transition");
+
+        let rows: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM runtime_device_state
+             WHERE workspace_id = 'ws-effects' AND task_id IN ('task-1', 'task-child')",
+        )
+        .fetch_one(fixture.db.pool())
+        .await
+        .expect("projection rows");
+        assert_eq!(
+            rows, 0,
+            "the effect-driven drain must prune both the parent and child projections"
+        );
         fixture.close().await;
     }
 

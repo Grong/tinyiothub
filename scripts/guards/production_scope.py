@@ -110,6 +110,57 @@ def find_block_end(masked: str, pos: int, limit: int) -> int:
     return limit
 
 
+def find_delimited_end(masked: str, pos: int, limit: int) -> int:
+    pairs = {"{": "}", "(": ")", "[": "]"}
+    opener = masked[pos]
+    closer = pairs[opener]
+    depth = 0
+    for j in range(pos, limit):
+        if masked[j] == opener:
+            depth += 1
+        elif masked[j] == closer:
+            depth -= 1
+            if depth == 0:
+                return j + 1
+    return limit
+
+
+def skip_space(masked: str, pos: int, limit: int) -> int:
+    while pos < limit and masked[pos].isspace():
+        pos += 1
+    return pos
+
+
+def find_macro_end(masked: str, bang: int, limit: int) -> int:
+    """A `name!` invocation is an item when followed by (), [] or {}."""
+    pos = skip_space(masked, bang + 1, limit)
+    if pos < limit and masked[pos] in "({[":
+        end = find_delimited_end(masked, pos, limit)
+        semi = skip_space(masked, end, limit)
+        if semi < limit and masked[semi] == ";":
+            end = semi + 1
+        return end
+    return find_semicolon(masked, bang, limit)
+
+
+def find_if_end(masked: str, pos: int, limit: int) -> int:
+    """Include `else` / `else if` blocks in the gated construct."""
+    end = find_block_end(masked, pos, limit)
+    while True:
+        pos = skip_space(masked, end, limit)
+        if not masked.startswith("else", pos):
+            return end
+        pos = skip_space(masked, pos + 4, limit)
+        if masked.startswith("if", pos) and (
+            pos + 2 >= limit or not (masked[pos + 2].isalnum() or masked[pos + 2] == "_")
+        ):
+            return find_if_end(masked, pos, limit)
+        if pos < limit and masked[pos] == "{":
+            end = find_block_end(masked, pos, limit)
+            continue
+        return end
+
+
 def find_semicolon(masked: str, pos: int, limit: int) -> int:
     depths = {"(": 0, "[": 0, "{": 0}
     pairs = {")": "(", "]": "[", "}": "{"}
@@ -163,6 +214,9 @@ def scope_end(masked: str, attr_end: int) -> int:
         return find_semicolon(masked, pos, limit)
     keyword = match.group(1)
     item_start = match.start(1)
+    after_ident = skip_space(masked, match.end(), limit)
+    if after_ident < limit and masked[after_ident] == "!":
+        return find_macro_end(masked, after_ident, limit)
     if keyword == "mod":
         # `mod name;` (file module) or `mod name { ... }`.
         brace = masked.find("{", match.end(), limit)
@@ -179,10 +233,10 @@ def scope_end(masked: str, attr_end: int) -> int:
             return find_block_end(masked, match.end(), limit)
         return find_semicolon(masked, match.end(), limit)
     # Statement-level gate (let/expression/if/match/unsafe block/...).
-    rest_start = match.end()
-    while rest_start < limit and masked[rest_start].isspace():
-        rest_start += 1
-    if keyword in {"if", "match", "for", "while", "loop"} or (
+    rest_start = skip_space(masked, match.end(), limit)
+    if keyword == "if":
+        return find_if_end(masked, match.end(), limit)
+    if keyword in {"match", "for", "while", "loop"} or (
         rest_start < limit and masked[rest_start] == "{"
     ):
         return find_block_end(masked, match.end(), limit)

@@ -1144,15 +1144,35 @@ impl tinyiothub_runtime::ports::WatchRuleStore for WatchRuleStoreAdapter {
             // The rule was already retired. Undo only the wake this call
             // newly inserted; a pre-existing wake (for example from a crash
             // after the wake write) must survive.
-            if inserted
-                && let Err(error) = self
+            if inserted {
+                match self
                     .db
                     .harness_remove_pending_wake(workspace_id, &wake.task_id, &wake.event_id)
                     .await
-            {
-                return Err(format!(
-                    "watch {id}: rule already retired and the newly inserted wake could not be removed: {error}"
-                ));
+                {
+                    Ok(_) => {}
+                    Err(remove_error) => {
+                        // Never leave a pending wake for a rule that no longer
+                        // exists: mark it dead so it cannot spuriously wake the
+                        // Task (M3 removal-failure fallback).
+                        match self
+                            .db
+                            .harness_mark_wake_dead(&wake.task_id, &wake.event_id, "completion_rule_missing")
+                            .await
+                        {
+                            Ok(()) => {
+                                return Err(format!(
+                                    "watch {id}: rule already retired; removing the newly inserted wake failed ({remove_error}); wake marked dead"
+                                ));
+                            }
+                            Err(dead_error) => {
+                                return Err(format!(
+                                    "watch {id}: rule already retired; removing the newly inserted wake failed ({remove_error}); marking it dead also failed ({dead_error})"
+                                ));
+                            }
+                        }
+                    }
+                }
             }
             return Ok(false);
         }
@@ -2002,6 +2022,45 @@ mod runtime_job_event_tests {
         .await
         .expect("workspace wake");
         assert_eq!(wakes, 1, "a pre-existing wake must survive completed == false");
+    }
+
+    /// Task 19C4 M3 removal-failure fallback: if the newly inserted wake
+    /// cannot be deleted after an already-retired completion, it is marked
+    /// dead instead of staying pending forever.
+    #[tokio::test]
+    async fn failed_completion_wake_removal_marks_the_wake_dead() {
+        let (db, recorder, _hub) = fixture().await;
+        let store = WatchRuleStoreAdapter::new((*db).clone()).with_recorder(recorder);
+        let workspace = db.workspace_pool_for_testing("ws-job").await.expect("workspace pool");
+        sqlx::query(
+            "CREATE TRIGGER fail_wake_delete BEFORE DELETE ON task_wake_outbox
+             BEGIN SELECT RAISE(ABORT, 'injected removal failure'); END",
+        )
+        .execute(&workspace)
+        .await
+        .expect("failure trigger");
+        let wake = tinyiothub_core::agent_task::TaskWake {
+            task_id: "task-1".into(),
+            event_id: "watch:watch-remove-fail:hit".into(),
+            signal_json: serde_json::json!({"workspace_id":"ws-job"}).to_string(),
+            dispatch_state: tinyiothub_core::agent_task::WakeDispatchState::Pending,
+            created_at: chrono::Utc::now(),
+            dispatched_at: None,
+            resolved_at: None,
+        };
+        let error = store
+            .complete_task_watch("ws-job", "watch-remove-fail", &wake)
+            .await
+            .expect_err("removal failure must surface");
+        assert!(error.contains("wake marked dead"), "{error}");
+        let state: String = sqlx::query_scalar(
+            "SELECT dispatch_state FROM task_wake_outbox
+             WHERE task_id = 'task-1' AND event_id = 'watch:watch-remove-fail:hit'",
+        )
+        .fetch_one(&workspace)
+        .await
+        .expect("wake row");
+        assert_eq!(state, "dead", "the orphan wake must not stay pending");
     }
 
     /// Task 19C4 M3: if the workspace wake cannot be written, the platform rule

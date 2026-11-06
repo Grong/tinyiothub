@@ -277,6 +277,44 @@ pub fn prod() {
 }
 RS
 expect_fails "legacy-writers (statement-level test gate)" bash scripts/guards/legacy-writers.sh
+# H1 round 3: a block-macro item has no trailing `;`; the scanner must stop at
+# the macro's own delimiter, not at the next top-level statement boundary.
+cat > "$EVIL_LEGACY_RS" <<'RS'
+#[cfg(test)]
+thread_local! {
+    static X: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+pub fn evil_after_macro() { let _ = "INSERT INTO agent_tasks VALUES (1)"; }
+RS
+expect_fails "legacy-writers (block-macro test gate)" bash scripts/guards/legacy-writers.sh
+# H1 round 3: `#[cfg(test)] if/else` fixtures are ignored; production after is
+# still emitted.
+cat > "$EVIL_LEGACY_RS" <<'RS'
+pub fn prod() {
+    #[cfg(test)]
+    if c { let _ = "INSERT INTO agent_tasks VALUES (1)"; } else { let _ = "SELECT * FROM task_wake_outbox"; }
+    let _ = 1;
+}
+RS
+expect_passes "legacy-writers (if/else fixtures ignored)" bash scripts/guards/legacy-writers.sh
+cat > "$EVIL_LEGACY_RS" <<'RS'
+pub fn prod() {
+    #[cfg(test)]
+    if c { let _ = 1; } else { let _ = 2; }
+    let _ = "UPDATE agent_tasks SET status = 'x'";
+}
+RS
+expect_fails "legacy-writers (production after if/else test gate)" bash scripts/guards/legacy-writers.sh
+# The block-macro scope bug hid real production lines in dynamic_adapter.rs.
+if PYTHONDONTWRITEBYTECODE=1 python3 scripts/guards/production_scope.py crates/runtime/src/driver/dynamic_adapter.rs \
+    | grep -q "fn own_source_response" \
+  && PYTHONDONTWRITEBYTECODE=1 python3 scripts/guards/production_scope.py crates/runtime/src/driver/dynamic_adapter.rs \
+    | grep -q "fn run_describe_job"; then
+  echo "✅ SELF-TEST: scanner emits dynamic_adapter.rs production lines"
+else
+  echo "❌ SELF-TEST: scanner still hides dynamic_adapter.rs production lines"
+  SELFTEST_FAIL=1
+fi
 # L5: quoted identifiers and multi-line SQL are normalized.
 printf 'pub fn evil() { let _ = "INSERT INTO \\"agent_tasks\\" VALUES (1)"; }\n' > "$EVIL_LEGACY_RS"
 expect_fails "legacy-writers (quoted retired table)" bash scripts/guards/legacy-writers.sh
