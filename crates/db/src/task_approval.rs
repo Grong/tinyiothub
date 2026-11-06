@@ -1,9 +1,9 @@
 //! Legacy platform `task_approvals` projection.
 //!
 //! Task 19C2 removed every writer: the workspace `decisions` table is the only
-//! approval source. This module keeps the row type the legacy Runtime
-//! projection still reads so old snapshots remain readable until the platform
-//! table is dropped by a later migration.
+//! approval source. This module keeps the row type for schema/tooling parity
+//! only. It has **no production caller or reader** and is expected to be
+//! deleted together with the platform table (L4, unwired surface).
 
 use chrono::{DateTime, Utc};
 use tinyiothub_core::task_approval::{ApprovalDecision, ApprovalState, TaskApproval, TaskApprovalStoreError};

@@ -183,6 +183,45 @@ that already own a Harness store and calls
 A workspace without a Harness store is skipped; recovery never creates empty
 stores.
 
+### 6.1 Interrupted device Job → Effect `unknown` (never `failed`)
+
+When startup Job recovery cannot prove whether a physical send happened, it
+marks the Job `interrupted`. The Effect is **not** failed:
+
+- `dispatching` settles to `unknown` and atomically creates one
+  `kind=effect_reconciliation` Decision (`requested`) with
+  `decision_id = reconciliation:<effect_id>`; the Run stays blocked.
+- after a stop request the same Job fact settles `cancelled_unknown`, not a
+  confirmed stop.
+- an `unknown` Effect is never re-dispatched automatically.
+
+Resolve it by confirming the physical outcome, then answering the Decision:
+
+```text
+POST /api/v1/workspaces/{workspace_id}/agent/effects/{effect_id}/reconcile
+{"answer": "applied" | "not_applied", "evidence": {...}}
+```
+
+The answer and its continuation wake are committed immediately. The periodic
+(and startup) recovery pass consumes the answer into the Effect
+(`completed` / `not_applied`) when the Task can advance. A paused Task keeps the
+committed answer until an operator resumes it
+(`POST .../agent/tasks/{task_id}/resume`); the recovery pass then consumes it
+and the pending continuation runs. Never answer from inference: `applied`
+asserts the device action executed, `not_applied` asserts it did not.
+
+### 6.2 Stuck `dispatching` after a transient settle failure
+
+The Job result sink can fail to settle an Effect (for example a transient
+SQLite busy/unreadable-workspace error) and only logs it. The periodic Effect
+pass now also settles every `dispatching`/`cancelling` Effect whose Job is
+already terminal and ensures reconciliation for `unknown` Effects, so such an
+Effect clears without a process restart. A still-active Job is never touched,
+and a `dispatching` Effect with no Job row is only handled by startup
+reconciliation (the periodic pass must not race a live permit/submit window).
+If a `dispatching` Effect persists beyond a few seconds, inspect the Job row and
+the workspace store errors before restarting.
+
 ## 7. Evidence to collect
 
 Record, without secrets or raw provider payloads:

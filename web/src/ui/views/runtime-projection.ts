@@ -256,7 +256,11 @@ export class RuntimeProjection {
 
   private applyTaskEvent(task: RuntimeTask, event: RuntimeEvent): void {
     if (event.eventType.startsWith('task.')) {
-      const status = event.eventType.slice('task.'.length) as TaskStatus;
+      // `task.resumed` / `task.pause_waiting` carry the real state in
+      // `data.state`; the type suffix is not a TaskStatus for those events.
+      const status = (
+        typeof event.data.state === 'string' ? event.data.state : event.eventType.slice('task.'.length)
+      ) as TaskStatus;
       const version =
         typeof event.data.stateVersion === 'number' ? event.data.stateVersion : task.stateVersion;
       if (isTaskStatus(status) && version >= task.stateVersion) {

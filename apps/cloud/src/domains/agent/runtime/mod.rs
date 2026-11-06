@@ -7,6 +7,30 @@ use tinyiothub_core::harness::{DecisionKind, DecisionState, EffectIntent, Effect
 use tinyiothub_storage::Db;
 use tinyiothub_storage::harness_effect::EffectRecoveryItem;
 
+/// Fill the owning workspace into a wake signal produced by a reducer that has
+/// no workspace argument, and default the kind so `TaskCoordinator::advance`
+/// can parse it. Idempotent: signals that already carry these fields keep
+/// their values.
+pub(crate) fn scope_transition_wake(transition: &mut Transition, workspace_id: &str) {
+    let Some(wake) = transition.wake.as_mut() else {
+        return;
+    };
+    let Ok(mut signal) = serde_json::from_str::<serde_json::Value>(&wake.signal_json) else {
+        return;
+    };
+    let Some(object) = signal.as_object_mut() else {
+        return;
+    };
+    object.insert(
+        "workspace_id".to_string(),
+        serde_json::Value::String(workspace_id.to_string()),
+    );
+    object
+        .entry("kind")
+        .or_insert_with(|| serde_json::Value::String("effect_terminal".to_string()));
+    wake.signal_json = signal.to_string();
+}
+
 pub mod admin;
 #[cfg(test)]
 mod api_cutover_tests;
@@ -92,6 +116,7 @@ impl EffectRecovery {
         for event in &mut transition.additional_events {
             event.workspace_id = workspace_id.to_string();
         }
+        scope_transition_wake(&mut transition, workspace_id);
         let precondition = transition.precondition.clone();
         self.db
             .apply_workspace_transition(workspace_id, &precondition, &transition)
@@ -289,11 +314,63 @@ impl EffectRecovery {
         actor: &str,
         evidence: Option<serde_json::Value>,
     ) -> Result<(), String> {
+        // Commit the durable answer (and its continuation wake). Applying it to
+        // the Effect is the recovery pass's job: `ensure_reconciliation` consumes
+        // an answered Decision when the Task can advance, and leaves a paused
+        // Task waiting for an explicit resume. This keeps the answer atomic and
+        // keeps every consumption on one idempotent, audited path.
         self.db
             .answer_effect_reconciliation(workspace_id, effect_id, answer, actor, evidence)
             .await
             .map(|_| ())
             .map_err(|error| error.to_string())
+    }
+
+    /// Production recovery for one persisted `unknown` Effect.
+    ///
+    /// - no reconciliation Decision: create the idempotent Decision and keep
+    ///   the Run blocked (restore fencing semantics live in the reducer);
+    /// - answered Decision and the Task can still advance: consume it so the
+    ///   Effect reaches `completed`/`not_applied` and the continuation wake can
+    ///   run;
+    /// - requested Decision, or an answered one on a paused Task: leave it for
+    ///   the operator. Nothing here ever dispatches a physical action.
+    pub async fn ensure_reconciliation(&self, workspace_id: &str, effect_id: &str) -> Result<(), String> {
+        let Ok(item) = self.item(workspace_id, effect_id).await else {
+            return Ok(());
+        };
+        if item.intent.state != EffectState::Unknown {
+            return Ok(());
+        }
+        match item.decision.as_ref() {
+            None => {
+                self.transition(workspace_id, &item, RecoveryFact::EnsureReconciliation)
+                    .await
+            }
+            Some(decision)
+                if decision.kind == DecisionKind::EffectReconciliation
+                    && decision.state == DecisionState::Answered
+                    && item.task_active =>
+            {
+                self.transition(workspace_id, &item, RecoveryFact::ConsumeAnswer).await
+            }
+            Some(decision)
+                if decision.kind == DecisionKind::EffectReconciliation
+                    && matches!(decision.state, DecisionState::Requested | DecisionState::Answered) =>
+            {
+                Ok(())
+            }
+            // An unknown Effect with only a consumed approval still needs an
+            // actionable reconciliation path; create the deterministic
+            // reconciliation Decision (idempotent on retry).
+            Some(decision)
+                if decision.kind == DecisionKind::ToolApproval && decision.state == DecisionState::Consumed =>
+            {
+                self.transition(workspace_id, &item, RecoveryFact::EnsureReconciliation)
+                    .await
+            }
+            Some(_) => Err("unknown effect has an invalid reconciliation decision".to_string()),
+        }
     }
 
     pub async fn request_cancellation(&self, workspace_id: &str, effect_id: &str) -> Result<(), String> {

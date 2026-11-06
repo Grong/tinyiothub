@@ -399,7 +399,16 @@ pub fn reduce_recovery(
     let wake = (next.is_terminal() && !matches!(fact, RecoveryFact::ConsumeAnswer)).then(|| WakeProjection {
         task_id: intent.task_id.clone(),
         wake_id: format!("{transition_id}:wake"),
-        signal_json: json!({"effectId":intent.effect_id,"state":next.as_str()}).to_string(),
+        // `TaskCoordinator::advance` needs a kind and an owner workspace; the
+        // workspace is scope-filled by the transition applier. A bare
+        // `{effectId,state}` signal is retried and dead-lettered (M1).
+        signal_json: json!({
+            "kind": "effect_terminal",
+            "task_id": intent.task_id,
+            "effect_id": intent.effect_id,
+            "state": next.as_str(),
+        })
+        .to_string(),
         created_at: occurred_at,
     });
     Ok(Transition {

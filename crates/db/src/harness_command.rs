@@ -420,6 +420,11 @@ async fn consume_once(
 }
 
 impl Db {
+    /// Persist a durable Harness command (steer / interrupt / pause / queue).
+    ///
+    /// **Unwired in this branch (L4):** no production HTTP route calls this and
+    /// `CommandRecovery` has no production consumer. The state machine is
+    /// exercised by tests only.
     pub async fn request_harness_command(
         &self,
         workspace_id: &str,

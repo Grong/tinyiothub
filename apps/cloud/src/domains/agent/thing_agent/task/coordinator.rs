@@ -481,6 +481,8 @@ impl TaskCoordinator {
             let wake_kind = raw_signal.get("kind").and_then(serde_json::Value::as_str);
             let approval_decision = wake_kind == Some("approval_decided");
             let job_terminal = wake_kind == Some("device_job_terminal");
+            let effect_terminal = wake_kind == Some("effect_terminal");
+            let reconciliation_answered = wake_kind == Some("reconciliation_answered");
             let workspace_id = raw_signal
                 .get("workspace_id")
                 .and_then(serde_json::Value::as_str)
@@ -644,6 +646,78 @@ impl TaskCoordinator {
                         ),
                         session_key: task.session_key.clone(),
                         source: Some("device_job_terminal".into()),
+                        problem_key: None,
+                    },
+                }
+            } else if effect_terminal {
+                // An Effect terminal without a Job terminal wake (dispatch
+                // validation/storage failure, cancel-before-send, recovery
+                // settle) is the only continuation. It must never dead-letter.
+                let effect_id = raw_signal
+                    .get("effect_id")
+                    .or_else(|| raw_signal.get("effectId"))
+                    .and_then(serde_json::Value::as_str)
+                    .ok_or_else(|| TaskError::InvalidWake("effect terminal wake has no effect_id".into()))?;
+                let state = raw_signal
+                    .get("state")
+                    .and_then(serde_json::Value::as_str)
+                    .unwrap_or("unknown");
+                let text = match state {
+                    "completed" => format!(
+                        "Device effect {effect_id} completed. Use the persisted result; do not re-issue the same action."
+                    ),
+                    "not_applied" => format!(
+                        "Device effect {effect_id} was NOT applied. Do not report it as executed; decide again only if the objective still requires it."
+                    ),
+                    "failed" => format!(
+                        "Device effect {effect_id} failed. Use the persisted result; do not invent result data."
+                    ),
+                    _ => format!(
+                        "Device effect {effect_id} reached state {state}. Use the persisted Effect result; do not invent result data."
+                    ),
+                };
+                WakeSignal {
+                    workspace_id: task.workspace_id.clone(),
+                    priority: crate::domains::agent::thing_agent::types::Priority::Normal,
+                    dedup_key: Some(format!("task:{task_id}:effect:{effect_id}:{state}")),
+                    source: crate::domains::agent::thing_agent::types::TriggerSource::UserDirective {
+                        user_id: task.created_by.clone(),
+                        text,
+                        session_key: task.session_key.clone(),
+                        source: Some("effect_terminal".into()),
+                        problem_key: None,
+                    },
+                }
+            } else if reconciliation_answered {
+                let effect_id = raw_signal
+                    .get("effect_id")
+                    .or_else(|| raw_signal.get("effectId"))
+                    .and_then(serde_json::Value::as_str)
+                    .ok_or_else(|| TaskError::InvalidWake("reconciliation wake has no effect_id".into()))?;
+                let answer = raw_signal
+                    .get("answer")
+                    .and_then(serde_json::Value::as_str)
+                    .unwrap_or("unknown");
+                let text = match answer {
+                    "applied" => format!(
+                        "Reconciliation for effect {effect_id} is recorded as applied. Continue from the recorded decision; do not re-issue the same action."
+                    ),
+                    "not_applied" => format!(
+                        "Reconciliation for effect {effect_id} is recorded as NOT applied. Do not report it as executed."
+                    ),
+                    _ => format!(
+                        "Reconciliation for effect {effect_id} was answered ({answer}). Continue from the recorded decision."
+                    ),
+                };
+                WakeSignal {
+                    workspace_id: task.workspace_id.clone(),
+                    priority: crate::domains::agent::thing_agent::types::Priority::Normal,
+                    dedup_key: Some(format!("task:{task_id}:reconciliation:{effect_id}:{answer}")),
+                    source: crate::domains::agent::thing_agent::types::TriggerSource::UserDirective {
+                        user_id: task.created_by.clone(),
+                        text,
+                        session_key: task.session_key.clone(),
+                        source: Some("reconciliation_answered".into()),
                         problem_key: None,
                     },
                 }

@@ -1,8 +1,9 @@
 //! T8 runtime evals: deterministic complete Task prompts, media capability at
-//! the provider boundary, evidence-only traces, and local integration latency.
+//! the provider boundary, and evidence-only traces.
 //!
-//! All timings in this file are local in-process integration evidence. They are
-//! not production p99 numbers and must not be read as such.
+//! This file does **not** assert latency. The legacy watch→Run / Job→UI timing
+//! evals were removed with the legacy stream (Task 19C4) and have not been
+//! replaced by Harness-path equivalents.
 
 use std::sync::{Arc, Mutex};
 

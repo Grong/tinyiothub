@@ -296,6 +296,12 @@ pub trait CommandControl: Send + Sync {
     fn cancel_model_call(&self, command: &HarnessCommand);
 }
 
+/// Consumes durable Harness commands (steer / interrupt / queue).
+///
+/// **Unwired in this branch (L4):** no production route or loop constructs a
+/// `CommandRecovery`, so steer/interrupt/queue are not reachable from the app.
+/// The DB state machine and its tests are the only callers. Do not assume a
+/// live command consumer when writing control-path code.
 #[derive(Clone)]
 pub struct CommandRecovery {
     db: Arc<Db>,

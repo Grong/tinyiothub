@@ -247,6 +247,27 @@ describe('RuntimeProjection', () => {
     expect(projection.task.status).toBe('completed');
   });
 
+  it('applies task.resumed and task.pause_waiting from payload state', () => {
+    const paused = new RuntimeProjection(
+      snapshotWithNoDevices({ task: task('task_1', { status: 'waiting_job' }) }),
+    );
+    paused.apply(
+      event(
+        'event_40',
+        'task.pause_waiting',
+        { state: 'paused', previousState: 'waiting_job' },
+        { cursor: 40 },
+      ),
+    );
+    expect(paused.task.status).toBe('paused');
+
+    const resumed = new RuntimeProjection(
+      snapshotWithNoDevices({ task: task('task_1', { status: 'paused' }) }),
+    );
+    resumed.apply(event('event_41', 'task.resumed', { state: 'waiting_job' }, { cursor: 41 }));
+    expect(resumed.task.status).toBe('waiting_job');
+  });
+
   it('freezes history events without conflating history with connection state', () => {
     const projection = new RuntimeProjection(snapshotWithNoDevices(), { history: true });
     projection.setConnection('offline');

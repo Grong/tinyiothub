@@ -48,9 +48,9 @@ use tinyiothub_runtime::job::worker_adapter::JobResultSink;
 use tinyiothub_storage::Db;
 use tinyiothub_storage::harness_effect::EffectRecoveryItem;
 
-use super::EffectSender;
 use super::controls::WorkflowControls;
 use super::harness_stream::HarnessStreamHub;
+use super::{EffectRecovery, EffectSender, scope_transition_wake};
 
 /// Dispatch cadence. Same family as the wake router (25 ms claim loop); a
 /// 250 ms per-workspace sweep is a bounded recovery pass, not a hot loop.
@@ -115,6 +115,31 @@ fn approval_continuation_wake(
         .to_string(),
         created_at: now,
     })
+}
+
+/// Parseable continuation wake for an Effect terminal that has no Job terminal
+/// wake to carry the continuation (a dispatch failure or a cancel-before-send).
+/// `TaskCoordinator::advance` coalesces it with a Job wake when both exist.
+fn effect_terminal_wake(
+    workspace_id: &str,
+    intent: &EffectIntent,
+    state: EffectState,
+    wake_id: String,
+    now: chrono::DateTime<Utc>,
+) -> WakeProjection {
+    WakeProjection {
+        task_id: intent.task_id.clone(),
+        wake_id,
+        signal_json: json!({
+            "kind": "effect_terminal",
+            "workspace_id": workspace_id,
+            "task_id": intent.task_id,
+            "effect_id": intent.effect_id,
+            "state": state.as_str(),
+        })
+        .to_string(),
+        created_at: now,
+    }
 }
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
@@ -265,6 +290,7 @@ impl EffectDispatch {
         for event in &mut transition.additional_events {
             event.workspace_id = workspace_id.to_string();
         }
+        scope_transition_wake(&mut transition, workspace_id);
         let precondition = transition.precondition.clone();
         self.db
             .apply_workspace_transition(workspace_id, &precondition, &transition)
@@ -306,17 +332,26 @@ impl EffectDispatch {
             )
             .map_err(|error| error.to_string())?
         } else {
+            let now = Utc::now();
             reduce(
                 &Self::harness_state(workspace_id, intent, EffectState::Prepared, intent.state_version),
                 &HarnessFact {
                     transition_id: transition_id.to_string(),
                     effect_id: intent.effect_id.clone(),
                     next: EffectState::NotApplied,
-                    occurred_at: Utc::now(),
+                    occurred_at: now,
                     external_ref: None,
                     result: Some(reason.clone()),
                     job: None,
-                    wake: None,
+                    // Without a Decision this is the only continuation: it must
+                    // be parseable or the Task stalls (M1).
+                    wake: Some(effect_terminal_wake(
+                        workspace_id,
+                        intent,
+                        EffectState::NotApplied,
+                        format!("dispatch:{}:not_applied:wake", intent.effect_id),
+                        now,
+                    )),
                 },
             )
             .map_err(|error| error.to_string())?
@@ -378,26 +413,24 @@ impl EffectDispatch {
         if current.state != EffectState::Dispatching {
             return Ok(());
         }
+        let now = Utc::now();
         let mut transition = reduce(
             &Self::harness_state(workspace_id, &current, EffectState::Dispatching, current.state_version),
             &HarnessFact {
                 transition_id: format!("dispatch:{}:not_applied", current.effect_id),
                 effect_id: current.effect_id.clone(),
                 next: EffectState::NotApplied,
-                occurred_at: Utc::now(),
+                occurred_at: now,
                 external_ref: None,
                 result: Some(reason),
                 job: None,
-                wake: Some(WakeProjection {
-                    task_id: current.task_id.clone(),
-                    wake_id: format!("dispatch:{}:not_applied:wake", current.effect_id),
-                    signal_json: json!({
-                        "effectId": current.effect_id,
-                        "state": EffectState::NotApplied.as_str(),
-                    })
-                    .to_string(),
-                    created_at: Utc::now(),
-                }),
+                wake: Some(effect_terminal_wake(
+                    workspace_id,
+                    &current,
+                    EffectState::NotApplied,
+                    format!("dispatch:{}:not_applied:wake", current.effect_id),
+                    now,
+                )),
             },
         )
         .map_err(|error| error.to_string())?;
@@ -835,6 +868,49 @@ impl EffectDispatch {
                         Err(error) => return Err(error.to_string()),
                     }
                 }
+                // An Effect persisted `unknown` must always have an actionable
+                // reconciliation path. This is idempotent and never dispatches.
+                EffectState::Unknown => {
+                    EffectRecovery::new(self.db.clone())
+                        .ensure_reconciliation(workspace_id, &item.intent.effect_id)
+                        .await?;
+                }
+                _ => {}
+            }
+        }
+        Ok(())
+    }
+
+    /// Bounded periodic settle pass (M3). Unlike [`Self::reconcile_workspace`]
+    /// it never settles a `dispatching` Effect that has no Job row: the
+    /// periodic loop races a live dispatch between permit commit and submit, so
+    /// that branch stays startup-only. Terminal Jobs and unknown Effects are
+    /// safe to revisit on every pass.
+    async fn settle_terminal_effects_workspace(&self, workspace_id: &str) -> Result<(), String> {
+        let items = self
+            .db
+            .list_effect_recovery(workspace_id)
+            .await
+            .map_err(|error| error.to_string())?;
+        for item in items {
+            match item.intent.state {
+                EffectState::Dispatching | EffectState::Cancelling => {
+                    let job_id = job_id_for(&item.intent.effect_id);
+                    match self.jobs.job(workspace_id, &job_id).await {
+                        Ok(Some(job)) if job.state.is_terminal() => {
+                            self.settle_job(workspace_id, &job_id).await?;
+                        }
+                        // An active Job is owned by the worker; a missing Job is
+                        // the startup-only race described above.
+                        Ok(_) => {}
+                        Err(error) => return Err(error.to_string()),
+                    }
+                }
+                EffectState::Unknown => {
+                    EffectRecovery::new(self.db.clone())
+                        .ensure_reconciliation(workspace_id, &item.intent.effect_id)
+                        .await?;
+                }
                 _ => {}
             }
         }
@@ -853,16 +929,13 @@ impl EffectDispatch {
                 external_ref: None,
                 result: Some(json!({"reason": "cancelled_before_send"})),
                 job: None,
-                wake: Some(WakeProjection {
-                    task_id: intent.task_id.clone(),
-                    wake_id: format!("reconcile:{}:cancelled:wake", intent.effect_id),
-                    signal_json: json!({
-                        "effectId": intent.effect_id,
-                        "state": EffectState::Cancelled.as_str(),
-                    })
-                    .to_string(),
-                    created_at: now,
-                }),
+                wake: Some(effect_terminal_wake(
+                    workspace_id,
+                    intent,
+                    EffectState::Cancelled,
+                    format!("reconcile:{}:cancelled:wake", intent.effect_id),
+                    now,
+                )),
             },
         )
         .map_err(|error| error.to_string())?;
@@ -901,6 +974,12 @@ impl EffectDispatch {
         if intent.state.is_terminal() {
             return Ok(());
         }
+        if intent.state == EffectState::Unknown {
+            // The reconciliation path owns an unknown Effect. Settling it from
+            // a late Job read (or a retried sink call) would overwrite the
+            // unknown/reconciliation state and could imply a confirmed result.
+            return Ok(());
+        }
         if matches!(job.state, DeviceJobState::Cancelled | DeviceJobState::CancelledUnknown)
             && matches!(intent.state, EffectState::Prepared | EffectState::Unknown)
         {
@@ -917,7 +996,19 @@ impl EffectDispatch {
         }
         let next = match job.state {
             DeviceJobState::Done => EffectState::Completed,
-            DeviceJobState::Failed | DeviceJobState::Rejected | DeviceJobState::Interrupted => EffectState::Failed,
+            DeviceJobState::Failed | DeviceJobState::Rejected => EffectState::Failed,
+            // A restart marks a non-recoverable accepted/running Job
+            // `interrupted`; the physical action may or may not have run. It
+            // is not a confirmed failure: keep it `unknown` with a
+            // reconciliation Decision (H1). After a stop request the stop
+            // outcome is unknown by contract, so it settles `cancelled_unknown`.
+            DeviceJobState::Interrupted => {
+                if matches!(intent.state, EffectState::Cancelling) {
+                    EffectState::CancelledUnknown
+                } else {
+                    EffectState::Unknown
+                }
+            }
             DeviceJobState::Cancelled => EffectState::Cancelled,
             DeviceJobState::CancelledUnknown => EffectState::CancelledUnknown,
             _ => return Ok(()),
@@ -970,6 +1061,39 @@ impl EffectDispatch {
                 "state": job.state.as_str(),
             })
         });
+        // `unknown` must go through the recovery matrix so the reconciliation
+        // Decision is created in the same transaction and the Run is blocked
+        // until an operator answers (design: failed != unknown, H1).
+        if next == EffectState::Unknown {
+            let item = self
+                .db
+                .list_effect_recovery(workspace_id)
+                .await
+                .map_err(|error| error.to_string())?
+                .into_iter()
+                .find(|item| item.intent.effect_id == intent.effect_id)
+                .ok_or_else(|| format!("active effect {} disappeared during settle", intent.effect_id))?;
+            let mut transition = reduce_recovery(
+                &item.intent,
+                item.decision.as_ref(),
+                Some(&job.id),
+                &format!("settle:{}:unknown", intent.effect_id),
+                now,
+                &item.task_state,
+                RecoveryFact::Fence,
+            )
+            .map_err(|error| error.to_string())?;
+            // Keep the Job's persisted interrupted result; the reducer's
+            // `unknown` result is intentionally empty.
+            if let Some(projection) = transition.job.as_mut() {
+                projection.result_json = job.result_json.clone();
+                projection.ended_at = job.ended_at.or(Some(now));
+            }
+            self.apply(workspace_id, transition).await?;
+            self.publish(workspace_id);
+            return Ok(());
+        }
+
         // A definitive device completion after a stop request is recorded as
         // `cancelled`; keep the Job projection state aligned with the Effect
         // instead of leaving a `done` Job under a `cancelled` Effect.
@@ -978,16 +1102,9 @@ impl EffectDispatch {
         } else {
             job.state.as_str()
         };
-        let wake = WakeProjection {
-            task_id: intent.task_id.clone(),
-            wake_id: format!("settle:{}:wake", intent.effect_id),
-            signal_json: json!({
-                "effectId": intent.effect_id,
-                "state": next.as_str(),
-            })
-            .to_string(),
-            created_at: now,
-        };
+        // The Job terminal wake (`device_job:<job>:<state>`, written by
+        // JobService::finish) already owns the continuation. Writing a second
+        // generic wake here dead-letters and duplicates the continuation (M1).
         let transition = reduce(
             &Self::harness_state(workspace_id, intent, current_state, current_version),
             &HarnessFact {
@@ -1006,7 +1123,7 @@ impl EffectDispatch {
                     external_ref: Some(job.id.clone()),
                     ended_at: job.ended_at.or(Some(now)),
                 }),
-                wake: Some(wake),
+                wake: None,
             },
         )
         .map_err(|error| error.to_string())?;
@@ -1074,6 +1191,12 @@ impl EffectDispatch {
                 }
                 if let Err(error) = self.dispatch_workspace(&workspace_id).await {
                     tracing::warn!(%workspace_id, %error, "effect dispatch pass failed");
+                }
+                // Transient sink failures and direct Job finishes leave a
+                // dispatching Effect behind; this bounded pass settles it
+                // without waiting for a restart (M3).
+                if let Err(error) = self.settle_terminal_effects_workspace(&workspace_id).await {
+                    tracing::warn!(%workspace_id, %error, "effect terminal-job settle pass failed");
                 }
             }
         }
@@ -2156,6 +2279,163 @@ mod tests {
             "{result:?}"
         );
         assert!(fixture.worker.submitted.lock().expect("submissions").is_empty());
+        fixture.workspace.close().await;
+    }
+
+    #[tokio::test]
+    async fn restart_interrupted_job_settles_unknown_with_one_reconciliation_decision() {
+        let fixture = Fixture::new().await;
+        fixture
+            .seed(
+                "effect-restart",
+                "running",
+                json!({"deviceId":"device-1","argsJson":{"level":7}}),
+            )
+            .await;
+        let first = fixture.dispatch.dispatch_workspace(WS).await.expect("dispatch");
+        assert_eq!(first.dispatched, 1);
+        assert_eq!(fixture.worker.submitted.lock().expect("submissions").len(), 1);
+        let job_id = job_id_for("effect-restart");
+
+        // Crash/restart: fresh in-memory maps and a fresh worker over the same
+        // workspace store. Any new physical send would land in `worker`.
+        let db = fixture.db.clone();
+        let worker = Arc::new(RecordingWorker::default());
+        let restarted_jobs = JobService::new(
+            Arc::new(crate::shared::runtime_ports::WorkspaceDeviceJobStore::new(db.clone())),
+            Arc::new(RecordingWorkers { worker: worker.clone() }),
+            Arc::new(Validator::default()),
+            Arc::new(Resources),
+            Arc::new(ArbitrationRegistry::default()),
+        );
+        restarted_jobs.recover().await.expect("job recovery");
+        let job = restarted_jobs
+            .job(WS, &job_id)
+            .await
+            .expect("job read")
+            .expect("job row");
+        assert_eq!(job.state, DeviceJobState::Interrupted);
+
+        let restarted = Arc::new(EffectDispatch::new(db.clone(), restarted_jobs));
+        restarted.reconcile_startup().await;
+
+        // The physical outcome is indeterminate: unknown, not failed.
+        assert_eq!(fixture.effect("effect-restart").await.0, "unknown");
+        let (decisions, decision_state): (i64, String) = sqlx::query_as(
+            "SELECT COUNT(*), MIN(state) FROM decisions
+             WHERE effect_id = 'effect-restart' AND kind = 'effect_reconciliation'",
+        )
+        .fetch_one(&fixture.workspace.workspace_pool().await)
+        .await
+        .expect("reconciliation decision");
+        assert_eq!(decisions, 1);
+        assert_eq!(decision_state, "requested");
+        // The Run is blocked until reconciliation.
+        let task_state: String = sqlx::query_scalar("SELECT state FROM agent_tasks WHERE id = 'effect-restart'")
+            .fetch_one(&fixture.workspace.workspace_pool().await)
+            .await
+            .expect("task state");
+        assert_eq!(task_state, "paused");
+        assert!(
+            worker.submitted.lock().expect("submissions").is_empty(),
+            "restart recovery must not resend the physical action"
+        );
+        // Repeated startup recovery is idempotent.
+        restarted.reconcile_startup().await;
+        assert_eq!(fixture.effect("effect-restart").await.0, "unknown");
+        assert!(worker.submitted.lock().expect("submissions").is_empty());
+
+        // The operator answer is committed while the Task is paused; the Effect
+        // is preserved until the Task can advance again.
+        let recovery = super::super::EffectRecovery::new(db.clone());
+        recovery
+            .answer_reconciliation(WS, "effect-restart", "applied", "user-1", None)
+            .await
+            .expect("answer reconciliation");
+        assert_eq!(fixture.effect("effect-restart").await.0, "unknown");
+        assert!(worker.submitted.lock().expect("submissions").is_empty());
+
+        // Resume lets the recovery pass consume the answer; still no send.
+        sqlx::query("UPDATE agent_tasks SET state = 'running' WHERE id = 'effect-restart'")
+            .execute(&fixture.workspace.workspace_pool().await)
+            .await
+            .expect("resume task");
+        recovery
+            .ensure_reconciliation(WS, "effect-restart")
+            .await
+            .expect("consume answered reconciliation");
+        assert_eq!(fixture.effect("effect-restart").await.0, "completed");
+        assert!(worker.submitted.lock().expect("submissions").is_empty());
+        let jobs: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM device_jobs")
+            .fetch_one(&fixture.workspace.workspace_pool().await)
+            .await
+            .expect("job count");
+        assert_eq!(jobs, 1, "recovery must not create a second physical Job");
+        fixture.workspace.close().await;
+    }
+
+    #[tokio::test]
+    async fn periodic_settle_recovers_a_terminal_job_the_sink_missed() {
+        let fixture = Fixture::new().await;
+        fixture
+            .seed(
+                "effect-orphan",
+                "running",
+                json!({"deviceId":"device-1","argsJson":{"level":7}}),
+            )
+            .await;
+        fixture.dispatch.dispatch_workspace(WS).await.expect("dispatch");
+        let job_id = job_id_for("effect-orphan");
+        // The Job reaches terminal but the sink's settle call is lost (the
+        // production sink only logs a transient error).
+        fixture
+            .jobs
+            .finish(&job_id, JobFinal::Done(json!({"ok":true})))
+            .await
+            .expect("finish job");
+        assert_eq!(fixture.effect("effect-orphan").await.0, "dispatching");
+
+        fixture
+            .dispatch
+            .settle_terminal_effects_workspace(WS)
+            .await
+            .expect("periodic settle");
+        assert_eq!(fixture.effect("effect-orphan").await.0, "completed");
+        // The Job terminal wake owns the continuation; no generic settle wake.
+        let settle_wakes: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM task_wake_outbox WHERE event_id LIKE 'settle:%'")
+                .fetch_one(&fixture.workspace.workspace_pool().await)
+                .await
+                .expect("settle wakes");
+        assert_eq!(settle_wakes, 0, "a terminal Job must not write a second wake");
+        fixture.workspace.close().await;
+    }
+
+    #[tokio::test]
+    async fn dispatch_validation_failure_writes_a_parseable_effect_terminal_wake() {
+        let fixture = Fixture::new().await;
+        fixture
+            .seed(
+                "effect-invalid-wake",
+                "running",
+                json!({"deviceId":"missing","argsJson":{"level":7}}),
+            )
+            .await;
+        let report = fixture.dispatch.dispatch_workspace(WS).await.expect("dispatch");
+        assert_eq!(report.not_applied, 1);
+        let signal: String = sqlx::query_scalar(
+            "SELECT signal_json FROM task_wake_outbox
+             WHERE event_id = 'dispatch:effect-invalid-wake:not_applied:wake'",
+        )
+        .fetch_one(&fixture.workspace.workspace_pool().await)
+        .await
+        .expect("effect terminal wake");
+        let signal: Value = serde_json::from_str(&signal).expect("signal JSON");
+        assert_eq!(signal["kind"], "effect_terminal");
+        assert_eq!(signal["workspace_id"], WS);
+        assert_eq!(signal["task_id"], "effect-invalid-wake");
+        assert_eq!(signal["effect_id"], "effect-invalid-wake");
+        assert_eq!(signal["state"], "not_applied");
         fixture.workspace.close().await;
     }
 

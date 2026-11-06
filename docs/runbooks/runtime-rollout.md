@@ -371,6 +371,42 @@ soak result is claimed. It is a future gate, not a merge or production gate
 this period. Simulation and controlled-provider results never substitute for
 production evidence.
 
+## Accepted Task-UI degradation after the Harness cutover
+
+The Harness cutover is greenfield for the Task projection. Two gaps are
+**accepted for this branch** and must not be read as working features:
+
+1. **Device / watch / evidence context is empty (M2).** The Task projection still
+   returns `watches`, `evidence`, `associations`, and `devices` as empty arrays
+   (`crates/db/src/harness_runtime_api.rs`). Device reads, watch rules, and media
+   evidence are written to platform `runtime.v1` telemetry, not to the Task's
+   workspace `session_events`, and the live SSE tail only reads the workspace
+   ledger. Consequence: the Task detail "Devices" panel says "No referenced
+   devices", the Evidence panel is empty, and the Workbench cannot resolve a
+   playback target from a Task. Bridging device/watch/media telemetry into the
+   workspace event stream (or having the projection read it) is a follow-up; the
+   arrays stay empty until then.
+2. **Model-process replay is not persisted (M4).** No production writer emits
+   `step.thinking`, `step.text`, or per-tool-call events; only effect terminal
+   `step.tool_result` and lifecycle/effect events exist. The Task Loop/SSE shows
+   lifecycle and effect process facts, not the model's reasoning or text, and a
+   reconnect cannot replay them. Do not claim "model-process replay" or
+   "the web shows the full agent process" for this branch.
+
+Both are visible degradations, not silent data loss: lifecycle, effect, Job,
+approval, and reconciliation facts remain durable and replayable.
+
+## Device autonomy is Job-only (L3)
+
+Auto-approved (`require_confirm=false`) Task actions still call
+`JobService::submit` directly and write a workspace Job without a Prepared
+Effect, dispatch permit, effect terminal wake, or `unknown`/reconciliation
+state (`apps/cloud/src/domains/agent/host/tools/thing/invoke_action.rs`). The
+Job is still single-writer and every action is still an auditable Job, but such
+actions do not traverse the Harness Effect state machine. Confirmed actions do.
+Treat "all device effects go through `effect_intents`" as the target state, not
+as a property of this branch.
+
 ## Evidence limits
 
 - The browser suite runs in Playwright Chromium. That build ships without

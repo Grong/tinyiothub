@@ -9,6 +9,7 @@ use tinyiothub_agent::port::runtime::AgentLoop;
 use tinyiothub_agent::port::task::TaskStore;
 use tinyiothub_cloud::domains::agent::events::AgentEventBus;
 use tinyiothub_cloud::domains::agent::runtime::controls::{CommandControl, CommandRecovery};
+use tinyiothub_cloud::domains::agent::runtime::dispatch::{EffectDispatch, HarnessJobResultSink, job_id_for};
 use tinyiothub_cloud::domains::agent::runtime::harness_store::HarnessTaskStore;
 use tinyiothub_cloud::domains::agent::runtime::{EffectRecovery, RecoveryMode};
 use tinyiothub_cloud::domains::agent::thing_agent::active_runs::ActiveRunRegistry;
@@ -18,10 +19,18 @@ use tinyiothub_cloud::domains::agent::thing_agent::runner::{AgentHandle, RunCont
 use tinyiothub_cloud::domains::agent::thing_agent::task::coordinator::TaskCoordinator;
 use tinyiothub_cloud::domains::agent::thing_agent::task::wake::WakeRouter;
 use tinyiothub_cloud::shared::runtime_ports::WatchRuleStoreAdapter;
+use tinyiothub_core::driver::manifest::{ManifestTool, ToolKindDecl, ToolSafetyDecl, ToolTimeout};
+use tinyiothub_core::error::Error;
 use tinyiothub_core::harness::{
     CommandKind, CommandState, DecisionState, EffectIntent, EffectState, ExecutionMode, HarnessCommand,
     HarnessEventInput,
 };
+use tinyiothub_core::models::thing_command::ThingCommand;
+use tinyiothub_runtime::access::resources::{ResourceClaim, ResourceResolver, device_claim};
+use tinyiothub_runtime::access::validator::{AccessCallValidator, CallError, ValidatedCall};
+use tinyiothub_runtime::arbitration::{ArbitrationRegistry, ResourceLease};
+use tinyiothub_runtime::job::service::JobService;
+use tinyiothub_runtime::job::worker_adapter::{JobDeviceWorker, JobResultSink, JobWorkerLocator};
 use tinyiothub_storage::harness_event::EventFilter;
 use tinyiothub_storage::harness_snapshot::{ProjectionSnapshot, ProjectionSubject};
 use tinyiothub_storage::test_helpers::{WorkspaceFixture, fixture_workspace};
@@ -835,11 +844,19 @@ fn task_runtime(
     db: &Arc<tinyiothub_storage::Db>,
     prompts: Arc<Mutex<Vec<String>>>,
 ) -> (Arc<HarnessTaskStore>, Arc<TaskCoordinator>, WakeRouter) {
+    task_runtime_with_jobs(db, prompts, None)
+}
+
+fn task_runtime_with_jobs(
+    db: &Arc<tinyiothub_storage::Db>,
+    prompts: Arc<Mutex<Vec<String>>>,
+    jobs: Option<JobService>,
+) -> (Arc<HarnessTaskStore>, Arc<TaskCoordinator>, WakeRouter) {
     let store = Arc::new(HarnessTaskStore::new(db.clone()));
     let coordinator = Arc::new(
         TaskCoordinator::new(
             store.clone(),
-            None,
+            jobs,
             Arc::new(WatchRuleStoreAdapter::new(db.as_ref().clone())),
             Arc::new(dashmap::DashMap::new()),
             Arc::new(AgentEventBus::new(64)),
@@ -853,6 +870,177 @@ fn task_runtime(
     );
     let router = WakeRouter::new(store.clone(), coordinator.clone());
     (store, coordinator, router)
+}
+
+#[derive(Default)]
+struct E2eWorker {
+    submitted: Mutex<Vec<String>>,
+}
+
+impl JobDeviceWorker for E2eWorker {
+    fn submit(&self, _command: ThingCommand, job_id: &str, _lease: Option<ResourceLease>) -> Result<(), Error> {
+        self.submitted.lock().expect("submissions").push(job_id.into());
+        Ok(())
+    }
+
+    fn cancel_job(&self, _job_id: &str) -> bool {
+        true
+    }
+
+    fn has_recoverable_call(&self, _job_id: &str) -> bool {
+        false
+    }
+
+    fn complete_job(&self, _job_id: &str) {}
+}
+
+struct E2eWorkers {
+    worker: Arc<E2eWorker>,
+}
+
+impl JobWorkerLocator for E2eWorkers {
+    fn worker_for(&self, _device_id: &str) -> Option<Arc<dyn JobDeviceWorker>> {
+        Some(self.worker.clone())
+    }
+}
+
+/// Rejects `deviceId == "missing"` so the dispatch path can be driven to
+/// `not_applied` through the real validator.
+struct E2eValidator;
+
+#[async_trait]
+impl AccessCallValidator for E2eValidator {
+    async fn validate(
+        &self,
+        _workspace_id: &str,
+        thing_id: &str,
+        tool: &str,
+        _params: Option<&serde_json::Value>,
+    ) -> Result<ValidatedCall, CallError> {
+        if thing_id == "missing" {
+            return Err(CallError::NoDeclaration(thing_id.to_string()));
+        }
+        Ok(ValidatedCall {
+            tool: ManifestTool {
+                name: tool.to_string(),
+                kind: ToolKindDecl::Action,
+                target_field: None,
+                parameters: json!({"type":"object"}),
+                timeout: ToolTimeout {
+                    default_ms: 5_000,
+                    max_ms: 5_000,
+                },
+                safety: ToolSafetyDecl::Control,
+                resources: vec![],
+                cancellable: true,
+            },
+            timeout_ms: 5_000,
+            clamped: false,
+        })
+    }
+}
+
+struct E2eResources;
+
+#[async_trait]
+impl ResourceResolver for E2eResources {
+    async fn resolve_action(
+        &self,
+        _workspace_id: &str,
+        _thing_id: &str,
+        _tool_name: &str,
+    ) -> Result<Vec<ResourceClaim>, String> {
+        Ok(vec![device_claim()])
+    }
+
+    async fn resolve_properties(
+        &self,
+        _workspace_id: &str,
+        _thing_id: &str,
+        _properties: &[String],
+    ) -> Result<Vec<ResourceClaim>, String> {
+        Ok(vec![device_claim()])
+    }
+}
+
+fn e2e_job_service(db: &Arc<tinyiothub_storage::Db>, worker: Arc<E2eWorker>) -> JobService {
+    JobService::new(
+        Arc::new(tinyiothub_cloud::shared::runtime_ports::WorkspaceDeviceJobStore::new(
+            db.clone(),
+        )),
+        Arc::new(E2eWorkers { worker }),
+        Arc::new(E2eValidator),
+        Arc::new(E2eResources),
+        Arc::new(ArbitrationRegistry::default()),
+    )
+}
+
+/// Seed a live Harness Task and one Prepared Effect with no approval Decision.
+async fn seed_task_effect(fixture: &WorkspaceFixture, task_id: &str, effect_id: &str, request_json: serde_json::Value) {
+    use tinyiothub_core::agent_task::{AgentTask, TaskStatus, TaskWake, WakeDispatchState};
+
+    let now = at();
+    let task = AgentTask {
+        id: task_id.into(),
+        workspace_id: WS.into(),
+        idempotency_key: format!("{task_id}-key"),
+        objective: "continue after the effect".into(),
+        session_key: Some("session-effect".into()),
+        created_by: "user-1".into(),
+        status: TaskStatus::Active,
+        current_run_id: None,
+        state_version: 0,
+        created_at: now,
+        updated_at: now,
+        ended_at: None,
+    };
+    let wake = TaskWake {
+        task_id: task_id.into(),
+        event_id: format!("create-{task_id}"),
+        signal_json: json!({"workspace_id":WS}).to_string(),
+        dispatch_state: WakeDispatchState::Dispatched,
+        created_at: now,
+        dispatched_at: Some(now),
+        resolved_at: Some(now),
+    };
+    fixture
+        .db
+        .harness_create_task_with_wake(&task, &wake)
+        .await
+        .expect("harness Task");
+    let pool = fixture.workspace_pool().await;
+    sqlx::query("INSERT INTO agent_runs (id, task_id, state) VALUES (?, ?, 'running')")
+        .bind(format!("run-{effect_id}"))
+        .bind(task_id)
+        .execute(&pool)
+        .await
+        .expect("run");
+    sqlx::query(
+        "INSERT INTO effect_intents
+            (effect_id, session_id, task_id, run_id, tool_call_id, tool_name, request_json,
+             request_digest, idempotency_key, external_ref, state, state_version, result_json,
+             created_at, updated_at)
+         VALUES (?, 'session-effect', ?, ?, ?, 'set_speed', ?, ?, ?, NULL, 'prepared', 1, NULL, ?, ?)",
+    )
+    .bind(effect_id)
+    .bind(task_id)
+    .bind(format!("run-{effect_id}"))
+    .bind(format!("call-{effect_id}"))
+    .bind(request_json.to_string())
+    .bind(format!("digest-{effect_id}"))
+    .bind(effect_id)
+    .bind(now.to_rfc3339())
+    .bind(now.to_rfc3339())
+    .execute(&pool)
+    .await
+    .expect("effect");
+}
+
+async fn dead_wake_count(fixture: &WorkspaceFixture) -> i64 {
+    sqlx::query_scalar("SELECT COUNT(*) FROM task_wake_outbox WHERE dispatch_state = 'dead'")
+        .fetch_one(&fixture.workspace_pool().await)
+        .await
+        .expect("dead wakes")
 }
 
 /// Seed a full Harness Task plus a Prepared Effect and a due requested
@@ -1065,6 +1253,203 @@ async fn deduplicated_denial_reheals_a_lost_continuation_wake() {
     let signal: serde_json::Value = serde_json::from_str(&signal).expect("signal JSON");
     assert_eq!(signal["kind"], "approval_decided");
     assert_eq!(signal["outcome"], "denied");
+    fixture.close().await;
+}
+
+async fn wait_for_task_completion(store: &HarnessTaskStore, task_id: &str) -> tinyiothub_core::agent_task::TaskStatus {
+    let mut status = tinyiothub_core::agent_task::TaskStatus::Active;
+    for _ in 0..300 {
+        let task = store.get_task(WS, task_id).await.expect("task read").expect("task row");
+        status = task.status;
+        if status.is_terminal() {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    }
+    status
+}
+
+#[tokio::test]
+async fn job_completion_settles_once_and_leaves_no_dead_wakes() {
+    let fixture = fixture_workspace(WS).await;
+    seed_task_effect(
+        &fixture,
+        "task-effect",
+        "effect-complete",
+        json!({"deviceId":"robot-1","argsJson":{"level":1}}),
+    )
+    .await;
+    let db = Arc::new(fixture.db.clone());
+    let worker = Arc::new(E2eWorker::default());
+    let jobs = e2e_job_service(&db, worker.clone());
+    let dispatch = Arc::new(EffectDispatch::new(db.clone(), jobs.clone()));
+    let report = dispatch.dispatch_workspace(WS).await.expect("dispatch");
+    assert_eq!(report.dispatched, 1);
+    assert_eq!(worker.submitted.lock().expect("submissions").len(), 1);
+    let job_id = job_id_for("effect-complete");
+
+    let sink = HarnessJobResultSink::new(jobs.clone(), dispatch.clone());
+    JobResultSink::command_finished(&sink, &job_id, true, None).await;
+    assert_eq!(effect_state(&fixture, "effect-complete").await.0, "completed");
+    // The Job terminal wake owns the continuation; no second generic wake.
+    let settle_wakes: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM task_wake_outbox WHERE event_id LIKE 'settle:%'")
+        .fetch_one(&fixture.workspace_pool().await)
+        .await
+        .expect("settle wakes");
+    assert_eq!(settle_wakes, 0);
+
+    let prompts = Arc::new(Mutex::new(Vec::new()));
+    let (store, _, router) = task_runtime_with_jobs(&db, prompts.clone(), Some(jobs));
+    assert_eq!(router.run(64).await.expect("route job wake"), 1);
+    assert_eq!(
+        dead_wake_count(&fixture).await,
+        0,
+        "the continuation must not dead-letter"
+    );
+    let wake_state: String = sqlx::query_scalar("SELECT dispatch_state FROM task_wake_outbox WHERE event_id = ?")
+        .bind(format!("device_job:{job_id}:done"))
+        .fetch_one(&fixture.workspace_pool().await)
+        .await
+        .expect("job wake state");
+    assert_eq!(wake_state, "dispatched");
+    assert_eq!(
+        wait_for_task_completion(&store, "task-effect").await,
+        tinyiothub_core::agent_task::TaskStatus::Completed
+    );
+    fixture.close().await;
+}
+
+#[tokio::test]
+async fn dispatch_failure_wake_is_parseable_and_not_dead() {
+    let fixture = fixture_workspace(WS).await;
+    seed_task_effect(
+        &fixture,
+        "task-invalid",
+        "effect-invalid",
+        json!({"deviceId":"missing","argsJson":{"level":1}}),
+    )
+    .await;
+    let db = Arc::new(fixture.db.clone());
+    let worker = Arc::new(E2eWorker::default());
+    let jobs = e2e_job_service(&db, worker.clone());
+    let dispatch = Arc::new(EffectDispatch::new(db.clone(), jobs.clone()));
+    let report = dispatch.dispatch_workspace(WS).await.expect("dispatch");
+    assert_eq!(report.not_applied, 1);
+    assert!(worker.submitted.lock().expect("submissions").is_empty());
+
+    let signal: String = sqlx::query_scalar(
+        "SELECT signal_json FROM task_wake_outbox
+         WHERE event_id = 'dispatch:effect-invalid:not_applied:wake'",
+    )
+    .fetch_one(&fixture.workspace_pool().await)
+    .await
+    .expect("effect terminal wake");
+    let signal: serde_json::Value = serde_json::from_str(&signal).expect("signal JSON");
+    assert_eq!(signal["kind"], "effect_terminal");
+    assert_eq!(signal["workspace_id"], WS);
+    assert_eq!(signal["task_id"], "task-invalid");
+
+    let prompts = Arc::new(Mutex::new(Vec::new()));
+    let (store, _, router) = task_runtime_with_jobs(&db, prompts.clone(), Some(jobs));
+    assert_eq!(router.run(64).await.expect("route failure wake"), 1);
+    assert_eq!(
+        dead_wake_count(&fixture).await,
+        0,
+        "a dispatch failure must not dead-letter"
+    );
+    let wake_state: String = sqlx::query_scalar("SELECT dispatch_state FROM task_wake_outbox WHERE event_id = ?")
+        .bind("dispatch:effect-invalid:not_applied:wake")
+        .fetch_one(&fixture.workspace_pool().await)
+        .await
+        .expect("failure wake state");
+    assert_eq!(wake_state, "dispatched");
+    assert_eq!(
+        wait_for_task_completion(&store, "task-invalid").await,
+        tinyiothub_core::agent_task::TaskStatus::Completed
+    );
+    fixture.close().await;
+}
+
+#[tokio::test]
+async fn interrupted_job_unknown_effect_continues_after_operator_reconciliation() {
+    let fixture = fixture_workspace(WS).await;
+    seed_task_effect(
+        &fixture,
+        "task-interrupted",
+        "effect-interrupted",
+        json!({"deviceId":"robot-1","argsJson":{"level":1}}),
+    )
+    .await;
+    let db = Arc::new(fixture.db.clone());
+    let worker = Arc::new(E2eWorker::default());
+    let jobs = e2e_job_service(&db, worker.clone());
+    let dispatch = Arc::new(EffectDispatch::new(db.clone(), jobs.clone()));
+    dispatch.dispatch_workspace(WS).await.expect("dispatch");
+    assert_eq!(worker.submitted.lock().expect("submissions").len(), 1);
+
+    // Restart over the same workspace store with a fresh worker: any recovery
+    // resend would be visible in `restart_worker`.
+    let restart_worker = Arc::new(E2eWorker::default());
+    let restart_jobs = e2e_job_service(&db, restart_worker.clone());
+    restart_jobs.recover().await.expect("job recovery");
+    let restarted = Arc::new(EffectDispatch::new(db.clone(), restart_jobs.clone()));
+    restarted.reconcile_startup().await;
+
+    assert_eq!(effect_state(&fixture, "effect-interrupted").await.0, "unknown");
+    assert_eq!(decision_state(&fixture, "effect-interrupted").await.0, "requested");
+    let task_status: String = sqlx::query_scalar("SELECT state FROM agent_tasks WHERE id = 'task-interrupted'")
+        .fetch_one(&fixture.workspace_pool().await)
+        .await
+        .expect("task state");
+    assert_eq!(task_status, "paused", "the Run stays blocked until reconciliation");
+    assert!(
+        restart_worker.submitted.lock().expect("submissions").is_empty(),
+        "restart recovery must not resend"
+    );
+
+    // Operator answer while paused: durable and committed, but not consumed
+    // until the Task can advance.
+    EffectRecovery::new(db.clone())
+        .answer_reconciliation(WS, "effect-interrupted", "applied", "user-1", None)
+        .await
+        .expect("answer reconciliation");
+    assert_eq!(effect_state(&fixture, "effect-interrupted").await.0, "unknown");
+    assert_eq!(
+        decision_state(&fixture, "effect-interrupted").await,
+        ("answered".to_string(), Some("applied".to_string()))
+    );
+    assert!(restart_worker.submitted.lock().expect("submissions").is_empty());
+
+    // Resume, then the recovery pass consumes the answer; the Task continues
+    // from the pending continuation wake with no resend.
+    let prompts = Arc::new(Mutex::new(Vec::new()));
+    let (store, _, router) = task_runtime_with_jobs(&db, prompts.clone(), Some(restart_jobs));
+    let task = store
+        .get_task(WS, "task-interrupted")
+        .await
+        .expect("task read")
+        .expect("task row");
+    assert_eq!(task.status, tinyiothub_core::agent_task::TaskStatus::Paused);
+    // The production pause/resume API restores the state recorded when the
+    // Effect fence blocked the Run.
+    let restored = db
+        .resume_workflow_task(WS, "task-interrupted")
+        .await
+        .expect("resume task");
+    assert_eq!(restored, "running");
+    restarted.reconcile_startup().await;
+    assert_eq!(effect_state(&fixture, "effect-interrupted").await.0, "completed");
+    assert_eq!(decision_state(&fixture, "effect-interrupted").await.0, "consumed");
+    router.run(64).await.expect("route continuation wakes");
+    assert_eq!(
+        wait_for_task_completion(&store, "task-interrupted").await,
+        tinyiothub_core::agent_task::TaskStatus::Completed
+    );
+    assert_eq!(dead_wake_count(&fixture).await, 0);
+    assert!(
+        restart_worker.submitted.lock().expect("submissions").is_empty(),
+        "the continuation must never re-send the physical action"
+    );
     fixture.close().await;
 }
 

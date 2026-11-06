@@ -174,6 +174,12 @@ under `#[cfg(any(test, feature = "testing"))]` for parity fixtures only.
 `runtime.v1` Run lifecycle event; Task/Run/Wake crash recovery is
 `Db::harness_interrupt_unfinished_runs` in the workspace generation.
 
+Unapproved autonomy is **Job-only** (L3): an auto-approved
+`require_confirm=false` `invoke_action` submits a workspace Job directly and
+does not create a Prepared Effect. Confirmed actions do traverse
+`effect_intents`. Treat "every device effect goes through the Harness Effect
+state machine" as the target, not as a current invariant.
+
 `hub_ledger` (`runtime.v1`) remains telemetry: watch-rule, media-evidence and
 device-read facts only. No Task/Run/Job lifecycle may be written there — those
 are workspace Harness events. `scripts/guards/legacy-writers.sh` enforces the

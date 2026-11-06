@@ -746,6 +746,10 @@ async fn apply_writes(
         drain_cancelling = current_task_state == "cancelling";
         let preserve_paused = current_task_state == "paused"
             && !matches!(projection.task_state.as_str(), "completed" | "failed" | "cancelled");
+        // An Effect transition may itself block the Run (e.g. recovery fences a
+        // dispatching Effect to `unknown`). Persist the waiting relation so the
+        // pause/resume API can restore the previous Task state.
+        let pause_waiting = current_task_state != "paused" && projection.task_state == "paused";
         // A terminal Task stays terminal: a late Effect write must never move it
         // back to `cancelling`, which would resurrect a cancelled Task while its
         // live Run and Jobs are still winding down.
@@ -782,6 +786,20 @@ async fn apply_writes(
                 "taskId":projection.task_id,
                 "state":"paused",
                 "previousState":projection.task_state,
+            });
+            let payload = serde_json::to_string(&payload_json)?;
+            let mut pause_relation = event.clone();
+            pause_relation.event_id = format!("{}:pause-waiting", transition.transition_id);
+            pause_relation.event_type = "task.pause_waiting".to_string();
+            pause_relation.payload_digest = format!("{:x}", sha2::Sha256::digest(payload.as_bytes()));
+            pause_relation.payload_json = payload_json;
+            insert_event(connection, &pause_relation).await?;
+        }
+        if pause_waiting {
+            let payload_json = serde_json::json!({
+                "taskId":projection.task_id,
+                "state":"paused",
+                "previousState":current_task_state,
             });
             let payload = serde_json::to_string(&payload_json)?;
             let mut pause_relation = event.clone();
@@ -1350,7 +1368,17 @@ impl Db {
         )
         .bind(&current.task_id)
         .bind(&event_id)
-        .bind(serde_json::json!({"effectId":effect_id,"kind":"reconciliation_answered"}).to_string())
+        .bind(
+            serde_json::json!({
+                "kind": "reconciliation_answered",
+                "workspace_id": workspace_id,
+                "task_id": current.task_id,
+                "effect_id": effect_id,
+                "answer": answer,
+                "state": if answer == "applied" { "completed" } else { "not_applied" },
+            })
+            .to_string(),
+        )
         .bind(now.to_rfc3339())
         .execute(&mut *tx)
         .await?;
