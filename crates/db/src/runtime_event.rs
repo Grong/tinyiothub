@@ -679,8 +679,11 @@ impl Db {
     pub async fn append_runtime_event(&self, input: RuntimeEventInput) -> Result<RuntimeEvent> {
         // A late device event for a terminal Task may be recorded as telemetry
         // but must never resurrect its device-state projection (Task 19C4 M4).
-        let terminal = match input.task_id.as_deref() {
-            Some(task_id) => {
+        // The terminal check only matters when this event would seed or merge
+        // a `runtime_device_state` row. Events without a device stay on the
+        // platform-only path (Task 19C4 hot-path Low).
+        let terminal = match (input.device_id.as_ref(), input.task_id.as_deref()) {
+            (Some(_), Some(task_id)) => {
                 // Never create a workspace generation from a telemetry write.
                 let has_store = self
                     .try_existing_workspace_pool(&input.workspace_id)
@@ -694,7 +697,7 @@ impl Db {
                         Ok(Some(task)) if task.status.is_terminal()
                     )
             }
-            None => false,
+            _ => false,
         };
         if terminal && let Some(task_id) = input.task_id.as_deref() {
             self.prune_runtime_device_state(&input.workspace_id, task_id).await;
@@ -1273,6 +1276,73 @@ mod tests {
         .await
         .expect("projection row after late evidence");
         assert_eq!(rows, 0, "late evidence must not resurrect the projection");
+        let _ = tokio::fs::remove_dir_all(&root).await;
+    }
+
+    #[tokio::test]
+    async fn cancel_workflow_prunes_drained_parent_and_child_projections() {
+        let pool = crate::test_helpers::test_pool().await;
+        seed_workspace(&pool, "ws-1").await;
+        let root = std::env::temp_dir().join(format!("tinyiothub-drain-device-{}", uuid::Uuid::new_v4()));
+        let db = Db::new(pool).with_workspace_store_root(root.join("data/agents"));
+        let now = Utc::now();
+        for (task_id, parent) in [("task-parent", None), ("task-child", Some("task-parent"))] {
+            db.harness_create_task_with_wake(
+                &AgentTask {
+                    id: task_id.into(),
+                    workspace_id: "ws-1".into(),
+                    idempotency_key: format!("{task_id}-key"),
+                    objective: "inspect".into(),
+                    session_key: None,
+                    created_by: "user-1".into(),
+                    status: TaskStatus::Active,
+                    current_run_id: None,
+                    state_version: 0,
+                    created_at: now,
+                    updated_at: now,
+                    ended_at: None,
+                },
+                &TaskWake {
+                    task_id: task_id.into(),
+                    event_id: format!("create-{task_id}"),
+                    signal_json: json!({"workspace_id":"ws-1"}).to_string(),
+                    dispatch_state: WakeDispatchState::Pending,
+                    created_at: now,
+                    dispatched_at: None,
+                    resolved_at: None,
+                },
+            )
+            .await
+            .expect("task");
+            if let Some(parent) = parent {
+                sqlx::query("UPDATE agent_tasks SET parent_task_id = ? WHERE id = ?")
+                    .bind(parent)
+                    .bind(task_id)
+                    .execute(&db.workspace_pool_for_testing("ws-1").await.expect("pool"))
+                    .await
+                    .expect("parent link");
+            }
+            sqlx::query(
+                "INSERT INTO runtime_device_state (workspace_id, task_id, device_id, state_json, updated_at)
+                 VALUES ('ws-1', ?, 'dev-drain', '{}', 'now')",
+            )
+            .bind(task_id)
+            .execute(db.pool())
+            .await
+            .expect("projection");
+        }
+
+        db.cancel_workflow_task("ws-1", "task-parent")
+            .await
+            .expect("cancel cascade");
+        let rows: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM runtime_device_state
+             WHERE workspace_id = 'ws-1' AND task_id IN ('task-parent', 'task-child')",
+        )
+        .fetch_one(db.pool())
+        .await
+        .expect("projection rows");
+        assert_eq!(rows, 0, "drained parent and child projections must be pruned");
         let _ = tokio::fs::remove_dir_all(&root).await;
     }
 

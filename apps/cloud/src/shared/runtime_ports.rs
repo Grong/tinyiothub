@@ -1129,42 +1129,36 @@ impl tinyiothub_runtime::ports::WatchRuleStore for WatchRuleStoreAdapter {
         id: &str,
         wake: &tinyiothub_core::agent_task::TaskWake,
     ) -> Result<bool, String> {
-        // Snapshot the platform row so a failed cross-database wake write can
-        // restore it (M3). The harness generation and the platform pool cannot
-        // share a transaction.
-        let existing = tinyiothub_storage::watch::find_rule(self.db.pool(), workspace_id, id)
-            .await
-            .map_err(|e| e.to_string())?;
+        // Wake-first crash-safe order (M3): the workspace wake is an
+        // INSERT OR IGNORE row before the platform rule is deleted. A crash
+        // between the two can at worst leave a duplicate/idempotent wake; the
+        // one-shot continuation is never lost.
+        let inserted = self.db.harness_record_wake(wake).await.map_err(|error| {
+            format!("watch {id}: workspace completion wake failed: {error}; watch rule left in place")
+        })?;
         let (completed, event) =
             tinyiothub_storage::watch::complete_task_watch_and_event(self.db.pool(), workspace_id, id, wake)
                 .await
                 .map_err(|e| e.to_string())?;
-        if let Some(event) = event {
-            self.publish(event);
-        }
         if !completed {
-            // Already retired (timeout/cancel/duplicate): never insert a wake
-            // for a watch that no longer exists.
+            // The rule was already retired. Undo only the wake this call
+            // newly inserted; a pre-existing wake (for example from a crash
+            // after the wake write) must survive.
+            if inserted
+                && let Err(error) = self
+                    .db
+                    .harness_remove_pending_wake(workspace_id, &wake.task_id, &wake.event_id)
+                    .await
+            {
+                return Err(format!(
+                    "watch {id}: rule already retired and the newly inserted wake could not be removed: {error}"
+                ));
+            }
             return Ok(false);
         }
-        // Record the continuation wake in the owning workspace Harness
-        // generation. On failure, put the platform rule back so the one-shot
-        // rule is not silently armed nowhere; the caller logs and re-arms the
-        // in-memory rule for a retry.
-        if let Err(error) = self.db.harness_record_wake(wake).await {
-            if let Some(row) = existing
-                && let Err(restore_error) = tinyiothub_storage::watch::restore_rule(self.db.pool(), &row).await
-            {
-                tracing::error!(
-                    %workspace_id,
-                    %id,
-                    %restore_error,
-                    "failed to restore watch rule after workspace wake failure"
-                );
-            }
-            return Err(format!(
-                "watch {id}: workspace completion wake failed: {error}; rule restored for retry"
-            ));
+        // Publish only after the rule delete and the wake are both durable.
+        if let Some(event) = event {
+            self.publish(event);
         }
         Ok(true)
     }
@@ -1964,13 +1958,56 @@ mod runtime_job_event_tests {
         .fetch_one(&workspace)
         .await
         .expect("workspace wake count");
-        assert_eq!(wakes, 1, "completed == false must not insert a wake");
+        assert_eq!(wakes, 1, "completed == false must not keep a replay wake");
+        let total: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM task_wake_outbox WHERE task_id = 'task-1'")
+            .fetch_one(&workspace)
+            .await
+            .expect("total wake count");
+        assert_eq!(
+            total, 2,
+            "the fixture create wake plus the completion wake only; the replay wake was removed"
+        );
+    }
+
+    /// Task 19C4 M3 crash window: the wake is written before the platform
+    /// delete. If a previous attempt crashed after that write, a later
+    /// completion that finds the rule already retired must not remove the
+    /// pre-existing wake.
+    #[tokio::test]
+    async fn preexisting_wake_survives_an_already_retired_completion() {
+        let (db, recorder, _hub) = fixture().await;
+        let store = WatchRuleStoreAdapter::new((*db).clone()).with_recorder(recorder);
+        let wake = tinyiothub_core::agent_task::TaskWake {
+            task_id: "task-1".into(),
+            event_id: "watch:watch-crash:hit".into(),
+            signal_json: serde_json::json!({"workspace_id":"ws-job"}).to_string(),
+            dispatch_state: tinyiothub_core::agent_task::WakeDispatchState::Pending,
+            created_at: chrono::Utc::now(),
+            dispatched_at: None,
+            resolved_at: None,
+        };
+        assert!(db.harness_record_wake(&wake).await.expect("pre-crash wake"));
+        assert!(
+            !store
+                .complete_task_watch("ws-job", "watch-crash", &wake)
+                .await
+                .expect("already retired"),
+            "no rule exists"
+        );
+        let workspace = db.workspace_pool_for_testing("ws-job").await.expect("workspace pool");
+        let wakes: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM task_wake_outbox WHERE task_id = 'task-1' AND event_id = 'watch:watch-crash:hit'",
+        )
+        .fetch_one(&workspace)
+        .await
+        .expect("workspace wake");
+        assert_eq!(wakes, 1, "a pre-existing wake must survive completed == false");
     }
 
     /// Task 19C4 M3: if the workspace wake cannot be written, the platform rule
-    /// is restored so the one-shot is retried instead of silently disarmed.
+    /// is left untouched and the engine re-arms the one-shot for retry.
     #[tokio::test]
-    async fn watch_completion_restores_the_rule_when_the_workspace_wake_fails() {
+    async fn watch_completion_leaves_the_rule_when_the_workspace_wake_fails() {
         let (db, recorder, _hub) = fixture().await;
         let store = WatchRuleStoreAdapter::new((*db).clone()).with_recorder(recorder);
         let rule = tinyiothub_core::watch::WatchRule {
@@ -2002,11 +2039,28 @@ mod runtime_job_event_tests {
             .complete_task_watch("ws-job", "watch-fail", &wake)
             .await
             .expect_err("workspace wake must fail");
-        assert!(error.contains("rule restored"), "{error}");
-        let restored = tinyiothub_storage::watch::find_rule(db.pool(), "ws-job", "watch-fail")
+        assert!(error.contains("rule left in place"), "{error}");
+        assert!(
+            !error.contains("rule restored"),
+            "the message must not claim a restore that never happened: {error}"
+        );
+        let stored = tinyiothub_storage::watch::find_rule(db.pool(), "ws-job", "watch-fail")
             .await
             .expect("platform rule lookup");
-        assert!(restored.is_some(), "the one-shot rule must be restored for retry");
+        assert!(
+            stored.is_some(),
+            "the one-shot rule must still exist because the wake was written first"
+        );
+        // No `watch.completed` event may be published before the wake exists.
+        let completed_events: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM hub_ledger
+             WHERE kind = 'runtime' || '.v1'
+               AND json_extract(payload, '$.eventType') = 'watch.completed'",
+        )
+        .fetch_one(db.pool())
+        .await
+        .expect("completed events");
+        assert_eq!(completed_events, 0);
     }
     #[tokio::test]
     async fn watch_adapter_publishes_and_replays_cancellation_and_generic_deletion() {

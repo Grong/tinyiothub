@@ -20,6 +20,10 @@
 # their own CREATE/DROP DDL.
 set -u
 cd "$(git rev-parse --show-toplevel)"
+command -v python3 >/dev/null 2>&1 || {
+  echo "❌ legacy-writers requires python3 for the production-scope scanner"
+  exit 1
+}
 
 FAIL=0
 FAILED_CHECKS=()
@@ -49,53 +53,17 @@ check_rust() {
 }
 
 # production_lines <file>
-# Emit `path:line:content` for the production scope only. Inline `#[cfg(test)]`
-# modules AND single test-gated items (mod/use/fn/impl/struct/...) are tracked
-# by scope — not by stopping at the first token — so production code after a
-# test block is still scanned. Items gated with
-# `#[cfg(any(test, feature = "testing"))]` remain in scope; device_job.rs is
-# verified separately by DEVICE_JOB_UNGATED.
+# Emit `path:line:content` for the production scope only. A lexical scanner
+# ignores braces in strings/raw strings/chars/comments and skips every
+# `#[cfg(test)]` item/statement (including multi-line statements) for its own
+# scope, so production code after a test block is still scanned. Items gated
+# with `#[cfg(any(test, feature = "testing"))]` remain in scope; device_job.rs
+# is verified separately by DEVICE_JOB_UNGATED.
 production_lines() {
-  awk -v f="$1" '
-    BEGIN { in_test = 0; opened = 0; depth = 0; test_pending = 0; prev = ""; prev_no = 0 }
-    in_test {
-      n = gsub(/{/, "{"); m = gsub(/}/, "}")
-      depth += n - m
-      if (n > 0) opened = 1
-      if (opened && depth <= 0) { in_test = 0; opened = 0; depth = 0 }
-      next
-    }
-    /^[[:space:]]*#\[cfg\(test\)\][[:space:]]*$/ { test_pending = 1; next }
-    test_pending {
-      if ($0 ~ /^[[:space:]]*$/) next
-      if ($0 ~ /^[[:space:]]*#\[/) next
-      if ($0 ~ /^[[:space:]]*mod[[:space:]]+[A-Za-z0-9_]+[[:space:]]*\{/) {
-        test_pending = 0; in_test = 1; opened = 0; depth = 0
-        n = gsub(/{/, "{"); m = gsub(/}/, "}")
-        depth += n - m; if (n > 0) opened = 1
-        next
-      }
-      if ($0 ~ /^[[:space:]]*(mod[[:space:]]+[A-Za-z0-9_]+[[:space:]]*;|use[[:space:]].*;|[A-Za-z_].*;)[[:space:]]*$/) {
-        test_pending = 0; next
-      }
-      # A test-only fn/impl/struct/const: skip its brace block.
-      test_pending = 0; in_test = 1; opened = 0; depth = 0
-      n = gsub(/{/, "{"); m = gsub(/}/, "}")
-      depth += n - m; if (n > 0) opened = 1
-      if (opened && depth <= 0) { in_test = 0; opened = 0; depth = 0 }
-      next
-    }
-    {
-      # Multi-line SQL: keyword at end of the previous production line and a
-      # retired table at the start of this one.
-      if (prev ~ /(INSERT[[:space:]]+(OR[[:space:]]+[A-Z]+[[:space:]]+)?INTO|UPDATE|DELETE[[:space:]]+FROM|FROM|JOIN)[[:space:]]*$/ \
-          && $0 ~ /^[[:space:]]*[\\"]*(agent_tasks|agent_runs|task_wake_outbox|task_approvals|task_finalize_intents|device_jobs)[\\"]*/) {
-        print f ":" prev_no ": (multi-line) " prev " " $0
-      }
-      print f ":" FNR ":" $0
-      prev = $0; prev_no = FNR
-    }
-  ' "$1"
+  # One Python process per check, not per file.
+  # shellcheck disable=SC2046
+  python3 scripts/guards/production_scope.py $(rg --files crates apps/cloud -g '*.rs' \
+    -g '!**/target/**' -g '!**/tests/**' -g '!**/benches/**' -g '!**/*_tests.rs')
 }
 
 # check_production <name> <kind:read|write> <allow map "file:table" lines>
@@ -113,10 +81,7 @@ check_production() {
     pattern="(FROM|JOIN)[[:space:]]+${q}${tables}${q}"
   fi
   local hits
-  hits=$(for file in $(rg --files crates apps/cloud -g '*.rs' \
-        -g '!**/target/**' -g '!**/tests/**' -g '!**/benches/**' -g '!**/*_tests.rs'); do
-      production_lines "$file"
-    done | grep -E "$pattern" || true)
+  hits=$(production_lines | grep -E "$pattern" || true)
   local violations=""
   while IFS= read -r hit; do
     [ -z "$hit" ] && continue

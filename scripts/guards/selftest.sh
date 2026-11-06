@@ -256,6 +256,27 @@ mod tests {
 }
 RS
 expect_passes "legacy-writers (test-module fixtures ignored)" bash scripts/guards/legacy-writers.sh
+# H1 round 2: a brace token inside a test-module string must not swallow the
+# rest of the file.
+cat > "$EVIL_LEGACY_RS" <<'RS'
+#[cfg(test)]
+mod tests { fn brace() { let s = "{"; let raw = r#"}"#; } }
+pub fn evil_after_tests() { let _ = "UPDATE agent_tasks SET status = 'x'"; }
+RS
+expect_fails "legacy-writers (brace token in a test string)" bash scripts/guards/legacy-writers.sh
+# H1 round 2: a statement-level multi-line #[cfg(test)] expression must skip
+# only its own statement, not the remainder of the function.
+cat > "$EVIL_LEGACY_RS" <<'RS'
+pub fn prod() {
+    #[cfg(test)]
+    let _x = compute(
+        1,
+        2,
+    );
+    let _ = "INSERT INTO agent_tasks VALUES (1)";
+}
+RS
+expect_fails "legacy-writers (statement-level test gate)" bash scripts/guards/legacy-writers.sh
 # L5: quoted identifiers and multi-line SQL are normalized.
 printf 'pub fn evil() { let _ = "INSERT INTO \\"agent_tasks\\" VALUES (1)"; }\n' > "$EVIL_LEGACY_RS"
 expect_fails "legacy-writers (quoted retired table)" bash scripts/guards/legacy-writers.sh

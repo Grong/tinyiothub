@@ -1609,6 +1609,30 @@ impl Db {
         Ok(affected > 0)
     }
 
+    /// Remove a still-pending wake that this operation just inserted. Used to
+    /// compensate a completion whose platform rule was already retired (M3):
+    /// a pre-existing wake is never removed.
+    pub async fn harness_remove_pending_wake(
+        &self,
+        workspace_id: &str,
+        task_id: &str,
+        event_id: &str,
+    ) -> Result<bool, TaskStoreError> {
+        let pool = self.workspace_pool(workspace_id).await.map_err(unavailable)?;
+        let affected = sqlx::query(
+            "DELETE FROM task_wake_outbox
+             WHERE task_id = ? AND event_id = ?
+               AND dispatch_state = 'pending' AND resolved_at IS NULL",
+        )
+        .bind(task_id)
+        .bind(event_id)
+        .execute(&pool)
+        .await
+        .map_err(unavailable)?
+        .rows_affected();
+        Ok(affected > 0)
+    }
+
     /// Cross-workspace ownership lookup for callers that must distinguish
     /// "the owner Task is proven terminal" from "the owner workspace could not
     /// be read" (Task 19C4 M5). An unreadable workspace is reported instead of
@@ -1627,7 +1651,12 @@ impl Db {
                 Ok(Some(pool)) => pool,
                 // A registered workspace with no generation owns no Tasks.
                 Ok(None) => continue,
-                Err(_) => {
+                Err(error) => {
+                    tracing::warn!(
+                        %workspace_id,
+                        %error,
+                        "task ownership sweep skipped an unreadable workspace"
+                    );
                     sweep.unreadable_workspaces.insert(workspace_id);
                     continue;
                 }
@@ -1641,7 +1670,12 @@ impl Db {
                 .await
             {
                 Ok(rows) => rows,
-                Err(_) => {
+                Err(error) => {
+                    tracing::warn!(
+                        %workspace_id,
+                        %error,
+                        "task ownership query failed; treating workspace as unreadable"
+                    );
                     sweep.unreadable_workspaces.insert(workspace_id);
                     continue;
                 }

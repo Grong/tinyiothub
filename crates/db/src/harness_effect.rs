@@ -1563,6 +1563,19 @@ impl Db {
             .filter(|projection| matches!(projection.task_state.as_str(), "completed" | "failed" | "cancelled"))
             .map(|projection| projection.task_id.clone());
         let pool = self.workspace_pool(workspace_id).await?;
+        // The transition may drain sibling/child Tasks (effect/cancel path).
+        // Capture the cancelling candidates before the transaction so their
+        // device-state projections can be pruned if they became terminal.
+        let drained_candidates: Vec<String> = if transition.run_task.is_some() {
+            sqlx::query_scalar(
+                "SELECT id FROM agent_tasks
+                 WHERE execution_mode = 'production' AND state = 'cancelling'",
+            )
+            .fetch_all(&pool)
+            .await?
+        } else {
+            Vec::new()
+        };
         let mut retries = 0;
         loop {
             match self
@@ -1573,6 +1586,7 @@ impl Db {
                     if let Some(task_id) = terminal_task.as_deref() {
                         self.prune_runtime_device_state(workspace_id, task_id).await;
                     }
+                    self.prune_drained_device_state(workspace_id, &drained_candidates).await;
                     return Ok(outcome);
                 }
                 Err(AttemptError::Writes(error)) => {
@@ -1592,6 +1606,7 @@ impl Db {
                         if let Some(task_id) = terminal_task.as_deref() {
                             self.prune_runtime_device_state(workspace_id, task_id).await;
                         }
+                        self.prune_drained_device_state(workspace_id, &drained_candidates).await;
                         return Ok(outcome);
                     }
                     drop(connection);
@@ -1608,6 +1623,16 @@ impl Db {
                         message: error.to_string(),
                     });
                 }
+            }
+        }
+    }
+
+    async fn prune_drained_device_state(&self, workspace_id: &str, candidates: &[String]) {
+        for task_id in candidates {
+            if let Ok(Some(task)) = self.harness_get_task(workspace_id, task_id).await
+                && task.status.is_terminal()
+            {
+                self.prune_runtime_device_state(workspace_id, task_id).await;
             }
         }
     }

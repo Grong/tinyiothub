@@ -177,8 +177,10 @@ under `#[cfg(any(test, feature = "testing"))]` for parity fixtures only.
 `hub_ledger` (`runtime.v1`) remains telemetry: watch-rule, media-evidence and
 device-read facts only. No Task/Run/Job lifecycle may be written there — those
 are workspace Harness events. `scripts/guards/legacy-writers.sh` enforces the
-boundary with a production-scope scan (inline `#[cfg(test)]` items are removed
-by brace scope, so production code after a test module is still checked). Its
+boundary with a production-scope scan. A lexical scanner masks strings, raw
+strings, char literals and comments, then skips every `#[cfg(test)]` item or
+statement (including multi-line statements) for its own scope, so production
+code after a test module is still checked. Its
 allow map is per file and per table: any production INSERT/UPDATE/DELETE or
 SELECT against `agent_tasks`, `agent_runs`, `task_wake_outbox`,
 `task_approvals`, `task_finalize_intents` or `device_jobs` outside the exact
