@@ -357,6 +357,19 @@ session-event replay, Runtime Task or Device Job storage modules. The runner
 therefore records the main/branch comparison as missing with the exact absent
 paths instead of producing a fabricated baseline.
 
+## 24h soak — future gate, not executed
+
+The 24h Harness soak and fault-drill method is documented in
+[harness-soak.md](harness-soak.md). It uses simulated devices and a controlled
+provider, records raw evidence, and defines the failure criteria for duplicate
+physical actions, silent loss, wrong terminal state, and state that cannot be
+rebuilt from durable facts.
+
+**The soak is not executed in this change.** No 24h process was started and no
+soak result is claimed. It is a future gate, not a merge or production gate
+this period. Simulation and controlled-provider results never substitute for
+production evidence.
+
 ## Evidence limits
 
 - The browser suite runs in Playwright Chromium. That build ships without
@@ -368,6 +381,9 @@ paths instead of producing a fabricated baseline.
   those broader claims follows from this runbook.
 - Real staging smoke and the 15-minute production window must be recorded
   separately. This runbook does not claim them as executed.
+- The 24h soak is a documented method only; it was not executed. No
+  simulated-device or controlled-provider result is staging, hardware, or
+  production evidence.
 - Playback was never exercised end-to-end in production. It is proven only to
   fail closed against the production `UnavailablePlaybackProvider`; no upstream
   provider exists. The API-test `FakePlayback` provider is a test double and
