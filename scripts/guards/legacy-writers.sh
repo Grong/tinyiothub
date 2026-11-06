@@ -48,23 +48,92 @@ check_rust() {
   fi
 }
 
-# check_production <name> <regex> <allow-regex>
-# Same as check_rust, but drops every inline `#[cfg(test)]` module before
-# matching. Test fixtures may seed the retired platform tables; production
-# code may not. Items gated with `#[cfg(any(test, feature = "testing"))]` are
-# still scanned (device_job.rs is verified separately by the gating check).
+# production_lines <file>
+# Emit `path:line:content` for the production scope only. Inline `#[cfg(test)]`
+# modules AND single test-gated items (mod/use/fn/impl/struct/...) are tracked
+# by scope — not by stopping at the first token — so production code after a
+# test block is still scanned. Items gated with
+# `#[cfg(any(test, feature = "testing"))]` remain in scope; device_job.rs is
+# verified separately by DEVICE_JOB_UNGATED.
+production_lines() {
+  awk -v f="$1" '
+    BEGIN { in_test = 0; opened = 0; depth = 0; test_pending = 0; prev = ""; prev_no = 0 }
+    in_test {
+      n = gsub(/{/, "{"); m = gsub(/}/, "}")
+      depth += n - m
+      if (n > 0) opened = 1
+      if (opened && depth <= 0) { in_test = 0; opened = 0; depth = 0 }
+      next
+    }
+    /^[[:space:]]*#\[cfg\(test\)\][[:space:]]*$/ { test_pending = 1; next }
+    test_pending {
+      if ($0 ~ /^[[:space:]]*$/) next
+      if ($0 ~ /^[[:space:]]*#\[/) next
+      if ($0 ~ /^[[:space:]]*mod[[:space:]]+[A-Za-z0-9_]+[[:space:]]*\{/) {
+        test_pending = 0; in_test = 1; opened = 0; depth = 0
+        n = gsub(/{/, "{"); m = gsub(/}/, "}")
+        depth += n - m; if (n > 0) opened = 1
+        next
+      }
+      if ($0 ~ /^[[:space:]]*(mod[[:space:]]+[A-Za-z0-9_]+[[:space:]]*;|use[[:space:]].*;|[A-Za-z_].*;)[[:space:]]*$/) {
+        test_pending = 0; next
+      }
+      # A test-only fn/impl/struct/const: skip its brace block.
+      test_pending = 0; in_test = 1; opened = 0; depth = 0
+      n = gsub(/{/, "{"); m = gsub(/}/, "}")
+      depth += n - m; if (n > 0) opened = 1
+      if (opened && depth <= 0) { in_test = 0; opened = 0; depth = 0 }
+      next
+    }
+    {
+      # Multi-line SQL: keyword at end of the previous production line and a
+      # retired table at the start of this one.
+      if (prev ~ /(INSERT[[:space:]]+(OR[[:space:]]+[A-Z]+[[:space:]]+)?INTO|UPDATE|DELETE[[:space:]]+FROM|FROM|JOIN)[[:space:]]*$/ \
+          && $0 ~ /^[[:space:]]*[\\"]*(agent_tasks|agent_runs|task_wake_outbox|task_approvals|task_finalize_intents|device_jobs)[\\"]*/) {
+        print f ":" prev_no ": (multi-line) " prev " " $0
+      }
+      print f ":" FNR ":" $0
+      prev = $0; prev_no = FNR
+    }
+  ' "$1"
+}
+
+# check_production <name> <kind:read|write> <allow map "file:table" lines>
+# Fails on a production read/write of a retired table that is not in the
+# per-file/per-table allow map. Test fixtures inside test scope are ignored.
 check_production() {
-  local name="$1" pattern="$2" allow="$3"
+  local name="$1" kind="$2" allow="$3"
+  local tables='(agent_tasks|agent_runs|task_wake_outbox|task_approvals|task_finalize_intents|device_jobs)'
+  # Optional Rust-string escaping and SQL quoting around an identifier.
+  local q='[\\"]*'
+  local pattern
+  if [ "$kind" = "write" ]; then
+    pattern="(INSERT[[:space:]]+(OR[[:space:]]+[A-Z]+[[:space:]]+)?INTO[[:space:]]+${q}${tables}${q}|UPDATE[[:space:]]+${q}${tables}${q}|DELETE[[:space:]]+FROM[[:space:]]+${q}${tables}${q})"
+  else
+    pattern="(FROM|JOIN)[[:space:]]+${q}${tables}${q}"
+  fi
   local hits
   hits=$(for file in $(rg --files crates apps/cloud -g '*.rs' \
         -g '!**/target/**' -g '!**/tests/**' -g '!**/benches/**' -g '!**/*_tests.rs'); do
-      awk -v f="$file" '
-        /^#\[cfg\(test\)\]$/ { exit }
-        { print f ":" FNR ":" $0 }
-      ' "$file"
-    done | grep -E "$pattern" | grep -vE "$allow" || true)
-  if [ -n "$hits" ]; then
-    echo "$hits"
+      production_lines "$file"
+    done | grep -E "$pattern" || true)
+  local violations=""
+  while IFS= read -r hit; do
+    [ -z "$hit" ] && continue
+    local file="${hit%%:*}"
+    local table
+    table=$(printf '%s' "$hit" \
+      | grep -oE "(INSERT[[:space:]]+(OR[[:space:]]+[A-Z]+[[:space:]]+)?INTO|UPDATE|DELETE[[:space:]]+FROM|FROM|JOIN)[[:space:]]+${q}${tables}${q}" \
+      | grep -oE '(agent_tasks|agent_runs|task_wake_outbox|task_approvals|task_finalize_intents|device_jobs)' \
+      | head -1)
+    if [ -n "$table" ] && printf '%s\n' "$allow" | grep -qx "$file:$table"; then
+      continue
+    fi
+    violations="${violations:+$violations
+}$hit"
+  done <<< "$hits"
+  if [ -n "$violations" ]; then
+    echo "$violations"
     fail "$name"
   fi
 }
@@ -96,18 +165,76 @@ check_rust \
 # code must not read or write them. `agent_runs` is exempt only for the
 # autonomous agent-loop persistence (trigger_type/outcome rows) which is not
 # the Task plane; policy.rs/ticket.rs read that same autonomous history.
-HARNESS_OWNERS='^(crates/db/src/harness_[a-z_]+\.rs|crates/db/src/runtime_admin\.rs|crates/db/src/device_job\.rs|crates/db/src/agent_runs\.rs):'
-AUTONOMOUS_RUN_READERS='^(crates/db/src/(harness_[a-z_]+|runtime_admin|device_job|agent_runs|policy|ticket)\.rs):'
+WRITE_OWNERS="crates/db/src/harness_task.rs:agent_tasks
+crates/db/src/harness_task.rs:agent_runs
+crates/db/src/harness_task.rs:task_wake_outbox
+crates/db/src/harness_task.rs:task_finalize_intents
+crates/db/src/harness_workflow.rs:agent_tasks
+crates/db/src/harness_workflow.rs:agent_runs
+crates/db/src/harness_workflow.rs:task_wake_outbox
+crates/db/src/harness_effect.rs:agent_tasks
+crates/db/src/harness_effect.rs:agent_runs
+crates/db/src/harness_effect.rs:device_jobs
+crates/db/src/harness_effect.rs:task_wake_outbox
+crates/db/src/harness_job.rs:device_jobs
+crates/db/src/harness_job.rs:task_wake_outbox
+crates/db/src/harness_command.rs:agent_tasks
+crates/db/src/harness_command.rs:agent_runs
+crates/db/src/harness_command.rs:task_wake_outbox
+crates/db/src/harness_runtime_api.rs:task_wake_outbox
+crates/db/src/harness_supervisor.rs:task_wake_outbox
+crates/db/src/harness_event.rs:agent_tasks
+crates/db/src/harness_event.rs:agent_runs
+crates/db/src/harness_simulation.rs:agent_tasks
+crates/db/src/harness_simulation.rs:agent_runs
+crates/db/src/runtime_admin.rs:task_wake_outbox
+crates/db/src/device_job.rs:device_jobs
+crates/db/src/device_job.rs:task_wake_outbox
+crates/db/src/agent_runs.rs:agent_runs"
+
+READ_OWNERS="crates/db/src/harness_task.rs:agent_tasks
+crates/db/src/harness_task.rs:agent_runs
+crates/db/src/harness_task.rs:task_wake_outbox
+crates/db/src/harness_task.rs:task_finalize_intents
+crates/db/src/harness_workflow.rs:agent_tasks
+crates/db/src/harness_workflow.rs:agent_runs
+crates/db/src/harness_workflow.rs:task_wake_outbox
+crates/db/src/harness_workflow.rs:device_jobs
+crates/db/src/harness_effect.rs:agent_tasks
+crates/db/src/harness_effect.rs:agent_runs
+crates/db/src/harness_effect.rs:device_jobs
+crates/db/src/harness_effect.rs:task_wake_outbox
+crates/db/src/harness_job.rs:device_jobs
+crates/db/src/harness_job.rs:task_wake_outbox
+crates/db/src/harness_command.rs:agent_tasks
+crates/db/src/harness_command.rs:agent_runs
+crates/db/src/harness_command.rs:task_wake_outbox
+crates/db/src/harness_runtime_api.rs:agent_tasks
+crates/db/src/harness_runtime_api.rs:agent_runs
+crates/db/src/harness_runtime_api.rs:device_jobs
+crates/db/src/harness_runtime_api.rs:task_wake_outbox
+crates/db/src/harness_supervisor.rs:agent_tasks
+crates/db/src/harness_supervisor.rs:task_wake_outbox
+crates/db/src/harness_event.rs:agent_tasks
+crates/db/src/harness_event.rs:agent_runs
+crates/db/src/harness_simulation.rs:agent_tasks
+crates/db/src/harness_simulation.rs:agent_runs
+crates/db/src/runtime_admin.rs:agent_tasks
+crates/db/src/runtime_admin.rs:agent_runs
+crates/db/src/runtime_admin.rs:task_wake_outbox
+crates/db/src/device_job.rs:device_jobs
+crates/db/src/device_job.rs:task_wake_outbox
+crates/db/src/agent_runs.rs:agent_runs
+crates/db/src/policy.rs:agent_runs
+crates/db/src/ticket.rs:agent_runs"
 
 check_production \
   "platform Task/Run/Wake/Job write outside the Harness owner" \
-  '(INSERT[[:space:]]+(OR[[:space:]]+[A-Z]+[[:space:]]+)?INTO[[:space:]]+(agent_tasks|agent_runs|task_wake_outbox|task_approvals|device_jobs)\b|UPDATE[[:space:]]+(agent_tasks|agent_runs|task_wake_outbox|task_approvals|device_jobs)\b|DELETE[[:space:]]+FROM[[:space:]]+(agent_tasks|agent_runs|task_wake_outbox|task_approvals|device_jobs)\b)' \
-  "$HARNESS_OWNERS"
+  write "$WRITE_OWNERS"
 
 check_production \
   "platform Task/Run/Wake/Job read outside the Harness owner" \
-  '(FROM|JOIN)[[:space:]]+(agent_tasks|agent_runs|task_wake_outbox|task_approvals|device_jobs)\b' \
-  "$AUTONOMOUS_RUN_READERS"
+  read "$READ_OWNERS"
 
 # ── Duplicate approval writers (platform task_approvals) ───
 # decisions is the only Harness approval source (Task 19C2). The platform

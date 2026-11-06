@@ -212,6 +212,7 @@ pub async fn list_events(
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
 
     use axum::body::Body;
     use axum::http::{Request, StatusCode};
@@ -220,6 +221,7 @@ mod tests {
     use tinyiothub_core::agent_task::{AgentTask, TaskStatus, TaskWake, WakeDispatchState};
     use tinyiothub_core::harness::{ExecutionMode, HarnessEventInput};
     use tinyiothub_storage::Db;
+    use tinyiothub_storage::runtime_event::RuntimeProjectionProbe;
     use tower::ServiceExt;
 
     use crate::test_utils::{
@@ -529,12 +531,14 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn timeline_lists_events_without_loading_the_task_projection() {
-        let (app_state, pool) = setup_test_app_with_pool().await;
+    async fn timeline_existence_check_does_not_load_the_task_projection() {
+        let (mut app_state, pool) = setup_test_app_with_pool().await;
         seed_test_workspace(&pool, "tenant-1", "ws-1").await;
         let db = app_state.db.clone();
         db.create_workspace_store("ws-1").await.expect("ws-1 store");
         seed_task(&db, "ws-1", "task-1").await;
+        let probe = Arc::new(RuntimeProjectionProbe::default());
+        app_state.db = Arc::new((*app_state.db).clone().with_runtime_projection_probe(probe.clone()));
         let app = axum::Router::new()
             .nest("/api", crate::api::create_router(&app_state))
             .with_state(app_state);
@@ -554,5 +558,10 @@ mod tests {
         )
         .await;
         assert_eq!(status, StatusCode::NOT_FOUND);
+        assert_eq!(
+            probe.attempts(),
+            0,
+            "the timeline existence check must not load the whole Task projection"
+        );
     }
 }

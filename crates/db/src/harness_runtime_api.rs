@@ -412,6 +412,10 @@ impl crate::Db {
         let Some(task) = task else {
             return Ok(None);
         };
+        #[cfg(any(test, feature = "testing"))]
+        if let Some(probe) = &self.runtime_projection_probe {
+            probe.after_task_read().await;
+        }
         // The cursor must name a production Event: `harness_cursor_known`
         // rejects simulation seq values, so a MAX over every execution mode
         // could issue a cursor the client cannot replay from.

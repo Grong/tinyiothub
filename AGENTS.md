@@ -169,15 +169,22 @@ test fixtures. `crates/db/src/device_job.rs` keeps its platform Job writer
 under `#[cfg(any(test, feature = "testing"))]` for parity fixtures only.
 `crates/db/src/agent_runs.rs` still owns the autonomous agent-loop run history
 (`trigger_type`/`outcome` rows), which is not the Task plane; `policy.rs` and
-`ticket.rs` read that same history.
+`ticket.rs` read that same history. That reconcile no longer joins
+`agent_tasks`/`task_wake_outbox`/`task_finalize_intents` and writes no
+`runtime.v1` Run lifecycle event; Task/Run/Wake crash recovery is
+`Db::harness_interrupt_unfinished_runs` in the workspace generation.
 
 `hub_ledger` (`runtime.v1`) remains telemetry: watch-rule, media-evidence and
 device-read facts only. No Task/Run/Job lifecycle may be written there — those
 are workspace Harness events. `scripts/guards/legacy-writers.sh` enforces the
-boundary: it fails on any production INSERT/UPDATE/DELETE or SELECT against the
-retired platform tables outside the Harness owners, and rejects new frontend
-tool/event/status allowlists (status copy is single-sourced in
-`web/src/ui/views/harness-status.ts`).
+boundary with a production-scope scan (inline `#[cfg(test)]` items are removed
+by brace scope, so production code after a test module is still checked). Its
+allow map is per file and per table: any production INSERT/UPDATE/DELETE or
+SELECT against `agent_tasks`, `agent_runs`, `task_wake_outbox`,
+`task_approvals`, `task_finalize_intents` or `device_jobs` outside the exact
+Harness owner for that table fails, including quoted and multi-line SQL. It
+also rejects new frontend tool/event/status allowlists (status copy is
+single-sourced in `web/src/ui/views/harness-status.ts`).
 
 ### Thing Ontology Module
 

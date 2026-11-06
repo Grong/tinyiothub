@@ -135,6 +135,16 @@ fn unavailable(error: impl std::fmt::Display) -> TaskStoreError {
     TaskStoreError::Unavailable(error.to_string())
 }
 
+/// Result of one cross-workspace Task-ownership sweep. `nonterminal` maps each
+/// production Task id to its owning workspace; `unreadable_workspaces` lists
+/// stores that could not be read (their rules must not be treated as proven
+/// terminal).
+#[derive(Debug, Clone, Default)]
+pub struct TaskOwnershipSweep {
+    pub nonterminal: std::collections::HashMap<String, String>,
+    pub unreadable_workspaces: std::collections::HashSet<String>,
+}
+
 /// Result of a cross-workspace point lookup. `skipped` records stores that
 /// could not be read; point lookups must not treat that as "absent" (N1).
 struct WorkspaceLookup {
@@ -964,6 +974,11 @@ impl Db {
         )?;
         write_event(&mut tx, &event).await?;
         tx.commit().await.map_err(unavailable)?;
+        if next.is_terminal() {
+            // The workspace transition commits first; the platform telemetry
+            // projection is best-effort cleanup (Task 19C4 M4).
+            self.prune_runtime_device_state(workspace_id, task_id).await;
+        }
         Ok(updated)
     }
 
@@ -1592,6 +1607,50 @@ impl Db {
         .map_err(unavailable)?
         .rows_affected();
         Ok(affected > 0)
+    }
+
+    /// Cross-workspace ownership lookup for callers that must distinguish
+    /// "the owner Task is proven terminal" from "the owner workspace could not
+    /// be read" (Task 19C4 M5). An unreadable workspace is reported instead of
+    /// silently dropping its Task-owned facts.
+    pub async fn harness_task_ownership_sweep(
+        &self,
+        workspace_id: Option<&str>,
+    ) -> Result<crate::harness_task::TaskOwnershipSweep, TaskStoreError> {
+        let workspaces = match workspace_id {
+            Some(workspace_id) => vec![workspace_id.to_string()],
+            None => self.harness_workspaces().await?,
+        };
+        let mut sweep = TaskOwnershipSweep::default();
+        for workspace_id in workspaces {
+            let pool = match self.try_existing_workspace_pool(&workspace_id).await {
+                Ok(Some(pool)) => pool,
+                // A registered workspace with no generation owns no Tasks.
+                Ok(None) => continue,
+                Err(_) => {
+                    sweep.unreadable_workspaces.insert(workspace_id);
+                    continue;
+                }
+            };
+            let statement = format!(
+                "SELECT id FROM agent_tasks WHERE execution_mode = 'production' AND {}",
+                nonterminal_state_placeholders()
+            );
+            let rows = match sqlx::query_scalar::<_, String>(sqlx::AssertSqlSafe(statement))
+                .fetch_all(&pool)
+                .await
+            {
+                Ok(rows) => rows,
+                Err(_) => {
+                    sweep.unreadable_workspaces.insert(workspace_id);
+                    continue;
+                }
+            };
+            for task_id in rows {
+                sweep.nonterminal.insert(task_id, workspace_id.clone());
+            }
+        }
+        Ok(sweep)
     }
 
     pub async fn harness_list_nonterminal_tasks(

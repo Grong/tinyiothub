@@ -12,6 +12,44 @@ use crate::error::{DbError, Result};
 
 pub const RUNTIME_EVENT_KIND: &str = "runtime.v1";
 
+/// Test seam proving a control-plane read did not build the full Task
+/// projection (the timeline existence check must stay cheap).
+#[cfg(any(test, feature = "testing"))]
+#[derive(Debug, Default)]
+pub struct RuntimeProjectionProbe {
+    armed: std::sync::atomic::AtomicBool,
+    attempts: std::sync::atomic::AtomicUsize,
+    task_read: tokio::sync::Notify,
+    release: tokio::sync::Notify,
+}
+
+#[cfg(any(test, feature = "testing"))]
+impl RuntimeProjectionProbe {
+    pub fn arm(&self) {
+        self.armed.store(true, std::sync::atomic::Ordering::SeqCst);
+    }
+
+    pub async fn wait_for_task_read(&self) {
+        self.task_read.notified().await;
+    }
+
+    pub fn attempts(&self) -> usize {
+        self.attempts.load(std::sync::atomic::Ordering::SeqCst)
+    }
+
+    pub fn release(&self) {
+        self.release.notify_one();
+    }
+
+    pub async fn after_task_read(&self) {
+        self.attempts.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        if self.armed.swap(false, std::sync::atomic::Ordering::SeqCst) {
+            self.task_read.notify_one();
+            self.release.notified().await;
+        }
+    }
+}
+
 /// Exact production page query. Shared with the EXPLAIN regression test so an
 /// edit that makes the bounded page non-indexable cannot pass unnoticed.
 const RUNTIME_EVENTS_PAGE_SQL: &str = "SELECT id, workspace_id, ts, payload FROM hub_ledger
@@ -540,6 +578,16 @@ pub(crate) async fn append_runtime_event_tx(
     connection: &mut sqlx::SqliteConnection,
     input: RuntimeEventInput,
 ) -> Result<RuntimeEvent> {
+    append_runtime_event_tx_with_policy(connection, input, true).await
+}
+
+/// `allow_device_projection == false` records the event but never seeds or
+/// merges `runtime_device_state` (used for a late event on a terminal Task).
+pub(crate) async fn append_runtime_event_tx_with_policy(
+    connection: &mut sqlx::SqliteConnection,
+    input: RuntimeEventInput,
+    allow_device_projection: bool,
+) -> Result<RuntimeEvent> {
     if input.event_id.trim().is_empty() || input.event_type.trim().is_empty() || input.workspace_id.trim().is_empty() {
         return Err(DbError::Validation {
             message: "runtime event id, type, and workspace are required".into(),
@@ -599,7 +647,10 @@ pub(crate) async fn append_runtime_event_tx(
         }
     };
     let mut event = decode_event(row)?;
-    if inserted_new && let Some(device_id) = event.device_id.clone() {
+    if inserted_new
+        && allow_device_projection
+        && let Some(device_id) = event.device_id.clone()
+    {
         merge_device_state_delta(&mut *connection, &event).await?;
         let facts = load_device_facts(
             &mut *connection,
@@ -626,12 +677,50 @@ pub(crate) async fn append_runtime_event_tx(
 
 impl Db {
     pub async fn append_runtime_event(&self, input: RuntimeEventInput) -> Result<RuntimeEvent> {
+        // A late device event for a terminal Task may be recorded as telemetry
+        // but must never resurrect its device-state projection (Task 19C4 M4).
+        let terminal = match input.task_id.as_deref() {
+            Some(task_id) => {
+                // Never create a workspace generation from a telemetry write.
+                let has_store = self
+                    .try_existing_workspace_pool(&input.workspace_id)
+                    .await
+                    .ok()
+                    .flatten()
+                    .is_some();
+                has_store
+                    && matches!(
+                        self.harness_get_task(&input.workspace_id, task_id).await,
+                        Ok(Some(task)) if task.status.is_terminal()
+                    )
+            }
+            None => false,
+        };
+        if terminal && let Some(task_id) = input.task_id.as_deref() {
+            self.prune_runtime_device_state(&input.workspace_id, task_id).await;
+        }
         let mut tx = self.pool().begin().await?;
-        let event = append_runtime_event_tx(&mut tx, input).await?;
+        let event = append_runtime_event_tx_with_policy(&mut tx, input, !terminal).await?;
         tx.commit().await?;
         Ok(event)
     }
 
+    /// Best-effort cleanup of the platform telemetry projection for a Task
+    /// that reached a terminal Harness state. Logged, never fails the terminal
+    /// transition.
+    pub(crate) async fn prune_runtime_device_state(&self, workspace_id: &str, task_id: &str) {
+        if let Err(error) = sqlx::query("DELETE FROM runtime_device_state WHERE workspace_id = ? AND task_id = ?")
+            .bind(workspace_id)
+            .bind(task_id)
+            .execute(self.pool())
+            .await
+        {
+            tracing::warn!(%workspace_id, %task_id, %error, "device-state projection cleanup failed");
+        }
+    }
+
+    /// Telemetry/test-only read: the production Task timeline is the Harness
+    /// `session_events` stream. Kept for `runtime.v1` telemetry verification.
     pub async fn runtime_event_by_id(&self, workspace_id: &str, event_id: &str) -> Result<Option<RuntimeEvent>> {
         sqlx::query_as::<_, RuntimeLedgerRow>(
             "SELECT id, workspace_id, ts, payload FROM hub_ledger
@@ -647,6 +736,7 @@ impl Db {
         .transpose()
     }
 
+    /// Telemetry/test-only replay API (see [`Self::runtime_event_by_id`]).
     pub async fn runtime_events_after(
         &self,
         workspace_id: &str,
@@ -674,6 +764,7 @@ impl Db {
     /// Bounded newest-first page of one Task's persisted events, returned in
     /// ascending cursor order. `before` is exclusive; `limit` is clamped to
     /// `1..=200` so callers can never replay the whole ledger in one query.
+    /// Telemetry/test-only page API (see [`Self::runtime_event_by_id`]).
     pub async fn runtime_events_page(
         &self,
         workspace_id: &str,
@@ -698,6 +789,7 @@ impl Db {
         Ok(RuntimeEventPage { events, has_more })
     }
 
+    /// Telemetry/test-only cursor check (see [`Self::runtime_event_by_id`]).
     pub async fn runtime_cursor_known(&self, workspace_id: &str, cursor: i64) -> Result<bool> {
         if cursor == 0 {
             return Ok(true);
@@ -718,6 +810,7 @@ mod tests {
     use chrono::Utc;
     use serde_json::json;
     use sqlx::SqlitePool;
+    use tinyiothub_core::agent_task::{AgentTask, TaskStatus, TaskWake, WakeDispatchState};
 
     use crate::Db;
     use crate::runtime_event::{RUNTIME_EVENT_DEDUPE_SQL, RUNTIME_EVENTS_PAGE_SQL, RuntimeEventInput};
@@ -1068,6 +1161,119 @@ mod tests {
             "the newest declaration id wins the tie-break"
         );
         assert_eq!(live_fields[0]["value"], "40");
+    }
+
+    #[tokio::test]
+    async fn terminal_task_prunes_the_device_projection_and_a_late_event_cannot_resurrect_it() {
+        let pool = crate::test_helpers::test_pool().await;
+        seed_workspace(&pool, "ws-1").await;
+        let root = std::env::temp_dir().join(format!("tinyiothub-terminal-device-{}", uuid::Uuid::new_v4()));
+        let db = Db::new(pool).with_workspace_store_root(root.join("data/agents"));
+        let now = Utc::now();
+        db.harness_create_task_with_wake(
+            &AgentTask {
+                id: "task-1".into(),
+                workspace_id: "ws-1".into(),
+                idempotency_key: "terminal-device".into(),
+                objective: "inspect".into(),
+                session_key: None,
+                created_by: "user-1".into(),
+                status: TaskStatus::Active,
+                current_run_id: None,
+                state_version: 0,
+                created_at: now,
+                updated_at: now,
+                ended_at: None,
+            },
+            &TaskWake {
+                task_id: "task-1".into(),
+                event_id: "create-task-1".into(),
+                signal_json: json!({"workspace_id":"ws-1"}).to_string(),
+                dispatch_state: WakeDispatchState::Pending,
+                created_at: now,
+                dispatched_at: None,
+                resolved_at: None,
+            },
+        )
+        .await
+        .expect("task");
+
+        let mut read = event("m4-read", "task-1");
+        read.event_type = "read_device".into();
+        read.device_id = Some("dev-m4".into());
+        read.data = json!({"state":{"temperature":"21"}});
+        db.append_runtime_event(read).await.expect("device read");
+        let rows: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM runtime_device_state WHERE workspace_id = 'ws-1' AND task_id = 'task-1'",
+        )
+        .fetch_one(db.pool())
+        .await
+        .expect("projection row");
+        assert_eq!(rows, 1);
+
+        let cancelling = db
+            .harness_transition_task("ws-1", "task-1", 0, TaskStatus::Cancelling, None)
+            .await
+            .expect("cancelling");
+        db.harness_transition_task("ws-1", "task-1", cancelling.state_version, TaskStatus::Cancelled, None)
+            .await
+            .expect("terminal");
+        let rows: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM runtime_device_state WHERE workspace_id = 'ws-1' AND task_id = 'task-1'",
+        )
+        .fetch_one(db.pool())
+        .await
+        .expect("projection row after terminal");
+        assert_eq!(rows, 0, "the terminal Harness transition must prune the projection");
+
+        let mut late = event("m4-late", "task-1");
+        late.event_type = "read_device".into();
+        late.device_id = Some("dev-m4".into());
+        late.data = json!({"state":{"temperature":"22"}});
+        let late = db.append_runtime_event(late).await.expect("late event");
+        assert!(
+            late.data.get("deviceFacts").is_none(),
+            "a late event on a terminal Task must not be enriched"
+        );
+        let rows: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM runtime_device_state WHERE workspace_id = 'ws-1' AND task_id = 'task-1'",
+        )
+        .fetch_one(db.pool())
+        .await
+        .expect("projection row after late event");
+        assert_eq!(rows, 0, "a late event must not resurrect the projection");
+
+        // The media-evidence telemetry path applies the same policy.
+        let now = Utc::now();
+        db.put_media_evidence(&tinyiothub_core::media::MediaEvidenceRecord {
+            id: "evidence-late".into(),
+            workspace_id: "ws-1".into(),
+            task_id: Some("task-1".into()),
+            run_id: None,
+            tool_call_id: None,
+            job_id: None,
+            device_id: "dev-m4".into(),
+            source_id: "camera".into(),
+            source_seq: 1,
+            media_time: now,
+            mime: "image/png".into(),
+            size_bytes: 4,
+            sha256: "abcd".into(),
+            storage_path: "private/evidence-late".into(),
+            dedup_key: "evidence-late".into(),
+            created_at: now,
+            expires_at: now + chrono::Duration::days(1),
+        })
+        .await
+        .expect("late evidence");
+        let rows: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM runtime_device_state WHERE workspace_id = 'ws-1' AND task_id = 'task-1'",
+        )
+        .fetch_one(db.pool())
+        .await
+        .expect("projection row after late evidence");
+        assert_eq!(rows, 0, "late evidence must not resurrect the projection");
+        let _ = tokio::fs::remove_dir_all(&root).await;
     }
 
     #[tokio::test]

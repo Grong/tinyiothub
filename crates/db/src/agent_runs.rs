@@ -239,68 +239,26 @@ pub(crate) async fn count_problem_runs(
 /// 已有完成报告的 run_id）。逐行条件更新（status 仍为 'running' 才
 /// 生效），启动期执行一次，行数有界。返回标记行数。
 ///
-/// A `running` Run owned by a live finalize intent is excluded in SQL, not via
-/// `known_active`: bootstrap reconciles zombies before `TaskCoordinator::recover`
-/// runs, so the caller cannot know the intent's Run id yet. Keeping the
-/// exclusion here makes both startup call sites agree, and `retry_finalize`
-/// can still `finish_run` the completed model output.
+/// This only reconciles the autonomous agent-loop run history. Task/Run/Wake
+/// fact-plane reconciliation is the workspace Harness sweep
+/// (`Db::harness_interrupt_unfinished_runs`, Task 19C4); the retired platform
+/// `agent_tasks` / `task_wake_outbox` / `task_finalize_intents` tables are not
+/// consulted and no `runtime.v1` Run lifecycle event is written.
 pub(crate) async fn interrupt_zombie_running_runs(pool: &SqlitePool, known_active: &[String]) -> Result<u64> {
-    let rows: Vec<(String, String, Option<String>, Option<String>)> = sqlx::query_as(
-        "SELECT r.id, r.workspace_id, r.task_id, r.wake_event_id
-         FROM agent_runs r
-         WHERE r.status = 'running'
-           AND NOT EXISTS (
-               SELECT 1
-               FROM task_finalize_intents i
-               JOIN task_wake_outbox w
-                 ON w.task_id = i.task_id AND w.event_id = i.wake_event_id
-               JOIN agent_tasks t ON t.id = i.task_id
-               WHERE i.run_id = r.id
-                 AND w.resolved_at IS NULL
-                 AND t.status NOT IN ('completed', 'failed', 'cancelled')
-           )",
-    )
-    .fetch_all(pool)
-    .await?;
+    let rows: Vec<String> = sqlx::query_scalar("SELECT id FROM agent_runs WHERE status = 'running'")
+        .fetch_all(pool)
+        .await?;
     let mut marked = 0u64;
-    for (id, workspace_id, task_id, _wake_event_id) in rows {
+    for id in rows {
         if known_active.iter().any(|k| k == &id) {
             continue;
         }
-        // The status fact and its `run.interrupted` event commit together, so a
-        // restart never changes a persisted Run without the matching event.
-        let mut tx = pool.begin().await?;
         let affected = sqlx::query("UPDATE agent_runs SET status = 'interrupted' WHERE id = ? AND status = 'running'")
             .bind(&id)
-            .execute(&mut *tx)
+            .execute(pool)
             .await?
             .rows_affected();
-        if affected == 0 {
-            tx.commit().await?;
-            continue;
-        }
-        crate::runtime_event::append_runtime_event_tx(
-            &mut tx,
-            crate::runtime_event::RuntimeEventInput {
-                event_id: format!("run:{id}:interrupted"),
-                event_type: "run.interrupted".into(),
-                occurred_at: chrono::Utc::now(),
-                workspace_id,
-                task_id,
-                run_id: Some(id.clone()),
-                tool_call_id: None,
-                job_id: None,
-                approval_id: None,
-                device_id: None,
-                source_id: None,
-                source_seq: None,
-                evidence_id: None,
-                data: serde_json::json!({"state":"interrupted"}),
-            },
-        )
-        .await?;
-        tx.commit().await?;
-        marked += 1;
+        marked += affected;
     }
     Ok(marked)
 }
@@ -398,7 +356,6 @@ impl Db {
 #[cfg(test)]
 mod tests {
     use crate::agent_runs::{ActionRecord, ActionResult};
-    use tinyiothub_core::agent_task::TaskFinalizeIntent;
 
     use super::*;
 
@@ -845,27 +802,8 @@ mod tests {
         assert_eq!(status_of("ghost").await, "interrupted");
         assert_eq!(status_of("owned").await, "running", "registry 认领的 run 不判僵尸");
         assert_eq!(status_of("done").await, "completed", "completed 行不动");
-        let event = db
-            .runtime_event_by_id("ws_1", "run:ghost:interrupted")
-            .await
-            .expect("lookup")
-            .expect("interrupted event");
-        assert_eq!(event.event_type, "run.interrupted");
-        assert_eq!(event.run_id.as_deref(), Some("ghost"));
-        assert_eq!(event.data["state"], "interrupted");
-        assert!(
-            db.runtime_event_by_id("ws_1", "run:owned:interrupted")
-                .await
-                .expect("lookup")
-                .is_none()
-        );
-
-        // 幂等：同一认领集再次 reconcile 无行可标。
-        let marked = db
-            .interrupt_zombie_running_agent_runs(&["owned".to_string()])
-            .await
-            .expect("reconcile again");
-        assert_eq!(marked, 0);
+        // Task 19C4: this autonomous-loop reconcile is not the Task/Run fact
+        // plane and writes no runtime.v1 Run lifecycle event.
         let interrupted_events: i64 = sqlx::query_scalar(
             "SELECT COUNT(*) FROM hub_ledger
              WHERE workspace_id = 'ws_1' AND kind = 'runtime.v1'
@@ -875,9 +813,16 @@ mod tests {
         .await
         .expect("count interrupted events");
         assert_eq!(
-            interrupted_events, 1,
-            "repeated reconciliation must not append another interrupted event"
+            interrupted_events, 0,
+            "autonomous zombie reconcile must not write a runtime.v1 Run event"
         );
+
+        // 幂等：同一认领集再次 reconcile 无行可标。
+        let marked = db
+            .interrupt_zombie_running_agent_runs(&["owned".to_string()])
+            .await
+            .expect("reconcile again");
+        assert_eq!(marked, 0);
         // 认领集为空时，残留的 running 行全部判僵尸。
         let marked = db
             .interrupt_zombie_running_agent_runs(&[])
@@ -885,181 +830,6 @@ mod tests {
             .expect("reconcile empty known");
         assert_eq!(marked, 1);
         assert_eq!(status_of("owned").await, "interrupted");
-    }
-
-    fn intent_row(task_id: &str, event_id: &str, run_id: &str) -> TaskFinalizeIntent {
-        TaskFinalizeIntent {
-            task_id: task_id.to_string(),
-            workspace_id: "ws_1".to_string(),
-            wake_event_id: event_id.to_string(),
-            run_id: run_id.to_string(),
-            report: sample_report(run_id, "ws_1", "finished"),
-            report_persisted: false,
-            report_emitted: false,
-            undelivered: vec![],
-        }
-    }
-
-    async fn insert_intent(pool: &SqlitePool, intent: &TaskFinalizeIntent) {
-        sqlx::query(
-            "INSERT INTO task_finalize_intents
-                 (task_id, workspace_id, wake_event_id, run_id, report_json,
-                  report_persisted, report_emitted, undelivered_json, created_at, updated_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'now', 'now')",
-        )
-        .bind(&intent.task_id)
-        .bind(&intent.workspace_id)
-        .bind(&intent.wake_event_id)
-        .bind(&intent.run_id)
-        .bind(serde_json::to_string(&intent.report).expect("report"))
-        .bind(i64::from(intent.report_persisted))
-        .bind(i64::from(intent.report_emitted))
-        .bind(serde_json::to_string(&intent.undelivered).expect("undelivered"))
-        .execute(pool)
-        .await
-        .expect("insert finalize intent");
-    }
-
-    async fn seed_workspace(pool: &SqlitePool, workspace_id: &str) {
-        sqlx::query(
-            "INSERT OR IGNORE INTO subscription_plans (id, name, display_name) VALUES ('plan_free','free','Free')",
-        )
-        .execute(pool)
-        .await
-        .expect("seed plan");
-        sqlx::query("INSERT OR IGNORE INTO tenants (id, name, slug) VALUES ('t1','tenant','t1')")
-            .execute(pool)
-            .await
-            .expect("seed tenant");
-        sqlx::query(
-            "INSERT INTO workspaces (id, name, tenant_id, created_at, updated_at) VALUES (?, 'workspace', 't1', 'now', 'now')",
-        )
-        .bind(workspace_id)
-        .execute(pool)
-        .await
-        .expect("seed workspace");
-    }
-
-    #[tokio::test]
-    pub async fn ingest_intent_owned_run_survives_bootstrap_zombie_reconcile() {
-        let pool = test_pool().await;
-        seed_workspace(&pool, "ws_1").await;
-        let db = Db::new(pool.clone());
-
-        for index in 1..=3 {
-            let task_id = format!("task_{index}");
-            let event_id = format!("event_{index}");
-            sqlx::query(
-                "INSERT INTO agent_tasks
-                     (id, workspace_id, idempotency_key, objective, created_by, status,
-                      state_version, created_at, updated_at)
-                 VALUES (?, 'ws_1', ?, 'zombie run owner', 'user_1', 'active', 0, 'now', 'now')",
-            )
-            .bind(&task_id)
-            .bind(format!("key_{index}"))
-            .execute(&pool)
-            .await
-            .expect("task");
-            sqlx::query(
-                "INSERT INTO task_wake_outbox
-                     (task_id, event_id, signal_json, dispatch_state, created_at)
-                 VALUES (?, ?, ?, 'pending', 'now')",
-            )
-            .bind(&task_id)
-            .bind(&event_id)
-            .bind(serde_json::json!({"workspace_id":"ws_1"}).to_string())
-            .execute(&pool)
-            .await
-            .expect("wake");
-            insert_raw(
-                &pool,
-                &format!("run_{index}"),
-                "ws_1",
-                "acted",
-                None,
-                None,
-                0,
-                "-1 hours",
-            )
-            .await;
-        }
-        sqlx::query("UPDATE agent_runs SET status = 'running' WHERE id IN ('run_1', 'run_2', 'run_3')")
-            .execute(&pool)
-            .await
-            .expect("set running");
-        insert_intent(&pool, &intent_row("task_1", "event_1", "run_1")).await;
-        // task_2: the Task is already terminal, so the intent no longer owns
-        // the Run.
-        insert_intent(&pool, &intent_row("task_2", "event_2", "run_2")).await;
-        sqlx::query("UPDATE agent_tasks SET status = 'failed' WHERE id = 'task_2'")
-            .execute(&pool)
-            .await
-            .expect("terminal task");
-        // task_3: the wake is resolved, so the intent is unreachable.
-        insert_intent(&pool, &intent_row("task_3", "event_3", "run_3")).await;
-        sqlx::query("UPDATE task_wake_outbox SET resolved_at = 'now' WHERE task_id = 'task_3'")
-            .execute(&pool)
-            .await
-            .expect("resolve wake");
-
-        let status_of = |id: &str| {
-            let pool = pool.clone();
-            let id = id.to_string();
-            async move {
-                let (s,): (String,) = sqlx::query_as("SELECT status FROM agent_runs WHERE id = ?")
-                    .bind(&id)
-                    .fetch_one(&pool)
-                    .await
-                    .expect("status");
-                s
-            }
-        };
-
-        // Bootstrap calls this first with an empty registry set.
-        let marked = db
-            .interrupt_zombie_running_agent_runs(&[])
-            .await
-            .expect("bootstrap reconcile");
-        assert_eq!(marked, 2);
-        assert_eq!(
-            status_of("run_1").await,
-            "running",
-            "bootstrap must not interrupt a Run owned by a live finalize intent"
-        );
-        assert_eq!(
-            status_of("run_2").await,
-            "interrupted",
-            "terminal Task releases the Run"
-        );
-        assert_eq!(
-            status_of("run_3").await,
-            "interrupted",
-            "resolved wake releases the Run"
-        );
-        assert!(
-            db.runtime_event_by_id("ws_1", "run:run_1:interrupted")
-                .await
-                .expect("lookup")
-                .is_none(),
-            "no interruption fact may be written for the retained Run"
-        );
-        for id in ["run_2", "run_3"] {
-            let event = db
-                .runtime_event_by_id("ws_1", &format!("run:{id}:interrupted"))
-                .await
-                .expect("lookup")
-                .expect("interrupted event");
-            assert_eq!(event.event_type, "run.interrupted");
-        }
-
-        // The coordinator's later call passes the intent Run id explicitly;
-        // it must be a no-op in either order.
-        let marked = db
-            .interrupt_zombie_running_agent_runs(&["run_1".to_string()])
-            .await
-            .expect("coordinator reconcile");
-        assert_eq!(marked, 0);
-        assert_eq!(status_of("run_1").await, "running");
     }
 
     #[tokio::test]

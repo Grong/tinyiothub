@@ -376,6 +376,7 @@ impl ServiceManager {
             }
             tool_registry.register_provider(crate::domains::agent::host::tools::chat_builtin_tools_provider(
                 app_state.db.pool().clone(),
+                app_state.db.clone(),
                 Some(app_state.device_cache.clone()),
                 app_state.pending_actions.clone(),
                 app_state.arbitration.clone(),
@@ -444,6 +445,7 @@ impl ServiceManager {
                             tinyiothub_agent::provider::minimax_provider_factory(),
                             tinyiothub_agent::config::AgentRuntimeConfig::default().model,
                             crate::domains::agent::host::tools::ThingToolContext {
+                                db: Some(app_state.db.clone()),
                                 device_cache: Some(app_state.device_cache.clone()),
                                 data_server: app_state.data_server.clone(),
                                 pending_actions: Some(app_state.pending_actions.clone()),

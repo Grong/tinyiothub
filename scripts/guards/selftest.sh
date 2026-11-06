@@ -220,12 +220,54 @@ AUTONOMOUS_FACTORY_BAK=""
 # 19C4: every retired platform Task/Run/Wake/Job table must reject an injected
 # production write and an injected production read, in a file with no
 # #[cfg(test)] module. Real fixtures live inside test modules and are stripped.
-for table in agent_tasks agent_runs task_wake_outbox task_approvals device_jobs; do
+for table in agent_tasks agent_runs task_wake_outbox task_approvals task_finalize_intents device_jobs; do
   printf 'pub fn evil() { let _ = "INSERT INTO %s VALUES (1)"; }\n' "$table" > "$EVIL_LEGACY_RS"
   expect_fails "legacy-writers (platform $table write)" bash scripts/guards/legacy-writers.sh
   printf 'pub fn evil() { let _ = "SELECT * FROM %s"; }\n' "$table" > "$EVIL_LEGACY_RS"
   expect_fails "legacy-writers (platform $table read)" bash scripts/guards/legacy-writers.sh
 done
+# H1: production code AFTER an inline test module is still scanned.
+cat > "$EVIL_LEGACY_RS" <<'RS'
+#[cfg(test)]
+mod tests {
+    fn fixture() { let _ = "INSERT INTO agent_tasks VALUES (1)"; }
+}
+pub fn evil_after_tests() { let _ = "SELECT * FROM agent_tasks"; }
+RS
+expect_fails "legacy-writers (production read after an inline test module)" bash scripts/guards/legacy-writers.sh
+cat > "$EVIL_LEGACY_RS" <<'RS'
+#[cfg(test)]
+mod tests {
+    fn fixture() { let _ = "SELECT * FROM agent_tasks"; }
+}
+pub fn evil_after_tests() { let _ = "UPDATE agent_tasks SET status = 'x'"; }
+RS
+expect_fails "legacy-writers (production write after an inline test module)" bash scripts/guards/legacy-writers.sh
+# H1: a fixture INSIDE an inline test module is ignored.
+cat > "$EVIL_LEGACY_RS" <<'RS'
+#[cfg(test)]
+mod tests {
+    fn fixture() { let _ = "INSERT INTO agent_tasks VALUES (1)"; }
+    #[test]
+    fn nested() {
+        let sql = "SELECT * FROM task_wake_outbox";
+        assert!(!sql.is_empty());
+    }
+}
+RS
+expect_passes "legacy-writers (test-module fixtures ignored)" bash scripts/guards/legacy-writers.sh
+# L5: quoted identifiers and multi-line SQL are normalized.
+printf 'pub fn evil() { let _ = "INSERT INTO \\"agent_tasks\\" VALUES (1)"; }\n' > "$EVIL_LEGACY_RS"
+expect_fails "legacy-writers (quoted retired table)" bash scripts/guards/legacy-writers.sh
+cat > "$EVIL_LEGACY_RS" <<'RS'
+pub fn evil() {
+    let sql = "SELECT *
+FROM
+agent_tasks WHERE id = 'x'";
+    let _ = sql;
+}
+RS
+expect_fails "legacy-writers (multi-line retired table read)" bash scripts/guards/legacy-writers.sh
 rm -f "$EVIL_LEGACY_RS"
 expect_passes "legacy-writers" bash scripts/guards/legacy-writers.sh
 

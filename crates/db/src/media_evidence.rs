@@ -63,6 +63,22 @@ impl Db {
         &self,
         row: &MediaEvidenceRecord,
     ) -> Result<(MediaEvidenceRecord, Option<crate::runtime_event::RuntimeEvent>), MediaError> {
+        let terminal = match row.task_id.as_deref() {
+            Some(task_id) => {
+                let has_store = self
+                    .try_existing_workspace_pool(&row.workspace_id)
+                    .await
+                    .ok()
+                    .flatten()
+                    .is_some();
+                has_store
+                    && matches!(
+                        self.harness_get_task(&row.workspace_id, task_id).await,
+                        Ok(Some(task)) if task.status.is_terminal()
+                    )
+            }
+            None => false,
+        };
         let mut tx = self.pool().begin().await.map_err(storage)?;
         sqlx::query(
             "INSERT INTO media_evidence (id, workspace_id, task_id, run_id, tool_call_id, job_id, device_id, source_id, source_seq, media_time, mime, size_bytes, sha256, storage_path, dedup_key, created_at, expires_at)
@@ -80,7 +96,7 @@ impl Db {
         let stored = MediaEvidenceRecord::try_from(stored)?;
         let event = if stored.task_id.is_some() {
             Some(
-                crate::runtime_event::append_runtime_event_tx(
+                crate::runtime_event::append_runtime_event_tx_with_policy(
                     &mut tx,
                     crate::runtime_event::RuntimeEventInput {
                         event_id: format!("evidence:{}:created", stored.id),
@@ -106,6 +122,7 @@ impl Db {
                             "sourceSeq": stored.source_seq,
                         }),
                     },
+                    !terminal,
                 )
                 .await
                 .map_err(storage)?,

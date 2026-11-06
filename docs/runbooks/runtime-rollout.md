@@ -255,11 +255,12 @@ Durable gauges (from the metrics response):
 - `watches.{active,total}`
 - `evidence.{count,bytes,expired}`
 - `host.{rssBytes,rssPercent,diskUsedPercent}` and `dbQueryMs`
-- `stream.{activeConnections,connectionsOpened,connectionsClosed,resyncs,duplicatesDropped,foreignTaskEvents,taskLessEvents,firstFrames,firstFrameMsTotal}`
-  (Runtime SSE counters; `foreignTaskEvents` counts frames filtered for another
-  Task, `taskLessEvents` counts workspace-scoped frames with no Task, and both
-  are separate from `duplicatesDropped`. Per-connection dedupe memory is
-  bounded; the oldest IDs are evicted after 1024 retained events.)
+- `stream.{activeConnections,connectionsOpened,connectionsClosed,resyncs,duplicatesDropped,firstFrames,firstFrameMsTotal}`
+  (Harness Task SSE counters; the legacy `foreignTaskEvents` /
+  `taskLessEvents` counters were retired with the platform Task stream. The
+  counters describe the workspace `/agent/tasks/{id}/stream` route.
+  Per-connection dedupe memory is bounded; the oldest IDs are evicted after
+  1024 retained events.)
 
 Structured metrics:
 

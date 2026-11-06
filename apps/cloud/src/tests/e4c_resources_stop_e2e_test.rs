@@ -171,6 +171,7 @@ fn thing_tools(
         pool.clone(),
         WS,
         &ThingToolContext {
+            db: None,
             device_cache: None,
             data_server,
             pending_actions: Some(Arc::new(PendingActionStore::new())),

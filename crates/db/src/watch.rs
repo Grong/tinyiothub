@@ -77,6 +77,38 @@ pub async fn insert_rule_tx(tx: &mut Transaction<'_, Sqlite>, row: &WatchRuleRow
     Ok(())
 }
 
+pub async fn find_rule(pool: &SqlitePool, workspace_id: &str, id: &str) -> Result<Option<WatchRuleRow>, sqlx::Error> {
+    sqlx::query_as(
+        "SELECT id, workspace_id, kind, condition, persistent, timeout_secs, created_at, owner_task_id
+         FROM watch_rules WHERE workspace_id = ? AND id = ?",
+    )
+    .bind(workspace_id)
+    .bind(id)
+    .fetch_optional(pool)
+    .await
+}
+
+/// Best-effort compensation after a cross-database completion failure: put the
+/// platform rule row back without emitting a second `watch.created` event.
+pub async fn restore_rule(pool: &SqlitePool, row: &WatchRuleRow) -> Result<(), sqlx::Error> {
+    sqlx::query(
+        "INSERT OR IGNORE INTO watch_rules
+             (id, workspace_id, kind, condition, persistent, timeout_secs, created_at, owner_task_id)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+    )
+    .bind(&row.id)
+    .bind(&row.workspace_id)
+    .bind(&row.kind)
+    .bind(&row.condition)
+    .bind(row.persistent)
+    .bind(row.timeout_secs)
+    .bind(&row.created_at)
+    .bind(&row.owner_task_id)
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
 pub async fn list_rules(pool: &SqlitePool) -> Result<Vec<WatchRuleRow>, sqlx::Error> {
     // Task terminality is a workspace-Harness fact (Task 19C4), so this
     // platform query no longer filters owner Tasks. Harness-aware callers

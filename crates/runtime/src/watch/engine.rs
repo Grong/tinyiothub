@@ -199,7 +199,9 @@ impl WatchEngine {
                 "watch timeout"
             );
             self.remove_rule(&id);
-            self.retire_persisted(&rule, "timeout", None, None, None).await;
+            if let Err(error) = self.retire_persisted(&rule, "timeout", None, None, None).await {
+                tracing::warn!(rule_id = %rule.id, %error, "timed-out watch retirement failed");
+            }
         }
     }
 
@@ -227,7 +229,9 @@ impl WatchEngine {
                 "watch expired"
             );
             self.remove_rule(&id);
-            self.retire_persisted(&rule, "invalid", None, None, None).await;
+            if let Err(error) = self.retire_persisted(&rule, "invalid", None, None, None).await {
+                tracing::warn!(rule_id = %rule.id, %error, "invalidated watch retirement failed");
+            }
         }
     }
 
@@ -353,13 +357,33 @@ impl WatchEngine {
                 w.armed = false;
             }
         } else {
-            self.remove_rule(rule_id);
-            self.retire_persisted(&rule, "hit", wake_value, wake_health, wake_zone)
-                .await;
+            match self
+                .retire_persisted(&rule, "hit", wake_value, wake_health, wake_zone)
+                .await
+            {
+                Ok(()) => {
+                    self.remove_rule(rule_id);
+                }
+                Err(error) => {
+                    // The platform rule was restored (or the workspace write
+                    // failed before deletion): keep the one-shot armed so the
+                    // continuation is retried instead of dying silently.
+                    tracing::warn!(
+                        rule_id = %rule.id,
+                        %error,
+                        "one-shot watch retirement failed; re-arming"
+                    );
+                    self.last_hit_at.remove(rule_id);
+                    if let Some(watch) = self.rules.get_mut(rule_id) {
+                        watch.armed = true;
+                    }
+                }
+            }
         }
     }
 
-    /// 退役写穿：Task one-shot watch 的删除与 wake 同事务提交；其他规则沿用删除。
+    /// 退役写穿：Task one-shot watch 的删除与 wake 跨两个 DB；任一步失败都要
+    /// 让调用方重新武装规则，不能静默丢掉 continuation wake。
     async fn retire_persisted(
         &self,
         rule: &WatchRule,
@@ -367,7 +391,7 @@ impl WatchEngine {
         current_value: Option<String>,
         health: Option<String>,
         zone: Option<String>,
-    ) {
+    ) -> Result<(), String> {
         let result = if let Some(task_id) = rule.owner_task_id.as_deref()
             && !rule.persistent
         {
@@ -403,11 +427,10 @@ impl WatchEngine {
         match result {
             Ok(false) if rule.owner_task_id.is_some() => {
                 tracing::debug!(rule_id = %rule.id, "Task watch already retired");
+                Ok(())
             }
-            Ok(_) => {}
-            Err(e) => {
-                tracing::warn!(rule_id = %rule.id, error = %e, "watch 规则退役写穿失败（DB 行残留，下次重启重织兜底）");
-            }
+            Ok(_) => Ok(()),
+            Err(e) => Err(e),
         }
     }
 
@@ -525,6 +548,7 @@ mod tests {
     struct StubRuleStore {
         rules: Mutex<HashMap<String, WatchRule>>,
         wakes: Mutex<Vec<tinyiothub_core::agent_task::TaskWake>>,
+        fail_complete: std::sync::atomic::AtomicBool,
     }
 
     impl StubRuleStore {
@@ -551,6 +575,9 @@ mod tests {
             id: &str,
             wake: &tinyiothub_core::agent_task::TaskWake,
         ) -> Result<bool, String> {
+            if self.fail_complete.load(std::sync::atomic::Ordering::SeqCst) {
+                return Err("injected completion failure".to_string());
+            }
             let removed = self
                 .rules
                 .lock()
@@ -722,6 +749,28 @@ mod tests {
         engine.on_property_change("w1", "t1", "温度", "32").await;
         assert!(rx.try_recv().is_err());
         assert!(!engine.remove_rule("r1"));
+    }
+
+    /// M3: a failed cross-database retirement must keep the one-shot rule and
+    /// re-arm it so the continuation is retried, not silently lost.
+    #[tokio::test]
+    async fn task_watch_completion_failure_rearms_the_rule() {
+        let (_cache, mut engine, mut rx, _ledger, store) = setup(vec![thing("t1")]);
+        let rule = task_rule("r1", "t1", "task1");
+        store.insert(&rule).await.unwrap();
+        engine.upsert_rule(rule).await.unwrap();
+        store.fail_complete.store(true, std::sync::atomic::Ordering::SeqCst);
+        engine.on_property_change("w1", "t1", "温度", "31").await;
+        assert!(rx.try_recv().is_ok(), "the hit is still delivered");
+        let kept = engine.rules.get("r1").expect("rule must not be removed");
+        assert!(kept.armed, "the failed one-shot must be re-armed");
+        assert!(store.contains("r1"), "the platform rule must survive the failure");
+
+        store.fail_complete.store(false, std::sync::atomic::Ordering::SeqCst);
+        engine.on_property_change("w1", "t1", "温度", "32").await;
+        assert!(rx.try_recv().is_ok(), "the retry fires");
+        assert!(!engine.rules.contains_key("r1"));
+        assert!(!store.contains("r1"));
     }
 
     #[tokio::test]

@@ -1037,19 +1037,29 @@ impl tinyiothub_runtime::ports::WatchRuleStore for WatchRuleStoreAdapter {
         let rows = tinyiothub_storage::watch::list_rules(self.db.pool())
             .await
             .map_err(|e| e.to_string())?;
-        let task_workspaces: std::collections::HashMap<String, String> = self
-            .db
-            .harness_list_nonterminal_tasks(None)
-            .await
-            .map_err(|e| e.to_string())?
-            .into_iter()
-            .map(|task| (task.id, task.workspace_id))
-            .collect();
+        // M5: only a Task proven terminal (or owned by a readable workspace
+        // where it is absent) is dropped. A Task in an unreadable workspace is
+        // unverifiable, so its rule is kept and the reweave can retry later.
+        // Avoid the all-workspace scan when no rule is Task-owned (the common
+        // chat-watch case). Task-owned reweave still needs the fleet scan until
+        // the port grows a workspace-scoped variant (deferred L9).
+        let ownership = if rows.iter().any(|row| row.owner_task_id.is_some()) {
+            self.db
+                .harness_task_ownership_sweep(None)
+                .await
+                .map_err(|e| e.to_string())?
+        } else {
+            tinyiothub_storage::harness_task::TaskOwnershipSweep::default()
+        };
         rows.iter()
             .filter(|row| {
-                row.owner_task_id
-                    .as_ref()
-                    .is_none_or(|task_id| task_workspaces.get(task_id) == Some(&row.workspace_id))
+                row.owner_task_id.as_ref().is_none_or(|task_id| {
+                    if let Some(owner) = ownership.nonterminal.get(task_id) {
+                        owner == &row.workspace_id
+                    } else {
+                        ownership.unreadable_workspaces.contains(&row.workspace_id)
+                    }
+                })
             })
             .map(|row| {
                 let condition: tinyiothub_core::watch::WatchCondition = serde_json::from_str(&row.condition)
@@ -1119,11 +1129,12 @@ impl tinyiothub_runtime::ports::WatchRuleStore for WatchRuleStoreAdapter {
         id: &str,
         wake: &tinyiothub_core::agent_task::TaskWake,
     ) -> Result<bool, String> {
-        // Record the continuation wake in the owning workspace Harness
-        // generation first (idempotent on task/event), then complete the watch
-        // and its telemetry. A platform wake write would be a retired fact
-        // writer (Task 19C4).
-        self.db.harness_record_wake(wake).await.map_err(|e| e.to_string())?;
+        // Snapshot the platform row so a failed cross-database wake write can
+        // restore it (M3). The harness generation and the platform pool cannot
+        // share a transaction.
+        let existing = tinyiothub_storage::watch::find_rule(self.db.pool(), workspace_id, id)
+            .await
+            .map_err(|e| e.to_string())?;
         let (completed, event) =
             tinyiothub_storage::watch::complete_task_watch_and_event(self.db.pool(), workspace_id, id, wake)
                 .await
@@ -1131,7 +1142,31 @@ impl tinyiothub_runtime::ports::WatchRuleStore for WatchRuleStoreAdapter {
         if let Some(event) = event {
             self.publish(event);
         }
-        Ok(completed)
+        if !completed {
+            // Already retired (timeout/cancel/duplicate): never insert a wake
+            // for a watch that no longer exists.
+            return Ok(false);
+        }
+        // Record the continuation wake in the owning workspace Harness
+        // generation. On failure, put the platform rule back so the one-shot
+        // rule is not silently armed nowhere; the caller logs and re-arms the
+        // in-memory rule for a retry.
+        if let Err(error) = self.db.harness_record_wake(wake).await {
+            if let Some(row) = existing
+                && let Err(restore_error) = tinyiothub_storage::watch::restore_rule(self.db.pool(), &row).await
+            {
+                tracing::error!(
+                    %workspace_id,
+                    %id,
+                    %restore_error,
+                    "failed to restore watch rule after workspace wake failure"
+                );
+            }
+            return Err(format!(
+                "watch {id}: workspace completion wake failed: {error}; rule restored for retry"
+            ));
+        }
+        Ok(true)
     }
 
     async fn delete_task_watches(&self, workspace_id: &str, task_id: &str) -> Result<usize, String> {
@@ -1903,6 +1938,75 @@ mod runtime_job_event_tests {
         assert_eq!(events[0].event_type, "watch.created");
         assert_eq!(events[1].event_type, "watch.completed");
         assert!(events.iter().all(|event| event.task_id.as_deref() == Some("task-1")));
+
+        // Task 19C4 M3/L4: the continuation wake is a workspace fact.
+        let workspace = db.workspace_pool_for_testing("ws-job").await.expect("workspace pool");
+        let wakes: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM task_wake_outbox WHERE task_id = 'task-1' AND event_id = 'watch-complete'",
+        )
+        .fetch_one(&workspace)
+        .await
+        .expect("workspace wake");
+        assert_eq!(wakes, 1, "the one-shot hit must record the workspace wake");
+
+        // A second completion (already retired) must not insert another wake.
+        let mut replay_wake = wake.clone();
+        replay_wake.event_id = "watch-complete-replay".into();
+        assert!(
+            !store
+                .complete_task_watch("ws-job", "watch-event", &replay_wake)
+                .await
+                .expect("idempotent completion")
+        );
+        let wakes: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM task_wake_outbox WHERE task_id = 'task-1' AND event_id = 'watch-complete'",
+        )
+        .fetch_one(&workspace)
+        .await
+        .expect("workspace wake count");
+        assert_eq!(wakes, 1, "completed == false must not insert a wake");
+    }
+
+    /// Task 19C4 M3: if the workspace wake cannot be written, the platform rule
+    /// is restored so the one-shot is retried instead of silently disarmed.
+    #[tokio::test]
+    async fn watch_completion_restores_the_rule_when_the_workspace_wake_fails() {
+        let (db, recorder, _hub) = fixture().await;
+        let store = WatchRuleStoreAdapter::new((*db).clone()).with_recorder(recorder);
+        let rule = tinyiothub_core::watch::WatchRule {
+            id: "watch-fail".into(),
+            workspace_id: "ws-job".into(),
+            condition: tinyiothub_core::watch::WatchCondition::Availability {
+                thing_id: "device-1".into(),
+                online: true,
+            },
+            persistent: false,
+            timeout_secs: 60,
+            created_at: chrono::Utc::now().to_rfc3339(),
+            owner_task_id: Some("task-1".into()),
+        };
+        store.insert(&rule).await.expect("insert watch");
+        db.mark_workspace_unavailable("ws-job", "injected workspace failure")
+            .await
+            .expect("mark unavailable");
+        let wake = tinyiothub_core::agent_task::TaskWake {
+            task_id: "task-1".into(),
+            event_id: "watch:watch-fail:hit".into(),
+            signal_json: serde_json::json!({"workspace_id":"ws-job"}).to_string(),
+            dispatch_state: tinyiothub_core::agent_task::WakeDispatchState::Pending,
+            created_at: chrono::Utc::now(),
+            dispatched_at: None,
+            resolved_at: None,
+        };
+        let error = store
+            .complete_task_watch("ws-job", "watch-fail", &wake)
+            .await
+            .expect_err("workspace wake must fail");
+        assert!(error.contains("rule restored"), "{error}");
+        let restored = tinyiothub_storage::watch::find_rule(db.pool(), "ws-job", "watch-fail")
+            .await
+            .expect("platform rule lookup");
+        assert!(restored.is_some(), "the one-shot rule must be restored for retry");
     }
     #[tokio::test]
     async fn watch_adapter_publishes_and_replays_cancellation_and_generic_deletion() {
@@ -2658,8 +2762,7 @@ mod watch_ports_tests {
         assert_eq!(got.created_at, "2026-10-20T00:00:00Z");
     }
 
-    #[tokio::test]
-    async fn rebuild_lists_only_watches_whose_owner_task_is_nonterminal() {
+    async fn watch_rebuild_fixture() -> tinyiothub_storage::Db {
         let pool = sqlx::SqlitePool::connect("sqlite::memory:").await.unwrap();
         tinyiothub_storage::test_helpers::run_all_migrations(&pool)
             .await
@@ -2725,11 +2828,36 @@ mod watch_ports_tests {
             .await
             .unwrap();
         }
+        db
+    }
 
+    #[tokio::test]
+    async fn rebuild_lists_only_watches_whose_owner_task_is_nonterminal() {
+        let db = watch_rebuild_fixture().await;
         let adapter = WatchRuleStoreAdapter::new(db);
         let restored = WatchRuleStore::list_all(&adapter).await.unwrap();
         let ids: Vec<&str> = restored.iter().map(|rule| rule.id.as_str()).collect();
         assert_eq!(ids, ["rule-task-active", "rule-task-paused"]);
+    }
+
+    /// Task 19C4 M5: an unreadable owner workspace is "unverifiable", not
+    /// "proven terminal", so its Task-owned rules must be kept for a later
+    /// retry instead of being silently dropped.
+    #[tokio::test]
+    async fn rebuild_keeps_task_rules_when_the_owner_workspace_is_unreadable() {
+        let db = watch_rebuild_fixture().await;
+        db.mark_workspace_unavailable("ws1", "injected unreadable store")
+            .await
+            .unwrap();
+        let adapter = WatchRuleStoreAdapter::new(db);
+        let restored = WatchRuleStore::list_all(&adapter).await.unwrap();
+        let mut ids: Vec<&str> = restored.iter().map(|rule| rule.id.as_str()).collect();
+        ids.sort_unstable();
+        assert_eq!(
+            ids,
+            ["rule-task-active", "rule-task-paused", "rule-task-terminal"],
+            "an unreadable owner workspace must not make its rules look terminal"
+        );
     }
 
     /// delete 跨工作区落空（多租户隔离），本工作区删得掉。

@@ -100,7 +100,7 @@ query/endpoint, and the artifact file.
 | Duplicate physical actions | Simulator command log grouped by `effect_id` and idempotency key; count of repeated physical commands (must be zero) and any repeated command ID |
 | Recovery | Startup recoveries, `run.interrupted` (with `incomplete_tail` and `last_persisted_seq`), interrupted/unknown gauges, and each `restore_journal` phase transition |
 | Compaction | Every compare/replace result: boundary sequence, state version, hash/digest match, `StaleAppend` or mismatch, and whether the replacement dispatched any effect (must be zero) |
-| SSE `resync` | `activeConnections`, `connectionsOpened`, `connectionsClosed`, `resyncs`, `duplicatesDropped`, `firstFrames`, `firstFrameMsTotal`; plus client-observed resync reason and cursor |
+| SSE `resync` | Harness Task SSE counters: `activeConnections`, `connectionsOpened`, `connectionsClosed`, `resyncs`, `duplicatesDropped`, `firstFrames`, `firstFrameMsTotal`; plus client-observed resync reason and cursor. The legacy `foreignTaskEvents` / `taskLessEvents` counters were retired with the platform Task stream |
 | DB / WAL | `harness.db`, `-wal`, and `-shm` bytes on the fixed cadence; `dbQueryMs`; bounded-page latency; write latency samples; lock/busy counts |
 | Memory | Host RSS bytes and percent, peak RSS, and per-workspace pool memory where available. RSS is approximate; report the sample method |
 | Idle pools | Physical connections per workspace after the settle interval, and the pool settings in force |

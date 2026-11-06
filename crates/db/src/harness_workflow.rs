@@ -1194,6 +1194,13 @@ impl Db {
         }
         drain_cancelling_tasks(&mut tx, workspace_id, now).await?;
         tx.commit().await?;
+        for id in &task_ids {
+            if let Ok(Some(task)) = self.harness_get_task(workspace_id, id).await
+                && task.status.is_terminal()
+            {
+                self.prune_runtime_device_state(workspace_id, id).await;
+            }
+        }
         Ok(task_ids)
     }
 
@@ -1219,9 +1226,21 @@ impl Db {
 
     pub async fn drain_workflow_cancellation(&self, workspace_id: &str) -> DbResult<()> {
         let pool = self.workspace_pool(workspace_id).await?;
+        let candidates: Vec<String> = sqlx::query_scalar(
+            "SELECT id FROM agent_tasks WHERE state = 'cancelling' AND execution_mode = 'production'",
+        )
+        .fetch_all(&pool)
+        .await?;
         let mut tx = pool.begin().await?;
         drain_cancelling_tasks(&mut tx, workspace_id, Utc::now()).await?;
         tx.commit().await?;
+        for id in candidates {
+            if let Ok(Some(task)) = self.harness_get_task(workspace_id, &id).await
+                && task.status.is_terminal()
+            {
+                self.prune_runtime_device_state(workspace_id, &id).await;
+            }
+        }
         Ok(())
     }
 
@@ -1475,6 +1494,8 @@ impl Db {
             .await?;
         }
         tx.commit().await?;
+        // `complete_subagent_task` only accepts completed/failed.
+        self.prune_runtime_device_state(workspace_id, task_id).await;
         Ok(true)
     }
 }

@@ -30,6 +30,7 @@ use crate::domains::agent::host::config::service as config_service;
 #[allow(clippy::too_many_arguments)] // 组合根 provider：参数即依赖清单，收敛于此一处
 pub fn chat_builtin_tools_provider(
     db_pool: SqlitePool,
+    db: Arc<tinyiothub_storage::Db>,
     device_cache: Option<Arc<ThingCache>>,
     pending_actions: Arc<PendingActionStore>,
     arbitration: Arc<ArbitrationRegistry>,
@@ -54,6 +55,7 @@ pub fn chat_builtin_tools_provider(
             db_pool.clone(),
             workspace_id,
             &ThingToolContext {
+                db: Some(db.clone()),
                 device_cache: device_cache.clone(),
                 data_server: runtime.data_server.clone(),
                 pending_actions: Some(pending_actions.clone()),

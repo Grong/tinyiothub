@@ -282,10 +282,24 @@ async fn dead_wakes_pool(
         .collect()
 }
 
-async fn workspace_pool(db: &Db, workspace_id: Option<&str>) -> Result<Option<sqlx::SqlitePool>, DeviceJobError> {
+/// A scoped read must never fall back to the fleet when the requested
+/// workspace has no harness generation: `None` (fleet) and `Some(ws)` with no
+/// generation are different answers.
+enum ScopedPool {
+    Missing,
+    Fleet,
+    Available(sqlx::SqlitePool),
+}
+
+async fn scope_pool(db: &Db, workspace_id: Option<&str>) -> Result<ScopedPool, DeviceJobError> {
     match workspace_id {
-        Some(workspace_id) => db.try_existing_workspace_pool(workspace_id).await.map_err(storage),
-        None => Ok(None),
+        Some(workspace_id) => Ok(
+            match db.try_existing_workspace_pool(workspace_id).await.map_err(storage)? {
+                Some(pool) => ScopedPool::Available(pool),
+                None => ScopedPool::Missing,
+            },
+        ),
+        None => Ok(ScopedPool::Fleet),
     }
 }
 
@@ -303,9 +317,10 @@ impl Db {
         &self,
         workspace_id: Option<&str>,
     ) -> Result<WorkspaceJobWakeCounts, DeviceJobError> {
-        match workspace_pool(self, workspace_id).await? {
-            Some(pool) => wake_counts_pool(&pool, None).await,
-            None => {
+        match scope_pool(self, workspace_id).await? {
+            ScopedPool::Available(pool) => wake_counts_pool(&pool, None).await,
+            ScopedPool::Missing => Ok(WorkspaceJobWakeCounts::default()),
+            ScopedPool::Fleet => {
                 let mut totals = WorkspaceJobWakeCounts::default();
                 for workspace_id in sweep_workspaces(self, None).await? {
                     let Ok(Some(pool)) = self.try_existing_workspace_pool(&workspace_id).await else {
@@ -334,9 +349,10 @@ impl Db {
         &self,
         workspace_id: Option<&str>,
     ) -> Result<WorkspaceJobWakeCounts, DeviceJobError> {
-        match workspace_pool(self, workspace_id).await? {
-            Some(pool) => wake_counts_pool(&pool, Some("device_job_terminal")).await,
-            None => {
+        match scope_pool(self, workspace_id).await? {
+            ScopedPool::Available(pool) => wake_counts_pool(&pool, Some("device_job_terminal")).await,
+            ScopedPool::Missing => Ok(WorkspaceJobWakeCounts::default()),
+            ScopedPool::Fleet => {
                 let mut totals = WorkspaceJobWakeCounts::default();
                 for workspace_id in sweep_workspaces(self, None).await? {
                     let Ok(Some(pool)) = self.try_existing_workspace_pool(&workspace_id).await else {
@@ -369,11 +385,12 @@ impl Db {
     ) -> Result<Vec<AdminWake>, DeviceJobError> {
         let limit = limit.max(0);
         let mut wakes = Vec::new();
-        match workspace_pool(self, workspace_id).await? {
-            Some(pool) => {
+        match scope_pool(self, workspace_id).await? {
+            ScopedPool::Available(pool) => {
                 wakes = dead_wakes_pool(&pool, workspace_id.unwrap_or_default(), limit).await?;
             }
-            None => {
+            ScopedPool::Missing => {}
+            ScopedPool::Fleet => {
                 for workspace_id in sweep_workspaces(self, None).await? {
                     let Ok(Some(pool)) = self.try_existing_workspace_pool(&workspace_id).await else {
                         continue;
@@ -420,9 +437,10 @@ impl Db {
     }
 
     pub async fn runtime_drain_counts(&self, workspace_id: Option<&str>) -> Result<RuntimeDrainCounts, DeviceJobError> {
-        let (nonterminal_tasks, active_runs) = match workspace_pool(self, workspace_id).await? {
-            Some(pool) => task_run_counts_pool(&pool).await?,
-            None => {
+        let (nonterminal_tasks, active_runs) = match scope_pool(self, workspace_id).await? {
+            ScopedPool::Available(pool) => task_run_counts_pool(&pool).await?,
+            ScopedPool::Missing => (0, 0),
+            ScopedPool::Fleet => {
                 let mut totals = (0i64, 0i64);
                 for workspace_id in sweep_workspaces(self, None).await? {
                     let Ok(Some(pool)) = self.try_existing_workspace_pool(&workspace_id).await else {
@@ -441,9 +459,12 @@ impl Db {
                 totals
             }
         };
-        let active_watches = match workspace_pool(self, workspace_id).await? {
-            Some(pool) => active_watch_count_pool(self, workspace_id.unwrap_or_default(), &pool).await?,
-            None => {
+        let active_watches = match scope_pool(self, workspace_id).await? {
+            ScopedPool::Available(pool) => {
+                active_watch_count_pool(self, workspace_id.unwrap_or_default(), &pool).await?
+            }
+            ScopedPool::Missing => 0,
+            ScopedPool::Fleet => {
                 let mut total = 0i64;
                 for workspace_id in sweep_workspaces(self, None).await? {
                     let Ok(Some(pool)) = self.try_existing_workspace_pool(&workspace_id).await else {
@@ -480,9 +501,10 @@ impl Db {
         let drain = self.runtime_drain_counts(workspace_id).await?;
 
         let mut task_rows: Vec<(String, i64)> = Vec::new();
-        match workspace_pool(self, workspace_id).await? {
-            Some(pool) => task_rows = task_state_counts_pool(&pool).await?,
-            None => {
+        match scope_pool(self, workspace_id).await? {
+            ScopedPool::Available(pool) => task_rows = task_state_counts_pool(&pool).await?,
+            ScopedPool::Missing => {}
+            ScopedPool::Fleet => {
                 for workspace_id in sweep_workspaces(self, None).await? {
                     let Ok(Some(pool)) = self.try_existing_workspace_pool(&workspace_id).await else {
                         continue;
@@ -497,9 +519,10 @@ impl Db {
             }
         }
         let mut outbox_rows: Vec<(String, i64)> = Vec::new();
-        match workspace_pool(self, workspace_id).await? {
-            Some(pool) => outbox_rows = wake_state_counts_pool(&pool).await?,
-            None => {
+        match scope_pool(self, workspace_id).await? {
+            ScopedPool::Available(pool) => outbox_rows = wake_state_counts_pool(&pool).await?,
+            ScopedPool::Missing => {}
+            ScopedPool::Fleet => {
                 for workspace_id in sweep_workspaces(self, None).await? {
                     let Ok(Some(pool)) = self.try_existing_workspace_pool(&workspace_id).await else {
                         continue;
@@ -845,6 +868,40 @@ mod tests {
         );
         let pending = db.workspace_job_wake_counts(Some("ws_1")).await.expect("counts");
         assert_eq!((pending.pending, pending.dead), (1, 0));
+        let _ = tokio::fs::remove_dir_all(db.workspace_store_root.parent().expect("root")).await;
+    }
+
+    #[tokio::test]
+    async fn scoped_reads_do_not_fall_back_to_the_fleet_when_the_store_is_missing() {
+        let pool = crate::test_helpers::test_pool().await;
+        seed_workspace(&pool, "ws_empty").await;
+        seed_workspace(&pool, "ws_data").await;
+        let db = test_db(pool);
+        // ws_data owns a Task; ws_empty is registered but never created a
+        // Harness generation.
+        seed_task(&db, "ws_data", "task_data", false).await;
+
+        let drain = db.runtime_drain_counts(Some("ws_empty")).await.expect("scoped drain");
+        assert_eq!(drain.nonterminal_tasks, 0, "must not see another workspace");
+        assert_eq!(drain.active_runs, 0);
+        assert_eq!(drain.active_watches, 0);
+        assert_eq!(drain.pending_outbox, 0);
+        assert_eq!(drain.active_jobs, 0);
+        let metrics = db.runtime_metrics(Some("ws_empty")).await.expect("scoped metrics");
+        assert_eq!(metrics.tasks.active, 0);
+        assert_eq!(metrics.outbox.pending, 0);
+        assert_eq!(metrics.jobs.accepted, 0);
+        let wakes = db.workspace_wake_counts(Some("ws_empty")).await.expect("scoped wakes");
+        assert_eq!(wakes.pending, 0);
+        let dead = db
+            .workspace_dead_wakes(Some("ws_empty"), 200)
+            .await
+            .expect("scoped dead");
+        assert!(dead.is_empty());
+
+        // The fleet-wide path still sees the readable workspace.
+        let fleet = db.runtime_drain_counts(None).await.expect("fleet drain");
+        assert_eq!(fleet.nonterminal_tasks, 1);
         let _ = tokio::fs::remove_dir_all(db.workspace_store_root.parent().expect("root")).await;
     }
 

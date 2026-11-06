@@ -179,6 +179,10 @@ impl ManagerSlot {
 /// `ToolRuntimeContext` 只携带存储无关字段，这些由组合层捕获/拼装）。
 #[derive(Clone, Default)]
 pub struct ThingToolContext {
+    /// Shared database handle (workspace-store registry + configured root).
+    /// Tools that read workspace-backed facts must use this instead of
+    /// reconstructing `Db::new(pool)`.
+    pub db: Option<Arc<tinyiothub_storage::Db>>,
     pub device_cache: Option<Arc<tinyiothub_storage::cache::ThingCache>>,
     pub data_server: Option<Arc<tinyiothub_runtime::DataServer>>,
     pub pending_actions: Option<Arc<PendingActionStore>>,
@@ -296,7 +300,11 @@ pub fn create_thing_tools(
             data_server: runtime.data_server.clone(),
         })),
         read_only(Box::new(watch_tools::WatchTool {
-            db: tinyiothub_storage::Db::new(pool.clone()),
+            db: runtime
+                .db
+                .as_ref()
+                .map(|db| (**db).clone())
+                .unwrap_or_else(|| tinyiothub_storage::Db::new(pool.clone())),
             workspace_id: ws.clone(),
             manager: manager.clone(),
             run_ctx: runtime.run_ctx.clone(),

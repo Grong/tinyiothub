@@ -1557,6 +1557,11 @@ impl Db {
     ) -> Result<ApplyOutcome> {
         validate_transition(workspace_id, expected, transition)?;
         let transition_json = serde_json::to_string(transition)?;
+        let terminal_task = transition
+            .run_task
+            .as_ref()
+            .filter(|projection| matches!(projection.task_state.as_str(), "completed" | "failed" | "cancelled"))
+            .map(|projection| projection.task_id.clone());
         let pool = self.workspace_pool(workspace_id).await?;
         let mut retries = 0;
         loop {
@@ -1564,7 +1569,12 @@ impl Db {
                 .apply_workspace_transition_once(&pool, transition, &transition_json)
                 .await
             {
-                Ok(outcome) => return Ok(outcome),
+                Ok(outcome) => {
+                    if let Some(task_id) = terminal_task.as_deref() {
+                        self.prune_runtime_device_state(workspace_id, task_id).await;
+                    }
+                    return Ok(outcome);
+                }
                 Err(AttemptError::Writes(error)) => {
                     if let Some(message) = lock_message(&error) {
                         if retries < MAX_LOCK_RETRIES {
@@ -1579,6 +1589,9 @@ impl Db {
                 Err(AttemptError::Commit(error)) => {
                     let mut connection = pool.acquire().await?.detach();
                     if let Some(outcome) = deduplicated_outcome(&mut connection, transition, &transition_json).await? {
+                        if let Some(task_id) = terminal_task.as_deref() {
+                            self.prune_runtime_device_state(workspace_id, task_id).await;
+                        }
                         return Ok(outcome);
                     }
                     drop(connection);
