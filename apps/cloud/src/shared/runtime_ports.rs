@@ -1157,7 +1157,12 @@ impl tinyiothub_runtime::ports::WatchRuleStore for WatchRuleStoreAdapter {
                         // Task (M3 removal-failure fallback).
                         match self
                             .db
-                            .harness_mark_wake_dead(&wake.task_id, &wake.event_id, "completion_rule_missing")
+                            .harness_mark_wake_dead_in(
+                                workspace_id,
+                                &wake.task_id,
+                                &wake.event_id,
+                                "completion_rule_missing",
+                            )
                             .await
                         {
                             Ok(()) => {

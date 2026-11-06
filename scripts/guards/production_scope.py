@@ -214,9 +214,20 @@ def scope_end(masked: str, attr_end: int) -> int:
         return find_semicolon(masked, pos, limit)
     keyword = match.group(1)
     item_start = match.start(1)
-    after_ident = skip_space(masked, match.end(), limit)
-    if after_ident < limit and masked[after_ident] == "!":
-        return find_macro_end(masked, after_ident, limit)
+    # `macro_rules! name { ... }` is a block item: the body is the block after
+    # the name, not a `name!` invocation followed by `(`/`[`/`{`.
+    if keyword == "macro_rules" or masked.startswith("macro_rules", item_start):
+        return find_block_end(masked, match.end(), limit)
+    # A macro item may be a qualified path (`foo::bar! { ... }`); consume the
+    # path segments before looking for the `!`.
+    cursor = skip_space(masked, match.end(), limit)
+    while masked.startswith("::", cursor):
+        segment = IDENT.match(masked, skip_space(masked, cursor + 2, limit))
+        if not segment:
+            break
+        cursor = skip_space(masked, segment.end(), limit)
+    if cursor < limit and masked[cursor] == "!":
+        return find_macro_end(masked, cursor, limit)
     if keyword == "mod":
         # `mod name;` (file module) or `mod name { ... }`.
         brace = masked.find("{", match.end(), limit)

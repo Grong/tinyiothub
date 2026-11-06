@@ -305,6 +305,20 @@ pub fn prod() {
 }
 RS
 expect_fails "legacy-writers (production after if/else test gate)" bash scripts/guards/legacy-writers.sh
+# H1 round 4: a test-gated `macro_rules!` body must not swallow the file.
+cat > "$EVIL_LEGACY_RS" <<'RS'
+#[cfg(test)]
+macro_rules! helper { () => { let _ = "INSERT INTO agent_tasks"; }; }
+pub fn evil_after_macro_rules() { let _ = "UPDATE agent_tasks SET status = 'x'"; }
+RS
+expect_fails "legacy-writers (macro_rules test gate)" bash scripts/guards/legacy-writers.sh
+# H1 round 4: a qualified-path macro item is an item too.
+cat > "$EVIL_LEGACY_RS" <<'RS'
+#[cfg(test)]
+foo::bar! { fixture }
+pub fn evil_after_qualified_macro() { let _ = "DELETE FROM task_wake_outbox"; }
+RS
+expect_fails "legacy-writers (qualified-path macro test gate)" bash scripts/guards/legacy-writers.sh
 # The block-macro scope bug hid real production lines in dynamic_adapter.rs.
 if PYTHONDONTWRITEBYTECODE=1 python3 scripts/guards/production_scope.py crates/runtime/src/driver/dynamic_adapter.rs \
     | grep -q "fn own_source_response" \

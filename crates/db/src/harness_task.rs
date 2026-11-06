@@ -1382,7 +1382,20 @@ impl Db {
         else {
             return Ok(());
         };
-        let pool = self.workspace_pool(&workspace_id).await.map_err(unavailable)?;
+        self.harness_mark_wake_dead_in(&workspace_id, task_id, event_id, reason)
+            .await
+    }
+
+    /// Exact-workspace variant for a caller that already resolved the owning
+    /// workspace; avoids the fleet-wide ambiguity scan on a failure path.
+    pub async fn harness_mark_wake_dead_in(
+        &self,
+        workspace_id: &str,
+        task_id: &str,
+        event_id: &str,
+        reason: &str,
+    ) -> Result<(), TaskStoreError> {
+        let pool = self.workspace_pool(workspace_id).await.map_err(unavailable)?;
         sqlx::query(
             "UPDATE task_wake_outbox
              SET dispatch_state = 'dead', resolved_at = ?, failure_reason = ?
