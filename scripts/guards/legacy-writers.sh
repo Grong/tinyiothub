@@ -91,6 +91,44 @@ check_rust \
 # task_approval.rs deliberately has no device_jobs SQL: it calls
 # crate::device_job::insert_job_projection inside its own transaction.
 
+# ── Retired platform Job writer stays test-gated (19C3 M3) ─
+# device_job.rs is allow-listed above only because it holds the retired writer.
+# Every INSERT/UPDATE device_jobs there must sit in an item guarded by
+# #[cfg(any(test, feature = "testing"))]; otherwise un-gating the writer would
+# silently reintroduce a production platform write.
+DEVICE_JOB_UNGATED=$(awk '
+  /^[[:space:]]*#\[cfg\(any\(test, feature = "testing"\)\)\]/ { pending = 1; next }
+  /^[[:space:]]*$/ { next }
+  {
+    if ($0 ~ /^[[:space:]]*(pub(\([a-z]+\))?[[:space:]]+)?(async[[:space:]]+)?fn[[:space:]]/) {
+      gated = pending
+    }
+    if ($0 ~ /(INSERT INTO device_jobs|UPDATE device_jobs)/ && !gated) {
+      print FILENAME ":" FNR ":" $0
+    }
+    pending = 0
+  }
+' crates/db/src/device_job.rs)
+if [ -n "$DEVICE_JOB_UNGATED" ]; then
+  echo "$DEVICE_JOB_UNGATED"
+  fail "platform device_jobs writer outside cfg(any(test, feature = \"testing\"))"
+fi
+
+# autonomous_factory.rs may write device_jobs only inside its #[cfg(test)]
+# module (its fixture seeds legacy Jobs).
+AUTONOMOUS_FIRST_TEST=$(grep -nE '^#\[cfg\(test\)\]' apps/cloud/src/domains/agent/host/autonomous_factory.rs | head -1 | cut -d: -f1)
+if [ -z "$AUTONOMOUS_FIRST_TEST" ]; then
+  fail "autonomous_factory.rs lost its #[cfg(test)] module; device_jobs writes must stay test-only"
+  AUTONOMOUS_FIRST_TEST=0
+fi
+AUTONOMOUS_WRITES=$(rg -n '(INSERT INTO device_jobs|UPDATE device_jobs)' \
+    apps/cloud/src/domains/agent/host/autonomous_factory.rs 2>/dev/null \
+  | awk -F: -v limit="$AUTONOMOUS_FIRST_TEST" '$1 < limit {print}' || true)
+if [ -n "$AUTONOMOUS_WRITES" ]; then
+  echo "$AUTONOMOUS_WRITES"
+  fail "device_jobs write in autonomous_factory outside its #[cfg(test)] module"
+fi
+
 check_rust \
   "Job writer outside the legacy runtime adapter" \
   '(create_job_and_event|mark_running_and_event|finish_job_and_event|update_progress_revision_and_event|request_stop_and_event)' \

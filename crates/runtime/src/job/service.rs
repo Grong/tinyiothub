@@ -370,11 +370,15 @@ impl JobService {
     pub async fn finish(&self, job_id: &str, final_result: JobFinal) -> Result<FinishOutcome, DeviceJobError> {
         let terminal_lock = self.terminal_lock(job_id);
         let _guard = terminal_lock.lock().await;
-        let job = match self.inner.workspaces.get(job_id).map(|value| value.clone()) {
-            Some(workspace_id) => self.inner.store.get_job(&workspace_id, job_id).await?,
-            None => self.inner.store.get_job_by_id(job_id).await?,
-        }
-        .ok_or(DeviceJobError::NotFound)?;
+        // Always resolve by id: the in-memory map is a hint, never a
+        // substitute for the store's duplicate-id / unreadable-workspace
+        // policy (Task 19C3 H1).
+        let job = self
+            .inner
+            .store
+            .get_job_by_id(job_id)
+            .await?
+            .ok_or(DeviceJobError::NotFound)?;
         self.finish_known(&job, final_result).await
     }
 
@@ -441,11 +445,9 @@ impl JobService {
 
     pub async fn wait(&self, job_id: &str, run_remaining: Duration) -> JobWait {
         // The in-memory maps are pruned once a Job is terminal; a store read by
-        // id keeps `wait` authoritative for a completed Job.
-        let initial = match self.inner.workspaces.get(job_id).map(|value| value.clone()) {
-            Some(workspace_id) => self.inner.store.get_job(&workspace_id, job_id).await,
-            None => self.inner.store.get_job_by_id(job_id).await,
-        };
+        // id keeps `wait` authoritative for a completed Job and always applies
+        // the duplicate-id / unreadable-workspace policy (Task 19C3 H1).
+        let initial = self.inner.store.get_job_by_id(job_id).await;
         let Ok(Some(initial)) = initial else {
             return JobWait::Running {
                 job_id: job_id.to_string(),

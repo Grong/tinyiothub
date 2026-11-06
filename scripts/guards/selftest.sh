@@ -10,6 +10,8 @@ CLEANUP=()
 # 未提交改动（根清单本脚本从不修改；成员清单即使提前退出也会被
 # checkout）。只在真正备份过时才恢复。
 AGENT_TOML_BAK=""
+DEVICE_JOB_BAK=""
+AUTONOMOUS_FACTORY_BAK=""
 THING_AGENT_DIR_CREATED=0
 cleanup() {
   for path in "${CLEANUP[@]}"; do
@@ -21,6 +23,14 @@ cleanup() {
   if [ -n "$AGENT_TOML_BAK" ] && [ -f "$AGENT_TOML_BAK" ]; then
     cp "$AGENT_TOML_BAK" crates/agent/Cargo.toml
     rm -f "$AGENT_TOML_BAK"
+  fi
+  if [ -n "$DEVICE_JOB_BAK" ] && [ -f "$DEVICE_JOB_BAK" ]; then
+    cp "$DEVICE_JOB_BAK" crates/db/src/device_job.rs
+    rm -f "$DEVICE_JOB_BAK"
+  fi
+  if [ -n "$AUTONOMOUS_FACTORY_BAK" ] && [ -f "$AUTONOMOUS_FACTORY_BAK" ]; then
+    cp "$AUTONOMOUS_FACTORY_BAK" apps/cloud/src/domains/agent/host/autonomous_factory.rs
+    rm -f "$AUTONOMOUS_FACTORY_BAK"
   fi
 }
 trap cleanup EXIT
@@ -171,6 +181,24 @@ rm -f "$EVIL_LEGACY_WEB"
 printf 'const terminalTasks = [];\n' > "$EVIL_LEGACY_WEB"
 expect_fails "legacy-writers (removed terminal task list)" bash scripts/guards/legacy-writers.sh
 rm -f "$EVIL_LEGACY_WEB"
+# 19C3 M3: un-gating the retired platform writer must fail, and a raw write
+# added to autonomous_factory before its #[cfg(test)] module must fail.
+DEVICE_JOB_BAK=$(mktemp)
+cp crates/db/src/device_job.rs "$DEVICE_JOB_BAK"
+printf '\npub fn guard_selftest_ungated() { let _ = "INSERT INTO device_jobs VALUES (1)"; }\n' >> crates/db/src/device_job.rs
+expect_fails "legacy-writers (un-gated platform Job writer)" bash scripts/guards/legacy-writers.sh
+cp "$DEVICE_JOB_BAK" crates/db/src/device_job.rs
+rm -f "$DEVICE_JOB_BAK"
+DEVICE_JOB_BAK=""
+AUTONOMOUS_FACTORY_BAK=$(mktemp)
+cp apps/cloud/src/domains/agent/host/autonomous_factory.rs "$AUTONOMOUS_FACTORY_BAK"
+sed -i.bak '1a\
+pub fn guard_selftest_ungated() { let _ = "UPDATE device_jobs SET state = 1"; }
+' apps/cloud/src/domains/agent/host/autonomous_factory.rs && rm -f apps/cloud/src/domains/agent/host/autonomous_factory.rs.bak
+expect_fails "legacy-writers (autonomous_factory production Job write)" bash scripts/guards/legacy-writers.sh
+cp "$AUTONOMOUS_FACTORY_BAK" apps/cloud/src/domains/agent/host/autonomous_factory.rs
+rm -f "$AUTONOMOUS_FACTORY_BAK"
+AUTONOMOUS_FACTORY_BAK=""
 expect_passes "legacy-writers" bash scripts/guards/legacy-writers.sh
 
 if [ "$SELFTEST_FAIL" -ne 0 ]; then

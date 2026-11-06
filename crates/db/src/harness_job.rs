@@ -139,6 +139,8 @@ impl Db {
     /// deterministic id that already exists is a Conflict, so a retried submit
     /// cannot reach a worker twice.
     pub async fn create_workspace_job(&self, job: &DeviceJob) -> Result<(), DeviceJobError> {
+        let timeout_ms = i64::try_from(job.timeout_ms)
+            .map_err(|_| DeviceJobError::Validation("timeout is too large".to_string()))?;
         let pool = self.workspace_pool(&job.workspace_id).await.map_err(db_job_storage)?;
         let inserted = sqlx::query(
             "INSERT INTO device_jobs
@@ -172,7 +174,7 @@ impl Db {
         .bind(&job.run_id)
         .bind(&job.tool_call_id)
         .bind(&job.driver_call_id)
-        .bind(i64::try_from(job.timeout_ms).unwrap_or(i64::MAX))
+        .bind(timeout_ms)
         .bind(job.started_at.to_rfc3339())
         .bind(job.ended_at.map(|value| value.to_rfc3339()))
         .execute(&pool)
@@ -192,6 +194,9 @@ impl Db {
         workspace_id: &str,
         job: &DeviceJob,
     ) -> std::result::Result<(), DbError> {
+        let timeout_ms = i64::try_from(job.timeout_ms).map_err(|_| DbError::Validation {
+            message: "timeout is too large".to_string(),
+        })?;
         let pool = self.workspace_pool(workspace_id).await?;
         sqlx::query(
             "INSERT INTO device_jobs
@@ -228,7 +233,7 @@ impl Db {
         .bind(&job.run_id)
         .bind(&job.tool_call_id)
         .bind(&job.driver_call_id)
-        .bind(i64::try_from(job.timeout_ms).unwrap_or(i64::MAX))
+        .bind(timeout_ms)
         .bind(job.started_at.to_rfc3339())
         .bind(job.ended_at.map(|value| value.to_rfc3339()))
         .execute(&pool)
@@ -241,7 +246,13 @@ impl Db {
         workspace_id: &str,
         job_id: &str,
     ) -> Result<Option<DeviceJob>, DeviceJobError> {
-        let pool = self.workspace_pool(workspace_id).await.map_err(db_job_storage)?;
+        let Some(pool) = self
+            .try_existing_workspace_pool(workspace_id)
+            .await
+            .map_err(db_job_storage)?
+        else {
+            return Ok(None);
+        };
         find_job(&pool, workspace_id, job_id).await
     }
 
@@ -251,7 +262,13 @@ impl Db {
         task_id: &str,
         job_id: &str,
     ) -> Result<Option<DeviceJob>, DeviceJobError> {
-        let pool = self.workspace_pool(workspace_id).await.map_err(db_job_storage)?;
+        let Some(pool) = self
+            .try_existing_workspace_pool(workspace_id)
+            .await
+            .map_err(db_job_storage)?
+        else {
+            return Ok(None);
+        };
         sqlx::query_as::<_, DeviceJobRow>(sqlx::AssertSqlSafe(format!(
             "SELECT {JOB_COLUMNS} FROM device_jobs WHERE workspace_id = ? AND task_id = ? AND id = ?"
         )))
@@ -270,7 +287,13 @@ impl Db {
         workspace_id: &str,
         tool_call_id: &str,
     ) -> Result<Option<DeviceJob>, DeviceJobError> {
-        let pool = self.workspace_pool(workspace_id).await.map_err(db_job_storage)?;
+        let Some(pool) = self
+            .try_existing_workspace_pool(workspace_id)
+            .await
+            .map_err(db_job_storage)?
+        else {
+            return Ok(None);
+        };
         sqlx::query_as::<_, DeviceJobRow>(sqlx::AssertSqlSafe(format!(
             "SELECT {JOB_COLUMNS} FROM device_jobs WHERE workspace_id = ? AND tool_call_id = ?"
         )))
@@ -290,7 +313,7 @@ impl Db {
         let mut matched: Option<String> = None;
         let mut skipped = 0usize;
         for workspace_id in self.harness_workspaces().await.map_err(storage)? {
-            let Some(pool) = self.try_workspace_pool(&workspace_id).await else {
+            let Some(pool) = self.try_existing_workspace_pool(&workspace_id).await.ok().flatten() else {
                 skipped += 1;
                 continue;
             };
@@ -510,12 +533,18 @@ impl Db {
         let mut jobs = Vec::new();
         match workspace_id {
             Some(workspace_id) => {
-                let pool = self.workspace_pool(workspace_id).await.map_err(db_job_storage)?;
+                let Some(pool) = self
+                    .try_existing_workspace_pool(workspace_id)
+                    .await
+                    .map_err(db_job_storage)?
+                else {
+                    return Ok(jobs);
+                };
                 jobs.extend(active_jobs_pool(&pool, unknown_only).await?);
             }
             None => {
                 for workspace_id in self.harness_workspaces().await.map_err(storage)? {
-                    let Some(pool) = self.try_workspace_pool(&workspace_id).await else {
+                    let Some(pool) = self.try_existing_workspace_pool(&workspace_id).await.ok().flatten() else {
                         continue;
                     };
                     match active_jobs_pool(&pool, unknown_only).await {
@@ -538,14 +567,20 @@ impl Db {
     pub async fn workspace_job_counts(&self, workspace_id: Option<&str>) -> Result<(u64, u64), DeviceJobError> {
         match workspace_id {
             Some(workspace_id) => {
-                let pool = self.workspace_pool(workspace_id).await.map_err(db_job_storage)?;
+                let Some(pool) = self
+                    .try_existing_workspace_pool(workspace_id)
+                    .await
+                    .map_err(db_job_storage)?
+                else {
+                    return Ok((0, 0));
+                };
                 job_counts_pool(&pool).await
             }
             None => {
                 let mut active = 0u64;
                 let mut unresolved = 0u64;
                 for workspace_id in self.harness_workspaces().await.map_err(storage)? {
-                    let Some(pool) = self.try_workspace_pool(&workspace_id).await else {
+                    let Some(pool) = self.try_existing_workspace_pool(&workspace_id).await.ok().flatten() else {
                         continue;
                     };
                     match job_counts_pool(&pool).await {
@@ -569,13 +604,19 @@ impl Db {
     ) -> Result<Vec<(String, i64)>, DeviceJobError> {
         match workspace_id {
             Some(workspace_id) => {
-                let pool = self.workspace_pool(workspace_id).await.map_err(db_job_storage)?;
+                let Some(pool) = self
+                    .try_existing_workspace_pool(workspace_id)
+                    .await
+                    .map_err(db_job_storage)?
+                else {
+                    return Ok(Vec::new());
+                };
                 job_state_counts_pool(&pool).await
             }
             None => {
                 let mut counts: std::collections::BTreeMap<String, i64> = std::collections::BTreeMap::new();
                 for workspace_id in self.harness_workspaces().await.map_err(storage)? {
-                    let Some(pool) = self.try_workspace_pool(&workspace_id).await else {
+                    let Some(pool) = self.try_existing_workspace_pool(&workspace_id).await.ok().flatten() else {
                         continue;
                     };
                     match job_state_counts_pool(&pool).await {
@@ -1034,6 +1075,46 @@ mod tests {
             .await
             .expect("platform dispositions");
         assert_eq!(platform_dispositions, 0, "dispositions live in the workspace");
+        fixture.close().await;
+    }
+
+    #[tokio::test]
+    async fn timeout_overflow_is_validation_not_a_clamped_row() {
+        let fixture = Fixture::new(&[WS]).await;
+        let db = &fixture.db;
+        let mut oversized = job("job-timeout", WS, "task-1");
+        oversized.timeout_ms = u64::MAX;
+        assert!(matches!(
+            db.create_workspace_job(&oversized).await,
+            Err(DeviceJobError::Validation(message)) if message == "timeout is too large"
+        ));
+        assert!(
+            db.get_workspace_job(WS, "job-timeout").await.expect("read").is_none(),
+            "a rejected timeout must not persist a clamped row"
+        );
+        fixture.close().await;
+    }
+
+    #[tokio::test]
+    async fn finishing_with_a_non_terminal_state_is_rejected() {
+        let fixture = Fixture::new(&[WS]).await;
+        let db = &fixture.db;
+        db.create_workspace_job(&job("job-active", WS, "task-1"))
+            .await
+            .expect("create");
+        let error = db
+            .finish_workspace_job(WS, "job-active", DeviceJobState::Running, &json!({}), None)
+            .await
+            .expect_err("a non-terminal result must be rejected");
+        assert!(matches!(error, DeviceJobError::Validation(_)));
+        assert_eq!(
+            db.get_workspace_job(WS, "job-active")
+                .await
+                .expect("read")
+                .expect("job")
+                .state,
+            DeviceJobState::Accepted
+        );
         fixture.close().await;
     }
 

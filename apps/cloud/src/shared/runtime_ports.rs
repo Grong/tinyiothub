@@ -270,48 +270,32 @@ impl DeviceJobStore for DbDeviceJobStore {
 ///
 /// Task 19C3 made the workspace `device_jobs` the only Job truth: every
 /// operation reads or writes the Job's workspace, and no Job id prefix is
-/// special. Job-id-only operations resolve the owner by scanning the registered
-/// Harness generations once and caching the result; point reads fail closed
-/// when an unreadable workspace could own the Job (Task 19A N1).
+/// special. Job-id-only operations always resolve the owner through
+/// `Db::find_workspace_for_job`, so duplicate ids and unreadable workspaces
+/// keep the documented fail-closed policy; there is intentionally no
+/// job-id→workspace cache to short-circuit that policy (Task 19C3 H1).
 pub struct WorkspaceDeviceJobStore {
     db: Arc<Db>,
-    workspaces: Arc<dashmap::DashMap<String, String>>,
 }
 
 impl WorkspaceDeviceJobStore {
     pub fn new(db: Arc<Db>) -> Self {
-        Self {
-            db,
-            workspaces: Arc::new(dashmap::DashMap::new()),
-        }
+        Self { db }
     }
 
     async fn workspace_for_job(&self, job_id: &str, mutating: bool) -> Result<Option<String>, DeviceJobError> {
-        if let Some(workspace_id) = self.workspaces.get(job_id) {
-            return Ok(Some(workspace_id.clone()));
-        }
-        let workspace_id = self.db.find_workspace_for_job(job_id, mutating).await?;
-        if let Some(workspace_id) = &workspace_id {
-            self.workspaces.insert(job_id.to_string(), workspace_id.clone());
-        }
-        Ok(workspace_id)
+        self.db.find_workspace_for_job(job_id, mutating).await
     }
 }
 
 #[async_trait]
 impl DeviceJobStore for WorkspaceDeviceJobStore {
     async fn create_job(&self, job: &DeviceJob) -> Result<(), DeviceJobError> {
-        self.db.create_workspace_job(job).await?;
-        self.workspaces.insert(job.id.clone(), job.workspace_id.clone());
-        Ok(())
+        self.db.create_workspace_job(job).await
     }
 
     async fn get_job(&self, workspace_id: &str, job_id: &str) -> Result<Option<DeviceJob>, DeviceJobError> {
-        let job = self.db.get_workspace_job(workspace_id, job_id).await?;
-        if job.is_some() {
-            self.workspaces.insert(job_id.to_string(), workspace_id.to_string());
-        }
-        Ok(job)
+        self.db.get_workspace_job(workspace_id, job_id).await
     }
 
     async fn get_job_by_id(&self, job_id: &str) -> Result<Option<DeviceJob>, DeviceJobError> {
@@ -327,11 +311,7 @@ impl DeviceJobStore for WorkspaceDeviceJobStore {
         task_id: &str,
         job_id: &str,
     ) -> Result<Option<DeviceJob>, DeviceJobError> {
-        let job = self.db.get_workspace_task_job(workspace_id, task_id, job_id).await?;
-        if job.is_some() {
-            self.workspaces.insert(job_id.to_string(), workspace_id.to_string());
-        }
-        Ok(job)
+        self.db.get_workspace_task_job(workspace_id, task_id, job_id).await
     }
 
     async fn get_job_by_tool_call(
@@ -339,14 +319,7 @@ impl DeviceJobStore for WorkspaceDeviceJobStore {
         workspace_id: &str,
         tool_call_id: &str,
     ) -> Result<Option<DeviceJob>, DeviceJobError> {
-        let job = self
-            .db
-            .get_workspace_job_by_tool_call(workspace_id, tool_call_id)
-            .await?;
-        if let Some(job) = &job {
-            self.workspaces.insert(job.id.clone(), workspace_id.to_string());
-        }
-        Ok(job)
+        self.db.get_workspace_job_by_tool_call(workspace_id, tool_call_id).await
     }
 
     async fn submit_approved_job(&self, job: &DeviceJob) -> Result<(Option<DeviceJob>, bool), DeviceJobError> {
@@ -364,8 +337,6 @@ impl DeviceJobStore for WorkspaceDeviceJobStore {
             if !matches {
                 return Err(DeviceJobError::ExecutionConflict);
             }
-            self.workspaces
-                .insert(existing.id.clone(), existing.workspace_id.clone());
             return Ok((Some(existing), false));
         }
         self.create_job(job).await?;
@@ -406,12 +377,7 @@ impl DeviceJobStore for WorkspaceDeviceJobStore {
     }
 
     async fn request_stop(&self, workspace_id: &str, task_id: &str, job_id: &str) -> Result<DeviceJob, DeviceJobError> {
-        let job = self
-            .db
-            .request_workspace_job_stop(workspace_id, task_id, job_id)
-            .await?;
-        self.workspaces.insert(job.id.clone(), workspace_id.to_string());
-        Ok(job)
+        self.db.request_workspace_job_stop(workspace_id, task_id, job_id).await
     }
 
     async fn active_jobs(
@@ -419,11 +385,7 @@ impl DeviceJobStore for WorkspaceDeviceJobStore {
         workspace_id: Option<&str>,
         unknown_only: bool,
     ) -> Result<Vec<DeviceJob>, DeviceJobError> {
-        let jobs = self.db.active_workspace_jobs(workspace_id, unknown_only).await?;
-        for job in &jobs {
-            self.workspaces.insert(job.id.clone(), job.workspace_id.clone());
-        }
-        Ok(jobs)
+        self.db.active_workspace_jobs(workspace_id, unknown_only).await
     }
 }
 
@@ -1207,6 +1169,13 @@ mod runtime_job_event_tests {
         }
     }
 
+    fn approved_job() -> DeviceJob {
+        let mut job = job();
+        job.id = "approved-job".into();
+        job.tool_call_id = Some("call-approved".into());
+        job
+    }
+
     async fn workspace_db(root: &std::path::Path, db: &Db) -> Db {
         let workspace_db = Db::new(db.pool().clone()).with_workspace_store_root(root.join("data/agents"));
         workspace_db
@@ -1292,8 +1261,9 @@ mod runtime_job_event_tests {
     }
 
     /// Per-method parity: the workspace store reproduces the legacy store's
-    /// observable Job lifecycle on the same fixture (create/get/mark/progress/
-    /// stop/active/finish/replay).
+    /// observable Job lifecycle on the same fixture and the same Job ids
+    /// (create/get/getById/getTaskJob/getByToolCall/submitApproved/mark/
+    /// progress/stop/active/finish/replay).
     #[tokio::test]
     async fn workspace_store_matches_legacy_store_semantics() {
         let (db, _recorder, _hub) = fixture().await;
@@ -1302,19 +1272,16 @@ mod runtime_job_event_tests {
         let legacy = DbDeviceJobStore::new((*db).clone());
         let workspace = WorkspaceDeviceJobStore::new(Arc::new(workspace_db.clone()));
 
-        let mut legacy_job = job();
-        legacy_job.id = "job:run-1:dev-1:1".into();
-        legacy_job.tool_call_id = Some("call-legacy".into());
-        let mut workspace_job = legacy_job.clone();
-        workspace_job.id = "job:run-2:dev-1:1".into();
-        workspace_job.tool_call_id = Some("call-workspace".into());
+        let mut shared_job = job();
+        shared_job.id = "job:run-1:dev-1:1".into();
+        shared_job.tool_call_id = Some("call-1".into());
 
-        legacy.create_job(&legacy_job).await.expect("legacy create");
-        workspace.create_job(&workspace_job).await.expect("workspace create");
+        legacy.create_job(&shared_job).await.expect("legacy create");
+        workspace.create_job(&shared_job).await.expect("workspace create");
 
         for (store, job) in [
-            (&legacy as &dyn DeviceJobStore, &legacy_job),
-            (&workspace as &dyn DeviceJobStore, &workspace_job),
+            (&legacy as &dyn DeviceJobStore, &shared_job),
+            (&workspace as &dyn DeviceJobStore, &shared_job),
         ] {
             assert_eq!(
                 store.get_job("ws-job", &job.id).await.expect("get").expect("job").state,
@@ -1322,6 +1289,70 @@ mod runtime_job_event_tests {
                 "{}: create/get parity",
                 job.id
             );
+            assert_eq!(
+                store.get_job_by_id(&job.id).await.expect("get by id").expect("job").id,
+                job.id,
+                "get_job_by_id parity"
+            );
+            assert_eq!(
+                store
+                    .get_task_job("ws-job", "task-1", &job.id)
+                    .await
+                    .expect("get task job")
+                    .expect("job")
+                    .id,
+                job.id,
+                "get_task_job parity"
+            );
+            assert!(
+                store
+                    .get_task_job("ws-job", "task-other", &job.id)
+                    .await
+                    .expect("wrong task")
+                    .is_none()
+            );
+            assert_eq!(
+                store
+                    .get_job_by_tool_call("ws-job", "call-1")
+                    .await
+                    .expect("get by tool call")
+                    .expect("job")
+                    .id,
+                job.id,
+                "get_job_by_tool_call parity"
+            );
+            assert!(
+                store
+                    .get_job_by_tool_call("ws-job", "call-missing")
+                    .await
+                    .expect("missing tool call")
+                    .is_none()
+            );
+
+            let approved = approved_job();
+            let (created, inserted) = store.submit_approved_job(&approved).await.expect("approved submit");
+            assert!(inserted);
+            assert_eq!(created.map(|job| job.id), Some("approved-job".into()));
+            let (replayed, inserted) = store.submit_approved_job(&approved).await.expect("approved replay");
+            assert!(!inserted, "a retried approved submission must not insert twice");
+            assert_eq!(replayed.map(|job| job.id), Some("approved-job".into()));
+            let mut conflicting = approved.clone();
+            conflicting.args_json = serde_json::json!({"speed": 99});
+            assert!(matches!(
+                store.submit_approved_job(&conflicting).await,
+                Err(DeviceJobError::ExecutionConflict)
+            ));
+            assert_eq!(
+                store
+                    .get_job_by_tool_call("ws-job", "call-approved")
+                    .await
+                    .expect("approved lookup")
+                    .expect("approved job")
+                    .args_json,
+                serde_json::json!({}),
+                "a conflicting retry must not overwrite the approved Job"
+            );
+
             let running = store.mark_running(&job.id, "driver-1").await.expect("mark running");
             assert_eq!(running.state, DeviceJobState::Running);
             assert_eq!(running.driver_call_id.as_deref(), Some("driver-1"));
@@ -1355,8 +1386,10 @@ mod runtime_job_event_tests {
             ));
 
             let active = store.active_jobs(Some("ws-job"), false).await.expect("active");
-            assert_eq!(active.len(), 1);
-            assert_eq!(active[0].id, job.id);
+            assert_eq!(active.len(), 2, "the lifecycle Job and the approved Job are both live");
+            let ids: Vec<&str> = active.iter().map(|active| active.id.as_str()).collect();
+            assert!(ids.contains(&job.id.as_str()));
+            assert!(ids.contains(&"approved-job"));
 
             let wake = TaskWake {
                 task_id: "task-1".into(),
@@ -1393,14 +1426,138 @@ mod runtime_job_event_tests {
             assert_eq!(terminal.state, DeviceJobState::Done);
             assert_eq!(terminal.result_json, Some(serde_json::json!({"ok": true})));
             assert!(terminal.ended_at.is_some());
-            assert!(
-                store
-                    .active_jobs(Some("ws-job"), false)
-                    .await
-                    .expect("empty")
-                    .is_empty()
-            );
+            let remaining = store.active_jobs(Some("ws-job"), false).await.expect("active");
+            assert_eq!(remaining.len(), 1);
+            assert_eq!(remaining[0].id, "approved-job", "only the terminal Job left the sweep");
         }
+        let _ = tokio::fs::remove_dir_all(&root).await;
+    }
+
+    async fn two_workspace_store(
+        db: &Db,
+        root: &std::path::Path,
+        first: &str,
+        second: &str,
+    ) -> (WorkspaceDeviceJobStore, Db) {
+        for workspace_id in [first, second] {
+            sqlx::query(
+                "INSERT OR IGNORE INTO workspaces (id, name, tenant_id, created_at, updated_at)
+                 VALUES (?, ?, 'tenant-default-001', '2025-01-01', '2025-01-01')",
+            )
+            .bind(workspace_id)
+            .bind(workspace_id)
+            .execute(db.pool())
+            .await
+            .expect("workspace row");
+        }
+        let workspace_db = Db::new(db.pool().clone()).with_workspace_store_root(root.join("data/agents"));
+        workspace_db.create_workspace_store(first).await.expect("first store");
+        workspace_db.create_workspace_store(second).await.expect("second store");
+        let store = WorkspaceDeviceJobStore::new(Arc::new(workspace_db.clone()));
+        (store, workspace_db)
+    }
+
+    /// H1: a duplicate Job id in two workspaces must keep erroring on every
+    /// job-id-only port, including a mutating call. The adapter has no cache
+    /// that can return a first match.
+    #[tokio::test]
+    async fn duplicate_job_ids_are_rejected_by_job_id_ports() {
+        let (db, _recorder, _hub) = fixture().await;
+        let root = std::env::temp_dir().join(format!("tinyiothub-runtime-dup-{}", uuid::Uuid::new_v4()));
+        let (store, _workspace_db) = two_workspace_store(&db, &root, "ws-job", "ws-other").await;
+
+        let mut first = job();
+        first.id = "job-dup".into();
+        first.task_id = Some("task-1".into());
+        first.tool_call_id = Some("call-a".into());
+        let mut second = job();
+        second.id = "job-dup".into();
+        second.workspace_id = "ws-other".into();
+        second.task_id = Some("task-2".into());
+        second.tool_call_id = Some("call-b".into());
+        store.create_job(&first).await.expect("first job");
+        store.create_job(&second).await.expect("second job");
+
+        assert!(matches!(
+            store.get_job_by_id("job-dup").await,
+            Err(DeviceJobError::Storage(message)) if message.contains("more than one workspace")
+        ));
+        assert!(matches!(
+            store.mark_running("job-dup", "driver-1").await,
+            Err(DeviceJobError::Storage(_))
+        ));
+        assert!(matches!(
+            store
+                .update_progress("job-dup", &serde_json::json!({"percent": 50}))
+                .await,
+            Err(DeviceJobError::Storage(_))
+        ));
+        assert!(matches!(
+            store
+                .finish_job("job-dup", DeviceJobState::Done, &serde_json::json!({}), None)
+                .await,
+            Err(DeviceJobError::Storage(_))
+        ));
+        for (workspace_id, row) in [("ws-job", &first), ("ws-other", &second)] {
+            let stored = store.get_job(workspace_id, &row.id).await.expect("read").expect("row");
+            assert_eq!(stored.state, DeviceJobState::Accepted, "{workspace_id} row unchanged");
+        }
+        let _ = tokio::fs::remove_dir_all(&root).await;
+    }
+
+    /// H1: an unreadable workspace keeps the DB fail-closed policy in the
+    /// adapter — a point read does not report "missing", and mutations refuse.
+    #[tokio::test]
+    async fn unreadable_workspace_fails_closed_through_the_adapter() {
+        let (db, _recorder, _hub) = fixture().await;
+        let root = std::env::temp_dir().join(format!("tinyiothub-runtime-unreadable-{}", uuid::Uuid::new_v4()));
+        let (store, workspace_db) = two_workspace_store(&db, &root, "ws-job", "ws-corrupt").await;
+
+        let mut readable = job();
+        readable.id = "job-readable".into();
+        readable.task_id = Some("task-1".into());
+        readable.tool_call_id = Some("call-readable".into());
+        let mut hidden = job();
+        hidden.id = "job-hidden".into();
+        hidden.workspace_id = "ws-corrupt".into();
+        hidden.task_id = Some("task-hidden".into());
+        hidden.tool_call_id = Some("call-hidden".into());
+        store.create_job(&readable).await.expect("readable job");
+        store.create_job(&hidden).await.expect("hidden job");
+        workspace_db
+            .mark_workspace_unavailable("ws-corrupt", "injected corruption")
+            .await
+            .expect("mark unavailable");
+
+        assert!(
+            matches!(store.get_job_by_id("job-hidden").await, Err(DeviceJobError::Storage(_))),
+            "a point read must not fail open while the owner is unreadable"
+        );
+        assert_eq!(
+            store
+                .get_job_by_id("job-readable")
+                .await
+                .expect("unique readable match")
+                .expect("job")
+                .id,
+            "job-readable"
+        );
+        assert!(matches!(
+            store.mark_running("job-readable", "driver-1").await,
+            Err(DeviceJobError::Storage(_))
+        ));
+        assert!(matches!(
+            store
+                .update_progress("job-readable", &serde_json::json!({"percent": 50}))
+                .await,
+            Err(DeviceJobError::Storage(_))
+        ));
+        assert!(matches!(
+            store
+                .finish_job("job-readable", DeviceJobState::Done, &serde_json::json!({}), None)
+                .await,
+            Err(DeviceJobError::Storage(_))
+        ));
         let _ = tokio::fs::remove_dir_all(&root).await;
     }
 

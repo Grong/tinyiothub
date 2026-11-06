@@ -139,17 +139,33 @@ pub async fn list_outbox(
     if let Err(response) = check_admin_read_access(&state, &claims, query.workspace_id.as_deref()).await {
         return response;
     }
-    match state
+    let mut outbox = match state
         .db
         .runtime_outbox(query.workspace_id.as_deref(), WakeDispatchState::Dead, 200)
         .await
     {
-        Ok(outbox) => ApiResponseBuilder::success(json!({"outbox": outbox})).into_response(),
+        Ok(outbox) => outbox,
         Err(error) => {
             tracing::error!(%error, "list runtime dead outbox failed");
-            error_response(StatusCode::SERVICE_UNAVAILABLE, "Runtime outbox 不可用")
+            return error_response(StatusCode::SERVICE_UNAVAILABLE, "Runtime outbox 不可用");
+        }
+    };
+    // Job terminal wakes live in the workspace outbox since 19C3 (M1).
+    match state.db.workspace_dead_wakes(query.workspace_id.as_deref(), 200).await {
+        Ok(mut workspace) => outbox.append(&mut workspace),
+        Err(error) => {
+            tracing::error!(%error, "list workspace dead outbox failed");
+            return error_response(StatusCode::SERVICE_UNAVAILABLE, "Runtime outbox 不可用");
         }
     }
+    outbox.sort_by(|left, right| {
+        left.created_at
+            .cmp(&right.created_at)
+            .then_with(|| left.task_id.cmp(&right.task_id))
+            .then_with(|| left.event_id.cmp(&right.event_id))
+    });
+    outbox.truncate(200);
+    ApiResponseBuilder::success(json!({"outbox": outbox})).into_response()
 }
 
 pub async fn retry_dead_wake(
@@ -161,13 +177,28 @@ pub async fn retry_dead_wake(
     if let Err(response) = check_agent_admin_response(&state, &claims, &scope.workspace_id).await {
         return response;
     }
-    match state.db.retry_dead_wake(&scope.workspace_id, &event_id).await {
-        Ok(true) => ApiResponseBuilder::success(json!({"eventId": event_id, "state": "pending"})).into_response(),
-        Ok(false) => error_response(StatusCode::NOT_FOUND, "Dead wake 不存在"),
+    let platform = match state.db.retry_dead_wake(&scope.workspace_id, &event_id).await {
+        Ok(retried) => retried,
         Err(error) => {
             tracing::error!(%error, %event_id, "retry runtime dead wake failed");
-            error_response(StatusCode::SERVICE_UNAVAILABLE, "Wake retry 失败")
+            return error_response(StatusCode::SERVICE_UNAVAILABLE, "Wake retry 失败");
         }
+    };
+    let workspace = if platform {
+        false
+    } else {
+        match state.db.retry_workspace_dead_wake(&scope.workspace_id, &event_id).await {
+            Ok(retried) => retried,
+            Err(error) => {
+                tracing::error!(%error, %event_id, "retry workspace dead wake failed");
+                return error_response(StatusCode::SERVICE_UNAVAILABLE, "Wake retry 失败");
+            }
+        }
+    };
+    if platform || workspace {
+        ApiResponseBuilder::success(json!({"eventId": event_id, "state": "pending"})).into_response()
+    } else {
+        error_response(StatusCode::NOT_FOUND, "Dead wake 不存在")
     }
 }
 

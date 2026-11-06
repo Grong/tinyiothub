@@ -351,6 +351,23 @@ impl Db {
         self.open_workspace_store_entry(workspace_id, &mut state).await
     }
 
+    /// Open an already-existing workspace generation without creating one.
+    ///
+    /// Diagnostics and drain reads must not turn a GET into a filesystem
+    /// mutation for a registered workspace that never created a Harness DB
+    /// (Task 19C3 Low 2). A restore journal counts as an existing generation:
+    /// opening it is required to finish or roll back the interrupted restore.
+    pub(crate) async fn try_existing_workspace_pool(&self, workspace_id: &str) -> Result<Option<SqlitePool>> {
+        self.ensure_registered_workspace(workspace_id).await?;
+        let path = self.workspace_store_root.join(workspace_id).join("harness/harness.db");
+        if !tokio::fs::try_exists(&path).await.unwrap_or(false)
+            && self.restore_journal_row(workspace_id).await?.is_none()
+        {
+            return Ok(None);
+        }
+        self.workspace_pool(workspace_id).await.map(Some)
+    }
+
     #[cfg(any(test, feature = "testing"))]
     pub async fn workspace_pool_for_testing(&self, workspace_id: &str) -> Result<SqlitePool> {
         self.workspace_pool(workspace_id).await

@@ -3406,6 +3406,43 @@ pub(crate) mod tests {
     }
 
     #[tokio::test]
+    async fn wake_router_claims_device_job_terminal_wake_and_starts_the_task() {
+        let (jobs, job_store, _worker) = jobs();
+        let waiting = task(TaskStatus::WaitingJob);
+        let fixture = Fixture::new_with_jobs(waiting, Some(jobs));
+        job_store
+            .create_job(&job("job_1", "task_1", DeviceJobState::Done))
+            .await
+            .expect("terminal job");
+        fixture.store.insert_wake(TaskWake {
+            signal_json: json!({
+                "kind": "device_job_terminal",
+                "workspace_id": "ws_1",
+                "task_id": "task_1",
+                "job_id": "job_1"
+            })
+            .to_string(),
+            ..wake("job_done")
+        });
+
+        let router = WakeRouter::new(fixture.store.clone(), fixture.coordinator.clone());
+        assert_eq!(router.run(10).await.expect("dispatch"), 1);
+        assert_eq!(
+            fixture.store.wake("task_1", "job_done").dispatch_state,
+            WakeDispatchState::Dispatched,
+            "the Job terminal wake must be claimed and acknowledged"
+        );
+        wait_for(|| fixture.store.task("task_1").status == TaskStatus::Active).await;
+        wait_for(|| !fixture.provider.prompts.lock().expect("prompts").is_empty()).await;
+        let prompt = fixture.provider.prompts.lock().expect("prompts")[0].clone();
+        assert!(
+            prompt.contains("Device Job job_1 reached terminal state done"),
+            "{prompt}"
+        );
+        assert!(prompt.contains("Terminal Job result"), "{prompt}");
+    }
+
+    #[tokio::test]
     async fn active_run_steering_includes_the_terminal_job_result() {
         let (jobs, job_store, _worker) = jobs();
         let mut terminal = job("job_1", "task_1", DeviceJobState::Done);
