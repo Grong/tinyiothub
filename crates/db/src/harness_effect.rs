@@ -746,14 +746,18 @@ async fn apply_writes(
         drain_cancelling = current_task_state == "cancelling";
         let preserve_paused = current_task_state == "paused"
             && !matches!(projection.task_state.as_str(), "completed" | "failed" | "cancelled");
-        // An Effect transition may itself block the Run (e.g. recovery fences a
-        // dispatching Effect to `unknown`). Persist the waiting relation so the
-        // pause/resume API can restore the previous Task state.
-        let pause_waiting = current_task_state != "paused" && projection.task_state == "paused";
         // A terminal Task stays terminal: a late Effect write must never move it
         // back to `cancelling`, which would resurrect a cancelled Task while its
         // live Run and Jobs are still winding down.
         let preserve_terminal = matches!(current_task_state.as_str(), "completed" | "failed" | "cancelled");
+        // An Effect transition may itself block the Run (e.g. recovery fences a
+        // dispatching Effect to `unknown`). Persist the waiting relation so the
+        // pause/resume API can restore the previous Task state. A cancelling or
+        // terminal Task is not resumable through that relation.
+        let pause_waiting = !drain_cancelling
+            && !preserve_terminal
+            && current_task_state != "paused"
+            && projection.task_state == "paused";
         let run_updated = sqlx::query("UPDATE agent_runs SET state = ? WHERE id = ? AND task_id = ?")
             .bind(&projection.run_state)
             .bind(&projection.run_id)
@@ -1101,6 +1105,58 @@ impl Db {
             });
         }
         Ok(items)
+    }
+
+    /// True when a Task owns an Effect/reconciliation wait that must block a
+    /// Run continuation:
+    /// - a non-terminal `dispatching`/`unknown` Effect, or
+    /// - a `requested`/`answered` (unconsumed) `effect_reconciliation`
+    ///   Decision.
+    ///
+    /// `prepared` is deliberately excluded: it is a queued intent, not an
+    /// indeterminate external action. Only production-mode Tasks are counted.
+    pub async fn task_effect_wait(&self, workspace_id: &str, task_id: &str) -> Result<bool> {
+        let pool = self.workspace_pool(workspace_id).await?;
+        let wait: i64 = sqlx::query_scalar(
+            "SELECT EXISTS(
+                 SELECT 1 FROM effect_intents e
+                 JOIN agent_tasks t ON t.id = e.task_id
+                 WHERE e.task_id = ? AND t.execution_mode = 'production'
+                   AND e.state IN ('dispatching', 'unknown')
+             ) OR EXISTS(
+                 SELECT 1 FROM decisions d
+                 JOIN agent_tasks t ON t.id = d.task_id
+                 WHERE d.task_id = ? AND t.execution_mode = 'production'
+                   AND d.kind = 'effect_reconciliation'
+                   AND d.state IN ('requested', 'answered')
+             )",
+        )
+        .bind(task_id)
+        .bind(task_id)
+        .fetch_one(&pool)
+        .await?;
+        Ok(wait != 0)
+    }
+
+    /// True when the Task owns a `requested`/`answered` (unconsumed)
+    /// `effect_reconciliation` Decision. Resume must keep the pause until the
+    /// recovery pass consumes it. A merely in-flight (`dispatching`) Effect is
+    /// intentionally not included: pause/resume does not cancel in-flight work.
+    pub async fn task_reconciliation_wait(&self, workspace_id: &str, task_id: &str) -> Result<bool> {
+        let pool = self.workspace_pool(workspace_id).await?;
+        let wait: i64 = sqlx::query_scalar(
+            "SELECT EXISTS(
+                 SELECT 1 FROM decisions d
+                 JOIN agent_tasks t ON t.id = d.task_id
+                 WHERE d.task_id = ? AND t.execution_mode = 'production'
+                   AND d.kind = 'effect_reconciliation'
+                   AND d.state IN ('requested', 'answered')
+             )",
+        )
+        .bind(task_id)
+        .fetch_one(&pool)
+        .await?;
+        Ok(wait != 0)
     }
 
     /// Scan every **actionable** persisted Effect × Decision pair and command

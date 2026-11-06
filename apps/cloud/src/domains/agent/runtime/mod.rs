@@ -144,6 +144,26 @@ impl EffectRecovery {
         self.apply(workspace_id, transition).await
     }
 
+    /// Consume an answered reconciliation without rewriting a paused Task's
+    /// pause relation. The Effect still settles; the Task waits for the
+    /// operator's explicit resume.
+    async fn consume_answer(&self, workspace_id: &str, item: &EffectRecoveryItem) -> Result<(), String> {
+        let mut transition = reduce_recovery(
+            &item.intent,
+            item.decision.as_ref(),
+            item.job_id.as_deref(),
+            &format!("recovery:{}", uuid::Uuid::new_v4()),
+            Utc::now(),
+            &item.task_state,
+            RecoveryFact::ConsumeAnswer,
+        )
+        .map_err(|error| error.to_string())?;
+        if item.task_state == "paused" {
+            transition.run_task = None;
+        }
+        self.apply(workspace_id, transition).await
+    }
+
     async fn recover_unknown(
         &self,
         workspace_id: &str,
@@ -336,7 +356,14 @@ impl EffectRecovery {
     /// - requested Decision, or an answered one on a paused Task: leave it for
     ///   the operator. Nothing here ever dispatches a physical action.
     pub async fn ensure_reconciliation(&self, workspace_id: &str, effect_id: &str) -> Result<(), String> {
-        let Ok(item) = self.item(workspace_id, effect_id).await else {
+        // Surface a workspace read failure to the caller (startup/periodic
+        // sweeps log it); a missing/terminal Effect is a normal no-op.
+        let items = self
+            .db
+            .list_effect_recovery(workspace_id)
+            .await
+            .map_err(|error| error.to_string())?;
+        let Some(item) = items.into_iter().find(|item| item.intent.effect_id == effect_id) else {
             return Ok(());
         };
         if item.intent.state != EffectState::Unknown {
@@ -347,24 +374,37 @@ impl EffectRecovery {
                 self.transition(workspace_id, &item, RecoveryFact::EnsureReconciliation)
                     .await
             }
+            // The operator answered: apply it even while the Task is paused.
+            // The Effect must leave `unknown` so the attention item clears and
+            // the resume gate can lift; a paused Task keeps its original pause
+            // relation and waits for the explicit resume.
             Some(decision)
-                if decision.kind == DecisionKind::EffectReconciliation
-                    && decision.state == DecisionState::Answered
-                    && item.task_active =>
+                if decision.kind == DecisionKind::EffectReconciliation && decision.state == DecisionState::Answered =>
             {
-                self.transition(workspace_id, &item, RecoveryFact::ConsumeAnswer).await
+                self.consume_answer(workspace_id, &item).await
             }
             Some(decision)
                 if decision.kind == DecisionKind::EffectReconciliation
-                    && matches!(decision.state, DecisionState::Requested | DecisionState::Answered) =>
+                    && decision.state == DecisionState::Requested =>
             {
-                Ok(())
+                // A non-paused Task with a persisted requested Decision needs
+                // the relation-backed pause; re-running EnsureReconciliation on
+                // an already paused Task would only churn the version.
+                if item.task_state != "paused"
+                    && !matches!(item.task_state.as_str(), "completed" | "failed" | "cancelled")
+                {
+                    self.transition(workspace_id, &item, RecoveryFact::EnsureReconciliation)
+                        .await
+                } else {
+                    Ok(())
+                }
             }
-            // An unknown Effect with only a consumed approval still needs an
-            // actionable reconciliation path; create the deterministic
+            // An unknown Effect with only an answered/consumed approval still
+            // needs an actionable reconciliation path; create the deterministic
             // reconciliation Decision (idempotent on retry).
             Some(decision)
-                if decision.kind == DecisionKind::ToolApproval && decision.state == DecisionState::Consumed =>
+                if decision.kind == DecisionKind::ToolApproval
+                    && matches!(decision.state, DecisionState::Answered | DecisionState::Consumed) =>
             {
                 self.transition(workspace_id, &item, RecoveryFact::EnsureReconciliation)
                     .await

@@ -142,6 +142,12 @@ impl TaskCoordinator {
         if task.status != TaskStatus::Paused {
             return Ok(task);
         }
+        if self.store.task_reconciliation_wait(workspace_id, task_id).await? {
+            return Err(TaskStoreError::Validation(
+                "task is waiting for effect reconciliation; answer it before resuming".into(),
+            )
+            .into());
+        }
         let next = self
             .waiting_status(workspace_id, task_id)
             .await?
@@ -167,6 +173,12 @@ impl TaskCoordinator {
                 .is_empty()
         {
             return Ok(Some(TaskStatus::WaitingJob));
+        }
+        // N1: a dispatching/unknown Effect or an unconsumed reconciliation
+        // Decision is a waiting relation. Startup recovery must pause the Task
+        // instead of starting a Run that could re-issue the device action.
+        if self.store.task_effect_wait(workspace_id, task_id).await? {
+            return Ok(Some(TaskStatus::Paused));
         }
         let watches = self.watches.list_all().await.map_err(TaskStoreError::Unavailable)?;
         if watches
@@ -539,6 +551,13 @@ impl TaskCoordinator {
             if task.status == TaskStatus::Cancelling {
                 self.finish_cancellation(&task).await?;
                 return Ok(Advance::Recorded);
+            }
+            // N1: never start or steer a Run while the Effect outcome is
+            // unresolved or a reconciliation answer is still unconsumed. The
+            // periodic recovery pass consumes an answered Decision; the wake
+            // stays pending and is retried afterwards.
+            if self.store.task_effect_wait(workspace_id, task_id).await? {
+                return Ok(Advance::Deferred);
             }
             let mut terminal_job: Option<DeviceJob> = None;
             let signal: WakeSignal = if approval_decision {

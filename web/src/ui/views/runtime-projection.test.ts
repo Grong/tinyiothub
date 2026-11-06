@@ -266,6 +266,17 @@ describe('RuntimeProjection', () => {
     );
     resumed.apply(event('event_41', 'task.resumed', { state: 'waiting_job' }, { cursor: 41 }));
     expect(resumed.task.status).toBe('waiting_job');
+
+    // DB Active aliases (especially the common `running`) project as `active`.
+    for (const [index, alias] of ['running', 'pending', 'model_calling', 'interrupted'].entries()) {
+      const active = new RuntimeProjection(
+        snapshotWithNoDevices({ task: task('task_1', { status: 'paused' }) }),
+      );
+      active.apply(
+        event(`event_5${index}`, 'task.resumed', { state: alias }, { cursor: 50 + index }),
+      );
+      expect(active.task.status, alias).toBe('active');
+    }
   });
 
   it('freezes history events without conflating history with connection state', () => {

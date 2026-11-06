@@ -311,6 +311,21 @@ impl ThingAgentManager {
             coordinator = coordinator.with_harness_task_store();
         }
         let coordinator = Arc::new(coordinator);
+        // N1: fence indeterminate Effects (and pause their Tasks) before Task
+        // recovery can start a Run. Job recovery first turns orphan
+        // accepted/running Jobs into `interrupted`; the Effect fence then
+        // settles them to `unknown` plus a reconciliation Decision. The wake
+        // router is spawned only after this block.
+        if let Some(dispatch) = deps.effect_dispatch.as_ref() {
+            if let Some(jobs) = deps.jobs.as_ref() {
+                jobs.recover().await.map_err(|error| {
+                    TaskError::Store(tinyiothub_core::agent_task::TaskStoreError::Unavailable(format!(
+                        "job recovery failed: {error}"
+                    )))
+                })?;
+            }
+            dispatch.reconcile_startup().await;
+        }
         coordinator.recover().await?;
         let router = Arc::new(WakeRouter::new(deps.store, coordinator.clone()));
         let router_task = tokio::spawn(async move {

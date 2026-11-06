@@ -1407,8 +1407,8 @@ async fn interrupted_job_unknown_effect_continues_after_operator_reconciliation(
         "restart recovery must not resend"
     );
 
-    // Operator answer while paused: durable and committed, but not consumed
-    // until the Task can advance.
+    // Operator answer while paused: durable and committed. The recovery pass
+    // consumes it (the Task itself stays paused for the explicit resume).
     EffectRecovery::new(db.clone())
         .answer_reconciliation(WS, "effect-interrupted", "applied", "user-1", None)
         .await
@@ -1419,9 +1419,12 @@ async fn interrupted_job_unknown_effect_continues_after_operator_reconciliation(
         ("answered".to_string(), Some("applied".to_string()))
     );
     assert!(restart_worker.submitted.lock().expect("submissions").is_empty());
+    restarted.reconcile_startup().await;
+    assert_eq!(effect_state(&fixture, "effect-interrupted").await.0, "completed");
+    assert_eq!(decision_state(&fixture, "effect-interrupted").await.0, "consumed");
 
-    // Resume, then the recovery pass consumes the answer; the Task continues
-    // from the pending continuation wake with no resend.
+    // Resume now lifts the reconciliation pause; the Task continues from the
+    // pending continuation wake with no resend.
     let prompts = Arc::new(Mutex::new(Vec::new()));
     let (store, _, router) = task_runtime_with_jobs(&db, prompts.clone(), Some(restart_jobs));
     let task = store
@@ -1437,9 +1440,6 @@ async fn interrupted_job_unknown_effect_continues_after_operator_reconciliation(
         .await
         .expect("resume task");
     assert_eq!(restored, "running");
-    restarted.reconcile_startup().await;
-    assert_eq!(effect_state(&fixture, "effect-interrupted").await.0, "completed");
-    assert_eq!(decision_state(&fixture, "effect-interrupted").await.0, "consumed");
     router.run(64).await.expect("route continuation wakes");
     assert_eq!(
         wait_for_task_completion(&store, "task-interrupted").await,
@@ -1450,6 +1450,107 @@ async fn interrupted_job_unknown_effect_continues_after_operator_reconciliation(
         restart_worker.submitted.lock().expect("submissions").is_empty(),
         "the continuation must never re-send the physical action"
     );
+    fixture.close().await;
+}
+
+#[tokio::test]
+async fn startup_recovery_does_not_start_a_run_before_the_unknown_fence() {
+    let fixture = fixture_workspace(WS).await;
+    seed_task_effect(
+        &fixture,
+        "task-fence",
+        "effect-fence",
+        json!({"deviceId":"robot-1","argsJson":{"level":1}}),
+    )
+    .await;
+    let db = Arc::new(fixture.db.clone());
+    let worker = Arc::new(E2eWorker::default());
+    let jobs = e2e_job_service(&db, worker.clone());
+    let dispatch = Arc::new(EffectDispatch::new(db.clone(), jobs.clone()));
+    dispatch.dispatch_workspace(WS).await.expect("dispatch");
+    assert_eq!(worker.submitted.lock().expect("submissions").len(), 1);
+
+    // Restart over the same workspace store with a fresh worker. Any resend
+    // would land in `restart_worker`.
+    let restart_worker = Arc::new(E2eWorker::default());
+    let restart_jobs = e2e_job_service(&db, restart_worker.clone());
+    let prompts = Arc::new(Mutex::new(Vec::new()));
+    let (store, coordinator, router) = task_runtime_with_jobs(&db, prompts.clone(), Some(restart_jobs.clone()));
+
+    // Production order: Job recovery -> Task recovery -> Effect fence. Task
+    // recovery must not start a Run while the Effect is still dispatching.
+    restart_jobs.recover().await.expect("job recovery");
+    coordinator.recover().await.expect("task recovery");
+    assert!(
+        restart_worker.submitted.lock().expect("submissions").is_empty(),
+        "startup recovery must not resend the physical action"
+    );
+    assert!(
+        prompts.lock().expect("prompts").is_empty(),
+        "no Run may start before the Effect fence"
+    );
+    let task = store
+        .get_task(WS, "task-fence")
+        .await
+        .expect("task read")
+        .expect("task row");
+    assert_eq!(task.status, tinyiothub_core::agent_task::TaskStatus::Paused);
+    assert!(task.current_run_id.is_none());
+
+    // The fence settles the indeterminate Job to unknown + one Decision.
+    let restarted = Arc::new(EffectDispatch::new(db.clone(), restart_jobs));
+    restarted.reconcile_startup().await;
+    assert_eq!(effect_state(&fixture, "effect-fence").await.0, "unknown");
+    assert_eq!(decision_state(&fixture, "effect-fence").await.0, "requested");
+
+    // Resume before the operator answer must keep the pause.
+    let blocked = db.resume_workflow_task(WS, "task-fence").await;
+    assert!(
+        matches!(blocked, Err(tinyiothub_storage::DbError::Conflict { .. })),
+        "resume before reconciliation must conflict: {blocked:?}"
+    );
+    let still_paused = store
+        .get_task(WS, "task-fence")
+        .await
+        .expect("task read")
+        .expect("task row");
+    assert_eq!(still_paused.status, tinyiothub_core::agent_task::TaskStatus::Paused);
+
+    // Operator answer: the recovery pass consumes it even while paused (the
+    // Task itself stays paused until the explicit resume below).
+    EffectRecovery::new(db.clone())
+        .answer_reconciliation(WS, "effect-fence", "applied", "user-1", None)
+        .await
+        .expect("answer reconciliation");
+    restarted.reconcile_startup().await;
+    assert_eq!(effect_state(&fixture, "effect-fence").await.0, "completed");
+    assert_eq!(decision_state(&fixture, "effect-fence").await.0, "consumed");
+
+    // The answer wake is redundant with the Job continuation; remove it so the
+    // assertion below is about one continuation, not delivery ordering.
+    sqlx::query("DELETE FROM task_wake_outbox WHERE task_id = ? AND event_id LIKE 'decision-answer:%'")
+        .bind("task-fence")
+        .execute(&fixture.workspace_pool().await)
+        .await
+        .expect("drop redundant answer wake");
+
+    let restored = db
+        .resume_workflow_task(WS, "task-fence")
+        .await
+        .expect("resume after reconciliation");
+    assert_eq!(restored, "running");
+
+    assert_eq!(router.run(64).await.expect("route continuation wake"), 1);
+    assert_eq!(
+        wait_for_task_completion(&store, "task-fence").await,
+        tinyiothub_core::agent_task::TaskStatus::Completed
+    );
+    assert_eq!(prompts.lock().expect("prompts").len(), 1, "one continuation Run");
+    assert!(
+        restart_worker.submitted.lock().expect("submissions").is_empty(),
+        "the continuation must never re-send the physical action"
+    );
+    assert_eq!(dead_wake_count(&fixture).await, 0);
     fixture.close().await;
 }
 
@@ -3022,8 +3123,33 @@ mod workflow_tests {
             "cancelled"
         );
 
+        // The restart recovery fences the in-flight `dispatching` Effect to
+        // `unknown` with a reconciliation Decision, so resume must keep the
+        // pause until the operator resolves it (N1).
+        let blocked = controls.resume("control-waiting-job").await;
+        assert!(
+            blocked.is_err(),
+            "resume must not lift a reconciliation pause: {blocked:?}"
+        );
+        assert_eq!(control_state(&fixture, "control-waiting-job").await, "paused");
+        recovery
+            .answer_reconciliation(workspace_id, "control-waiting-job", "applied", "user-1", None)
+            .await
+            .expect("answer reconciliation");
+        recovery
+            .ensure_reconciliation(workspace_id, "control-waiting-job")
+            .await
+            .expect("consume reconciliation");
+        assert_eq!(
+            controls
+                .resume("control-waiting-job")
+                .await
+                .expect("resume after reconciliation"),
+            "waiting_job"
+        );
+        assert_eq!(control_state(&fixture, "control-waiting-job").await, "waiting_job");
+
         for (task_id, expected) in [
-            ("control-waiting-job", "waiting_job"),
             ("control-needs-approval", "needs_approval"),
             ("control-waiting-watch", "waiting_watch"),
             ("control-running", "running"),

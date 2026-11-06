@@ -84,4 +84,18 @@ pub trait TaskStore: Send + Sync {
     async fn prune_finalize_intents(&self, older_than: chrono::DateTime<chrono::Utc>) -> Result<usize, TaskStoreError>;
     async fn retry_dead_wake(&self, workspace_id: &str, event_id: &str) -> Result<bool, TaskStoreError>;
     async fn list_nonterminal_tasks(&self, workspace_id: Option<&str>) -> Result<Vec<AgentTask>, TaskStoreError>;
+    /// True when the Task must not start or steer a Run because an Effect is
+    /// unresolved: it owns a non-terminal `dispatching`/`unknown` Effect, or a
+    /// `requested`/`answered` (unconsumed) `effect_reconciliation` Decision.
+    /// Stores that do not model Effects keep the safe default (no wait).
+    async fn task_effect_wait(&self, _workspace_id: &str, _task_id: &str) -> Result<bool, TaskStoreError> {
+        Ok(false)
+    }
+    /// True when the Task owns a `requested`/`answered` (unconsumed)
+    /// `effect_reconciliation` Decision. Resume must keep the pause until the
+    /// reconciliation is consumed; an in-flight `dispatching` Effect alone does
+    /// not block resume because pause/resume never cancels in-flight work.
+    async fn task_reconciliation_wait(&self, _workspace_id: &str, _task_id: &str) -> Result<bool, TaskStoreError> {
+        Ok(false)
+    }
 }

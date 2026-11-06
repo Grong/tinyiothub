@@ -1058,6 +1058,14 @@ impl Db {
     }
 
     pub async fn resume_workflow_task(&self, workspace_id: &str, task_id: &str) -> DbResult<String> {
+        // N1: a reconciliation pause must not be lifted before the Effect is
+        // resolved. The periodic recovery pass consumes an answered Decision;
+        // until then the ordinary resume route keeps the Task paused.
+        if self.task_reconciliation_wait(workspace_id, task_id).await? {
+            return Err(DbError::Conflict {
+                message: format!("task {task_id} is waiting for effect reconciliation"),
+            });
+        }
         let pool = self.workspace_pool(workspace_id).await?;
         let mut tx = pool.begin().await?;
         let current = sqlx::query_as::<_, (String, Option<String>, i64)>(
@@ -1074,7 +1082,7 @@ impl Db {
         if state != "paused" {
             return Ok(state);
         }
-        let previous = sqlx::query_scalar::<_, String>(
+        let previous = sqlx::query_scalar::<_, Option<String>>(
             "SELECT json_extract(payload_json, '$.previousState') FROM session_events
              WHERE task_id = ? AND type IN ('task.paused', 'task.pause_waiting')
              ORDER BY seq DESC LIMIT 1",
@@ -1082,7 +1090,11 @@ impl Db {
         .bind(task_id)
         .fetch_optional(&mut *tx)
         .await?
-        .ok_or_else(|| DbError::Internal(format!("paused task {task_id} has no waiting relation")))?;
+        .flatten()
+        .filter(|value| !value.is_empty())
+        // A Task paused by startup recovery may not carry an explicit pause
+        // relation; restoring Active is the safe default.
+        .unwrap_or_else(|| "running".to_string());
         if !matches!(
             previous.as_str(),
             "pending" | "running" | "waiting_job" | "waiting_watch" | "needs_approval"

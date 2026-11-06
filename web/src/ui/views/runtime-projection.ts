@@ -22,6 +22,9 @@ import {
 export type RuntimeDeviceRef = RuntimeDeviceAssociation &
   Partial<Omit<RuntimeDeviceFacts, 'deviceId'>>;
 
+/** DB-side aliases for an Active Task (`state_for_status` + run states). */
+const DB_ACTIVE_ALIASES = new Set(['running', 'pending', 'model_calling', 'interrupted']);
+
 export type RuntimeProjectedJob = Partial<RuntimeJob> & Pick<RuntimeJob, 'id' | 'state'>;
 export type RuntimeProjectedApproval = Partial<RuntimeApproval> &
   Pick<RuntimeApproval, 'id' | 'state'>;
@@ -258,9 +261,11 @@ export class RuntimeProjection {
     if (event.eventType.startsWith('task.')) {
       // `task.resumed` / `task.pause_waiting` carry the real state in
       // `data.state`; the type suffix is not a TaskStatus for those events.
-      const status = (
-        typeof event.data.state === 'string' ? event.data.state : event.eventType.slice('task.'.length)
-      ) as TaskStatus;
+      // The DB persists Active under its working aliases, so map them back to
+      // the public `active` status before validating.
+      const raw =
+        typeof event.data.state === 'string' ? event.data.state : event.eventType.slice('task.'.length);
+      const status = (DB_ACTIVE_ALIASES.has(raw) ? 'active' : raw) as TaskStatus;
       const version =
         typeof event.data.stateVersion === 'number' ? event.data.stateVersion : task.stateVersion;
       if (isTaskStatus(status) && version >= task.stateVersion) {

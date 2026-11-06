@@ -316,6 +316,14 @@ async fn runtime_api_uses_harness_facts_and_never_writes_legacy_tables() {
         .expect("persisted live cursor");
     assert_eq!(live_cursor, persisted_cursor);
 
+    // The periodic recovery pass owns answered-decision consumption (one tick
+    // in production). Apply it explicitly before exercising pause/resume so the
+    // Task no longer owns a reconciliation wait.
+    super::EffectRecovery::new(fixture.db.clone())
+        .ensure_reconciliation(WS, "effect-reconcile")
+        .await
+        .expect("consume reconciliation answer");
+
     for action in ["pause", "resume"] {
         let (status, body) = post(
             &fixture,

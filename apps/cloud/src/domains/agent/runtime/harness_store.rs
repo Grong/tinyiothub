@@ -173,6 +173,20 @@ impl TaskStore for HarnessTaskStore {
     async fn list_nonterminal_tasks(&self, workspace_id: Option<&str>) -> Result<Vec<AgentTask>, TaskStoreError> {
         self.db.harness_list_nonterminal_tasks(workspace_id).await
     }
+
+    async fn task_effect_wait(&self, workspace_id: &str, task_id: &str) -> Result<bool, TaskStoreError> {
+        self.db
+            .task_effect_wait(workspace_id, task_id)
+            .await
+            .map_err(|error| TaskStoreError::Unavailable(error.to_string()))
+    }
+
+    async fn task_reconciliation_wait(&self, workspace_id: &str, task_id: &str) -> Result<bool, TaskStoreError> {
+        self.db
+            .task_reconciliation_wait(workspace_id, task_id)
+            .await
+            .map_err(|error| TaskStoreError::Unavailable(error.to_string()))
+    }
 }
 
 const _: fn() = || {
