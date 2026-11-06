@@ -8,18 +8,14 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use crate::domains::agent::agent_runtime::{AgentRuntime, RuntimeDeps};
-use chrono::Utc;
-use serde_json::json;
 use sqlx::SqlitePool;
 use tinyiothub_core::agent_runs::{Outcome, RunReport};
-use tinyiothub_core::agent_task::{AgentTask, TaskStatus, TaskWake, WakeDispatchState};
 use tinyiothub_core::heartbeat::TrustConfig;
 use tinyiothub_storage::Db;
 use tinyiothub_storage::heartbeat::WorkspaceHeartbeatConfig;
 
 use crate::bootstrap::{build_agent_snapshot, reconcile_zombie_runs};
 use crate::domains::agent::host::test_utils::seed_test_workspace;
-use crate::domains::agent::runtime::stream::{RuntimeFrame, RuntimeStreamHub};
 
 // ── fixtures ──────────────────────────────────────────────
 
@@ -87,22 +83,6 @@ async fn insert_run_with_status(pool: &SqlitePool, run_id: &str, workspace_id: &
     .expect("insert run with status");
 }
 
-/// Task-owned 僵尸行：reconcile 时 `run.interrupted` 事件必须带 task_id，
-/// 才能在 Task SSE 重连回放中送达。
-async fn insert_task_run_with_status(pool: &SqlitePool, run_id: &str, workspace_id: &str, task_id: &str, status: &str) {
-    sqlx::query(
-        "INSERT INTO agent_runs (id, workspace_id, task_id, trigger_type, outcome, summary, report, status)
-         VALUES (?, ?, ?, 'task', 'acted', 's', '{}', ?)",
-    )
-    .bind(run_id)
-    .bind(workspace_id)
-    .bind(task_id)
-    .bind(status)
-    .execute(pool)
-    .await
-    .expect("insert task run with status");
-}
-
 /// 带有效完成报告的 run 行（会被快照 recent_runs 段预热，registry 认领）。
 async fn insert_completed_run(pool: &SqlitePool, run_id: &str, workspace_id: &str, status: &str) {
     sqlx::query(
@@ -140,71 +120,6 @@ async fn startup_marks_orphan_running_runs_interrupted() {
     let _runtime = bootstrap_test_runtime(&db).await;
 
     assert_eq!(run_status(&pool, "ghost").await, "interrupted");
-}
-
-/// A residual 3: startup recovery runs before the HTTP listener binds, so no
-/// live SSE subscriber can exist at that instant. The persisted
-/// `run.interrupted` event must still reach a reconnecting Task stream through
-/// cursor replay, with the Task identity required by the task-scoped filter.
-#[tokio::test]
-async fn startup_interrupted_event_is_replayed_on_a_reconnecting_task_stream() {
-    let (db, pool) = test_db().await;
-    seed_test_workspace(&pool, "tenant1", "ws1").await;
-    let now = Utc::now();
-    db.create_task_with_wake(
-        &AgentTask {
-            id: "task-1".into(),
-            workspace_id: "ws1".into(),
-            idempotency_key: "startup-interrupted".into(),
-            objective: "inspect".into(),
-            session_key: None,
-            created_by: "user-1".into(),
-            status: TaskStatus::Active,
-            current_run_id: Some("ghost-task-run".into()),
-            state_version: 0,
-            created_at: now,
-            updated_at: now,
-            ended_at: None,
-        },
-        &TaskWake {
-            task_id: "task-1".into(),
-            event_id: "create-task-1".into(),
-            signal_json: json!({"workspace_id":"ws1"}).to_string(),
-            dispatch_state: WakeDispatchState::Pending,
-            created_at: now,
-            dispatched_at: None,
-            resolved_at: None,
-        },
-    )
-    .await
-    .expect("task");
-    let before_interrupt = db
-        .runtime_projection("ws1", "task-1")
-        .await
-        .expect("projection")
-        .expect("task projection")
-        .cursor;
-    insert_task_run_with_status(&pool, "ghost-task-run", "ws1", "task-1", "running").await;
-
-    let _runtime = bootstrap_test_runtime(&db).await;
-    assert_eq!(run_status(&pool, "ghost-task-run").await, "interrupted");
-
-    let hub = Arc::new(RuntimeStreamHub::default());
-    let mut connection = hub
-        .connect(db.clone(), "ws1", "task-1", Some(before_interrupt))
-        .await
-        .expect("reconnect stream");
-    assert!(matches!(
-        connection.next_frame().await,
-        Some(RuntimeFrame::Snapshot { .. })
-    ));
-    let Some(RuntimeFrame::Event { event, .. }) = connection.next_frame().await else {
-        panic!("persisted interrupted event must replay to the reconnecting Task");
-    };
-    assert_eq!(event.event_type, "run.interrupted");
-    assert_eq!(event.task_id.as_deref(), Some("task-1"));
-    assert_eq!(event.run_id.as_deref(), Some("ghost-task-run"));
-    assert_eq!(event.data["state"], "interrupted");
 }
 
 /// completed 行不动；registry 预热窗口认领的 run_id 即使 DB 行残留

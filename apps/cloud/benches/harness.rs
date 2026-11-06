@@ -1511,7 +1511,7 @@ async fn create_task_once(db: &Db, workspace_id: &str, key: &str, objective_byte
         dispatched_at: None,
         resolved_at: None,
     };
-    db.create_task_with_wake(&task, &wake)
+    db.harness_create_task_with_wake(&task, &wake)
         .await
         .map(|_| ())
         .map_err(|error| error.to_string())

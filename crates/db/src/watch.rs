@@ -78,16 +78,14 @@ pub async fn insert_rule_tx(tx: &mut Transaction<'_, Sqlite>, row: &WatchRuleRow
 }
 
 pub async fn list_rules(pool: &SqlitePool) -> Result<Vec<WatchRuleRow>, sqlx::Error> {
-    // Startup rebuild must not rehydrate watches whose owner Task is already
-    // terminal: the coordinator deletes them on the terminal transition, so
-    // any survivor is stale and must never fire into a finished Task.
+    // Task terminality is a workspace-Harness fact (Task 19C4), so this
+    // platform query no longer filters owner Tasks. Harness-aware callers
+    // (`WatchRuleStoreAdapter::list_all`) drop rules whose owner Task is
+    // terminal or no longer nonterminal in its workspace.
     sqlx::query_as(
         "SELECT w.id, w.workspace_id, w.kind, w.condition, w.persistent, w.timeout_secs,
                 w.created_at, w.owner_task_id
-         FROM watch_rules w
-         LEFT JOIN agent_tasks t ON t.id = w.owner_task_id
-         WHERE w.owner_task_id IS NULL
-            OR t.status NOT IN ('completed', 'failed', 'cancelled')",
+         FROM watch_rules w",
     )
     .fetch_all(pool)
     .await
@@ -121,21 +119,8 @@ pub async fn complete_task_watch_and_event(
     if deleted == 0 {
         return Ok((false, None));
     }
-    sqlx::query(
-        "INSERT INTO task_wake_outbox
-             (task_id, event_id, signal_json, dispatch_state, created_at, dispatched_at, resolved_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?)
-         ON CONFLICT(task_id, event_id) DO NOTHING",
-    )
-    .bind(&wake.task_id)
-    .bind(&wake.event_id)
-    .bind(&wake.signal_json)
-    .bind(wake.dispatch_state.as_str())
-    .bind(wake.created_at)
-    .bind(wake.dispatched_at)
-    .bind(wake.resolved_at)
-    .execute(&mut *tx)
-    .await?;
+    // The continuation wake is a workspace-Harness Task fact (Task 19C4); the
+    // caller records it in the owning workspace before completing the watch.
     let event = crate::runtime_event::append_runtime_event_tx(
         &mut tx,
         crate::runtime_event::RuntimeEventInput {
@@ -399,7 +384,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn list_rules_excludes_watches_owned_by_terminal_tasks() {
+    async fn list_rules_returns_all_rows_without_a_platform_task_join() {
         let pool = owned_watch_fixture().await;
         sqlx::query(
             "INSERT INTO agent_tasks
@@ -420,7 +405,10 @@ mod tests {
 
         let listed = list_rules(&pool).await.expect("list");
         let ids = listed.iter().map(|rule| rule.id.as_str()).collect::<Vec<_>>();
-        assert_eq!(ids, ["r_live", "r_unowned"]);
+        // Task terminality is a workspace Harness fact now; this platform query
+        // returns every rule and `WatchRuleStoreAdapter::list_all` applies the
+        // terminal filter from the owning workspace.
+        assert_eq!(ids, ["r_live", "r_terminal", "r_unowned"]);
     }
 
     #[tokio::test]
@@ -591,13 +579,15 @@ mod tests {
                 .expect("complete watch")
         );
         assert!(list_rules(&pool).await.expect("deleted").is_empty());
-        assert!(
-            crate::Db::new(pool.clone())
-                .wake_by_id("task1", "watch:r1:hit")
-                .await
-                .expect("wake")
-                .is_some()
-        );
+        // Task 19C4: the continuation wake is a workspace fact and is recorded
+        // by the Harness-aware adapter, never by this platform watch writer.
+        let wake_count: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM task_wake_outbox WHERE task_id = 'task1' AND event_id = 'watch:r1:hit'",
+        )
+        .fetch_one(&pool)
+        .await
+        .expect("wake");
+        assert_eq!(wake_count, 0);
         assert!(
             !complete_task_watch(&pool, "ws1", "r1", &wake)
                 .await
@@ -607,7 +597,7 @@ mod tests {
             .fetch_one(&pool)
             .await
             .expect("wake count");
-        assert_eq!(wakes, 1);
+        assert_eq!(wakes, 0);
     }
 
     #[tokio::test]

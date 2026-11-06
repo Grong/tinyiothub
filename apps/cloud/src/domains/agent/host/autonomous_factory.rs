@@ -747,7 +747,7 @@ mod tests {
             dispatched_at: Some(now),
             resolved_at: Some(now),
         };
-        db.create_task_with_wake(&task, &wake).await.expect("Task");
+        db.harness_create_task_with_wake(&task, &wake).await.expect("Task");
         db.save_autonomy_policy(workspace_id, &act_policy(), "test")
             .await
             .expect("autonomy policy");
@@ -926,11 +926,13 @@ mod tests {
 
         // JobService only enqueues the wake; the Task status is still owned by
         // the coordinator/router contract.
-        let status: String = sqlx::query_scalar("SELECT status FROM agent_tasks WHERE id = 'task-1'")
-            .fetch_one(&pool)
+        let status = db
+            .harness_get_task("ws-jobs", "task-1")
             .await
-            .expect("task status");
-        assert_eq!(status, "active");
+            .expect("task read")
+            .expect("task")
+            .status;
+        assert_eq!(status, TaskStatus::Active);
     }
 
     #[tokio::test]
@@ -1144,35 +1146,8 @@ mod tests {
         );
         seed_task_owned_device(&pool, &db, "ws-approve", "dev-1", "task-1", "run-1", true).await;
         db.create_workspace_store("ws-approve").await.expect("workspace store");
-        // Production Tasks live in the workspace generation after 19C1. The
-        // Effect recovery query joins this row, and the tool re-checks the Run.
-        let now = chrono::Utc::now();
-        let task = AgentTask {
-            id: "task-1".into(),
-            workspace_id: "ws-approve".into(),
-            idempotency_key: "task-1-harness-key".into(),
-            objective: "approve a device action".into(),
-            session_key: None,
-            created_by: "user-1".into(),
-            status: TaskStatus::Active,
-            current_run_id: Some("run-1".into()),
-            state_version: 0,
-            created_at: now,
-            updated_at: now,
-            ended_at: None,
-        };
-        let wake = TaskWake {
-            task_id: "task-1".into(),
-            event_id: "harness-task-1-created".into(),
-            signal_json: serde_json::json!({"workspace_id":"ws-approve"}).to_string(),
-            dispatch_state: WakeDispatchState::Dispatched,
-            created_at: now,
-            dispatched_at: Some(now),
-            resolved_at: Some(now),
-        };
-        db.harness_create_task_with_wake(&task, &wake)
-            .await
-            .expect("harness Task");
+        // `seed_task_owned_device` created the production Task in the
+        // workspace generation. The tool re-checks the Run below.
         let workspace = db
             .workspace_pool_for_testing("ws-approve")
             .await

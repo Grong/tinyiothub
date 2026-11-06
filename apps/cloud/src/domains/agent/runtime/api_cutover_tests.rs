@@ -490,12 +490,7 @@ async fn http_cancel_stops_the_job_owned_by_the_live_coordinator() {
         dispatched_at: Some(now),
         resolved_at: Some(now),
     };
-    // Platform reference row for the legacy Job FK, plus the workspace facts.
-    app_state
-        .db
-        .create_task_with_wake(&task, &wake)
-        .await
-        .expect("platform Task reference");
+    // Production Tasks and Jobs are workspace Harness facts (Task 19C4).
     app_state
         .db
         .harness_create_task_with_wake(&task, &wake)

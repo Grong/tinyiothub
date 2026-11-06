@@ -1178,7 +1178,7 @@ async fn drain_ignores_prerelease_platform_approvals() {
     let now = Utc::now();
     fixture
         .db
-        .create_task_with_wake(
+        .harness_create_task_with_wake(
             &tinyiothub_core::agent_task::AgentTask {
                 id: "task-legacy".into(),
                 workspace_id: WS.into(),
@@ -1205,6 +1205,18 @@ async fn drain_ignores_prerelease_platform_approvals() {
         )
         .await
         .expect("legacy task");
+    // A pre-upgrade platform approval still carries a platform Task FK; this
+    // fixture row exists only so the retired-table read can be exercised.
+    sqlx::query(
+        "INSERT INTO agent_tasks
+             (id, workspace_id, idempotency_key, objective, created_by, status,
+              state_version, created_at, updated_at)
+         VALUES ('task-legacy', ?, 'legacy-platform-row', 'legacy', 'user-1', 'active', 0, 'now', 'now')",
+    )
+    .bind(WS)
+    .execute(fixture.db.pool())
+    .await
+    .expect("platform task fixture");
     // A pre-upgrade pending row has no writer and no expirer. The drain gate
     // must not count it forever (Task 19C2 M7).
     sqlx::query(
@@ -4007,7 +4019,7 @@ mod dry_run_tests {
         assert!(
             fixture
                 .db
-                .runtime_projection(&fixture.workspace_id, &result.task_id)
+                .harness_runtime_projection(&fixture.workspace_id, &result.task_id)
                 .await
                 .expect("runtime projection")
                 .is_none()
@@ -4399,7 +4411,6 @@ mod supervisor_health_tests {
     use tinyiothub_cloud::domains::agent::workflows::{
         RetryOutcome, StalledReason, SupervisorHealth, SupervisorStatus,
     };
-    use tinyiothub_core::agent_task::{AgentTask, TaskStatus, TaskWake, WakeDispatchState};
     use tinyiothub_storage::test_helpers::{WorkspaceFixture, fixture_workspace};
 
     const WS: &str = "ws-supervisor-health";
@@ -4835,54 +4846,9 @@ mod supervisor_health_tests {
     }
 
     #[tokio::test]
-    async fn supervisor_health_dead_wake_writers_record_cancelled_and_dispatch_failed_reasons() {
+    async fn workspace_cancel_marks_pending_wakes_dead_with_a_reason() {
         let fixture = fixture_workspace(WS).await;
         let now = Utc::now();
-
-        // Production wake dispatcher store: dispatch failures write a reason.
-        fixture
-            .db
-            .create_task_with_wake(
-                &AgentTask {
-                    id: "task-platform".into(),
-                    workspace_id: WS.into(),
-                    idempotency_key: "platform-dead-reason".into(),
-                    objective: "dispatch failure".into(),
-                    session_key: None,
-                    created_by: "user-1".into(),
-                    status: TaskStatus::Active,
-                    current_run_id: None,
-                    state_version: 1,
-                    created_at: now,
-                    updated_at: now,
-                    ended_at: None,
-                },
-                &TaskWake {
-                    task_id: "task-platform".into(),
-                    event_id: "event-platform".into(),
-                    signal_json: json!({"workspace_id": WS}).to_string(),
-                    dispatch_state: WakeDispatchState::Pending,
-                    created_at: now,
-                    dispatched_at: None,
-                    resolved_at: None,
-                },
-            )
-            .await
-            .expect("platform task");
-        fixture
-            .db
-            .mark_wake_dead("task-platform", "event-platform", "dispatch_failed")
-            .await
-            .expect("mark dispatch failed");
-        let (state, reason): (String, Option<String>) = sqlx::query_as(
-            "SELECT dispatch_state, dead_reason FROM task_wake_outbox
-             WHERE task_id = 'task-platform' AND event_id = 'event-platform'",
-        )
-        .fetch_one(fixture.db.pool())
-        .await
-        .expect("platform dead wake");
-        assert_eq!(state, "dead");
-        assert_eq!(reason.as_deref(), Some("dispatch_failed"));
 
         // Workspace cancellation writer: Task cancel marks its pending wakes
         // dead with the `cancelled` reason, and retry refuses the terminal Task.

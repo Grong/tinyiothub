@@ -1039,7 +1039,7 @@ impl tinyiothub_runtime::ports::WatchRuleStore for WatchRuleStoreAdapter {
             .map_err(|e| e.to_string())?;
         let task_workspaces: std::collections::HashMap<String, String> = self
             .db
-            .list_nonterminal_tasks(None)
+            .harness_list_nonterminal_tasks(None)
             .await
             .map_err(|e| e.to_string())?
             .into_iter()
@@ -1071,7 +1071,7 @@ impl tinyiothub_runtime::ports::WatchRuleStore for WatchRuleStoreAdapter {
         if let Some(task_id) = rule.owner_task_id.as_deref() {
             let task = self
                 .db
-                .get_task(&rule.workspace_id, task_id)
+                .harness_get_task(&rule.workspace_id, task_id)
                 .await
                 .map_err(|e| e.to_string())?
                 .ok_or_else(|| "watch owner Task does not exist in this workspace".to_string())?;
@@ -1119,6 +1119,11 @@ impl tinyiothub_runtime::ports::WatchRuleStore for WatchRuleStoreAdapter {
         id: &str,
         wake: &tinyiothub_core::agent_task::TaskWake,
     ) -> Result<bool, String> {
+        // Record the continuation wake in the owning workspace Harness
+        // generation first (idempotent on task/event), then complete the watch
+        // and its telemetry. A platform wake write would be a retired fact
+        // writer (Task 19C4).
+        self.db.harness_record_wake(wake).await.map_err(|e| e.to_string())?;
         let (completed, event) =
             tinyiothub_storage::watch::complete_task_watch_and_event(self.db.pool(), workspace_id, id, wake)
                 .await
@@ -1155,14 +1160,26 @@ mod runtime_job_event_tests {
         tinyiothub_storage::test_helpers::run_all_migrations(&pool)
             .await
             .expect("migrations");
-        let db = Arc::new(Db::new(pool));
+        let root = std::env::temp_dir().join(format!("tinyiothub-runtime-ports-{}", uuid::Uuid::new_v4()));
+        let db = Arc::new(Db::new(pool).with_workspace_store_root(root.join("data/agents")));
         tinyiothub_storage::seed::seed_system(&db).await.expect("seed");
         sqlx::query("INSERT INTO workspaces (id, name, tenant_id, created_at, updated_at) VALUES ('ws-job','ws-job','tenant-default-001','2025-01-01','2025-01-01')")
             .execute(db.pool())
             .await
             .expect("workspace");
+        // The test-gated platform Job/evidence writers still carry foreign
+        // keys to the retired platform Task row; this fixture is test-only.
+        sqlx::query(
+            "INSERT INTO agent_tasks
+                 (id, workspace_id, idempotency_key, objective, created_by, status,
+                  state_version, created_at, updated_at)
+             VALUES ('task-1', 'ws-job', 'job-event', 'inspect', 'user-1', 'active', 0, 'now', 'now')",
+        )
+        .execute(db.pool())
+        .await
+        .expect("platform task fixture");
         let now = chrono::Utc::now();
-        db.create_task_with_wake(
+        db.harness_create_task_with_wake(
             &tinyiothub_core::agent_task::AgentTask {
                 id: "task-1".into(),
                 workspace_id: "ws-job".into(),
@@ -1642,6 +1659,29 @@ mod runtime_job_event_tests {
             ),
             "a Job that may live in the unreadable workspace must refuse"
         );
+
+        // Task 19C3 Low: the assertions above are served by the hint warmed by
+        // `create_job`. Repeat them cold: the full scan must still resolve the
+        // unique readable match, must fail closed for the ambiguous id, and
+        // must not cache a result produced while a workspace was skipped.
+        store.workspaces.clear();
+        assert_eq!(
+            store
+                .get_job_by_id("job-readable")
+                .await
+                .expect("cold unique readable match")
+                .expect("job")
+                .id,
+            "job-readable"
+        );
+        assert!(
+            !store.workspaces.contains_key("job-readable"),
+            "a scan that skipped an unreadable workspace must not cache the hint"
+        );
+        assert!(
+            matches!(store.get_job_by_id("job-hidden").await, Err(DeviceJobError::Storage(_))),
+            "a cold lookup must not fail open while the owner could be unreadable"
+        );
         let _ = tokio::fs::remove_dir_all(&root).await;
     }
 
@@ -1690,14 +1730,7 @@ mod runtime_job_event_tests {
     #[tokio::test]
     async fn shared_evidence_adapter_publishes_the_exact_persisted_event() {
         let (db, recorder, hub) = fixture().await;
-        let mut connection = hub
-            .connect(db.clone(), "ws-job", "task-1", None)
-            .await
-            .expect("connect runtime stream");
-        assert!(matches!(
-            connection.next_frame().await,
-            Some(crate::domains::agent::runtime::stream::RuntimeFrame::Snapshot { .. })
-        ));
+        let mut published = hub.subscribe("ws-job");
         let store = DbMediaEvidenceStore::new((*db).clone()).with_recorder(recorder);
         let now = chrono::Utc::now();
         store
@@ -1728,12 +1761,8 @@ mod runtime_job_event_tests {
             .await
             .expect("query persisted event")
             .expect("persisted event");
-        let Some(crate::domains::agent::runtime::stream::RuntimeFrame::Event { event, .. }) =
-            connection.next_frame().await
-        else {
-            panic!("expected live evidence event");
-        };
-        assert_eq!(*event, persisted);
+        let event = published.recv().await.expect("expected live evidence event");
+        assert_eq!(event, persisted);
         assert_eq!(event.device_id.as_deref(), Some("device-1"));
         assert_eq!(event.source_id.as_deref(), Some("camera"));
         assert!(event.data.get("storagePath").is_none());
@@ -1742,14 +1771,7 @@ mod runtime_job_event_tests {
     #[tokio::test]
     async fn shared_job_adapter_records_ordered_facts_with_stable_ids() {
         let (db, recorder, hub) = fixture().await;
-        let mut connection = hub
-            .connect(db.clone(), "ws-job", "task-1", None)
-            .await
-            .expect("connect runtime stream");
-        assert!(matches!(
-            connection.next_frame().await,
-            Some(crate::domains::agent::runtime::stream::RuntimeFrame::Snapshot { .. })
-        ));
+        let mut published = hub.subscribe("ws-job");
         let store = DbDeviceJobStore::new((*db).clone()).with_recorder(recorder);
         store.create_job(&job()).await.expect("create");
         store.mark_running("job-event", "driver-1").await.expect("running");
@@ -1818,14 +1840,14 @@ mod runtime_job_event_tests {
         assert_eq!(events[2].data["progress"]["percent"], 50);
         assert_eq!(events[3].data["revision"], 2);
         assert_eq!(events[3].data["progress"]["percent"], 75);
-        let mut streamed_ids = Vec::new();
-        for _ in 0..events.len() {
-            let Some(crate::domains::agent::runtime::stream::RuntimeFrame::Event { event, .. }) =
-                connection.next_frame().await
-            else {
-                panic!("expected every persisted revision on the live stream");
-            };
-            streamed_ids.push(event.event_id.to_string());
+        // The live fan-out may repeat a replay event; the replaced SSE reader
+        // deduplicated by cursor. Persisted identity is what the UI sees.
+        let mut streamed_ids: Vec<String> = Vec::new();
+        for _ in 0..=events.len() {
+            let event = published.recv().await.expect("every persisted revision is published");
+            if !streamed_ids.contains(&event.event_id) {
+                streamed_ids.push(event.event_id);
+            }
         }
         assert_eq!(streamed_ids, ids);
         assert!(events.iter().all(|event| event.task_id.as_deref() == Some("task-1")));
@@ -1886,14 +1908,7 @@ mod runtime_job_event_tests {
     async fn watch_adapter_publishes_and_replays_cancellation_and_generic_deletion() {
         let (db, recorder, hub) = fixture().await;
         let store = WatchRuleStoreAdapter::new((*db).clone()).with_recorder(recorder);
-        let mut connection = hub
-            .connect(db.clone(), "ws-job", "task-1", None)
-            .await
-            .expect("connect runtime stream");
-        assert!(matches!(
-            connection.next_frame().await,
-            Some(crate::domains::agent::runtime::stream::RuntimeFrame::Snapshot { .. })
-        ));
+        let mut published = hub.subscribe("ws-job");
         let rule = |id: &str| tinyiothub_core::watch::WatchRule {
             id: id.into(),
             workspace_id: "ws-job".into(),
@@ -1909,11 +1924,7 @@ mod runtime_job_event_tests {
         store.insert(&rule("watch-cancel-1")).await.expect("first watch");
         store.insert(&rule("watch-cancel-2")).await.expect("second watch");
         for id in ["watch-cancel-1", "watch-cancel-2"] {
-            let Some(crate::domains::agent::runtime::stream::RuntimeFrame::Event { event, .. }) =
-                connection.next_frame().await
-            else {
-                panic!("expected live creation");
-            };
+            let event = published.recv().await.expect("expected live creation");
             assert_eq!(event.event_id, format!("watch:{id}:created"));
         }
         assert_eq!(
@@ -1924,25 +1935,14 @@ mod runtime_job_event_tests {
             2
         );
         for id in ["watch-cancel-1", "watch-cancel-2"] {
-            let Some(crate::domains::agent::runtime::stream::RuntimeFrame::Event { event, .. }) =
-                connection.next_frame().await
-            else {
-                panic!("expected live cancellation");
-            };
+            let event = published.recv().await.expect("expected live cancellation");
             assert_eq!(event.event_id, format!("watch:{id}:deleted"));
             assert_eq!(event.event_type, "watch.deleted");
         }
         store.insert(&rule("watch-generic")).await.expect("generic watch");
-        assert!(matches!(
-            connection.next_frame().await,
-            Some(crate::domains::agent::runtime::stream::RuntimeFrame::Event { .. })
-        ));
+        published.recv().await.expect("generic watch event");
         assert!(store.delete("ws-job", "watch-generic").await.expect("generic delete"));
-        let Some(crate::domains::agent::runtime::stream::RuntimeFrame::Event { event, .. }) =
-            connection.next_frame().await
-        else {
-            panic!("expected live generic deletion");
-        };
+        let event = published.recv().await.expect("expected live generic deletion");
         assert_eq!(event.event_id, "watch:watch-generic:deleted");
         assert!(
             !store
@@ -2664,7 +2664,8 @@ mod watch_ports_tests {
         tinyiothub_storage::test_helpers::run_all_migrations(&pool)
             .await
             .unwrap();
-        let db = tinyiothub_storage::Db::new(pool);
+        let root = std::env::temp_dir().join(format!("tinyiothub-runtime-ports-watch-{}", uuid::Uuid::new_v4()));
+        let db = tinyiothub_storage::Db::new(pool).with_workspace_store_root(root.join("data/agents"));
         tinyiothub_storage::seed::seed_system(&db).await.unwrap();
         sqlx::query("INSERT INTO workspaces (id, name, tenant_id, created_at, updated_at) VALUES ('ws1','ws1','tenant-default-001','2025-01-01','2025-01-01')")
             .execute(db.pool())
@@ -2699,9 +2700,11 @@ mod watch_ports_tests {
                 dispatched_at: None,
                 resolved_at: None,
             };
-            db.create_task_with_wake(&task, &wake).await.unwrap();
+            db.harness_create_task_with_wake(&task, &wake).await.unwrap();
             if status != tinyiothub_core::agent_task::TaskStatus::Active {
-                db.transition_task("ws1", task_id, 0, status, None).await.unwrap();
+                db.harness_transition_task("ws1", task_id, 0, status, None)
+                    .await
+                    .unwrap();
             }
             let mut rule = sample_rule(&format!("rule-{task_id}"), "ws1");
             rule.owner_task_id = Some(task_id.into());

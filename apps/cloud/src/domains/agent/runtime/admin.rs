@@ -11,7 +11,6 @@ use axum::routing::{get, post};
 use axum::{Extension, Router};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
-use tinyiothub_core::agent_task::WakeDispatchState;
 use tinyiothub_storage::Db;
 use tinyiothub_storage::runtime_admin::{RuntimeDrainCounts, UnknownDispositionOutcome};
 use tinyiothub_web::response::ApiResponseBuilder;
@@ -139,25 +138,15 @@ pub async fn list_outbox(
     if let Err(response) = check_admin_read_access(&state, &claims, query.workspace_id.as_deref()).await {
         return response;
     }
-    let mut outbox = match state
-        .db
-        .runtime_outbox(query.workspace_id.as_deref(), WakeDispatchState::Dead, 200)
-        .await
-    {
-        Ok(outbox) => outbox,
-        Err(error) => {
-            tracing::error!(%error, "list runtime dead outbox failed");
-            return error_response(StatusCode::SERVICE_UNAVAILABLE, "Runtime outbox 不可用");
-        }
-    };
-    // Job terminal wakes live in the workspace outbox since 19C3 (M1).
-    match state.db.workspace_dead_wakes(query.workspace_id.as_deref(), 200).await {
-        Ok(mut workspace) => outbox.append(&mut workspace),
+    // Every Task/Job wake lives in its owning workspace Harness generation;
+    // the platform outbox has no production reader or writer (Task 19C4).
+    let mut outbox = match state.db.workspace_dead_wakes(query.workspace_id.as_deref(), 200).await {
+        Ok(workspace) => workspace,
         Err(error) => {
             tracing::error!(%error, "list workspace dead outbox failed");
             return error_response(StatusCode::SERVICE_UNAVAILABLE, "Runtime outbox 不可用");
         }
-    }
+    };
     outbox.sort_by(|left, right| {
         left.created_at
             .cmp(&right.created_at)
@@ -177,25 +166,14 @@ pub async fn retry_dead_wake(
     if let Err(response) = check_agent_admin_response(&state, &claims, &scope.workspace_id).await {
         return response;
     }
-    let platform = match state.db.retry_dead_wake(&scope.workspace_id, &event_id).await {
+    let workspace = match state.db.retry_workspace_dead_wake(&scope.workspace_id, &event_id).await {
         Ok(retried) => retried,
         Err(error) => {
-            tracing::error!(%error, %event_id, "retry runtime dead wake failed");
+            tracing::error!(%error, %event_id, "retry workspace dead wake failed");
             return error_response(StatusCode::SERVICE_UNAVAILABLE, "Wake retry 失败");
         }
     };
-    let workspace = if platform {
-        false
-    } else {
-        match state.db.retry_workspace_dead_wake(&scope.workspace_id, &event_id).await {
-            Ok(retried) => retried,
-            Err(error) => {
-                tracing::error!(%error, %event_id, "retry workspace dead wake failed");
-                return error_response(StatusCode::SERVICE_UNAVAILABLE, "Wake retry 失败");
-            }
-        }
-    };
-    if platform || workspace {
+    if workspace {
         ApiResponseBuilder::success(json!({"eventId": event_id, "state": "pending"})).into_response()
     } else {
         error_response(StatusCode::NOT_FOUND, "Dead wake 不存在")
@@ -309,7 +287,7 @@ async fn cancel_fixed_task_batch<C: DrainTaskCancel + ?Sized>(
                 let outcome = if accepted {
                     "cancelled"
                 } else {
-                    match db.get_task(workspace_id, task_id).await {
+                    match db.harness_get_task(workspace_id, task_id).await {
                         Ok(Some(task)) if task.status.is_terminal() => "already_terminal",
                         Ok(Some(_)) => "in_progress",
                         Ok(None) => "not_found",
@@ -534,7 +512,7 @@ mod tests {
         let db = (*app_state.db).clone();
         db.create_workspace_store(WS).await.expect("workspace store");
         let now = Utc::now();
-        db.create_task_with_wake(
+        db.harness_create_task_with_wake(
             &AgentTask {
                 id: "task-admin".into(),
                 workspace_id: WS.into(),
@@ -561,7 +539,7 @@ mod tests {
         )
         .await
         .expect("task");
-        db.mark_wake("task-admin", "dead-original", WakeDispatchState::Dead)
+        db.harness_mark_wake("task-admin", "dead-original", WakeDispatchState::Dead)
             .await
             .expect("dead wake");
         let api = crate::api::create_router(&app_state);
@@ -655,7 +633,7 @@ mod tests {
 
     async fn seed_task(db: &tinyiothub_storage::Db, id: &str, status: TaskStatus) {
         let now = Utc::now();
-        db.create_task_with_wake(
+        db.harness_create_task_with_wake(
             &AgentTask {
                 id: id.into(),
                 workspace_id: WS.into(),
@@ -686,11 +664,11 @@ mod tests {
             return;
         }
         let cancelling = db
-            .transition_task(WS, id, 1, TaskStatus::Cancelling, None)
+            .harness_transition_task(WS, id, 1, TaskStatus::Cancelling, None)
             .await
             .expect("cancelling");
         if status == TaskStatus::Cancelled {
-            db.transition_task(WS, id, cancelling.state_version, TaskStatus::Cancelled, None)
+            db.harness_transition_task(WS, id, cancelling.state_version, TaskStatus::Cancelled, None)
                 .await
                 .expect("cancelled");
         }
@@ -716,13 +694,14 @@ mod tests {
         seed_task(&db, "task-terminal", TaskStatus::Cancelled).await;
         seed_owned_watch(&db, "watch-live", "task-admin").await;
         seed_owned_watch(&db, "watch-terminal", "task-terminal").await;
+        let workspace = db.workspace_pool_for_testing(WS).await.expect("workspace pool");
         sqlx::query(
             "INSERT INTO task_wake_outbox
                  (task_id, event_id, signal_json, dispatch_state, created_at, dispatched_at, resolved_at)
              VALUES ('task-admin', 'pending-http', '{\"workspace_id\":\"ws-runtime-admin\"}', 'pending',
                      '2026-10-29T00:00:00Z', NULL, NULL)",
         )
-        .execute(db.pool())
+        .execute(&workspace)
         .await
         .expect("pending outbox");
         insert_unknown_job(&db, "unknown-http").await;
@@ -856,10 +835,10 @@ mod tests {
             "disposition must never rewrite or replay an interrupted Job"
         );
 
-        db.transition_task(WS, "task-admin", 1, TaskStatus::Cancelling, None)
+        db.harness_transition_task(WS, "task-admin", 1, TaskStatus::Cancelling, None)
             .await
             .expect("cancel task");
-        db.transition_task(WS, "task-admin", 2, TaskStatus::Cancelled, None)
+        db.harness_transition_task(WS, "task-admin", 2, TaskStatus::Cancelled, None)
             .await
             .expect("finish cancel");
         let (status, body) = request(&app, &admin, "GET", &drain_uri).await;
@@ -889,7 +868,7 @@ mod tests {
             StatusCode::SERVICE_UNAVAILABLE,
             "no manager is wired in this fixture: {body}"
         );
-        let task = db.get_task(WS, "task-admin").await.expect("get").expect("task");
+        let task = db.harness_get_task(WS, "task-admin").await.expect("get").expect("task");
         assert_eq!(task.status, tinyiothub_core::agent_task::TaskStatus::Active);
         assert_eq!(task.state_version, 1);
     }
@@ -921,7 +900,7 @@ mod tests {
                 }
                 let task = self
                     .db
-                    .get_task(workspace_id, task_id)
+                    .harness_get_task(workspace_id, task_id)
                     .await
                     .map_err(|error| error.to_string())?
                     .ok_or_else(|| "task not found".to_string())?;
@@ -930,11 +909,11 @@ mod tests {
                 }
                 let cancelling = self
                     .db
-                    .transition_task(workspace_id, task_id, task.state_version, TaskStatus::Cancelling, None)
+                    .harness_transition_task(workspace_id, task_id, task.state_version, TaskStatus::Cancelling, None)
                     .await
                     .map_err(|error| error.to_string())?;
                 self.db
-                    .transition_task(
+                    .harness_transition_task(
                         workspace_id,
                         task_id,
                         cancelling.state_version,
@@ -979,7 +958,11 @@ mod tests {
         assert!(drain.can_hide_workbench());
         assert!(drain.can_hide_media());
         assert_eq!(
-            db.get_task(WS, "task-admin").await.expect("get").expect("task").status,
+            db.harness_get_task(WS, "task-admin")
+                .await
+                .expect("get")
+                .expect("task")
+                .status,
             TaskStatus::Cancelled
         );
     }
@@ -1014,7 +997,7 @@ mod tests {
             ["cancelled", "already_terminal", "in_progress", "not_found", "failed"]
         );
         assert_eq!(
-            db.get_task(WS, "task-terminal")
+            db.harness_get_task(WS, "task-terminal")
                 .await
                 .expect("get")
                 .expect("task")
@@ -1023,7 +1006,7 @@ mod tests {
             "terminal Tasks must not be rewritten"
         );
         assert_eq!(
-            db.get_task(WS, "task-cancelling")
+            db.harness_get_task(WS, "task-cancelling")
                 .await
                 .expect("get")
                 .expect("task")
@@ -1089,13 +1072,14 @@ mod tests {
         let (status, body) = request(&app, &admin, "POST", &retry_uri).await;
         assert_eq!(status, StatusCode::OK, "retry: {body}");
         let wake = db
-            .wake_by_id("task-admin", "dead-original")
+            .harness_wake_by_id("task-admin", "dead-original")
             .await
             .expect("wake")
             .expect("original row");
         assert_eq!(wake.dispatch_state, WakeDispatchState::Pending);
+        let workspace = db.workspace_pool_for_testing(WS).await.expect("workspace pool");
         let count = sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM task_wake_outbox")
-            .fetch_one(db.pool())
+            .fetch_one(&workspace)
             .await
             .expect("count");
         assert_eq!(count, 1, "retry must never create a replacement event");
@@ -1157,7 +1141,7 @@ mod tests {
         assert_eq!(workspace_wake["workspaceId"], WS);
         assert!(
             outbox.iter().any(|wake| wake["eventId"] == "dead-original"),
-            "the platform dead wake is still listed"
+            "the workspace dead wake is still listed"
         );
 
         let retry_uri = format!("/api/v1/admin/runtime/outbox/device_job:job-workspace:done/retry?workspaceId={WS}");

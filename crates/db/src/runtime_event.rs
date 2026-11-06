@@ -1,7 +1,7 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use tinyiothub_core::agent_task::{AgentTask, TaskStatus, WakeDispatchState};
+use tinyiothub_core::agent_task::{AgentTask, WakeDispatchState};
 use tinyiothub_core::device_job::DeviceJob;
 use tinyiothub_core::driver::declaration::DeviceDeclaration;
 use tinyiothub_core::driver::manifest::DriverManifest;
@@ -24,42 +24,6 @@ const RUNTIME_EVENTS_PAGE_SQL: &str = "SELECT id, workspace_id, ts, payload FROM
 const RUNTIME_EVENT_DEDUPE_SQL: &str = "SELECT 1 FROM hub_ledger
              WHERE workspace_id = ? AND kind = ?
                AND json_extract(payload, '$.eventId') = ?";
-
-#[cfg(any(test, feature = "testing"))]
-#[derive(Debug, Default)]
-pub struct RuntimeProjectionProbe {
-    armed: std::sync::atomic::AtomicBool,
-    attempts: std::sync::atomic::AtomicUsize,
-    task_read: tokio::sync::Notify,
-    release: tokio::sync::Notify,
-}
-
-#[cfg(any(test, feature = "testing"))]
-impl RuntimeProjectionProbe {
-    pub fn arm(&self) {
-        self.armed.store(true, std::sync::atomic::Ordering::SeqCst);
-    }
-
-    pub async fn wait_for_task_read(&self) {
-        self.task_read.notified().await;
-    }
-
-    pub fn attempts(&self) -> usize {
-        self.attempts.load(std::sync::atomic::Ordering::SeqCst)
-    }
-
-    pub fn release(&self) {
-        self.release.notify_one();
-    }
-
-    async fn after_task_read(&self) {
-        self.attempts.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-        if self.armed.swap(false, std::sync::atomic::Ordering::SeqCst) {
-            self.task_read.notify_one();
-            self.release.notified().await;
-        }
-    }
-}
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -105,25 +69,6 @@ pub struct RuntimeEventInput {
     pub source_seq: Option<i64>,
     pub evidence_id: Option<String>,
     pub data: Value,
-}
-
-pub(crate) fn task_event(task: &AgentTask, event_type: &str, event_id: String) -> RuntimeEventInput {
-    RuntimeEventInput {
-        event_id,
-        event_type: event_type.to_string(),
-        occurred_at: Utc::now(),
-        workspace_id: task.workspace_id.clone(),
-        task_id: Some(task.id.clone()),
-        run_id: task.current_run_id.clone(),
-        tool_call_id: None,
-        job_id: None,
-        approval_id: None,
-        device_id: None,
-        source_id: None,
-        source_seq: None,
-        evidence_id: None,
-        data: serde_json::json!({"stateVersion": task.state_version}),
-    }
 }
 
 /// Legacy platform Job event builder. The production Job writer was removed in
@@ -322,43 +267,9 @@ struct RuntimeLedgerRow {
 
 #[derive(sqlx::FromRow)]
 struct RuntimeThingFactsRow {
-    id: String,
     state: i32,
     zone_ref: Option<String>,
     position: Option<String>,
-}
-
-fn add_device_reference(
-    associations: &mut Vec<RuntimeDeviceAssociation>,
-    positions: &mut std::collections::HashMap<String, usize>,
-    device_id: &str,
-    source_id: Option<&str>,
-) {
-    if device_id.trim().is_empty() {
-        return;
-    }
-    let index = match positions.get(device_id).copied() {
-        Some(index) => index,
-        None => {
-            let index = associations.len();
-            positions.insert(device_id.to_string(), index);
-            associations.push(RuntimeDeviceAssociation {
-                device_id: device_id.to_string(),
-                source_ids: Vec::new(),
-            });
-            index
-        }
-    };
-    if let Some(source_id) = source_id.filter(|id| !id.trim().is_empty()) {
-        let sources = &mut associations[index].source_ids;
-        if !sources.iter().any(|existing| existing == source_id) {
-            sources.push(source_id.to_string());
-        }
-    }
-}
-
-fn internal(error: impl std::fmt::Display) -> DbError {
-    DbError::Internal(error.to_string())
 }
 
 fn decode_event(row: RuntimeLedgerRow) -> Result<RuntimeEvent> {
@@ -406,7 +317,7 @@ async fn load_device_facts(
     cursor: i64,
 ) -> Result<RuntimeDeviceProjection> {
     let facts = sqlx::query_as::<_, RuntimeThingFactsRow>(
-        "SELECT id, state, zone_ref, position FROM things WHERE workspace_id = ? AND id = ?",
+        "SELECT state, zone_ref, position FROM things WHERE workspace_id = ? AND id = ?",
     )
     .bind(workspace_id)
     .bind(device_id)
@@ -500,36 +411,26 @@ async fn load_device_facts(
                         }
                     }
                 }
-                // A late interrupted/unknown Job event must not resurrect a
-                // projection that the terminal transition already deleted.
-                let terminal =
-                    sqlx::query_scalar::<_, String>("SELECT status FROM agent_tasks WHERE workspace_id = ? AND id = ?")
-                        .bind(workspace_id)
-                        .bind(task_id)
-                        .fetch_optional(&mut *connection)
-                        .await?
-                        .and_then(|status| TaskStatus::from_db(&status))
-                        .is_some_and(TaskStatus::is_terminal);
                 // Seed even an empty projection: a device whose first events
                 // carry only null values still needs a row, otherwise every new
                 // event replays the Task's whole ledger and `merge_device_state_delta`
-                // keeps treating the projection as unseeded.
-                if !terminal {
-                    sqlx::query(
-                        "INSERT INTO runtime_device_state
-                             (workspace_id, task_id, device_id, state_json, updated_at)
-                         VALUES (?, ?, ?, ?, ?)
-                         ON CONFLICT(workspace_id, task_id, device_id)
-                         DO UPDATE SET state_json = excluded.state_json, updated_at = excluded.updated_at",
-                    )
-                    .bind(workspace_id)
-                    .bind(task_id)
-                    .bind(device_id)
-                    .bind(Value::Object(merged.clone()).to_string())
-                    .bind(Utc::now().to_rfc3339())
-                    .execute(&mut *connection)
-                    .await?;
-                }
+                // keeps treating the projection as unseeded. Task lifecycle is a
+                // workspace Harness fact (Task 19C4), so this telemetry writer
+                // never reads the retired platform `agent_tasks` table.
+                sqlx::query(
+                    "INSERT INTO runtime_device_state
+                         (workspace_id, task_id, device_id, state_json, updated_at)
+                     VALUES (?, ?, ?, ?, ?)
+                     ON CONFLICT(workspace_id, task_id, device_id)
+                     DO UPDATE SET state_json = excluded.state_json, updated_at = excluded.updated_at",
+                )
+                .bind(workspace_id)
+                .bind(task_id)
+                .bind(device_id)
+                .bind(Value::Object(merged.clone()).to_string())
+                .bind(Utc::now().to_rfc3339())
+                .execute(&mut *connection)
+                .await?;
                 Some(Value::Object(merged))
             }
         };
@@ -811,379 +712,12 @@ impl Db {
             .await
             .map_err(Into::into)
     }
-
-    pub async fn runtime_projection(&self, workspace_id: &str, task_id: &str) -> Result<Option<TaskProjection>> {
-        let mut tx = self.pool().begin().await?;
-        let cursor = sqlx::query_scalar::<_, i64>("SELECT COALESCE(MAX(id), 0) FROM hub_ledger WHERE workspace_id = ?")
-            .bind(workspace_id)
-            .fetch_one(&mut *tx)
-            .await?;
-        let Some(task) = crate::runtime_task::find_task(&mut tx, workspace_id, task_id)
-            .await
-            .map_err(internal)?
-        else {
-            return Ok(None);
-        };
-        #[cfg(any(test, feature = "testing"))]
-        if let Some(probe) = &self.runtime_projection_probe {
-            probe.after_task_read().await;
-        }
-        let runs = sqlx::query_as::<_, TaskRunProjection>(
-            "SELECT id, status, outcome, summary, created_at FROM agent_runs
-             WHERE workspace_id = ? AND task_id = ? ORDER BY created_at, rowid",
-        )
-        .bind(workspace_id)
-        .bind(task_id)
-        .fetch_all(&mut *tx)
-        .await?;
-        let jobs = sqlx::query_as::<_, crate::device_job::DeviceJobRow>(
-            "SELECT id, workspace_id, device_id, tool, args_json, state, stop_requested_at,
-                    progress_json, result_json, task_id, run_id, tool_call_id, driver_call_id,
-                    timeout_ms, started_at, ended_at
-             FROM device_jobs WHERE workspace_id = ? AND task_id = ? ORDER BY started_at, id",
-        )
-        .bind(workspace_id)
-        .bind(task_id)
-        .fetch_all(&mut *tx)
-        .await?
-        .into_iter()
-        .map(DeviceJob::try_from)
-        .collect::<std::result::Result<Vec<_>, _>>()
-        .map_err(internal)?;
-        let approvals = sqlx::query_as::<_, crate::task_approval::TaskApprovalRow>(sqlx::AssertSqlSafe(format!(
-            "SELECT {} FROM task_approvals WHERE workspace_id = ? AND task_id = ? ORDER BY requested_at, id",
-            crate::task_approval::APPROVAL_COLUMNS
-        )))
-        .bind(workspace_id)
-        .bind(task_id)
-        .fetch_all(&mut *tx)
-        .await?
-        .into_iter()
-        .map(tinyiothub_core::task_approval::TaskApproval::try_from)
-        .collect::<std::result::Result<Vec<_>, _>>()
-        .map_err(internal)?;
-        let watch_rows = sqlx::query_as::<_, crate::watch::WatchRuleRow>(
-            "SELECT id, workspace_id, kind, condition, persistent, timeout_secs, created_at, owner_task_id
-             FROM watch_rules WHERE workspace_id = ? AND owner_task_id = ? ORDER BY created_at, id",
-        )
-        .bind(workspace_id)
-        .bind(task_id)
-        .fetch_all(&mut *tx)
-        .await?;
-        let watches = watch_rows
-            .into_iter()
-            .map(|row| {
-                Ok(TaskWatchProjection {
-                    id: row.id,
-                    condition: serde_json::from_str(&row.condition)?,
-                    persistent: row.persistent != 0,
-                    timeout_secs: row.timeout_secs,
-                    created_at: row.created_at,
-                })
-            })
-            .collect::<Result<Vec<_>>>()?;
-        let evidence_rows = sqlx::query_as::<
-            _,
-            (
-                String,
-                String,
-                i64,
-                DateTime<Utc>,
-                DateTime<Utc>,
-                String,
-                String,
-                Option<String>,
-                Option<String>,
-                Option<String>,
-                Option<String>,
-            ),
-        >(
-            "SELECT id, mime, source_seq, media_time, expires_at, device_id, source_id, task_id, run_id, tool_call_id, job_id
-             FROM media_evidence WHERE workspace_id = ? AND task_id = ? ORDER BY created_at, id",
-        )
-        .bind(workspace_id)
-        .bind(task_id)
-        .fetch_all(&mut *tx)
-        .await?;
-        let evidence = evidence_rows
-            .into_iter()
-            .map(
-                |(
-                    evidence_id,
-                    mime,
-                    source_seq,
-                    media_time,
-                    expires_at,
-                    device_id,
-                    source_id,
-                    task_id,
-                    run_id,
-                    tool_call_id,
-                    job_id,
-                )| {
-                    Ok(TaskEvidenceProjection {
-                        evidence_id,
-                        mime,
-                        source_seq: u64::try_from(source_seq).map_err(internal)?,
-                        media_time,
-                        expires_at,
-                        device_id,
-                        source_id,
-                        task_id,
-                        run_id,
-                        tool_call_id,
-                        job_id,
-                    })
-                },
-            )
-            .collect::<Result<Vec<_>>>()?;
-
-        let event_rows = sqlx::query_as::<_, RuntimeLedgerRow>(
-            "SELECT id, workspace_id, ts, payload FROM hub_ledger
-             WHERE workspace_id = ? AND kind = ? AND json_extract(payload, '$.taskId') = ? ORDER BY id",
-        )
-        .bind(workspace_id)
-        .bind(RUNTIME_EVENT_KIND)
-        .bind(task_id)
-        .fetch_all(&mut *tx)
-        .await?;
-        let mut associations = Vec::new();
-        let mut association_positions = std::collections::HashMap::new();
-        let mut current_values = std::collections::HashMap::new();
-        for row in event_rows {
-            let event = decode_event(row)?;
-            if let Some(device_id) = event.device_id.as_deref() {
-                add_device_reference(
-                    &mut associations,
-                    &mut association_positions,
-                    device_id,
-                    event.source_id.as_deref(),
-                );
-                if let Some(source_ids) = event.data.get("sourceIds").and_then(Value::as_array) {
-                    for source_id in source_ids.iter().filter_map(Value::as_str) {
-                        add_device_reference(
-                            &mut associations,
-                            &mut association_positions,
-                            device_id,
-                            Some(source_id),
-                        );
-                    }
-                }
-                if let Some(state) = event.data.get("state").and_then(Value::as_object) {
-                    for (name, value) in state {
-                        let value = match value {
-                            Value::String(value) => Some(value.clone()),
-                            Value::Null => None,
-                            value => Some(value.to_string()),
-                        };
-                        if let Some(value) = value {
-                            current_values.insert((device_id.to_string(), name.clone()), value);
-                        }
-                    }
-                }
-            }
-        }
-        // Compatibility fallback for facts written before their reference events existed.
-        for job in &jobs {
-            add_device_reference(&mut associations, &mut association_positions, &job.device_id, None);
-        }
-        for approval in &approvals {
-            add_device_reference(&mut associations, &mut association_positions, &approval.device_id, None);
-        }
-        for watch in &watches {
-            let device_id = watch
-                .condition
-                .get("thing_id")
-                .and_then(Value::as_str)
-                .or_else(|| watch.condition.get("thingId").and_then(Value::as_str));
-            if let Some(device_id) = device_id {
-                add_device_reference(&mut associations, &mut association_positions, device_id, None);
-            }
-        }
-        for item in &evidence {
-            add_device_reference(
-                &mut associations,
-                &mut association_positions,
-                &item.device_id,
-                Some(&item.source_id),
-            );
-        }
-
-        let thing_rows = sqlx::query_as::<_, RuntimeThingFactsRow>(
-            "SELECT id, state, zone_ref, position FROM things WHERE workspace_id = ?",
-        )
-        .bind(workspace_id)
-        .fetch_all(&mut *tx)
-        .await?;
-        let thing_facts = thing_rows
-            .into_iter()
-            .map(|row| (row.id.clone(), row))
-            .collect::<std::collections::HashMap<_, _>>();
-        let declaration_rows = sqlx::query_as::<_, (String, String)>(
-            "SELECT thing_id, declaration_json FROM device_declarations WHERE workspace_id = ? AND status = 'active' ORDER BY thing_id, updated_at DESC, id DESC",
-        )
-        .bind(workspace_id)
-        .fetch_all(&mut *tx)
-        .await?;
-        let mut declarations = std::collections::HashMap::new();
-        for (device_id, raw) in declaration_rows {
-            if let std::collections::hash_map::Entry::Vacant(entry) = declarations.entry(device_id)
-                && let Ok(declaration) = serde_json::from_str::<DeviceDeclaration>(&raw)
-            {
-                entry.insert(declaration);
-            }
-        }
-        let manifest_rows = sqlx::query_as::<_, (String, String, String)>(
-            "SELECT driver_name, driver_version, manifest_json FROM driver_declarations WHERE workspace_id = ? AND status = 'active'",
-        )
-        .bind(workspace_id)
-        .fetch_all(&mut *tx)
-        .await?;
-        let manifests = manifest_rows
-            .into_iter()
-            .filter_map(|(driver, version, raw)| {
-                serde_json::from_str::<DriverManifest>(&raw)
-                    .ok()
-                    .map(|manifest| ((driver, version), manifest))
-            })
-            .collect::<std::collections::HashMap<_, _>>();
-        let devices = associations
-            .iter()
-            .map(|association| {
-                let facts = thing_facts.get(&association.device_id);
-                let health = match facts.map(|facts| facts.state) {
-                    Some(1) => "ok",
-                    Some(0) => "attention",
-                    Some(2 | 3) => "bad",
-                    _ => "unknown",
-                }
-                .to_string();
-                let declaration = declarations.get(&association.device_id);
-                let sources = declaration
-                    .and_then(|declaration| {
-                        manifests.get(&(declaration.driver.clone(), declaration.driver_version.clone()))
-                    })
-                    .map(|manifest| {
-                        manifest
-                            .sources
-                            .iter()
-                            .map(|source| RuntimeDeviceSource {
-                                id: source.id.clone(),
-                                data_kind: source.data_kind.clone(),
-                            })
-                            .collect()
-                    })
-                    .unwrap_or_default();
-                let selected_fields = declaration
-                    .map(|declaration| {
-                        let key_fields = declaration
-                            .state_fields
-                            .iter()
-                            .filter(|field| field.key.is_some())
-                            .collect::<Vec<_>>();
-                        if key_fields.is_empty() {
-                            declaration.state_fields.iter().take(3).collect::<Vec<_>>()
-                        } else {
-                            key_fields
-                        }
-                    })
-                    .unwrap_or_default();
-                let fields = selected_fields
-                    .into_iter()
-                    .map(|field| RuntimeDeviceField {
-                        name: field.name.clone(),
-                        value: current_values
-                            .get(&(association.device_id.clone(), field.name.clone()))
-                            .cloned(),
-                        unit: field.unit.clone(),
-                    })
-                    .collect();
-                RuntimeDeviceProjection {
-                    device_id: association.device_id.clone(),
-                    health,
-                    zone: facts.and_then(|facts| facts.zone_ref.clone()),
-                    position: facts.and_then(|facts| facts.position.clone()),
-                    sources,
-                    fields,
-                }
-            })
-            .collect();
-        let summary = runs
-            .iter()
-            .rev()
-            .find(|run| run.status == "completed")
-            .map(|run| run.summary.clone());
-        tx.commit().await?;
-        Ok(Some(TaskProjection {
-            task,
-            runs,
-            jobs: jobs.into_iter().map(TaskJobProjection::from).collect(),
-            approvals,
-            watches,
-            evidence,
-            associations,
-            devices,
-            summary,
-            cursor,
-        }))
-    }
-
-    pub async fn runtime_outbox(
-        &self,
-        workspace_id: Option<&str>,
-        state: WakeDispatchState,
-        limit: i64,
-    ) -> Result<Vec<AdminWake>> {
-        let rows = sqlx::query_as::<
-            _,
-            (
-                String,
-                String,
-                String,
-                String,
-                DateTime<Utc>,
-                Option<DateTime<Utc>>,
-                Option<DateTime<Utc>>,
-            ),
-        >(
-            "SELECT t.workspace_id, w.task_id, w.event_id, w.signal_json, w.created_at, w.dispatched_at, w.resolved_at
-             FROM task_wake_outbox w JOIN agent_tasks t ON t.id = w.task_id
-             WHERE w.dispatch_state = ? AND (? IS NULL OR t.workspace_id = ?)
-             ORDER BY w.created_at, w.task_id, w.event_id LIMIT ?",
-        )
-        .bind(state.as_str())
-        .bind(workspace_id)
-        .bind(workspace_id)
-        .bind(limit)
-        .fetch_all(self.pool())
-        .await?;
-        rows.into_iter()
-            .map(
-                |(workspace_id, task_id, event_id, signal_json, created_at, dispatched_at, resolved_at)| {
-                    Ok(AdminWake {
-                        workspace_id,
-                        task_id,
-                        event_id,
-                        signal_json: serde_json::from_str(&signal_json)?,
-                        dispatch_state: state,
-                        created_at,
-                        dispatched_at,
-                        resolved_at,
-                    })
-                },
-            )
-            .collect()
-    }
 }
-
 #[cfg(test)]
 mod tests {
     use chrono::Utc;
     use serde_json::json;
     use sqlx::SqlitePool;
-    use tinyiothub_core::agent_task::{AgentTask, TaskStatus, TaskWake, WakeDispatchState};
-    use tinyiothub_core::device_job::{DeviceJob, DeviceJobState};
-    use tinyiothub_core::media::MediaEvidenceRecord;
 
     use crate::Db;
     use crate::runtime_event::{RUNTIME_EVENT_DEDUPE_SQL, RUNTIME_EVENTS_PAGE_SQL, RuntimeEventInput};
@@ -1206,37 +740,6 @@ mod tests {
         .execute(pool)
         .await
         .expect("seed workspace");
-    }
-
-    async fn seed_task(db: &Db, workspace_id: &str, task_id: &str) {
-        let now = Utc::now();
-        db.create_task_with_wake(
-            &AgentTask {
-                id: task_id.into(),
-                workspace_id: workspace_id.into(),
-                idempotency_key: format!("key-{task_id}"),
-                objective: "inspect pump".into(),
-                session_key: None,
-                created_by: "user-1".into(),
-                status: TaskStatus::Active,
-                current_run_id: None,
-                state_version: 0,
-                created_at: now,
-                updated_at: now,
-                ended_at: None,
-            },
-            &TaskWake {
-                task_id: task_id.into(),
-                event_id: format!("create-{task_id}"),
-                signal_json: json!({"workspace_id":workspace_id}).to_string(),
-                dispatch_state: WakeDispatchState::Pending,
-                created_at: now,
-                dispatched_at: None,
-                resolved_at: None,
-            },
-        )
-        .await
-        .expect("seed task");
     }
 
     fn event(event_id: &str, task_id: &str) -> RuntimeEventInput {
@@ -1264,8 +767,6 @@ mod tests {
         seed_workspace(&pool, "ws-1").await;
         seed_workspace(&pool, "ws-2").await;
         let db = Db::new(pool);
-        seed_task(&db, "ws-1", "task-1").await;
-        seed_task(&db, "ws-1", "task-2").await;
 
         let first = db
             .append_runtime_event(event("event-1", "task-1"))
@@ -1360,316 +861,10 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn projection_combines_ordered_runtime_facts_without_media_bytes() {
-        let pool = crate::test_helpers::test_pool().await;
-        seed_workspace(&pool, "ws-1").await;
-        let db = Db::new(pool);
-        seed_task(&db, "ws-1", "task-1").await;
-        let task = db.get_task("ws-1", "task-1").await.expect("get").expect("task");
-        assert!(db.begin_run(&task, "create-task-1", "run-1").await.expect("run"));
-        db.finish_run(&tinyiothub_core::agent_runs::RunReport {
-            run_id: "run-1".into(),
-            workspace_id: "ws-1".into(),
-            trigger: "task:create-task-1".into(),
-            outcome: tinyiothub_core::agent_runs::Outcome::NoActionNeeded,
-            summary: "pump is healthy".into(),
-            actions: vec![],
-            verified: true,
-            duration_ms: 10,
-            tool_calls: 0,
-            tokens: 2,
-            end_reason: None,
-            thing_id: None,
-            trace: vec![],
-            task_count: None,
-            snapshot: None,
-            task_id: Some("task-1".into()),
-            wake_event_id: Some("create-task-1".into()),
-        })
-        .await
-        .expect("finish run");
-        db.create_job(&DeviceJob {
-            id: "job-1".into(),
-            workspace_id: "ws-1".into(),
-            device_id: "device-1".into(),
-            tool: "inspect".into(),
-            args_json: json!({}),
-            state: DeviceJobState::Accepted,
-            stop_requested_at: None,
-            progress_json: None,
-            result_json: None,
-            task_id: Some("task-1".into()),
-            run_id: Some("run-1".into()),
-            tool_call_id: Some("call-1".into()),
-            driver_call_id: None,
-            timeout_ms: 1000,
-            started_at: Utc::now(),
-            ended_at: None,
-        })
-        .await
-        .expect("job");
-        crate::watch::insert_rule(
-            db.pool(),
-            &crate::watch::WatchRuleRow {
-                id: "watch-1".into(),
-                workspace_id: "ws-1".into(),
-                kind: "availability".into(),
-                condition: json!({"type":"availability","thing_id":"device-1","online":true}).to_string(),
-                persistent: 0,
-                timeout_secs: 600,
-                created_at: Utc::now().to_rfc3339(),
-                owner_task_id: Some("task-1".into()),
-            },
-        )
-        .await
-        .expect("watch");
-        let now = Utc::now();
-        db.put_media_evidence(&MediaEvidenceRecord {
-            id: "evidence-1".into(),
-            workspace_id: "ws-1".into(),
-            task_id: Some("task-1".into()),
-            run_id: Some("run-1".into()),
-            tool_call_id: Some("call-1".into()),
-            job_id: Some("job-1".into()),
-            device_id: "device-1".into(),
-            source_id: "camera".into(),
-            source_seq: 4,
-            media_time: now,
-            mime: "image/png".into(),
-            size_bytes: 12,
-            sha256: "abc".into(),
-            storage_path: "private/path".into(),
-            dedup_key: "dedup-1".into(),
-            created_at: now,
-            expires_at: now + chrono::Duration::days(1),
-        })
-        .await
-        .expect("evidence");
-        let appended = db
-            .append_runtime_event(event("event-1", "task-1"))
-            .await
-            .expect("event");
-
-        let projection = db
-            .runtime_projection("ws-1", "task-1")
-            .await
-            .expect("projection")
-            .expect("task");
-        assert_eq!(projection.task.id, "task-1");
-        assert_eq!(projection.runs.len(), 1);
-        assert_eq!(projection.runs[0].id, "run-1");
-        assert_eq!(projection.jobs.len(), 1);
-        assert_eq!(projection.watches.len(), 1);
-        assert_eq!(projection.evidence.len(), 1);
-        assert_eq!(projection.evidence[0].evidence_id, "evidence-1");
-        assert_eq!(projection.summary.as_deref(), Some("pump is healthy"));
-        assert_eq!(projection.cursor, appended.cursor);
-        let serialized = serde_json::to_value(&projection).expect("serialize");
-        assert!(serialized.get("events").is_none());
-        assert!(serialized.get("storagePath").is_none());
-        assert!(serialized["evidence"][0].get("storagePath").is_none());
-        assert!(serialized["evidence"][0].get("expiresAt").is_some());
-        assert!(
-            db.runtime_projection("ws-1", "missing")
-                .await
-                .expect("missing")
-                .is_none()
-        );
-    }
-
-    #[tokio::test]
-    async fn projection_enriches_declaration_cards_and_preserves_cross_type_first_references() {
-        let pool = crate::test_helpers::test_pool().await;
-        seed_workspace(&pool, "ws-1").await;
-        let db = Db::new(pool);
-        seed_task(&db, "ws-1", "task-1").await;
-        for (device_id, state, zone, position) in [
-            ("dev-direct", 1, "North", "rack-1"),
-            ("dev-watch", 0, "South", "rack-2"),
-            ("dev-approval", 1, "West", "rack-3"),
-            ("dev-job", 2, "East", "rack-4"),
-            ("dev-evidence", 1, "West", "rack-5"),
-        ] {
-            sqlx::query(
-                "INSERT INTO things (id, name, workspace_id, thing_type, state, zone_ref, position, driver_name)
-                 VALUES (?, ?, 'ws-1', 'device', ?, ?, ?, 'camera')",
-            )
-            .bind(device_id)
-            .bind(device_id)
-            .bind(state)
-            .bind(zone)
-            .bind(position)
-            .execute(db.pool())
-            .await
-            .expect("device");
-        }
-        let manifest = json!({
-            "manifestVersion":"1.0",
-            "identity":{"driver":"camera","version":"1.0.0","protocol":"demo","abiVersion":2},
-            "config":{"type":"object"},
-            "tools":[],
-            "stateFields":[
-                {"name":"temperature","type":"number","unit":"C","key":"primary"},
-                {"name":"humidity","type":"number"}
-            ],
-            "sources":[
-                {"id":"telemetry","kind":"poll","fields":["temperature"],"dataKind":"values"},
-                {"id":"preview","kind":"poll","fields":[],"dataKind":"image"},
-                {"id":"live","kind":"push","fields":[],"dataKind":"video"}
-            ],
-            "resources":[],"placement":{"mode":"runtime"},
-            "limits":{"maxConcurrentJobs":1,"maxCallsPerMin":60}
-        });
-        db.upsert_driver_declaration(&tinyiothub_core::driver::declaration::DriverDeclarationRecord {
-            workspace_id: "ws-1".into(),
-            driver_name: "camera".into(),
-            driver_version: "1.0.0".into(),
-            manifest_version: "1.0".into(),
-            manifest_json: manifest.to_string(),
-            manifest_hash: "hash".into(),
-            binary_hash: None,
-            status: "active".into(),
-            installed_at: "now".into(),
-        })
-        .await
-        .expect("manifest");
-        let declaration = tinyiothub_core::driver::declaration::DeviceDeclaration {
-            manifest_version: "1.0".into(),
-            driver: "camera".into(),
-            driver_version: "1.0.0".into(),
-            state_fields: serde_json::from_value(manifest["stateFields"].clone()).expect("fields"),
-            tools: vec![],
-        };
-        for device_id in ["dev-direct", "dev-watch", "dev-approval", "dev-job", "dev-evidence"] {
-            db.upsert_device_declaration(&tinyiothub_core::driver::declaration::DeviceDeclarationRecord {
-                workspace_id: "ws-1".into(),
-                thing_id: device_id.into(),
-                driver_name: "camera".into(),
-                driver_version: "1.0.0".into(),
-                declaration_json: serde_json::to_string(&declaration).expect("declaration"),
-                declaration_hash: "hash".into(),
-                status: "active".into(),
-                updated_at: "now".into(),
-            })
-            .await
-            .expect("device declaration");
-        }
-
-        let mut direct = event("direct-read", "task-1");
-        direct.event_type = "read_device".into();
-        direct.device_id = Some("dev-direct".into());
-        direct.source_id = Some("telemetry".into());
-        direct.data = json!({"state":{"temperature":"21.5"}});
-        db.append_runtime_event(direct).await.expect("direct read");
-        let mut watch = event("watch-reference", "task-1");
-        watch.event_type = "watch.created".into();
-        watch.device_id = Some("dev-watch".into());
-        watch.data = json!({"watchId":"watch-1"});
-        db.append_runtime_event(watch).await.expect("watch reference");
-        let mut approval = event("approval-reference", "task-1");
-        approval.event_type = "approval.requested".into();
-        approval.approval_id = Some("approval-1".into());
-        approval.device_id = Some("dev-approval".into());
-        db.append_runtime_event(approval).await.expect("approval reference");
-        db.create_job(&DeviceJob {
-            id: "job-first-reference".into(),
-            workspace_id: "ws-1".into(),
-            device_id: "dev-job".into(),
-            tool: "inspect".into(),
-            args_json: json!({"mode":"brief"}),
-            state: DeviceJobState::Accepted,
-            stop_requested_at: None,
-            progress_json: None,
-            result_json: None,
-            task_id: Some("task-1".into()),
-            run_id: None,
-            tool_call_id: None,
-            driver_call_id: None,
-            timeout_ms: 1000,
-            started_at: Utc::now(),
-            ended_at: None,
-        })
-        .await
-        .expect("job");
-        let now = Utc::now();
-        db.put_media_evidence(&MediaEvidenceRecord {
-            id: "evidence-only".into(),
-            workspace_id: "ws-1".into(),
-            task_id: Some("task-1".into()),
-            run_id: None,
-            tool_call_id: None,
-            job_id: None,
-            device_id: "dev-evidence".into(),
-            source_id: "preview".into(),
-            source_seq: 8,
-            media_time: now,
-            mime: "image/jpeg".into(),
-            size_bytes: 12,
-            sha256: "abc".into(),
-            storage_path: "private/path".into(),
-            dedup_key: "dedup-evidence-only".into(),
-            created_at: now,
-            expires_at: now + chrono::Duration::days(1),
-        })
-        .await
-        .expect("evidence");
-
-        let projection = db
-            .runtime_projection("ws-1", "task-1")
-            .await
-            .expect("projection")
-            .expect("task");
-        let device_ids = projection
-            .associations
-            .iter()
-            .map(|association| association.device_id.as_str())
-            .collect::<Vec<_>>();
-        assert_eq!(
-            device_ids,
-            ["dev-direct", "dev-watch", "dev-approval", "dev-job", "dev-evidence"]
-        );
-        assert_eq!(projection.associations[0].source_ids, ["telemetry"]);
-        assert_eq!(projection.associations[4].source_ids, ["preview"]);
-        assert_eq!(projection.evidence[0].device_id, "dev-evidence");
-        assert_eq!(projection.evidence[0].source_id, "preview");
-        assert_eq!(projection.evidence[0].task_id.as_deref(), Some("task-1"));
-        let direct = projection
-            .devices
-            .iter()
-            .find(|device| device.device_id == "dev-direct")
-            .expect("facts");
-        assert_eq!(direct.health, "ok");
-        assert_eq!(direct.zone.as_deref(), Some("North"));
-        assert_eq!(direct.position.as_deref(), Some("rack-1"));
-        assert_eq!(
-            direct
-                .sources
-                .iter()
-                .map(|source| source.id.as_str())
-                .collect::<Vec<_>>(),
-            ["telemetry", "preview", "live"]
-        );
-        assert_eq!(direct.fields.len(), 1);
-        assert_eq!(direct.fields[0].name, "temperature");
-        assert_eq!(direct.fields[0].value.as_deref(), Some("21.5"));
-        let persisted = db
-            .runtime_event_by_id("ws-1", "evidence:evidence-only:created")
-            .await
-            .expect("event")
-            .expect("persisted");
-        assert_eq!(persisted.event_type, "evidence.created");
-        assert_eq!(persisted.device_id.as_deref(), Some("dev-evidence"));
-        assert_eq!(persisted.source_id.as_deref(), Some("preview"));
-        assert_eq!(persisted.evidence_id.as_deref(), Some("evidence-only"));
-        assert!(persisted.data.get("storagePath").is_none());
-    }
-
-    #[tokio::test]
     async fn null_only_state_seeds_the_device_projection() {
         let pool = crate::test_helpers::test_pool().await;
         seed_workspace(&pool, "ws-1").await;
         let db = Db::new(pool);
-        seed_task(&db, "ws-1", "task-1").await;
 
         let mut read = event("null-state", "task-1");
         read.event_type = "read_device".into();
@@ -1704,93 +899,10 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn late_device_event_does_not_reseed_a_terminal_task_projection() {
-        let pool = crate::test_helpers::test_pool().await;
-        seed_workspace(&pool, "ws-1").await;
-        let db = Db::new(pool);
-        seed_task(&db, "ws-1", "task-1").await;
-        sqlx::query(
-            "INSERT INTO things (id, name, workspace_id, thing_type, state, zone_ref, position, driver_name)
-             VALUES ('dev-late', 'dev-late', 'ws-1', 'device', 1, 'North', 'rack-1', 'camera')",
-        )
-        .execute(db.pool())
-        .await
-        .expect("device");
-        let declaration = json!({
-            "manifestVersion":"1.0",
-            "driver":"camera",
-            "driverVersion":"1.0.0",
-            "stateFields":[{"name":"temperature","type":"number","unit":"C","key":"primary"}],
-            "tools":[]
-        });
-        sqlx::query(
-            "INSERT INTO device_declarations
-                 (workspace_id, thing_id, driver_name, driver_version, declaration_json,
-                  declaration_hash, status, updated_at)
-             VALUES ('ws-1', 'dev-late', 'camera', '1.0.0', ?, 'hash', 'active', 'now')",
-        )
-        .bind(declaration.to_string())
-        .execute(db.pool())
-        .await
-        .expect("device declaration");
-        // Seed the incremental projection, then drive the production terminal
-        // transition, which must delete it in the same transaction.
-        sqlx::query(
-            "INSERT INTO runtime_device_state (workspace_id, task_id, device_id, state_json, updated_at)
-             VALUES ('ws-1', 'task-1', 'dev-late', '{\"temperature\":\"18\"}', 'now')",
-        )
-        .execute(db.pool())
-        .await
-        .expect("seed projection");
-        db.transition_task_and_event("ws-1", "task-1", 0, TaskStatus::Failed, None)
-            .await
-            .expect("terminal Task");
-        let rows_after_transition: i64 = sqlx::query_scalar(
-            "SELECT COUNT(*) FROM runtime_device_state
-             WHERE workspace_id = 'ws-1' AND task_id = 'task-1'",
-        )
-        .fetch_one(db.pool())
-        .await
-        .expect("projection rows after transition");
-        assert_eq!(
-            rows_after_transition, 0,
-            "the terminal transition must delete the projection in its own transaction"
-        );
-
-        let mut late = event("late-terminal", "task-1");
-        late.event_type = "job.interrupted".into();
-        late.device_id = Some("dev-late".into());
-        late.data = json!({"state":{"temperature":"22"}});
-        let appended = db.append_runtime_event(late).await.expect("late append");
-
-        let rows: i64 = sqlx::query_scalar(
-            "SELECT COUNT(*) FROM runtime_device_state
-             WHERE workspace_id = 'ws-1' AND task_id = 'task-1' AND device_id = 'dev-late'",
-        )
-        .fetch_one(db.pool())
-        .await
-        .expect("projection rows");
-        assert_eq!(rows, 0, "a terminal Task must not regain a device projection");
-        let facts = appended.data.get("deviceFacts").expect("device facts");
-        assert_eq!(facts["deviceId"], "dev-late");
-        assert_eq!(facts["health"], "ok");
-        assert_eq!(facts["zone"], "North");
-        let fields = facts["fields"].as_array().expect("fields");
-        assert_eq!(fields.len(), 1);
-        assert_eq!(fields[0]["name"], "temperature");
-        assert_eq!(
-            fields[0]["value"], "22",
-            "returned facts must reflect only the late event, not the deleted projection"
-        );
-        assert!(!facts.to_string().contains("18"));
-    }
-
-    #[tokio::test]
     async fn live_device_events_carry_authoritative_declaration_and_state_facts() {
         let pool = crate::test_helpers::test_pool().await;
         seed_workspace(&pool, "ws-1").await;
         let db = Db::new(pool);
-        seed_task(&db, "ws-1", "task-1").await;
         sqlx::query(
             "INSERT INTO things (id, name, workspace_id, thing_type, state, zone_ref, position, driver_name)
              VALUES ('dev-live', 'dev-live', 'ws-1', 'device', 1, 'North', 'rack-1', 'camera')",
@@ -1892,20 +1004,6 @@ mod tests {
             .expect("event")
             .expect("persisted");
         assert_eq!(persisted, second);
-        let projection = db
-            .runtime_projection("ws-1", "task-1")
-            .await
-            .expect("projection")
-            .expect("task");
-        let projected = serde_json::to_value(
-            projection
-                .devices
-                .iter()
-                .find(|device| device.device_id == "dev-live")
-                .expect("projected device"),
-        )
-        .expect("projected facts");
-        assert_eq!(second.data["deviceFacts"], projected);
 
         // Incremental projection: a later state-only event merges into the
         // stored projection rather than replaying (and trusting) all history.
@@ -1934,11 +1032,10 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn live_facts_and_snapshot_apply_the_same_declaration_tie_break() {
+    async fn live_facts_apply_the_newest_declaration_tie_break() {
         let pool = crate::test_helpers::test_pool().await;
         seed_workspace(&pool, "ws-1").await;
         let db = Db::new(pool);
-        seed_task(&db, "ws-1", "task-1").await;
         for (driver, field) in [("camera_a", "temperature"), ("camera_b", "humidity")] {
             let declaration = json!({
                 "manifestVersion":"1.0",
@@ -1971,89 +1068,18 @@ mod tests {
             "the newest declaration id wins the tie-break"
         );
         assert_eq!(live_fields[0]["value"], "40");
-
-        let projection = db
-            .runtime_projection("ws-1", "task-1")
-            .await
-            .expect("projection")
-            .expect("task");
-        let projected = projection
-            .devices
-            .iter()
-            .find(|device| device.device_id == "dev-tie")
-            .expect("projected device");
-        let projected = serde_json::to_value(projected).expect("serialize");
-        assert_eq!(
-            projected["fields"], live.data["deviceFacts"]["fields"],
-            "the snapshot must apply the same declaration tie-break as live facts"
-        );
     }
 
     #[tokio::test]
-    async fn legacy_watch_only_associations_accept_production_thing_id_condition() {
+    async fn cursor_replay_paginates_without_a_preloaded_snapshot() {
         let pool = crate::test_helpers::test_pool().await;
         seed_workspace(&pool, "ws-1").await;
         let db = Db::new(pool);
-        seed_task(&db, "ws-1", "task-1").await;
-        for (id, condition, created_at) in [
-            (
-                "watch-legacy",
-                json!({"type":"availability","thing_id":"dev-legacy","online":true}),
-                "2026-10-27T10:00:00Z",
-            ),
-            (
-                "watch-camel",
-                json!({"type":"availability","thingId":"dev-camel","online":true}),
-                "2026-10-27T10:00:01Z",
-            ),
-        ] {
-            sqlx::query(
-                "INSERT INTO watch_rules (id, workspace_id, kind, condition, persistent, timeout_secs, created_at, owner_task_id)
-                 VALUES (?, 'ws-1', 'availability', ?, 1, 60, ?, 'task-1')",
-            )
-            .bind(id)
-            .bind(condition.to_string())
-            .bind(created_at)
-            .execute(db.pool())
-            .await
-            .expect("watch rule");
-        }
-
-        let projection = db
-            .runtime_projection("ws-1", "task-1")
-            .await
-            .expect("projection")
-            .expect("task");
-        assert_eq!(
-            projection
-                .associations
-                .iter()
-                .map(|association| association.device_id.as_str())
-                .collect::<Vec<_>>(),
-            ["dev-legacy", "dev-camel"]
-        );
-    }
-
-    #[tokio::test]
-    async fn projection_snapshots_exclude_history_while_cursor_replay_paginates() {
-        let pool = crate::test_helpers::test_pool().await;
-        seed_workspace(&pool, "ws-1").await;
-        let db = Db::new(pool);
-        seed_task(&db, "ws-1", "task-1").await;
         for index in 0..300 {
             db.append_runtime_event(event(&format!("history-{index}"), "task-1"))
                 .await
                 .expect("append history");
         }
-
-        let projection = db
-            .runtime_projection("ws-1", "task-1")
-            .await
-            .expect("projection")
-            .expect("task");
-        let snapshot_json = serde_json::to_value(&projection).expect("serialize snapshot");
-        assert!(snapshot_json.get("events").is_none());
-        assert!(!snapshot_json.to_string().contains("history-299"));
 
         let mut replayed = Vec::new();
         let mut after = 0;
@@ -2070,97 +1096,7 @@ mod tests {
             }
             after = next_cursor.expect("full page has a cursor");
         }
-        assert_eq!(replayed.len(), 301);
+        assert_eq!(replayed.len(), 300);
         assert_eq!(replayed.last().map(String::as_str), Some("history-299"));
-    }
-
-    #[tokio::test]
-    async fn projection_uses_one_consistent_snapshot_during_sustained_unrelated_writes() {
-        let path = std::env::temp_dir().join(format!("tinyiothub-projection-{}.db", uuid::Uuid::new_v4()));
-        let options = sqlx::sqlite::SqliteConnectOptions::new()
-            .filename(&path)
-            .create_if_missing(true)
-            .journal_mode(sqlx::sqlite::SqliteJournalMode::Wal);
-        let pool = sqlx::sqlite::SqlitePoolOptions::new()
-            .connect_with(options)
-            .await
-            .expect("wal pool");
-        crate::test_helpers::run_all_migrations(&pool)
-            .await
-            .expect("migrations");
-        seed_workspace(&pool, "ws-1").await;
-        let db = Db::new(pool);
-        seed_task(&db, "ws-1", "task-1").await;
-        let cursor = db
-            .runtime_projection("ws-1", "task-1")
-            .await
-            .expect("initial projection")
-            .expect("task")
-            .cursor;
-        let probe = std::sync::Arc::new(crate::runtime_event::RuntimeProjectionProbe::default());
-        let db = db.with_runtime_projection_probe(probe.clone());
-        probe.arm();
-        let projecting = tokio::spawn({
-            let db = db.clone();
-            async move { db.runtime_projection("ws-1", "task-1").await }
-        });
-        probe.wait_for_task_read().await;
-        for index in 0..64 {
-            db.append_runtime_event(event(&format!("unrelated-{index}"), "other-task"))
-                .await
-                .expect("unrelated write");
-        }
-        probe.release();
-        let projection = tokio::time::timeout(std::time::Duration::from_secs(1), projecting)
-            .await
-            .expect("projection completes")
-            .expect("join")
-            .expect("projection")
-            .expect("task");
-        assert_eq!(probe.attempts(), 1);
-        assert_eq!(projection.cursor, cursor);
-        assert_eq!(projection.task.status, TaskStatus::Active);
-    }
-
-    #[tokio::test]
-    async fn dead_outbox_retry_preserves_original_id_and_never_replaces_rows() {
-        let pool = crate::test_helpers::test_pool().await;
-        seed_workspace(&pool, "ws-1").await;
-        seed_workspace(&pool, "ws-2").await;
-        let db = Db::new(pool);
-        seed_task(&db, "ws-1", "task-1").await;
-        db.mark_wake("task-1", "create-task-1", WakeDispatchState::Dead)
-            .await
-            .expect("dead");
-
-        let listed = db
-            .runtime_outbox(Some("ws-1"), WakeDispatchState::Dead, 50)
-            .await
-            .expect("list");
-        assert_eq!(listed.len(), 1);
-        assert_eq!(listed[0].event_id, "create-task-1");
-        assert!(
-            !db.retry_dead_wake("ws-2", "create-task-1")
-                .await
-                .expect("foreign retry")
-        );
-        assert!(db.retry_dead_wake("ws-1", "create-task-1").await.expect("retry"));
-        assert!(
-            !db.retry_dead_wake("ws-1", "create-task-1")
-                .await
-                .expect("repeat is current state")
-        );
-        let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM task_wake_outbox")
-            .fetch_one(db.pool())
-            .await
-            .expect("count");
-        assert_eq!(count, 1);
-        let wake = db
-            .wake_by_id("task-1", "create-task-1")
-            .await
-            .expect("wake")
-            .expect("original");
-        assert_eq!(wake.event_id, "create-task-1");
-        assert_eq!(wake.dispatch_state, WakeDispatchState::Pending);
     }
 }

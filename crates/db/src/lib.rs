@@ -89,10 +89,8 @@ pub mod pool;
 pub mod role;
 /// Runtime rollout drain gauges and unknown-Job dispositions.
 pub mod runtime_admin;
-/// Ordered runtime event envelopes and Task projection queries.
+/// Ordered runtime event envelopes and Harness Task projections.
 pub mod runtime_event;
-/// Persistent agent Task and wake outbox storage.
-pub mod runtime_task;
 /// Scene package template types (recursive thing node definitions, name-pattern renderer).
 pub mod scene_template;
 /// Two-tier seed module (system + demo), applied at bootstrap.

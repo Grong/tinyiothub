@@ -29,7 +29,7 @@ use tinyiothub_skills::registry::Capability;
 use tinyiothub_storage::Db;
 use tinyiothub_storage::error::DbError;
 use tinyiothub_storage::harness_effect::EffectRecoveryItem;
-use tinyiothub_storage::runtime_task::HarnessTaskRow;
+use tinyiothub_storage::harness_workflow::HarnessTaskRow;
 use tinyiothub_web::response::{ApiResponse, ApiResponseBuilder};
 use tinyiothub_web::security::Claims;
 

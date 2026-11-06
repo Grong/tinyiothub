@@ -66,6 +66,3 @@ impl TryFrom<TaskApprovalRow> for TaskApproval {
         })
     }
 }
-
-pub(crate) const APPROVAL_COLUMNS: &str = "id, workspace_id, task_id, run_id, tool_call_id, device_id, tool, args_json,
-        reason, state, decision, decider_id, requested_at, decided_at, expires_at, decision_event_id, updated_at";

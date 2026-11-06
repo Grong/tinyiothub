@@ -128,9 +128,8 @@ async fn seed_running_job(db: &Db, task_id: &str, job_id: &str) {
 }
 
 #[test]
-fn db_task_store_implements_task_store_port() {
+fn harness_task_store_implements_task_store_port() {
     fn assert_task_store<T: tinyiothub_agent::port::task::TaskStore>() {}
-    assert_task_store::<crate::domains::agent::runtime::DbTaskStore>();
     assert_task_store::<crate::domains::agent::runtime::harness_store::HarnessTaskStore>();
 }
 
@@ -396,6 +395,20 @@ async fn persistent_task_control_routes_reach_the_harness_runtime() {
         assert_eq!(status, StatusCode::OK, "{action}: {body}");
         assert_eq!(body["result"]["task"]["status"], expected, "{action}: {body}");
     }
+    // Task 19C4: create/transition/cancel are workspace Harness facts and must
+    // never write the retired platform Task tables or the legacy runtime.v1
+    // Task ledger.
+    let platform_tasks: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM agent_tasks")
+        .fetch_one(fixture.db.pool())
+        .await
+        .expect("platform task count");
+    assert_eq!(platform_tasks, 0, "platform agent_tasks must stay empty");
+    let legacy = fixture
+        .db
+        .runtime_events_after(WS, None, Some(task_id), 50)
+        .await
+        .expect("legacy ledger");
+    assert!(legacy.is_empty(), "no runtime.v1 Task rows may be produced: {legacy:?}");
 }
 
 #[tokio::test]

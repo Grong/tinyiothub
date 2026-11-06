@@ -157,23 +157,26 @@ Each Harness fact has exactly one writer. New code must use these paths:
 |------|-------|
 | Session events | `Db::append_session_event` / `Db::apply_workspace_transition` |
 | Effects | Harness transitions in `crates/db/src/harness_effect.rs` |
-| Device jobs | Projection written by the Harness effect transition; `crates/db/src/device_job.rs` owns the legacy platform projection SQL |
+| Tasks / Runs / Wakes | The owning workspace generation: `crates/db/src/harness_task.rs` (TaskStore port), `harness_workflow.rs` (workflow control / subagents), `harness_effect.rs`, `harness_command.rs` |
+| Device jobs | The owning workspace generation: `crates/db/src/harness_effect.rs` / `harness_job.rs` |
 | Approvals / decisions | `decisions` (workspace DB) |
-| Commands / wakes | `commands` and `task_wake_outbox` |
+| Commands / wakes | Workspace `commands` and `task_wake_outbox` |
 
-`hub_ledger` remains device telemetry. The platform `task_approvals` table has
-no writers at all: approvals are workspace `decisions` (Task 19C2). The
-pre-Harness platform Runtime writers that remain (`runtime.v1` events, platform
-`device_jobs`, and platform Task/Run writes) live only in the legacy adapters
-in `apps/cloud/src/domains/agent/runtime/` and
-`apps/cloud/src/shared/runtime_ports.rs`, plus their real writer sites in
-`crates/db/src/` (for example `device_job.rs`, `runtime_task.rs`,
-`runtime_event.rs`) and the host tool boundaries
-(`apps/cloud/src/domains/agent/tools/capabilities.rs`,
-`apps/cloud/src/domains/agent/host/tools/thing/device.rs`); they must not gain
-new callers. `scripts/guards/legacy-writers.sh` enforces that boundary, rejects
-every `INSERT INTO task_approvals` / `UPDATE task_approvals`, and rejects new
-frontend tool/event/status allowlists (status copy is single-sourced in
+Platform runtime tables are retired legacy (Task 19C4). `agent_tasks`,
+`task_wake_outbox`, `device_jobs`, and `task_approvals` have **no production
+reader or writer**; they remain only as schema for pre-Harness generations and
+test fixtures. `crates/db/src/device_job.rs` keeps its platform Job writer
+under `#[cfg(any(test, feature = "testing"))]` for parity fixtures only.
+`crates/db/src/agent_runs.rs` still owns the autonomous agent-loop run history
+(`trigger_type`/`outcome` rows), which is not the Task plane; `policy.rs` and
+`ticket.rs` read that same history.
+
+`hub_ledger` (`runtime.v1`) remains telemetry: watch-rule, media-evidence and
+device-read facts only. No Task/Run/Job lifecycle may be written there — those
+are workspace Harness events. `scripts/guards/legacy-writers.sh` enforces the
+boundary: it fails on any production INSERT/UPDATE/DELETE or SELECT against the
+retired platform tables outside the Harness owners, and rejects new frontend
+tool/event/status allowlists (status copy is single-sourced in
 `web/src/ui/views/harness-status.ts`).
 
 ### Thing Ontology Module

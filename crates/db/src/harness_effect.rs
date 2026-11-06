@@ -866,7 +866,7 @@ async fn apply_writes(
     .await?;
 
     if drain_cancelling {
-        crate::runtime_task::drain_cancelling_tasks(connection, &event.workspace_id, event.occurred_at).await?;
+        crate::harness_workflow::drain_cancelling_tasks(connection, &event.workspace_id, event.occurred_at).await?;
     }
 
     Ok(ApplyOutcome {

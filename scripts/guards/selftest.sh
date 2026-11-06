@@ -217,6 +217,16 @@ expect_fails "legacy-writers (autonomous_factory production Job write)" bash scr
 cp "$AUTONOMOUS_FACTORY_BAK" apps/cloud/src/domains/agent/host/autonomous_factory.rs
 rm -f "$AUTONOMOUS_FACTORY_BAK"
 AUTONOMOUS_FACTORY_BAK=""
+# 19C4: every retired platform Task/Run/Wake/Job table must reject an injected
+# production write and an injected production read, in a file with no
+# #[cfg(test)] module. Real fixtures live inside test modules and are stripped.
+for table in agent_tasks agent_runs task_wake_outbox task_approvals device_jobs; do
+  printf 'pub fn evil() { let _ = "INSERT INTO %s VALUES (1)"; }\n' "$table" > "$EVIL_LEGACY_RS"
+  expect_fails "legacy-writers (platform $table write)" bash scripts/guards/legacy-writers.sh
+  printf 'pub fn evil() { let _ = "SELECT * FROM %s"; }\n' "$table" > "$EVIL_LEGACY_RS"
+  expect_fails "legacy-writers (platform $table read)" bash scripts/guards/legacy-writers.sh
+done
+rm -f "$EVIL_LEGACY_RS"
 expect_passes "legacy-writers" bash scripts/guards/legacy-writers.sh
 
 if [ "$SELFTEST_FAIL" -ne 0 ]; then

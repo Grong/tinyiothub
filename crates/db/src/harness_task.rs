@@ -172,7 +172,7 @@ fn is_unique_violation(error: &sqlx::Error) -> bool {
 /// the working state `active`, while Harness projections use `running`; an
 /// interrupted projection still belongs to an active Task and is resumed by
 /// the coordinator.
-fn status_from_state(state: &str) -> Option<TaskStatus> {
+pub(crate) fn status_from_state(state: &str) -> Option<TaskStatus> {
     match state {
         "pending" | "running" | "model_calling" | "interrupted" => Some(TaskStatus::Active),
         other => TaskStatus::from_db(other),

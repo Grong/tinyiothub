@@ -398,8 +398,7 @@ impl Db {
 #[cfg(test)]
 mod tests {
     use crate::agent_runs::{ActionRecord, ActionResult};
-    use chrono::Utc;
-    use tinyiothub_core::agent_task::{AgentTask, TaskFinalizeIntent, TaskStatus, TaskWake, WakeDispatchState};
+    use tinyiothub_core::agent_task::TaskFinalizeIntent;
 
     use super::*;
 
@@ -888,36 +887,6 @@ mod tests {
         assert_eq!(status_of("owned").await, "interrupted");
     }
 
-    fn task_row(id: &str, key: &str) -> AgentTask {
-        let now = Utc::now();
-        AgentTask {
-            id: id.to_string(),
-            workspace_id: "ws_1".to_string(),
-            idempotency_key: key.to_string(),
-            objective: "inspect".to_string(),
-            session_key: None,
-            created_by: "user_1".to_string(),
-            status: TaskStatus::Active,
-            current_run_id: None,
-            state_version: 0,
-            created_at: now,
-            updated_at: now,
-            ended_at: None,
-        }
-    }
-
-    fn wake_row(task_id: &str, event_id: &str) -> TaskWake {
-        TaskWake {
-            task_id: task_id.to_string(),
-            event_id: event_id.to_string(),
-            signal_json: serde_json::json!({"workspace_id": "ws_1"}).to_string(),
-            dispatch_state: WakeDispatchState::Pending,
-            created_at: Utc::now(),
-            dispatched_at: None,
-            resolved_at: None,
-        }
-    }
-
     fn intent_row(task_id: &str, event_id: &str, run_id: &str) -> TaskFinalizeIntent {
         TaskFinalizeIntent {
             task_id: task_id.to_string(),
@@ -929,6 +898,26 @@ mod tests {
             report_emitted: false,
             undelivered: vec![],
         }
+    }
+
+    async fn insert_intent(pool: &SqlitePool, intent: &TaskFinalizeIntent) {
+        sqlx::query(
+            "INSERT INTO task_finalize_intents
+                 (task_id, workspace_id, wake_event_id, run_id, report_json,
+                  report_persisted, report_emitted, undelivered_json, created_at, updated_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'now', 'now')",
+        )
+        .bind(&intent.task_id)
+        .bind(&intent.workspace_id)
+        .bind(&intent.wake_event_id)
+        .bind(&intent.run_id)
+        .bind(serde_json::to_string(&intent.report).expect("report"))
+        .bind(i64::from(intent.report_persisted))
+        .bind(i64::from(intent.report_emitted))
+        .bind(serde_json::to_string(&intent.undelivered).expect("undelivered"))
+        .execute(pool)
+        .await
+        .expect("insert finalize intent");
     }
 
     async fn seed_workspace(pool: &SqlitePool, workspace_id: &str) {
@@ -960,12 +949,28 @@ mod tests {
         for index in 1..=3 {
             let task_id = format!("task_{index}");
             let event_id = format!("event_{index}");
-            db.create_task_with_wake(
-                &task_row(&task_id, &format!("key_{index}")),
-                &wake_row(&task_id, &event_id),
+            sqlx::query(
+                "INSERT INTO agent_tasks
+                     (id, workspace_id, idempotency_key, objective, created_by, status,
+                      state_version, created_at, updated_at)
+                 VALUES (?, 'ws_1', ?, 'zombie run owner', 'user_1', 'active', 0, 'now', 'now')",
             )
+            .bind(&task_id)
+            .bind(format!("key_{index}"))
+            .execute(&pool)
             .await
             .expect("task");
+            sqlx::query(
+                "INSERT INTO task_wake_outbox
+                     (task_id, event_id, signal_json, dispatch_state, created_at)
+                 VALUES (?, ?, ?, 'pending', 'now')",
+            )
+            .bind(&task_id)
+            .bind(&event_id)
+            .bind(serde_json::json!({"workspace_id":"ws_1"}).to_string())
+            .execute(&pool)
+            .await
+            .expect("wake");
             insert_raw(
                 &pool,
                 &format!("run_{index}"),
@@ -982,22 +987,20 @@ mod tests {
             .execute(&pool)
             .await
             .expect("set running");
-        db.requeue_with_finalize_intent(&intent_row("task_1", "event_1", "run_1"))
-            .await
-            .expect("live intent");
+        insert_intent(&pool, &intent_row("task_1", "event_1", "run_1")).await;
         // task_2: the Task is already terminal, so the intent no longer owns
         // the Run.
-        db.requeue_with_finalize_intent(&intent_row("task_2", "event_2", "run_2"))
-            .await
-            .expect("terminal task intent");
-        db.transition_task("ws_1", "task_2", 0, TaskStatus::Failed, None)
+        insert_intent(&pool, &intent_row("task_2", "event_2", "run_2")).await;
+        sqlx::query("UPDATE agent_tasks SET status = 'failed' WHERE id = 'task_2'")
+            .execute(&pool)
             .await
             .expect("terminal task");
         // task_3: the wake is resolved, so the intent is unreachable.
-        db.requeue_with_finalize_intent(&intent_row("task_3", "event_3", "run_3"))
+        insert_intent(&pool, &intent_row("task_3", "event_3", "run_3")).await;
+        sqlx::query("UPDATE task_wake_outbox SET resolved_at = 'now' WHERE task_id = 'task_3'")
+            .execute(&pool)
             .await
-            .expect("resolved wake intent");
-        db.resolve_task_wakes("task_3").await.expect("resolve wake");
+            .expect("resolve wake");
 
         let status_of = |id: &str| {
             let pool = pool.clone();

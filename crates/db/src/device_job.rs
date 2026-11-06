@@ -70,6 +70,7 @@ fn parse_json(raw: &str) -> Result<Value, DeviceJobError> {
     serde_json::from_str(raw).map_err(|error| DeviceJobError::Storage(error.to_string()))
 }
 
+#[cfg(any(test, feature = "testing"))]
 pub(crate) fn storage(error: impl std::fmt::Display) -> DeviceJobError {
     DeviceJobError::Storage(error.to_string())
 }
@@ -83,6 +84,7 @@ fn create_error(error: sqlx::Error) -> DeviceJobError {
     }
 }
 
+#[cfg(any(test, feature = "testing"))]
 async fn find_job_by_id(
     executor: &mut sqlx::SqliteConnection,
     job_id: &str,
@@ -210,6 +212,7 @@ impl Db {
         Ok(event)
     }
 
+    #[cfg(any(test, feature = "testing"))]
     pub async fn get_job(&self, workspace_id: &str, job_id: &str) -> Result<Option<DeviceJob>, DeviceJobError> {
         sqlx::query_as::<_, DeviceJobRow>(
             "SELECT id, workspace_id, device_id, tool, args_json, state, stop_requested_at,
@@ -225,11 +228,13 @@ impl Db {
         .transpose()
     }
 
+    #[cfg(any(test, feature = "testing"))]
     pub async fn get_job_by_id(&self, job_id: &str) -> Result<Option<DeviceJob>, DeviceJobError> {
         let mut connection = self.pool().acquire().await.map_err(storage)?;
         find_job_by_id(&mut connection, job_id).await
     }
 
+    #[cfg(any(test, feature = "testing"))]
     pub async fn get_job_by_tool_call(
         &self,
         workspace_id: &str,
@@ -249,6 +254,7 @@ impl Db {
         .transpose()
     }
 
+    #[cfg(any(test, feature = "testing"))]
     pub async fn get_task_job(
         &self,
         workspace_id: &str,
@@ -516,6 +522,7 @@ impl Db {
         Ok((job, event))
     }
 
+    #[cfg(any(test, feature = "testing"))]
     pub async fn active_jobs(
         &self,
         workspace_id: Option<&str>,
@@ -557,7 +564,7 @@ mod tests {
     use chrono::Utc;
     use serde_json::json;
     use sqlx::SqlitePool;
-    use tinyiothub_core::agent_task::{AgentTask, TaskStatus, TaskWake, WakeDispatchState};
+    use tinyiothub_core::agent_task::{TaskWake, WakeDispatchState};
     use tinyiothub_core::device_job::{DeviceJob, DeviceJobError, DeviceJobState};
 
     use crate::Db;
@@ -580,32 +587,33 @@ mod tests {
             .expect("seed workspace");
     }
 
+    /// Seed the retired platform Task tables directly. The platform Task
+    /// writer was deleted in Task 19C4; these fixtures only exercise the
+    /// test-gated platform Job writer's foreign-key references.
     async fn seed_task(db: &Db, task_id: &str, workspace_id: &str) {
-        let now = Utc::now();
-        let task = AgentTask {
-            id: task_id.to_string(),
-            workspace_id: workspace_id.to_string(),
-            idempotency_key: format!("key_{task_id}"),
-            objective: "exercise device jobs".to_string(),
-            session_key: None,
-            created_by: "user_1".to_string(),
-            status: TaskStatus::Active,
-            current_run_id: None,
-            state_version: 0,
-            created_at: now,
-            updated_at: now,
-            ended_at: None,
-        };
-        let wake = TaskWake {
-            task_id: task_id.to_string(),
-            event_id: format!("create_{task_id}"),
-            signal_json: json!({"workspace_id":workspace_id}).to_string(),
-            dispatch_state: WakeDispatchState::Pending,
-            created_at: now,
-            dispatched_at: None,
-            resolved_at: None,
-        };
-        db.create_task_with_wake(&task, &wake).await.expect("seed task");
+        sqlx::query(
+            "INSERT INTO agent_tasks
+                 (id, workspace_id, idempotency_key, objective, created_by, status,
+                  state_version, created_at, updated_at)
+             VALUES (?, ?, ?, 'exercise device jobs', 'user_1', 'active', 0, 'now', 'now')",
+        )
+        .bind(task_id)
+        .bind(workspace_id)
+        .bind(format!("key_{task_id}"))
+        .execute(db.pool())
+        .await
+        .expect("seed task");
+        sqlx::query(
+            "INSERT INTO task_wake_outbox
+                 (task_id, event_id, signal_json, dispatch_state, created_at)
+             VALUES (?, ?, ?, 'pending', 'now')",
+        )
+        .bind(task_id)
+        .bind(format!("create_{task_id}"))
+        .bind(json!({"workspace_id":workspace_id}).to_string())
+        .execute(db.pool())
+        .await
+        .expect("seed task wake");
     }
 
     fn sample_job(job_id: &str, task_id: &str) -> DeviceJob {
@@ -805,16 +813,10 @@ mod tests {
                 .data,
             terminal.data
         );
-        let projection = db
-            .runtime_projection("ws_1", "task_1")
-            .await
-            .expect("reload projection")
-            .expect("task");
-        let snapshot = serde_json::to_value(projection).expect("snapshot JSON");
-        assert_eq!(snapshot["jobs"][0]["tool"], "set_speed");
-        assert_eq!(snapshot["jobs"][0]["argsJson"], json!({"speed":2}));
-        assert_eq!(snapshot["jobs"][0]["resultJson"], json!({"actualSpeed":2}));
-        assert!(snapshot["jobs"][0].get("args_json").is_none());
+        let stored = db.get_job("ws_1", &job.id).await.expect("reload job").expect("job");
+        assert_eq!(stored.tool, "set_speed");
+        assert_eq!(stored.args_json, json!({"speed":2}));
+        assert_eq!(stored.result_json, Some(json!({"actualSpeed":2})));
     }
 
     #[tokio::test]

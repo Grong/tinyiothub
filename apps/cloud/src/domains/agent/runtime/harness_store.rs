@@ -1,9 +1,8 @@
 //! Workspace-Harness-backed `TaskStore` adapter (Task 19A).
 //!
-//! This adapter has the same port contract as [`super::DbTaskStore`] but every
-//! fact is read from and written to the owning workspace's Harness SQLite
-//! generation. It is registered alongside the legacy store so Task 19B can
-//! swap the runtime wiring without changing handlers in the same step.
+//! Every fact is read from and written to the owning workspace's Harness
+//! SQLite generation. Since Task 19C4 this is the only `TaskStore`
+//! implementation: the legacy platform store and its writers are deleted.
 
 use std::sync::Arc;
 
@@ -180,7 +179,6 @@ const _: fn() = || {
     fn assert_task_store<T: TaskStore>() {}
     assert_task_store::<HarnessTaskStore>();
 };
-
 #[cfg(test)]
 mod tests {
     use std::path::PathBuf;
@@ -197,111 +195,47 @@ mod tests {
     use tinyiothub_storage::test_helpers::{WorkspaceFixture, fixture_workspace};
 
     use super::HarnessTaskStore;
-    use crate::domains::agent::runtime::DbTaskStore;
 
-    const WS: &str = "ws-task-store-parity";
+    const WS: &str = "ws-task-store";
 
-    struct ParityFixture {
+    struct Fixture {
         _workspace: WorkspaceFixture,
         db: Arc<Db>,
-        legacy: DbTaskStore,
         harness: HarnessTaskStore,
     }
 
-    impl ParityFixture {
+    impl Fixture {
         async fn new() -> Self {
             let workspace = fixture_workspace(WS).await;
             let db = Arc::new(workspace.db.clone());
-            let legacy = DbTaskStore::new(db.clone());
             let harness = HarnessTaskStore::new(db.clone());
             Self {
                 _workspace: workspace,
                 db,
-                legacy,
                 harness,
             }
         }
 
-        async fn legacy_events(&self, task_id: &str) -> Vec<(String, String, serde_json::Value, Option<String>)> {
-            self.db
-                .runtime_events_after(WS, None, Some(task_id), 200)
-                .await
-                .expect("legacy events")
-                .into_iter()
-                .map(|event| (event.event_id, event.event_type, event.data, event.run_id))
-                .collect()
-        }
-
-        async fn harness_events(
-            &self,
-            task_id: &str,
-        ) -> Vec<(String, String, serde_json::Value, Option<String>, String)> {
+        async fn harness_events(&self, task_id: &str) -> Vec<(String, String, serde_json::Value, Option<String>)> {
             let pool = self.db.workspace_pool_for_testing(WS).await.expect("workspace pool");
-            sqlx::query_as::<_, (String, String, String, Option<String>, String)>(
-                "SELECT event_id, type, payload_json, run_id, session_id FROM session_events
+            let rows = sqlx::query_as::<_, (String, String, String, Option<String>)>(
+                "SELECT event_id, type, payload_json, run_id FROM session_events
                  WHERE task_id = ? AND execution_mode = 'production' ORDER BY seq",
             )
             .bind(task_id)
             .fetch_all(&pool)
             .await
-            .expect("harness events")
-            .into_iter()
-            .map(|(event_id, event_type, payload, run_id, session_id)| {
-                (
-                    event_id,
-                    event_type,
-                    serde_json::from_str(&payload).expect("event payload"),
-                    run_id,
-                    session_id,
-                )
-            })
-            .collect()
-        }
-
-        async fn assert_same_events(&self, task_id: &str) {
-            let legacy = self.legacy_events(task_id).await;
-            let harness = self.harness_events(task_id).await;
-            assert_eq!(
-                legacy
-                    .iter()
-                    .map(|(event_id, event_type, _, _)| (event_id.clone(), event_type.clone()))
-                    .collect::<Vec<_>>(),
-                harness
-                    .iter()
-                    .map(|(event_id, event_type, _, _, _)| (event_id.clone(), event_type.clone()))
-                    .collect::<Vec<_>>(),
-                "task {task_id}: event identity and ordering must match"
-            );
-            for (legacy_event, harness_event) in legacy.iter().zip(harness.iter()) {
-                assert_eq!(
-                    legacy_event.2, harness_event.2,
-                    "task {task_id}: event {} payload must match",
-                    legacy_event.0
-                );
-                assert_eq!(
-                    legacy_event.3, harness_event.3,
-                    "task {task_id}: event {} run id must match",
-                    legacy_event.0
-                );
-                let expected_session = match harness_event.1.as_str() {
-                    "run.started" | "run.finished" => {
-                        format!("task:{task_id}/run:{}", harness_event.3.clone().unwrap_or_default())
-                    }
-                    _ => format!("task:{task_id}"),
-                };
-                assert_eq!(
-                    harness_event.4, expected_session,
-                    "task {task_id}: event {} session id",
-                    harness_event.0
-                );
-            }
-        }
-
-        async fn legacy_wake_count(&self) -> i64 {
-            sqlx::query_scalar("SELECT COUNT(*) FROM task_wake_outbox")
-                .fetch_one(self.db.pool())
-                .await
-                .expect("legacy wake count")
+            .expect("harness events");
+            rows.into_iter()
+                .map(|(event_id, event_type, payload, run_id)| {
+                    (
+                        event_id,
+                        event_type,
+                        serde_json::from_str(&payload).expect("event payload"),
+                        run_id,
+                    )
+                })
+                .collect()
         }
 
         async fn harness_wake_count(&self) -> i64 {
@@ -314,7 +248,7 @@ mod tests {
     }
 
     /// One `Db` with several registered, migrated workspace stores. Used for
-    /// cross-workspace ambiguity and degrade-isolation tests (F3/F4).
+    /// cross-workspace ambiguity and degrade-isolation tests.
     struct MultiStoreFixture {
         db: Arc<Db>,
         root: PathBuf,
@@ -365,32 +299,6 @@ mod tests {
             self.db.pool().close().await;
             let _ = tokio::fs::remove_dir_all(&self.root).await;
         }
-    }
-
-    /// Ops set the wall-clock `updated_at`/`ended_at` independently, so parity
-    /// compares every durable field and only the presence of those timestamps.
-    fn assert_task_parity(left: &AgentTask, right: &AgentTask) {
-        assert_eq!(left.id, right.id);
-        assert_eq!(left.workspace_id, right.workspace_id);
-        assert_eq!(left.idempotency_key, right.idempotency_key);
-        assert_eq!(left.objective, right.objective);
-        assert_eq!(left.session_key, right.session_key);
-        assert_eq!(left.created_by, right.created_by);
-        assert_eq!(left.status, right.status);
-        assert_eq!(left.current_run_id, right.current_run_id);
-        assert_eq!(left.state_version, right.state_version);
-        assert_eq!(left.created_at, right.created_at);
-        assert_eq!(left.ended_at.is_some(), right.ended_at.is_some());
-    }
-
-    fn assert_wake_parity(left: &TaskWake, right: &TaskWake) {
-        assert_eq!(left.task_id, right.task_id);
-        assert_eq!(left.event_id, right.event_id);
-        assert_eq!(left.signal_json, right.signal_json);
-        assert_eq!(left.dispatch_state, right.dispatch_state);
-        assert_eq!(left.created_at, right.created_at);
-        assert_eq!(left.dispatched_at.is_some(), right.dispatched_at.is_some());
-        assert_eq!(left.resolved_at.is_some(), right.resolved_at.is_some());
     }
 
     fn at() -> DateTime<Utc> {
@@ -462,279 +370,159 @@ mod tests {
         sample_report_in(WS, task_id, run_id, wake_id)
     }
 
-    async fn create_both(fixture: &ParityFixture, task_id: &str, wake_id: &str) {
-        let task = sample_task(task_id);
-        let wake = sample_wake(task_id, wake_id);
-        let legacy = fixture
-            .legacy
-            .create_task_with_wake(&task, &wake)
-            .await
-            .expect("legacy create");
-        let harness = fixture
+    async fn create_task(fixture: &Fixture, task_id: &str, wake_id: &str) {
+        fixture
             .harness
-            .create_task_with_wake(&task, &wake)
+            .create_task_with_wake(&sample_task(task_id), &sample_wake(task_id, wake_id))
             .await
-            .expect("harness create");
-        assert_eq!(legacy.deduplicated, harness.deduplicated);
-        assert_eq!(legacy.task, harness.task);
+            .expect("create");
     }
 
     #[tokio::test]
-    async fn create_get_list_and_idempotent_replay_match_legacy() {
-        let fixture = ParityFixture::new().await;
-        create_both(&fixture, "task-1", "event-1").await;
+    async fn create_get_list_and_idempotent_replay() {
+        let fixture = Fixture::new().await;
+        create_task(&fixture, "task-1", "event-1").await;
 
-        assert_eq!(fixture.legacy_wake_count().await, 1);
         assert_eq!(fixture.harness_wake_count().await, 1);
-        fixture.assert_same_events("task-1").await;
+        let events = fixture.harness_events("task-1").await;
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].0, "task:task-1:created");
+        assert_eq!(events[0].1, "task.created");
 
-        let legacy = fixture.legacy.get_task(WS, "task-1").await.expect("legacy get");
-        let harness = fixture.harness.get_task(WS, "task-1").await.expect("harness get");
-        assert_eq!(legacy, harness);
-
-        let legacy_list = fixture.legacy.list_tasks(WS, 10, 0).await.expect("legacy list");
-        let harness_list = fixture.harness.list_tasks(WS, 10, 0).await.expect("harness list");
-        assert_eq!(legacy_list, harness_list);
-
-        let replay_task = sample_task("task-1");
-        let replay_wake = sample_wake("task-1", "event-1");
-        let legacy_replay = fixture
-            .legacy
-            .create_task_with_wake(&replay_task, &replay_wake)
+        let task = fixture
+            .harness
+            .get_task(WS, "task-1")
             .await
-            .expect("legacy replay");
+            .expect("get")
+            .expect("task");
+        assert_eq!(task, sample_task("task-1"));
+        let list = fixture.harness.list_tasks(WS, 10, 0).await.expect("list");
+        assert_eq!(list, vec![sample_task("task-1")]);
+
         let harness_replay = fixture
             .harness
-            .create_task_with_wake(&replay_task, &replay_wake)
+            .create_task_with_wake(&sample_task("task-1"), &sample_wake("task-1", "event-1"))
             .await
-            .expect("harness replay");
-        assert!(legacy_replay.deduplicated && harness_replay.deduplicated);
-        assert_eq!(fixture.legacy_wake_count().await, 1);
+            .expect("replay");
+        assert!(harness_replay.deduplicated);
         assert_eq!(fixture.harness_wake_count().await, 1);
-        fixture.assert_same_events("task-1").await;
+        assert_eq!(fixture.harness_events("task-1").await.len(), 1);
 
         let mut conflicting = sample_task("task-1");
         conflicting.objective = "different objective".to_string();
         assert_eq!(
-            fixture.legacy.create_task_with_wake(&conflicting, &replay_wake).await,
-            Err(TaskStoreError::ObjectiveConflict)
-        );
-        assert_eq!(
-            fixture.harness.create_task_with_wake(&conflicting, &replay_wake).await,
+            fixture
+                .harness
+                .create_task_with_wake(&conflicting, &sample_wake("task-1", "event-1"))
+                .await,
             Err(TaskStoreError::ObjectiveConflict)
         );
     }
 
     #[tokio::test]
-    async fn wake_claim_mark_recover_and_retry_match_legacy() {
-        let fixture = ParityFixture::new().await;
-        create_both(&fixture, "task-wake", "event-wake").await;
-
-        let legacy_claimed = fixture.legacy.claim_pending_wakes(10).await.expect("legacy claim");
-        let harness_claimed = fixture.harness.claim_pending_wakes(10).await.expect("harness claim");
-        assert_eq!(legacy_claimed.len(), 1);
-        assert_eq!(harness_claimed.len(), 1);
-        assert_wake_parity(&legacy_claimed[0], &harness_claimed[0]);
-        assert!(harness_claimed[0].dispatched_at.is_some());
-
-        assert!(
-            fixture
-                .legacy
-                .claim_pending_wakes(10)
+    async fn blank_idempotency_key_is_rejected_without_writes() {
+        let fixture = Fixture::new().await;
+        let mut task = sample_task("task-blank");
+        task.idempotency_key = "   ".to_string();
+        for _ in 0..2 {
+            let error = fixture
+                .harness
+                .create_task_with_wake(&task, &sample_wake("task-blank", "event-blank"))
                 .await
-                .expect("legacy re-claim")
-                .is_empty()
-        );
+                .expect_err("blank key must be rejected");
+            assert!(matches!(error, TaskStoreError::Validation(_)), "{error:?}");
+        }
+        assert_eq!(fixture.harness_wake_count().await, 0);
+    }
+
+    #[tokio::test]
+    async fn wake_claim_mark_recover_and_retry() {
+        let fixture = Fixture::new().await;
+        create_task(&fixture, "task-wake", "event-wake").await;
+
+        let claimed = fixture.harness.claim_pending_wakes(10).await.expect("claim");
+        assert_eq!(claimed.len(), 1);
+        assert!(claimed[0].dispatched_at.is_some());
         assert!(
             fixture
                 .harness
                 .claim_pending_wakes(10)
                 .await
-                .expect("harness re-claim")
+                .expect("re-claim")
                 .is_empty()
         );
 
         fixture
-            .legacy
-            .mark_wake("task-wake", "event-wake", WakeDispatchState::Dispatched)
-            .await
-            .expect("legacy dispatch");
-        fixture
             .harness
             .mark_wake("task-wake", "event-wake", WakeDispatchState::Dispatched)
             .await
-            .expect("harness dispatch");
-        assert_wake_parity(
-            &fixture
-                .legacy
-                .wake_by_id("task-wake", "event-wake")
-                .await
-                .unwrap()
-                .unwrap(),
-            &fixture
-                .harness
-                .wake_by_id("task-wake", "event-wake")
-                .await
-                .unwrap()
-                .unwrap(),
-        );
-
-        fixture
-            .legacy
-            .mark_wake_dead("task-wake", "event-wake", "provider unavailable")
-            .await
-            .expect("legacy dead");
+            .expect("dispatch");
         fixture
             .harness
             .mark_wake_dead("task-wake", "event-wake", "provider unavailable")
             .await
-            .expect("harness dead");
-        let legacy_dead = fixture
-            .legacy
-            .wake_by_id("task-wake", "event-wake")
-            .await
-            .unwrap()
-            .unwrap();
-        let harness_dead = fixture
+            .expect("dead");
+        let dead = fixture
             .harness
             .wake_by_id("task-wake", "event-wake")
             .await
             .unwrap()
             .unwrap();
-        assert_wake_parity(&legacy_dead, &harness_dead);
-        assert_eq!(harness_dead.dispatch_state, WakeDispatchState::Dead);
+        assert_eq!(dead.dispatch_state, WakeDispatchState::Dead);
 
-        assert!(
-            fixture
-                .legacy
-                .retry_dead_wake(WS, "event-wake")
-                .await
-                .expect("legacy retry")
-        );
-        assert!(
-            fixture
-                .harness
-                .retry_dead_wake(WS, "event-wake")
-                .await
-                .expect("harness retry")
-        );
-        assert_wake_parity(
-            &fixture
-                .legacy
-                .wake_by_id("task-wake", "event-wake")
-                .await
-                .unwrap()
-                .unwrap(),
-            &fixture
-                .harness
-                .wake_by_id("task-wake", "event-wake")
-                .await
-                .unwrap()
-                .unwrap(),
-        );
-        assert!(
-            !fixture
-                .legacy
-                .retry_dead_wake(WS, "event-wake")
-                .await
-                .expect("legacy re-retry")
-        );
+        assert!(fixture.harness.retry_dead_wake(WS, "event-wake").await.expect("retry"));
         assert!(
             !fixture
                 .harness
                 .retry_dead_wake(WS, "event-wake")
                 .await
-                .expect("harness re-retry")
+                .expect("re-retry")
         );
 
-        assert_eq!(fixture.legacy.recover_claimed_wakes().await.unwrap(), 0);
         assert_eq!(fixture.harness.recover_claimed_wakes().await.unwrap(), 0);
-        assert_eq!(fixture.legacy.claim_pending_wakes(10).await.unwrap().len(), 1);
         assert_eq!(fixture.harness.claim_pending_wakes(10).await.unwrap().len(), 1);
-        assert_eq!(fixture.legacy.recover_claimed_wakes().await.unwrap(), 1);
         assert_eq!(fixture.harness.recover_claimed_wakes().await.unwrap(), 1);
-
-        assert_eq!(fixture.legacy.resolve_task_wakes("task-wake").await.unwrap(), 1);
         assert_eq!(fixture.harness.resolve_task_wakes("task-wake").await.unwrap(), 1);
-        assert!(fixture.legacy.claim_pending_wakes(10).await.unwrap().is_empty());
         assert!(fixture.harness.claim_pending_wakes(10).await.unwrap().is_empty());
     }
 
     #[tokio::test]
-    async fn run_lifecycle_matches_legacy() {
-        let fixture = ParityFixture::new().await;
-        create_both(&fixture, "task-run", "event-run").await;
+    async fn run_lifecycle() {
+        let fixture = Fixture::new().await;
+        create_task(&fixture, "task-run", "event-run").await;
 
-        let legacy_task = fixture.legacy.get_task(WS, "task-run").await.unwrap().unwrap();
-        let harness_task = fixture.harness.get_task(WS, "task-run").await.unwrap().unwrap();
-        assert!(
-            fixture
-                .legacy
-                .begin_run(&legacy_task, "event-run", "run-1")
-                .await
-                .unwrap()
-        );
-        assert!(
-            fixture
-                .harness
-                .begin_run(&harness_task, "event-run", "run-1")
-                .await
-                .unwrap()
-        );
-        assert!(
-            !fixture
-                .legacy
-                .begin_run(&legacy_task, "event-run", "run-1")
-                .await
-                .unwrap()
-        );
-        assert!(
-            !fixture
-                .harness
-                .begin_run(&harness_task, "event-run", "run-1")
-                .await
-                .unwrap()
-        );
+        let task = fixture.harness.get_task(WS, "task-run").await.unwrap().unwrap();
+        assert!(fixture.harness.begin_run(&task, "event-run", "run-1").await.unwrap());
+        assert!(!fixture.harness.begin_run(&task, "event-run", "run-1").await.unwrap());
 
-        let legacy_started = fixture.legacy.get_task(WS, "task-run").await.unwrap().unwrap();
-        let harness_started = fixture.harness.get_task(WS, "task-run").await.unwrap().unwrap();
-        assert_task_parity(&legacy_started, &harness_started);
-        assert_eq!(harness_started.current_run_id.as_deref(), Some("run-1"));
+        let started = fixture.harness.get_task(WS, "task-run").await.unwrap().unwrap();
+        assert_eq!(started.current_run_id.as_deref(), Some("run-1"));
 
         let report = sample_report("task-run", "run-1", "event-run");
-        fixture.legacy.finish_run(&report).await.expect("legacy finish");
-        fixture.harness.finish_run(&report).await.expect("harness finish");
+        fixture.harness.finish_run(&report).await.expect("finish");
         assert_eq!(
-            serde_json::to_value(fixture.legacy.latest_task_run("task-run").await.unwrap()).unwrap(),
-            serde_json::to_value(fixture.harness.latest_task_run("task-run").await.unwrap()).unwrap()
+            serde_json::to_value(fixture.harness.latest_task_run("task-run").await.unwrap()).unwrap(),
+            serde_json::to_value(&report).unwrap()
         );
         assert_eq!(
-            serde_json::to_value(fixture.legacy.completed_run_report("run-1").await.unwrap()).unwrap(),
-            serde_json::to_value(fixture.harness.completed_run_report("run-1").await.unwrap()).unwrap()
-        );
-        assert_eq!(
-            fixture.legacy.finish_run(&report).await,
-            Err(TaskStoreError::ConcurrentUpdate)
+            serde_json::to_value(fixture.harness.completed_run_report("run-1").await.unwrap()).unwrap(),
+            serde_json::to_value(&report).unwrap()
         );
         assert_eq!(
             fixture.harness.finish_run(&report).await,
             Err(TaskStoreError::ConcurrentUpdate)
         );
-        fixture.assert_same_events("task-run").await;
+
+        let events = fixture.harness_events("task-run").await;
+        let types: Vec<&str> = events.iter().map(|event| event.1.as_str()).collect();
+        assert_eq!(types, ["task.created", "run.started", "run.finished"]);
     }
 
     #[tokio::test]
-    async fn transitions_binding_recovery_and_nonterminal_listing_match_legacy() {
-        let fixture = ParityFixture::new().await;
-        create_both(&fixture, "task-move", "event-move").await;
+    async fn transitions_binding_recovery_and_nonterminal_listing() {
+        let fixture = Fixture::new().await;
+        create_task(&fixture, "task-move", "event-move").await;
 
-        assert_eq!(
-            fixture
-                .legacy
-                .transition_task(WS, "task-move", 9, TaskStatus::Paused, None)
-                .await,
-            Err(TaskStoreError::ConcurrentUpdate)
-        );
         assert_eq!(
             fixture
                 .harness
@@ -743,96 +531,51 @@ mod tests {
             Err(TaskStoreError::ConcurrentUpdate)
         );
 
-        let legacy_bound = fixture
-            .legacy
-            .bind_current_run("task-move", 0, Some("run-bound"))
-            .await
-            .unwrap();
-        let harness_bound = fixture
+        let bound = fixture
             .harness
             .bind_current_run("task-move", 0, Some("run-bound"))
             .await
             .unwrap();
-        assert_task_parity(&legacy_bound, &harness_bound);
+        assert_eq!(bound.current_run_id.as_deref(), Some("run-bound"));
 
-        let legacy_paused = fixture
-            .legacy
-            .transition_task(WS, "task-move", 1, TaskStatus::Paused, None)
-            .await
-            .unwrap();
-        let harness_paused = fixture
+        let paused = fixture
             .harness
             .transition_task(WS, "task-move", 1, TaskStatus::Paused, None)
             .await
             .unwrap();
-        assert_task_parity(&legacy_paused, &harness_paused);
-
-        fixture
-            .legacy
-            .transition_task(WS, "task-move", 2, TaskStatus::Active, None)
-            .await
-            .expect("legacy resume");
+        assert_eq!(paused.status, TaskStatus::Paused);
         fixture
             .harness
             .transition_task(WS, "task-move", 2, TaskStatus::Active, None)
             .await
-            .expect("harness resume");
-
-        let legacy_done = fixture
-            .legacy
-            .transition_task(WS, "task-move", 3, TaskStatus::Completed, None)
-            .await
-            .unwrap();
-        let harness_done = fixture
+            .expect("resume");
+        let done = fixture
             .harness
             .transition_task(WS, "task-move", 3, TaskStatus::Completed, None)
             .await
             .unwrap();
-        assert_task_parity(&legacy_done, &harness_done);
-        assert!(harness_done.ended_at.is_some());
-        fixture.assert_same_events("task-move").await;
+        assert!(done.ended_at.is_some());
 
-        create_both(&fixture, "task-crash", "event-crash").await;
-        let legacy_crash = fixture.legacy.get_task(WS, "task-crash").await.unwrap().unwrap();
-        let harness_crash = fixture.harness.get_task(WS, "task-crash").await.unwrap().unwrap();
-        fixture
-            .legacy
-            .begin_run(&legacy_crash, "event-crash", "run-crash")
-            .await
-            .unwrap();
+        create_task(&fixture, "task-crash", "event-crash").await;
+        let crash = fixture.harness.get_task(WS, "task-crash").await.unwrap().unwrap();
         fixture
             .harness
-            .begin_run(&harness_crash, "event-crash", "run-crash")
+            .begin_run(&crash, "event-crash", "run-crash")
             .await
             .unwrap();
-        assert_eq!(fixture.legacy.interrupt_unfinished_runs(&[]).await.unwrap(), 1);
         assert_eq!(fixture.harness.interrupt_unfinished_runs(&[]).await.unwrap(), 1);
-        assert_eq!(fixture.legacy.interrupt_unfinished_runs(&[]).await.unwrap(), 0);
         assert_eq!(fixture.harness.interrupt_unfinished_runs(&[]).await.unwrap(), 0);
-        fixture.assert_same_events("task-crash").await;
 
-        let legacy_active = fixture.legacy.list_nonterminal_tasks(Some(WS)).await.unwrap();
-        let harness_active = fixture.harness.list_nonterminal_tasks(Some(WS)).await.unwrap();
-        assert_eq!(legacy_active.len(), harness_active.len());
-        for (legacy_task, harness_task) in legacy_active.iter().zip(harness_active.iter()) {
-            assert_task_parity(legacy_task, harness_task);
-        }
-        assert_eq!(
-            harness_active
-                .iter()
-                .find(|task| task.id == "task-crash")
-                .map(|task| task.status),
-            Some(TaskStatus::Active)
-        );
-        let all_legacy = fixture.legacy.list_nonterminal_tasks(None).await.unwrap();
-        let all_harness = fixture.harness.list_nonterminal_tasks(None).await.unwrap();
-        assert_eq!(all_legacy.len(), all_harness.len());
+        let active = fixture.harness.list_nonterminal_tasks(Some(WS)).await.unwrap();
+        assert_eq!(active.len(), 1);
+        assert_eq!(active[0].id, "task-crash");
+        assert_eq!(active[0].status, TaskStatus::Active);
     }
 
     #[tokio::test]
-    async fn finalize_intents_and_retention_match_legacy() {
-        let fixture = ParityFixture::new().await;
-        create_both(&fixture, "task-finalize", "event-finalize").await;
+    async fn finalize_intents_and_retention() {
+        let fixture = Fixture::new().await;
+        create_task(&fixture, "task-finalize", "event-finalize").await;
         let intent = TaskFinalizeIntent {
             task_id: "task-finalize".to_string(),
             workspace_id: WS.to_string(),
@@ -845,59 +588,16 @@ mod tests {
         };
 
         fixture
-            .legacy
-            .requeue_with_finalize_intent(&intent)
-            .await
-            .expect("legacy requeue");
-        fixture
             .harness
             .requeue_with_finalize_intent(&intent)
             .await
-            .expect("harness requeue");
-        assert_eq!(
-            serde_json::to_value(
-                fixture
-                    .legacy
-                    .finalize_intent("task-finalize", "event-finalize")
-                    .await
-                    .unwrap()
-            )
-            .unwrap(),
-            serde_json::to_value(
-                fixture
-                    .harness
-                    .finalize_intent("task-finalize", "event-finalize")
-                    .await
-                    .unwrap()
-            )
-            .unwrap()
-        );
-        assert_eq!(
-            serde_json::to_value(fixture.legacy.pending_finalize_intents().await.unwrap()).unwrap(),
-            serde_json::to_value(fixture.harness.pending_finalize_intents().await.unwrap()).unwrap()
-        );
-        assert_eq!(fixture.legacy.count_finalize_intents().await.unwrap(), 1);
+            .expect("requeue");
         assert_eq!(fixture.harness.count_finalize_intents().await.unwrap(), 1);
+        assert_eq!(fixture.harness.pending_finalize_intents().await.unwrap().len(), 1);
 
         let mut updated = intent.clone();
         updated.report.summary = "retried".to_string();
-        fixture.legacy.put_finalize_intent(&updated).await.expect("legacy put");
-        fixture
-            .harness
-            .put_finalize_intent(&updated)
-            .await
-            .expect("harness put");
-        assert_eq!(
-            fixture
-                .legacy
-                .finalize_intent("task-finalize", "event-finalize")
-                .await
-                .unwrap()
-                .unwrap()
-                .report
-                .summary,
-            "retried"
-        );
+        fixture.harness.put_finalize_intent(&updated).await.expect("put");
         assert_eq!(
             fixture
                 .harness
@@ -911,164 +611,85 @@ mod tests {
         );
 
         fixture
-            .legacy
-            .complete_finalize_intent("task-finalize", "event-finalize")
-            .await
-            .expect("legacy complete");
-        fixture
             .harness
             .complete_finalize_intent("task-finalize", "event-finalize")
             .await
-            .expect("harness complete");
-        assert_eq!(fixture.legacy.count_finalize_intents().await.unwrap(), 0);
+            .expect("complete");
         assert_eq!(fixture.harness.count_finalize_intents().await.unwrap(), 0);
 
         let retention_intent = TaskFinalizeIntent {
-            task_id: "task-finalize".to_string(),
-            workspace_id: WS.to_string(),
-            wake_event_id: "event-finalize".to_string(),
-            run_id: "run-finalize".to_string(),
-            report: sample_report("task-finalize", "run-finalize", "event-finalize"),
             report_persisted: true,
             report_emitted: true,
             undelivered: vec![],
+            ..intent.clone()
         };
         fixture
-            .legacy
-            .put_finalize_intent(&retention_intent)
-            .await
-            .expect("legacy retention intent");
-        fixture
             .harness
             .put_finalize_intent(&retention_intent)
             .await
-            .expect("harness retention intent");
-        fixture
-            .legacy
-            .resolve_task_wakes("task-finalize")
-            .await
-            .expect("legacy resolve");
+            .expect("retention intent");
         fixture
             .harness
             .resolve_task_wakes("task-finalize")
             .await
-            .expect("harness resolve");
-        fixture
-            .legacy
-            .transition_task(WS, "task-finalize", 0, TaskStatus::Completed, None)
-            .await
-            .expect("legacy terminal");
+            .expect("resolve");
         fixture
             .harness
             .transition_task(WS, "task-finalize", 0, TaskStatus::Completed, None)
             .await
-            .expect("harness terminal");
+            .expect("terminal");
         let cutoff = Utc::now() + Duration::days(1);
-        assert_eq!(fixture.legacy.prune_finalize_intents(cutoff).await.unwrap(), 1);
         assert_eq!(fixture.harness.prune_finalize_intents(cutoff).await.unwrap(), 1);
-        assert_eq!(fixture.legacy.count_finalize_intents().await.unwrap(), 0);
         assert_eq!(fixture.harness.count_finalize_intents().await.unwrap(), 0);
     }
 
     #[tokio::test]
-    async fn record_wake_and_wake_lookup_match_legacy() {
-        let fixture = ParityFixture::new().await;
-        create_both(&fixture, "task-record", "event-record").await;
+    async fn record_wake_and_wake_lookup() {
+        let fixture = Fixture::new().await;
+        create_task(&fixture, "task-record", "event-record").await;
         let extra = sample_wake("task-record", "event-extra");
-        assert!(fixture.legacy.record_wake(&extra).await.unwrap());
         assert!(fixture.harness.record_wake(&extra).await.unwrap());
-        assert!(!fixture.legacy.record_wake(&extra).await.unwrap());
         assert!(!fixture.harness.record_wake(&extra).await.unwrap());
-        assert_wake_parity(
-            &fixture
-                .legacy
-                .wake_by_id("task-record", "event-extra")
-                .await
-                .unwrap()
-                .unwrap(),
-            &fixture
-                .harness
-                .wake_by_id("task-record", "event-extra")
-                .await
-                .unwrap()
-                .unwrap(),
-        );
-        assert_eq!(fixture.legacy_wake_count().await, 2);
         assert_eq!(fixture.harness_wake_count().await, 2);
+        let wake = fixture
+            .harness
+            .wake_by_id("task-record", "event-extra")
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(wake.event_id, "event-extra");
     }
 
     #[tokio::test]
     async fn idempotency_conflicts_are_scoped_to_the_key() {
-        let fixture = ParityFixture::new().await;
-        create_both(&fixture, "task-key", "event-key").await;
+        let fixture = Fixture::new().await;
+        create_task(&fixture, "task-key", "event-key").await;
 
-        // Same key, new task id: replay returns the original Task.
         let mut replay = sample_task("task-key-new-id");
         replay.idempotency_key = sample_task("task-key").idempotency_key;
-        let replay_wake = sample_wake("task-key-new-id", "event-key-new");
-        let legacy_replay = fixture
-            .legacy
-            .create_task_with_wake(&replay, &replay_wake)
-            .await
-            .expect("legacy key replay");
-        let harness_replay = fixture
+        let replayed = fixture
             .harness
-            .create_task_with_wake(&replay, &replay_wake)
+            .create_task_with_wake(&replay, &sample_wake("task-key-new-id", "event-key-new"))
             .await
-            .expect("harness key replay");
-        assert!(legacy_replay.deduplicated && harness_replay.deduplicated);
-        assert_eq!(harness_replay.task.id, "task-key");
-        assert_eq!(legacy_replay.task.id, harness_replay.task.id);
-        assert_eq!(fixture.legacy_wake_count().await, 1);
-        assert_eq!(fixture.harness_wake_count().await, 1);
+            .expect("key replay");
+        assert!(replayed.deduplicated);
+        assert_eq!(replayed.task.id, "task-key");
 
-        // Same id, different key: explicit error, never a different Task.
         let mut conflicting = sample_task("task-key");
         conflicting.idempotency_key = "key-other".to_string();
-        let conflicting_wake = sample_wake("task-key", "event-other");
-        let legacy_error = fixture
-            .legacy
-            .create_task_with_wake(&conflicting, &conflicting_wake)
-            .await
-            .expect_err("legacy same-id conflict");
-        let harness_error = fixture
+        let error = fixture
             .harness
-            .create_task_with_wake(&conflicting, &conflicting_wake)
+            .create_task_with_wake(&conflicting, &sample_wake("task-key", "event-other"))
             .await
-            .expect_err("harness same-id conflict");
-        assert!(
-            matches!(legacy_error, TaskStoreError::Unavailable(_)),
-            "legacy: {legacy_error:?}"
-        );
-        assert!(
-            matches!(harness_error, TaskStoreError::Unavailable(_)),
-            "harness: {harness_error:?}"
-        );
-        assert_eq!(fixture.legacy_wake_count().await, 1);
+            .expect_err("same-id conflict");
+        assert!(matches!(error, TaskStoreError::Unavailable(_)), "{error:?}");
         assert_eq!(fixture.harness_wake_count().await, 1);
-    }
-
-    #[tokio::test]
-    async fn blank_idempotency_key_is_rejected_without_writes() {
-        let fixture = ParityFixture::new().await;
-        let mut task = sample_task("task-blank");
-        task.idempotency_key = "   ".to_string();
-        let wake = sample_wake("task-blank", "event-blank");
-        for _ in 0..2 {
-            let error = fixture
-                .harness
-                .create_task_with_wake(&task, &wake)
-                .await
-                .expect_err("blank key must be rejected");
-            assert!(matches!(error, TaskStoreError::Validation(_)), "{error:?}");
-        }
-        assert_eq!(fixture.harness_wake_count().await, 0);
     }
 
     #[tokio::test]
     async fn concurrent_transitions_serialize_on_the_first_write() {
-        let fixture = ParityFixture::new().await;
-        create_both(&fixture, "task-race", "event-race").await;
+        let fixture = Fixture::new().await;
+        create_task(&fixture, "task-race", "event-race").await;
         let store = Arc::new(fixture.harness.clone());
         let (left, right) = tokio::join!(
             store.transition_task(WS, "task-race", 0, TaskStatus::Paused, None),
@@ -1083,14 +704,6 @@ mod tests {
                 .count(),
             1
         );
-        let task = fixture
-            .harness
-            .get_task(WS, "task-race")
-            .await
-            .expect("task")
-            .expect("present");
-        assert_eq!(task.status, TaskStatus::Paused);
-        assert_eq!(task.state_version, 1);
         let events = fixture.harness_events("task-race").await;
         assert_eq!(events.len(), 2, "exactly one transition event commits");
         assert_eq!(events[1].1, "task.paused");
@@ -1138,7 +751,6 @@ mod tests {
             Err(TaskStoreError::Unavailable(_))
         ));
 
-        // The refused resolve must not have mutated either workspace.
         for workspace_id in ["ws-amb-a", "ws-amb-b"] {
             let pool = fixture
                 .db
@@ -1153,6 +765,23 @@ mod tests {
             assert!(resolved.is_none(), "{workspace_id} wake must stay unresolved");
         }
         fixture.close().await;
+    }
+
+    async fn corrupt_workspace(fixture: &MultiStoreFixture, workspace_id: &str) {
+        fixture
+            .db
+            .close_workspace_store(workspace_id)
+            .await
+            .expect("close workspace to corrupt");
+        let path = fixture.database_path(workspace_id);
+        tokio::fs::write(&path, b"not a sqlite database")
+            .await
+            .expect("corrupt store");
+        for suffix in ["-wal", "-shm"] {
+            let mut sidecar = path.clone().into_os_string();
+            sidecar.push(suffix);
+            let _ = tokio::fs::remove_file(sidecar).await;
+        }
     }
 
     #[tokio::test]
@@ -1177,20 +806,7 @@ mod tests {
             undelivered: vec!["retained".to_string()],
         };
         store.put_finalize_intent(&intent).await.expect("retained intent");
-        fixture
-            .db
-            .close_workspace_store("ws-bad")
-            .await
-            .expect("close bad store");
-        let path = fixture.database_path("ws-bad");
-        tokio::fs::write(&path, b"not a sqlite database")
-            .await
-            .expect("corrupt store");
-        for suffix in ["-wal", "-shm"] {
-            let mut sidecar = path.clone().into_os_string();
-            sidecar.push(suffix);
-            let _ = tokio::fs::remove_file(sidecar).await;
-        }
+        corrupt_workspace(&fixture, "ws-bad").await;
 
         let claimed = store.claim_pending_wakes(10).await.expect("claim degrades");
         assert_eq!(claimed.len(), 1, "good workspace still claims");
@@ -1206,251 +822,6 @@ mod tests {
         assert!(store.interrupt_unfinished_runs(&[]).await.is_ok());
         assert_eq!(store.list_nonterminal_tasks(None).await.expect("list").len(), 1);
         fixture.close().await;
-    }
-
-    #[tokio::test]
-    async fn interrupt_honors_known_active_and_retained_finalize_intents() {
-        let fixture = ParityFixture::new().await;
-        for (task_id, wake_id) in [
-            ("task-owned", "event-owned"),
-            ("task-zombie", "event-zombie"),
-            ("task-intent", "event-intent"),
-        ] {
-            create_both(&fixture, task_id, wake_id).await;
-            let legacy_task = fixture.legacy.get_task(WS, task_id).await.unwrap().unwrap();
-            let harness_task = fixture.harness.get_task(WS, task_id).await.unwrap().unwrap();
-            fixture
-                .legacy
-                .begin_run(&legacy_task, wake_id, &format!("run-{task_id}"))
-                .await
-                .unwrap();
-            fixture
-                .harness
-                .begin_run(&harness_task, wake_id, &format!("run-{task_id}"))
-                .await
-                .unwrap();
-        }
-        let intent = TaskFinalizeIntent {
-            task_id: "task-intent".to_string(),
-            workspace_id: WS.to_string(),
-            wake_event_id: "event-intent".to_string(),
-            run_id: "run-task-intent".to_string(),
-            report: sample_report("task-intent", "run-task-intent", "event-intent"),
-            report_persisted: false,
-            report_emitted: false,
-            undelivered: vec![],
-        };
-        fixture
-            .legacy
-            .put_finalize_intent(&intent)
-            .await
-            .expect("legacy intent");
-        fixture
-            .harness
-            .put_finalize_intent(&intent)
-            .await
-            .expect("harness intent");
-
-        let known_active = vec!["run-task-owned".to_string()];
-        assert_eq!(
-            fixture.legacy.interrupt_unfinished_runs(&known_active).await.unwrap(),
-            1
-        );
-        assert_eq!(
-            fixture.harness.interrupt_unfinished_runs(&known_active).await.unwrap(),
-            1
-        );
-        assert_eq!(
-            fixture.legacy.interrupt_unfinished_runs(&known_active).await.unwrap(),
-            0
-        );
-        assert_eq!(
-            fixture.harness.interrupt_unfinished_runs(&known_active).await.unwrap(),
-            0
-        );
-
-        assert_eq!(harness_run_states(&fixture, "task-zombie").await, vec!["interrupted"]);
-        assert_eq!(harness_run_states(&fixture, "task-owned").await, vec!["running"]);
-        assert_eq!(harness_run_states(&fixture, "task-intent").await, vec!["running"]);
-        let zombie_events = fixture.harness_events("task-zombie").await;
-        assert!(zombie_events.iter().any(|(event_id, event_type, _, _, _)| event_id
-            == "run:run-task-zombie:interrupted"
-            && event_type == "run.interrupted"));
-        assert!(
-            fixture
-                .harness_events("task-owned")
-                .await
-                .iter()
-                .all(|(_, event_type, _, _, _)| event_type != "run.interrupted")
-        );
-        assert!(
-            fixture
-                .harness_events("task-intent")
-                .await
-                .iter()
-                .all(|(_, event_type, _, _, _)| event_type != "run.interrupted")
-        );
-        fixture.assert_same_events("task-zombie").await;
-    }
-
-    async fn harness_run_states(fixture: &ParityFixture, task_id: &str) -> Vec<String> {
-        let pool = fixture.db.workspace_pool_for_testing(WS).await.expect("workspace pool");
-        sqlx::query_scalar("SELECT state FROM agent_runs WHERE task_id = ? ORDER BY runtime_created_at, rowid")
-            .bind(task_id)
-            .fetch_all(&pool)
-            .await
-            .expect("run states")
-    }
-
-    #[tokio::test]
-    async fn run_and_nonterminal_ordering_match_legacy() {
-        let fixture = ParityFixture::new().await;
-        create_both(&fixture, "task-multi", "event-multi-1").await;
-        let legacy_task = fixture.legacy.get_task(WS, "task-multi").await.unwrap().unwrap();
-        let harness_task = fixture.harness.get_task(WS, "task-multi").await.unwrap().unwrap();
-        fixture
-            .legacy
-            .begin_run(&legacy_task, "event-multi-1", "run-multi-1")
-            .await
-            .unwrap();
-        fixture
-            .harness
-            .begin_run(&harness_task, "event-multi-1", "run-multi-1")
-            .await
-            .unwrap();
-        fixture
-            .legacy
-            .finish_run(&sample_report("task-multi", "run-multi-1", "event-multi-1"))
-            .await
-            .unwrap();
-        fixture
-            .harness
-            .finish_run(&sample_report("task-multi", "run-multi-1", "event-multi-1"))
-            .await
-            .unwrap();
-        tokio::time::sleep(std::time::Duration::from_millis(5)).await;
-        let legacy_task = fixture.legacy.get_task(WS, "task-multi").await.unwrap().unwrap();
-        let harness_task = fixture.harness.get_task(WS, "task-multi").await.unwrap().unwrap();
-        let second_wake = sample_wake("task-multi", "event-multi-2");
-        fixture.legacy.record_wake(&second_wake).await.unwrap();
-        fixture.harness.record_wake(&second_wake).await.unwrap();
-        fixture
-            .legacy
-            .begin_run(&legacy_task, "event-multi-2", "run-multi-2")
-            .await
-            .unwrap();
-        fixture
-            .harness
-            .begin_run(&harness_task, "event-multi-2", "run-multi-2")
-            .await
-            .unwrap();
-        fixture
-            .legacy
-            .finish_run(&sample_report("task-multi", "run-multi-2", "event-multi-2"))
-            .await
-            .unwrap();
-        fixture
-            .harness
-            .finish_run(&sample_report("task-multi", "run-multi-2", "event-multi-2"))
-            .await
-            .unwrap();
-        let legacy_latest = fixture.legacy.latest_task_run("task-multi").await.unwrap().unwrap();
-        let harness_latest = fixture.harness.latest_task_run("task-multi").await.unwrap().unwrap();
-        assert_eq!(legacy_latest.run_id, "run-multi-2");
-        assert_eq!(harness_latest.run_id, "run-multi-2");
-        assert_eq!(
-            serde_json::to_value(&legacy_latest).unwrap(),
-            serde_json::to_value(&harness_latest).unwrap()
-        );
-        fixture.assert_same_events("task-multi").await;
-        fixture
-            .legacy
-            .transition_task(WS, "task-multi", 2, TaskStatus::Completed, None)
-            .await
-            .expect("legacy terminal");
-        fixture
-            .harness
-            .transition_task(WS, "task-multi", 2, TaskStatus::Completed, None)
-            .await
-            .expect("harness terminal");
-
-        for (task_id, seconds) in [
-            ("task-order-b", 2_i64),
-            ("task-order-a", 0_i64),
-            ("task-order-c", 1_i64),
-        ] {
-            let mut task = sample_task(task_id);
-            task.updated_at = at() + Duration::seconds(seconds);
-            let wake = sample_wake(task_id, &format!("event-{task_id}"));
-            let legacy = fixture
-                .legacy
-                .create_task_with_wake(&task, &wake)
-                .await
-                .expect("legacy order task");
-            let harness = fixture
-                .harness
-                .create_task_with_wake(&task, &wake)
-                .await
-                .expect("harness order task");
-            assert_eq!(legacy.task.id, harness.task.id);
-        }
-        let legacy_tasks = fixture.legacy.list_nonterminal_tasks(Some(WS)).await.unwrap();
-        let harness_tasks = fixture.harness.list_nonterminal_tasks(Some(WS)).await.unwrap();
-        let legacy_ids: Vec<&str> = legacy_tasks.iter().map(|task| task.id.as_str()).collect();
-        let harness_ids: Vec<&str> = harness_tasks.iter().map(|task| task.id.as_str()).collect();
-        assert_eq!(legacy_ids, vec!["task-order-a", "task-order-c", "task-order-b"]);
-        assert_eq!(legacy_ids, harness_ids);
-        for (legacy_task, harness_task) in legacy_tasks.iter().zip(harness_tasks.iter()) {
-            assert_task_parity(legacy_task, harness_task);
-        }
-    }
-
-    #[tokio::test]
-    async fn non_positive_claim_limit_never_consumes_wakes() {
-        let fixture = ParityFixture::new().await;
-        create_both(&fixture, "task-limit", "event-limit").await;
-        assert!(
-            fixture
-                .harness
-                .claim_pending_wakes(-1)
-                .await
-                .expect("negative limit")
-                .is_empty()
-        );
-        assert!(
-            fixture
-                .harness
-                .claim_pending_wakes(0)
-                .await
-                .expect("zero limit")
-                .is_empty()
-        );
-        assert_eq!(
-            fixture
-                .harness
-                .claim_pending_wakes(10)
-                .await
-                .expect("claim after no-op")
-                .len(),
-            1
-        );
-    }
-
-    async fn corrupt_workspace(fixture: &MultiStoreFixture, workspace_id: &str) {
-        fixture
-            .db
-            .close_workspace_store(workspace_id)
-            .await
-            .expect("close workspace to corrupt");
-        let path = fixture.database_path(workspace_id);
-        tokio::fs::write(&path, b"not a sqlite database")
-            .await
-            .expect("corrupt store");
-        for suffix in ["-wal", "-shm"] {
-            let mut sidecar = path.clone().into_os_string();
-            sidecar.push(suffix);
-            let _ = tokio::fs::remove_file(sidecar).await;
-        }
     }
 
     #[tokio::test]
@@ -1506,7 +877,7 @@ mod tests {
             Err(TaskStoreError::Unavailable(_))
         ));
 
-        // Sweeps keep the F4 per-workspace skip and must stay Ok.
+        // Sweeps keep the per-workspace skip and must stay Ok.
         assert!(store.claim_pending_wakes(10).await.expect("claim").is_empty());
         assert!(store.recover_claimed_wakes().await.is_ok());
         assert!(store.pending_finalize_intents().await.is_ok());
@@ -1537,7 +908,6 @@ mod tests {
         }
         corrupt_workspace(&fixture, "ws-shadow").await;
 
-        // Read-only lookup may return the unique readable match.
         let wake = store
             .wake_by_id("task-shadow", "event-shadow")
             .await
@@ -1545,7 +915,6 @@ mod tests {
             .expect("readable match");
         assert_eq!(wake.task_id, "task-shadow");
 
-        // Mutating lookups cannot prove the readable match is unique.
         assert!(matches!(
             store.bind_current_run("task-shadow", 0, Some("run-shadow")).await,
             Err(TaskStoreError::Unavailable(_))
@@ -1576,36 +945,26 @@ mod tests {
 
     #[tokio::test]
     async fn dedup_replay_after_transition_keeps_the_created_event() {
-        let fixture = ParityFixture::new().await;
-        create_both(&fixture, "task-created", "event-created").await;
-        fixture
-            .legacy
-            .transition_task(WS, "task-created", 0, TaskStatus::Paused, None)
-            .await
-            .expect("legacy transition");
+        let fixture = Fixture::new().await;
+        create_task(&fixture, "task-created", "event-created").await;
         fixture
             .harness
             .transition_task(WS, "task-created", 0, TaskStatus::Paused, None)
             .await
-            .expect("harness transition");
+            .expect("transition");
 
-        let replay_task = sample_task("task-created");
-        let replay_wake = sample_wake("task-created", "event-created");
-        let legacy = fixture
-            .legacy
-            .create_task_with_wake(&replay_task, &replay_wake)
-            .await
-            .expect("legacy replay after transition");
-        let harness = fixture
+        let replay = fixture
             .harness
-            .create_task_with_wake(&replay_task, &replay_wake)
+            .create_task_with_wake(
+                &sample_task("task-created"),
+                &sample_wake("task-created", "event-created"),
+            )
             .await
-            .expect("harness replay after transition");
-        assert!(legacy.deduplicated && harness.deduplicated);
-        assert_eq!(harness.task.status, TaskStatus::Paused);
-        assert_eq!(harness.task.state_version, 1);
+            .expect("replay after transition");
+        assert!(replay.deduplicated);
+        assert_eq!(replay.task.status, TaskStatus::Paused);
+        assert_eq!(replay.task.state_version, 1);
 
-        fixture.assert_same_events("task-created").await;
         let events = fixture.harness_events("task-created").await;
         assert_eq!(events.len(), 2, "dedup must not append a new event");
         assert_eq!(events[0].0, "task:task-created:created");

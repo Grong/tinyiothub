@@ -6,13 +6,14 @@
 #   task_wake_outbox / device_jobs projection (workspace DB)
 #   hub_ledger telemetry (platform DB; remains a pure telemetry ledger)
 #
-# The pre-Harness Runtime API still has adapters under runtime/ and
-# shared/runtime_ports.rs. They are allowed to call the old platform writers so
-# the existing Runtime endpoints keep working, but no other production module
-# may create a second write path. This guard freezes that boundary: new code in
-# workflows/, harness.rs, host/ (except the legacy device recorder), crates/, or
-# web/src cannot reach the old writers or reintroduce a hand-maintained tool /
-# event / status list.
+# Task 19C4 retired the platform Task fact plane: the platform `agent_tasks`,
+# `task_wake_outbox`, `device_jobs`, and `task_approvals` tables have no
+# production reader or writer. The only exceptions are the harness owner
+# modules (workspace DB SQL), the read-only cross-workspace admin sweep, the
+# cfg(test)-gated legacy Job fixture owner, and the autonomous agent-loop run
+# history. `hub_ledger` (runtime.v1) is device/watch/evidence telemetry only.
+# This guard freezes that boundary and rejects hand-maintained tool / event /
+# status lists in web/src.
 #
 # Regex hits in comments/docs are reported as violations too; that is
 # intentional for identifier-derived guards. Migration files are exempt only for
@@ -47,6 +48,27 @@ check_rust() {
   fi
 }
 
+# check_production <name> <regex> <allow-regex>
+# Same as check_rust, but drops every inline `#[cfg(test)]` module before
+# matching. Test fixtures may seed the retired platform tables; production
+# code may not. Items gated with `#[cfg(any(test, feature = "testing"))]` are
+# still scanned (device_job.rs is verified separately by the gating check).
+check_production() {
+  local name="$1" pattern="$2" allow="$3"
+  local hits
+  hits=$(for file in $(rg --files crates apps/cloud -g '*.rs' \
+        -g '!**/target/**' -g '!**/tests/**' -g '!**/benches/**' -g '!**/*_tests.rs'); do
+      awk -v f="$file" '
+        /^#\[cfg\(test\)\]$/ { exit }
+        { print f ":" FNR ":" $0 }
+      ' "$file"
+    done | grep -E "$pattern" | grep -vE "$allow" || true)
+  if [ -n "$hits" ]; then
+    echo "$hits"
+    fail "$name"
+  fi
+}
+
 # ── Old runtime event writer ───────────────────────────────
 # `runtime/api_cutover_tests.rs` is a #[cfg(test)]-only module; its assertions
 # intentionally name the legacy identifiers. It is allow-listed by exact path,
@@ -54,19 +76,38 @@ check_rust() {
 # Only the legacy runtime adapters and the low-level db transaction writer may
 # append runtime.v1 events. The Harness path uses append_session_event.
 check_rust \
-  "runtime.v1 append outside legacy adapters" \
+  "runtime.v1 append outside telemetry writers" \
   'append_runtime_event(_tx)?' \
-  '^(crates/db/src/(runtime_event|runtime_task|task_approval|device_job|watch|media_evidence|agent_runs)\.rs|apps/cloud/src/domains/agent/runtime/(stream|tasks)\.rs):'
+  '^(crates/db/src/(runtime_event|task_approval|device_job|watch|media_evidence|agent_runs)\.rs|apps/cloud/src/domains/agent/runtime/stream\.rs):'
 
 check_rust \
   "runtime.v1 kind outside the ledger writer" \
   'RUNTIME_EVENT_KIND|runtime\.v1' \
-  '^(crates/db/src/(runtime_event|runtime_task|agent_runs|watch)\.rs|apps/cloud/src/domains/agent/runtime/stream\.rs|apps/cloud/src/domains/agent/runtime/api_cutover_tests\.rs):'
+  '^(crates/db/src/(runtime_event|agent_runs|watch)\.rs|apps/cloud/src/domains/agent/runtime/stream\.rs|apps/cloud/src/domains/agent/runtime/api_cutover_tests\.rs):'
 
 check_rust \
-  "runtime event construction outside legacy adapters" \
+  "runtime event construction outside telemetry writers" \
   'RuntimeEventInput\s*\{' \
-  '^(crates/db/src/(runtime_event|runtime_task|task_approval|device_job|watch|media_evidence|agent_runs)\.rs|apps/cloud/src/domains/agent/runtime/(stream|tasks)\.rs|apps/cloud/src/domains/agent/host/tools/thing/device\.rs|apps/cloud/src/domains/agent/tools/capabilities\.rs):'
+  '^(crates/db/src/(runtime_event|task_approval|device_job|watch|media_evidence|agent_runs)\.rs|apps/cloud/src/domains/agent/runtime/(stream|tasks)\.rs|apps/cloud/src/domains/agent/host/tools/thing/device\.rs|apps/cloud/src/domains/agent/tools/capabilities\.rs):'
+
+# ── Retired platform Task/Job fact plane (Task 19C4) ───────
+# Task/Run/Wake/Job facts live only in each workspace Harness generation.
+# The platform tables survive for migrations and test fixtures, but production
+# code must not read or write them. `agent_runs` is exempt only for the
+# autonomous agent-loop persistence (trigger_type/outcome rows) which is not
+# the Task plane; policy.rs/ticket.rs read that same autonomous history.
+HARNESS_OWNERS='^(crates/db/src/harness_[a-z_]+\.rs|crates/db/src/runtime_admin\.rs|crates/db/src/device_job\.rs|crates/db/src/agent_runs\.rs):'
+AUTONOMOUS_RUN_READERS='^(crates/db/src/(harness_[a-z_]+|runtime_admin|device_job|agent_runs|policy|ticket)\.rs):'
+
+check_production \
+  "platform Task/Run/Wake/Job write outside the Harness owner" \
+  '(INSERT[[:space:]]+(OR[[:space:]]+[A-Z]+[[:space:]]+)?INTO[[:space:]]+(agent_tasks|agent_runs|task_wake_outbox|task_approvals|device_jobs)\b|UPDATE[[:space:]]+(agent_tasks|agent_runs|task_wake_outbox|task_approvals|device_jobs)\b|DELETE[[:space:]]+FROM[[:space:]]+(agent_tasks|agent_runs|task_wake_outbox|task_approvals|device_jobs)\b)' \
+  "$HARNESS_OWNERS"
+
+check_production \
+  "platform Task/Run/Wake/Job read outside the Harness owner" \
+  '(FROM|JOIN)[[:space:]]+(agent_tasks|agent_runs|task_wake_outbox|task_approvals|device_jobs)\b' \
+  "$AUTONOMOUS_RUN_READERS"
 
 # ── Duplicate approval writers (platform task_approvals) ───
 # decisions is the only Harness approval source (Task 19C2). The platform
@@ -97,10 +138,20 @@ check_rust \
 # #[cfg(any(test, feature = "testing"))]; otherwise un-gating the writer would
 # silently reintroduce a production platform write.
 DEVICE_JOB_UNGATED=$(awk '
+  # Inline test modules are gated as a whole; test SQL is not production.
+  # Selftest injections are appended AFTER the module, so the module boundary
+  # must be tracked instead of stopping at the first #[cfg(test)].
+  /^#\[cfg\(test\)\]$/ { test_pending = 1; next }
+  in_tests {
+    if ($0 ~ /^\}/) { in_tests = 0 }
+    next
+  }
+  test_pending && /^mod [A-Za-z0-9_]+ \{/ { in_tests = 1; test_pending = 0; next }
+  test_pending { test_pending = 0 }
   # Attributes accumulate: an extra #[allow]/#[inline] between the gate and
   # the item must not clear the pending gate. Only the item line consumes it.
   /^[[:space:]]*#\[/ {
-    if ($0 ~ /#\[cfg\(any\(test, feature = "testing"\)\)\]/) pending = 1
+    if ($0 ~ /#\[cfg\((any\(test, feature = "testing"\)|test)\)\]/) pending = 1
     next
   }
   /^[[:space:]]*$/ { next }
@@ -115,7 +166,7 @@ DEVICE_JOB_UNGATED=$(awk '
       gated = pending
       pending = 0
     }
-    if ($0 ~ /(INSERT INTO device_jobs|UPDATE device_jobs)/ && !gated) {
+    if ($0 ~ /(INSERT INTO device_jobs|UPDATE device_jobs|FROM device_jobs|INSERT INTO task_wake_outbox|UPDATE task_wake_outbox|FROM task_wake_outbox)/ && !gated) {
       print FILENAME ":" FNR ":" $0
     }
   }
@@ -145,16 +196,10 @@ check_rust \
   '(create_job_and_event|mark_running_and_event|finish_job_and_event|update_progress_revision_and_event|request_stop_and_event)' \
   '^(crates/db/src/(device_job|task_approval)\.rs|apps/cloud/src/shared/runtime_ports\.rs):'
 
-# ── Independently transitioned platform Task facts ─────────
-check_rust \
-  "Task writer outside the legacy runtime adapter" \
-  '(create_task_with_wake_and_event|transition_task_and_event|begin_run_and_event|finish_run_and_event|bind_current_run_and_event)' \
-  '^(crates/db/src/(runtime_task|runtime_event)\.rs|apps/cloud/src/domains/agent/runtime/(mod|stream)\.rs):'
-
 if [ "$FAIL" -ne 0 ]; then
   echo "   ✅ New facts must be written through Harness transitions:"
   echo "      Db::apply_workspace_transition / append_session_event / effect_intents / decisions"
-  echo "   ✅ Legacy Runtime adapters stay in runtime/ and shared/runtime_ports.rs; do not add a new caller."
+  echo "   ✅ Task/Run/Wake/Job facts live in the owning workspace Harness generation."
   exit 1
 fi
 

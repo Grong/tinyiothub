@@ -20,7 +20,9 @@ const MAX_ACTIVE_WATCHES: usize = 20;
 const DEFAULT_TIMEOUT_SECS: u32 = 600;
 
 pub(super) struct WatchTool {
-    pub(super) pool: SqlitePool,
+    /// Workspace-Harness-aware handle: the owner-Task check reads the owning
+    /// workspace generation, not the retired platform task tables.
+    pub(super) db: tinyiothub_storage::Db,
     pub(super) workspace_id: String,
     pub(super) manager: ManagerSlot,
     pub(super) run_ctx: Option<super::super::RunContextSlot>,
@@ -119,7 +121,7 @@ impl Tool for WatchTool {
         };
 
         // 引用物存在性（本区）。
-        let db = tinyiothub_storage::Db::new(self.pool.clone());
+        let db = &self.db;
         match db.find_thing_by_id(Some(&self.workspace_id), &input.thing_id).await {
             Ok(Some(_)) => {}
             Ok(None) => return tool_err(format!("watch 引用的物不存在：{}", input.thing_id)),
@@ -134,7 +136,7 @@ impl Tool for WatchTool {
                     (inner.task_id.clone(), inner.task_session_key.clone())
                 };
                 if let Some(task_id) = task_id {
-                    let task = match db.get_task(&self.workspace_id, &task_id).await {
+                    let task = match db.harness_get_task(&self.workspace_id, &task_id).await {
                         Ok(Some(task)) => task,
                         Ok(None) => return tool_err("watch owner Task does not exist in this workspace"),
                         Err(error) => return tool_err(format!("watch owner Task 查询失败：{error}")),
@@ -157,7 +159,7 @@ impl Tool for WatchTool {
         };
 
         // 每工作区活跃 watch 上限。
-        let active = match tinyiothub_storage::watch::list_rules(&self.pool).await {
+        let active = match tinyiothub_storage::watch::list_rules(self.db.pool()).await {
             Ok(rows) => rows.iter().filter(|r| r.workspace_id == self.workspace_id).count(),
             Err(e) => return tool_err(format!("watch 列表读取失败：{e}")),
         };
@@ -200,7 +202,7 @@ impl Tool for WatchTool {
             created_at: rule.created_at.clone(),
             owner_task_id: rule.owner_task_id.clone(),
         };
-        if let Err(e) = tinyiothub_storage::watch::insert_rule(&self.pool, &row).await {
+        if let Err(e) = tinyiothub_storage::watch::insert_rule(self.db.pool(), &row).await {
             return tool_err(format!("watch 注册失败：{e}"));
         }
         // 内存注册表（best-effort：loop 未起时下次 start 重织自愈）。

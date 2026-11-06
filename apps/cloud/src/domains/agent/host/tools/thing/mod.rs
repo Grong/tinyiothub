@@ -296,7 +296,7 @@ pub fn create_thing_tools(
             data_server: runtime.data_server.clone(),
         })),
         read_only(Box::new(watch_tools::WatchTool {
-            pool: pool.clone(),
+            db: tinyiothub_storage::Db::new(pool.clone()),
             workspace_id: ws.clone(),
             manager: manager.clone(),
             run_ctx: runtime.run_ctx.clone(),
@@ -624,7 +624,7 @@ mod tests {
             .unwrap();
 
         let watch = watch_tools::WatchTool {
-            pool: pool.clone(),
+            db: tinyiothub_storage::Db::new(pool.clone()),
             workspace_id: "ws".into(),
             manager: ManagerSlot::default(),
             run_ctx: None,
@@ -668,13 +668,34 @@ mod tests {
             .execute(&pool)
             .await
             .unwrap();
-        sqlx::query(
-            "INSERT INTO agent_tasks
-                 (id, workspace_id, idempotency_key, objective, session_key, created_by,
-                  status, current_run_id, state_version, created_at, updated_at, ended_at)
-             VALUES ('task_1','ws','idem_1','inspect','session_1','user_1','active',NULL,0,'2026-10-27T00:00:00Z','2026-10-27T00:00:00Z',NULL)",
+        let root = std::env::temp_dir().join(format!("tinyiothub-watch-tools-{}", uuid::Uuid::new_v4()));
+        let db = tinyiothub_storage::Db::new(pool.clone()).with_workspace_store_root(root.join("data/agents"));
+        let now = chrono::Utc::now();
+        db.harness_create_task_with_wake(
+            &tinyiothub_core::agent_task::AgentTask {
+                id: "task_1".into(),
+                workspace_id: "ws".into(),
+                idempotency_key: "idem_1".into(),
+                objective: "inspect".into(),
+                session_key: Some("session_1".into()),
+                created_by: "user_1".into(),
+                status: tinyiothub_core::agent_task::TaskStatus::Active,
+                current_run_id: None,
+                state_version: 0,
+                created_at: now,
+                updated_at: now,
+                ended_at: None,
+            },
+            &tinyiothub_core::agent_task::TaskWake {
+                task_id: "task_1".into(),
+                event_id: "create-task_1".into(),
+                signal_json: serde_json::json!({"workspace_id":"ws"}).to_string(),
+                dispatch_state: tinyiothub_core::agent_task::WakeDispatchState::Pending,
+                created_at: now,
+                dispatched_at: None,
+                resolved_at: None,
+            },
         )
-        .execute(&pool)
         .await
         .unwrap();
         let inner = Arc::new(tokio::sync::RwLock::new(
@@ -686,7 +707,7 @@ mod tests {
         ));
         let run_ctx = crate::domains::agent::host::tools::new_run_context_slot(inner.clone());
         let watch = watch_tools::WatchTool {
-            pool: pool.clone(),
+            db: db.clone(),
             workspace_id: "ws".into(),
             manager: ManagerSlot::default(),
             run_ctx: Some(run_ctx),
@@ -720,13 +741,35 @@ mod tests {
             .execute(&pool)
             .await
             .expect("thing");
-        sqlx::query(
-            "INSERT INTO agent_tasks
-                 (id, workspace_id, idempotency_key, objective, session_key, created_by,
-                  status, current_run_id, state_version, created_at, updated_at, ended_at)
-             VALUES ('task_1','ws','idem_unwatch','inspect','session_1','user_1','active',NULL,0,'2026-10-27T00:00:00Z','2026-10-27T00:00:00Z',NULL)",
+        let root = std::env::temp_dir().join(format!("tinyiothub-watch-tools-{}", uuid::Uuid::new_v4()));
+        let db =
+            Arc::new(tinyiothub_storage::Db::new(pool.clone()).with_workspace_store_root(root.join("data/agents")));
+        let now = chrono::Utc::now();
+        db.harness_create_task_with_wake(
+            &tinyiothub_core::agent_task::AgentTask {
+                id: "task_1".into(),
+                workspace_id: "ws".into(),
+                idempotency_key: "idem_unwatch".into(),
+                objective: "inspect".into(),
+                session_key: Some("session_1".into()),
+                created_by: "user_1".into(),
+                status: tinyiothub_core::agent_task::TaskStatus::Active,
+                current_run_id: None,
+                state_version: 0,
+                created_at: now,
+                updated_at: now,
+                ended_at: None,
+            },
+            &tinyiothub_core::agent_task::TaskWake {
+                task_id: "task_1".into(),
+                event_id: "create-task_1".into(),
+                signal_json: serde_json::json!({"workspace_id":"ws"}).to_string(),
+                dispatch_state: tinyiothub_core::agent_task::WakeDispatchState::Pending,
+                created_at: now,
+                dispatched_at: None,
+                resolved_at: None,
+            },
         )
-        .execute(&pool)
         .await
         .expect("task");
         let inner = Arc::new(tokio::sync::RwLock::new(
@@ -737,7 +780,7 @@ mod tests {
             },
         ));
         let watch = watch_tools::WatchTool {
-            pool: pool.clone(),
+            db: (*db).clone(),
             workspace_id: "ws".into(),
             manager: ManagerSlot::default(),
             run_ctx: Some(crate::domains::agent::host::tools::new_run_context_slot(inner)),
@@ -750,18 +793,8 @@ mod tests {
         let payload: serde_json::Value = serde_json::from_str(&created.output).expect("watch payload");
         let rule_id = payload["ruleId"].as_str().expect("rule id").to_string();
 
-        let db = Arc::new(tinyiothub_storage::Db::new(pool.clone()));
         let hub = Arc::new(crate::domains::agent::runtime::stream::RuntimeStreamHub::default());
-        let mut connection = hub
-            .connect(db.clone(), "ws", "task_1", None)
-            .await
-            .expect("runtime connection");
-        let Some(crate::domains::agent::runtime::stream::RuntimeFrame::Snapshot { snapshot, .. }) =
-            connection.next_frame().await
-        else {
-            panic!("expected initial watch snapshot");
-        };
-        assert_eq!(snapshot.watches.len(), 1);
+        let mut published = hub.subscribe("ws");
 
         let unwatch = watch_tools::UnwatchTool {
             pool: pool.clone(),
@@ -786,13 +819,10 @@ mod tests {
                 .iter()
                 .any(|event| event.event_id == format!("watch:{rule_id}:deleted"))
         );
-        let frame = tokio::time::timeout(std::time::Duration::from_millis(100), connection.next_frame())
+        let event = tokio::time::timeout(std::time::Duration::from_millis(100), published.recv())
             .await
             .expect("live unwatch deletion")
             .expect("open runtime connection");
-        let crate::domains::agent::runtime::stream::RuntimeFrame::Event { event, .. } = frame else {
-            panic!("expected exact live deletion event");
-        };
         assert_eq!(event.event_id, format!("watch:{rule_id}:deleted"));
     }
 

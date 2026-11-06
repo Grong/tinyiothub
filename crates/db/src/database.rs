@@ -14,8 +14,6 @@ pub struct Db {
     #[cfg(test)]
     pub(crate) harness_transition_test_hooks:
         Option<std::sync::Arc<crate::harness_effect::tests::HarnessTransitionTestHooks>>,
-    #[cfg(any(test, feature = "testing"))]
-    pub(crate) runtime_projection_probe: Option<std::sync::Arc<crate::runtime_event::RuntimeProjectionProbe>>,
 }
 
 impl Db {
@@ -29,8 +27,6 @@ impl Db {
             workspace_store_test_hooks: None,
             #[cfg(test)]
             harness_transition_test_hooks: None,
-            #[cfg(any(test, feature = "testing"))]
-            runtime_projection_probe: None,
         }
     }
 
@@ -39,16 +35,6 @@ impl Db {
     pub fn with_workspace_store_root(mut self, root: std::path::PathBuf) -> Self {
         self.workspace_store_root = root;
         self
-    }
-
-    #[cfg(any(test, feature = "testing"))]
-    pub fn with_runtime_projection_probe(
-        &self,
-        probe: std::sync::Arc<crate::runtime_event::RuntimeProjectionProbe>,
-    ) -> Self {
-        let mut db = self.clone();
-        db.runtime_projection_probe = Some(probe);
-        db
     }
 
     /// One-step cloud entry: build the pool (FK pragma on), run embedded
