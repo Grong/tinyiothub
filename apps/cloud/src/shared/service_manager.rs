@@ -741,6 +741,19 @@ impl ServiceManager {
             for ws_id in &ws_ids {
                 thing_agent_manager.start(ws_id);
             }
+            // Plan 2：schedule 唤醒由 TriggerRouter 接管（legacy timer/heartbeat
+            // 默认不再挂载）；句柄进 service_handles 随关停排空。
+            let wake_runner = Arc::new(crate::domains::agent::session::WakeRunner::from_runtime(
+                app_state.db.clone(),
+                app_state.agent_pool.clone(),
+                &app_state.session_runtime,
+            ));
+            let trigger_router = Arc::new(crate::domains::agent::session::TriggerRouter::new(
+                app_state.db.clone(),
+                wake_runner,
+            ));
+            let trigger_handle = trigger_router.clone().start();
+            self.service_handles.write().await.push(trigger_handle);
             info!("✅ AI Orchestrator started ({} workspaces)", ws_ids.len());
 
             // Boot race 恢复：AI 接线完成前创建的报警（publisher 未接线时

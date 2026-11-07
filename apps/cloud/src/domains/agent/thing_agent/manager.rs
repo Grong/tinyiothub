@@ -107,6 +107,9 @@ pub struct ThingAgentManagerConfig {
     /// 心跳巡检默认间隔（T6；bootstrap 期自 HeartbeatConfig.interval_minutes
     /// 来，T13 接线；每工作区覆盖走 heartbeat intervals 共享表）。
     pub heartbeat_default_interval: Duration,
+    /// Plan 2 起 schedule 唤醒由 `TriggerRouter` 接管。为 `true` 时仍挂载
+    /// legacy Timer/Heartbeat trigger（仅用于回归对比，生产默认 `false`）。
+    pub legacy_wake_triggers: bool,
 }
 
 impl Default for ThingAgentManagerConfig {
@@ -115,6 +118,7 @@ impl Default for ThingAgentManagerConfig {
             timer_interval: Duration::from_secs(15 * 60),
             min_wake_level: 3,
             heartbeat_default_interval: Duration::from_secs(15 * 60),
+            legacy_wake_triggers: false,
         }
     }
 }
@@ -455,41 +459,48 @@ impl ThingAgentManager {
             }
         });
 
-        let timer = TimerTrigger {
-            workspace_id: ws.clone(),
-            interval: self.config.timer_interval,
-            policy_repo: Arc::clone(&self.deps.policy_repo),
-        };
-        let timer_tx = tx.clone();
-        let timer_ws = ws.clone();
-        let timer_task = tokio::spawn(async move {
-            if let Err(e) = timer.run(timer_tx).await {
-                tracing::warn!(workspace_id = %timer_ws, error = %e, "timer trigger exited with error");
-            }
-        });
+        let mut tasks = vec![forward, event_task];
 
-        // Task 6：心跳触发器挂载（T5）。空任务/全暂停不 tick；governor 暂停
-        // 抑制；reload_notify 到达立即 tick（行为保持清单第 1/3 行）。
-        // T13：reload_notify 为每工作区独立实例（见 heartbeat_reload_notify）。
-        let heartbeat = HeartbeatTrigger {
-            workspace_id: workspace_id.to_string(),
-            default_interval: self.config.heartbeat_default_interval,
-            intervals: Arc::clone(&self.deps.heartbeat_intervals),
-            enabled: Arc::clone(&self.deps.heartbeat_enabled),
-            tasks_source: Arc::clone(&self.deps.heartbeat_tasks_map),
-            policy_repo: Arc::clone(&self.deps.policy_repo),
-            governor: self.deps.governor.clone(),
-            reload_notify: self.heartbeat_reload_notify(workspace_id),
-        };
-        let heartbeat_ws = workspace_id.to_string();
-        let heartbeat_tx = tx.clone();
-        let heartbeat_task = tokio::spawn(async move {
-            if let Err(e) = heartbeat.run(heartbeat_tx).await {
-                tracing::warn!(workspace_id = %heartbeat_ws, error = %e, "heartbeat trigger exited with error");
-            }
-        });
+        // Plan 2：schedule 唤醒由 `TriggerRouter` 接管，默认不挂 legacy
+        // Timer/Heartbeat（避免双重自治跑）；仅显式 opt-in 用于回归对比。
+        if self.config.legacy_wake_triggers {
+            let timer = TimerTrigger {
+                workspace_id: ws.clone(),
+                interval: self.config.timer_interval,
+                policy_repo: Arc::clone(&self.deps.policy_repo),
+            };
+            let timer_tx = tx.clone();
+            let timer_ws = ws.clone();
+            let timer_task = tokio::spawn(async move {
+                if let Err(e) = timer.run(timer_tx).await {
+                    tracing::warn!(workspace_id = %timer_ws, error = %e, "timer trigger exited with error");
+                }
+            });
 
-        let mut tasks = vec![forward, event_task, timer_task, heartbeat_task];
+            // Task 6：心跳触发器挂载（T5）。空任务/全暂停不 tick；governor 暂停
+            // 抑制；reload_notify 到达立即 tick（行为保持清单第 1/3 行）。
+            // T13：reload_notify 为每工作区独立实例（见 heartbeat_reload_notify）。
+            let heartbeat = HeartbeatTrigger {
+                workspace_id: workspace_id.to_string(),
+                default_interval: self.config.heartbeat_default_interval,
+                intervals: Arc::clone(&self.deps.heartbeat_intervals),
+                enabled: Arc::clone(&self.deps.heartbeat_enabled),
+                tasks_source: Arc::clone(&self.deps.heartbeat_tasks_map),
+                policy_repo: Arc::clone(&self.deps.policy_repo),
+                governor: self.deps.governor.clone(),
+                reload_notify: self.heartbeat_reload_notify(workspace_id),
+            };
+            let heartbeat_ws = workspace_id.to_string();
+            let heartbeat_tx = tx.clone();
+            let heartbeat_task = tokio::spawn(async move {
+                if let Err(e) = heartbeat.run(heartbeat_tx).await {
+                    tracing::warn!(workspace_id = %heartbeat_ws, error = %e, "heartbeat trigger exited with error");
+                }
+            });
+
+            tasks.push(timer_task);
+            tasks.push(heartbeat_task);
+        }
 
         // E1 watch 值守（Task 8）：deps 已接线则构建本区 engine 事件循环
         // （启动重织 + EventBus 订阅 + 超时清扫）并注册 WatchTrigger 进
@@ -564,6 +575,14 @@ impl ThingAgentManager {
 
     pub fn workspace_count(&self) -> usize {
         self.workspaces.len()
+    }
+
+    #[cfg(test)]
+    fn workspace_task_count_for_test(&self, workspace_id: &str) -> usize {
+        self.workspaces
+            .get(workspace_id)
+            .map(|entry| entry.value().tasks.len())
+            .unwrap_or(0)
     }
 
     /// 进行中 run 注册表（T3）的共享句柄——克隆零成本（内部 Arc 共享同一
@@ -1399,11 +1418,33 @@ pub(crate) mod tests {
         pub(crate) heartbeat: HeartbeatDeps,
     }
 
+    fn stub_config() -> ThingAgentManagerConfig {
+        ThingAgentManagerConfig {
+            timer_interval: Duration::from_secs(24 * 3600),
+            min_wake_level: 3,
+            heartbeat_default_interval: Duration::from_secs(24 * 3600),
+            legacy_wake_triggers: false,
+        }
+    }
+
     /// Manager with all-stub deps and a 24h timer interval. Task 4：run 记录
     /// 走内存 registry + 事件总线，探针订阅同一总线（先 subscribe 再 start，
     /// 不丢事件）。E1 Task 7（合并窗已废）：timer 首 tick 即醒即跑成一条
     /// `timer:{ws}` run——断言一律按 dedup_key 过滤，不吃总数。
     pub(crate) async fn stub_manager() -> StubManagerParts {
+        stub_manager_with_config(stub_config()).await
+    }
+
+    /// Plan 2：legacy timer/heartbeat trigger opt-in 的夹具（回归对比用）。
+    pub(crate) async fn stub_manager_with_legacy_wake_triggers() -> StubManagerParts {
+        stub_manager_with_config(ThingAgentManagerConfig {
+            legacy_wake_triggers: true,
+            ..stub_config()
+        })
+        .await
+    }
+
+    pub(crate) async fn stub_manager_with_config(config: ThingAgentManagerConfig) -> StubManagerParts {
         let host = Arc::new(StubHost::new());
         let registry = RunRegistry::new();
         let events = Arc::new(AgentEventBus::new(64));
@@ -1421,11 +1462,7 @@ pub(crate) mod tests {
             registry,
             events,
             Arc::new(Runner::new()),
-            ThingAgentManagerConfig {
-                timer_interval: Duration::from_secs(24 * 3600),
-                min_wake_level: 3,
-                heartbeat_default_interval: Duration::from_secs(24 * 3600),
-            },
+            config,
             Arc::new(crate::domains::agent::thing_agent::traits::NoopTicketResolutions),
             heartbeat.clone(),
         ));
@@ -1594,11 +1631,35 @@ pub(crate) mod tests {
 
     // ── T13 bootstrap 装配（T15 起唯一心跳路径）───────────────
 
-    /// T13：start 挂载 4 个任务——forward + thing-event trigger + timer
-    /// trigger + heartbeat trigger（统一循环接管心跳依赖的结构断言）。
+    /// Plan 2：默认配置只挂载 forward + event 两个任务——schedule 唤醒由
+    /// `TriggerRouter` 接管，避免与 legacy timer/heartbeat 双重自治跑。
+    #[tokio::test(start_paused = true)]
+    async fn default_config_does_not_mount_legacy_wake_triggers() {
+        let parts = stub_manager().await;
+        parts.manager.start("ws-default");
+        let tasks = parts.manager.workspace_task_count_for_test("ws-default");
+        assert_eq!(tasks, 2, "forward + event only; schedule wakes belong to TriggerRouter");
+    }
+
+    /// Plan 2：legacy timer/heartbeat trigger 仅可显式 opt-in（回归对比）。
+    #[tokio::test(start_paused = true)]
+    async fn legacy_wake_triggers_can_be_opted_in() {
+        let parts = stub_manager_with_config(ThingAgentManagerConfig {
+            legacy_wake_triggers: true,
+            ..Default::default()
+        })
+        .await;
+        parts.manager.start("ws-legacy");
+        let tasks = parts.manager.workspace_task_count_for_test("ws-legacy");
+        assert_eq!(tasks, 4, "forward + event + timer + heartbeat");
+    }
+
+    /// T13：显式 opt-in 时 start 仍挂载 4 个任务——forward + thing-event
+    /// trigger + timer trigger + heartbeat trigger（统一循环接管心跳依赖的
+    /// 结构断言）。
     #[tokio::test(start_paused = true)]
     async fn start_mounts_heartbeat_trigger_alongside_timer_and_event() {
-        let parts = stub_manager().await;
+        let parts = stub_manager_with_legacy_wake_triggers().await;
         parts.manager.start(WS);
         let lp = parts.manager.workspaces.get(WS).expect("loop running");
         assert_eq!(
@@ -1682,7 +1743,8 @@ pub(crate) mod tests {
     /// （对齐 HeartbeatConfig::default enabled:true）。
     #[tokio::test(start_paused = true)]
     async fn heartbeat_enabled_write_through_gates_unified_tick() {
-        let parts = stub_manager().await;
+        // Plan 2：心跳 trigger 是 legacy opt-in（默认由 TriggerRouter 接管）。
+        let parts = stub_manager_with_legacy_wake_triggers().await;
         // 缺省 true（表无条目）。
         assert!(parts.manager.heartbeat_enabled(WS), "缺省须为 true");
 
@@ -1751,7 +1813,8 @@ pub(crate) mod tests {
     // stop(): triggers aborted, queued signals drained, later events ignored.
     #[tokio::test(start_paused = true)]
     async fn stop_halts_loop() {
-        let parts = stub_manager().await;
+        // Plan 2：timer 首 tick 是 legacy opt-in；本用例借它做排空屏障。
+        let parts = stub_manager_with_legacy_wake_triggers().await;
         parts.manager.start(WS);
         wait_subscribed(&parts.host).await;
 
@@ -1974,7 +2037,8 @@ pub(crate) mod tests {
     // build_heartbeat_prompt 的内容)必须进 LLM 实际收到的 prompt。
     #[tokio::test(start_paused = true)]
     async fn heartbeat_prompt_contains_tasks_and_trust() {
-        let parts = stub_manager().await;
+        // Plan 2：心跳 trigger 是 legacy opt-in（默认由 TriggerRouter 接管）。
+        let parts = stub_manager_with_legacy_wake_triggers().await;
         parts.heartbeat.tasks.insert(
             WS.to_string(),
             vec![tinyiothub_core::heartbeat::HeartbeatTask {
@@ -2053,6 +2117,7 @@ pub(crate) mod tests {
                 timer_interval: Duration::from_secs(24 * 3600),
                 min_wake_level: 3,
                 heartbeat_default_interval: Duration::from_secs(24 * 3600),
+                ..Default::default()
             },
             Arc::new(crate::domains::agent::thing_agent::traits::NoopTicketResolutions),
             heartbeat,
@@ -2227,6 +2292,7 @@ pub(crate) mod tests {
                 timer_interval: Duration::from_secs(24 * 3600),
                 min_wake_level: 3,
                 heartbeat_default_interval: Duration::from_secs(24 * 3600),
+                ..Default::default()
             },
             Arc::new(crate::domains::agent::thing_agent::traits::NoopTicketResolutions),
             heartbeat,
@@ -2510,6 +2576,7 @@ pub(crate) mod tests {
                 timer_interval: Duration::from_secs(24 * 3600),
                 min_wake_level: 3,
                 heartbeat_default_interval: Duration::from_secs(24 * 3600),
+                ..Default::default()
             },
             Arc::new(crate::domains::agent::thing_agent::traits::NoopTicketResolutions),
             HeartbeatDeps::default(),
@@ -2939,6 +3006,7 @@ pub(crate) mod tests {
                 timer_interval: Duration::from_secs(24 * 3600),
                 min_wake_level: 3,
                 heartbeat_default_interval: Duration::from_secs(24 * 3600),
+                ..Default::default()
             },
             Arc::new(crate::domains::agent::thing_agent::traits::NoopTicketResolutions),
             HeartbeatDeps::default(),
@@ -3043,8 +3111,13 @@ pub(crate) mod tests {
         parts.manager.set_watch_deps(deps);
         parts.manager.start(WS);
 
-        // engine + trigger 两个任务随 deps 挂载（forward+event+timer+heartbeat 之上）。
-        assert_eq!(parts.manager.workspaces.get(WS).unwrap().tasks.len(), 6);
+        // engine + trigger 两个任务随 deps 挂载（默认 forward+event 之上；
+        // legacy timer/heartbeat 已由 TriggerRouter 接管，不再挂载）。
+        assert_eq!(
+            parts.manager.workspace_task_count_for_test(WS),
+            4,
+            "forward + event + engine + watch"
+        );
         assert!(parts.manager.watch_command_sink(WS).is_some());
 
         // 未越限：不命中（only-new-data 语义之外的一般路径）。
@@ -3097,7 +3170,7 @@ pub(crate) mod tests {
     async fn start_without_watch_deps_mounts_no_watch_tasks() {
         let parts = stub_manager().await;
         parts.manager.start(WS);
-        assert_eq!(parts.manager.workspaces.get(WS).unwrap().tasks.len(), 4);
+        assert_eq!(parts.manager.workspace_task_count_for_test(WS), 2);
         assert!(parts.manager.watch_command_sink(WS).is_none());
     }
 

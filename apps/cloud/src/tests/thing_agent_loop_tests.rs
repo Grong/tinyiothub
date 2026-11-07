@@ -389,9 +389,11 @@ async fn build_fixture(
         runner,
         ThingAgentManagerConfig {
             // 定时巡检不干扰断言（timer 首 tick 即醒即跑成 timer:{ws} run；
-            // 断言按 dedup_key 过滤）。
+            // 断言按 dedup_key 过滤）。Plan 2 起 legacy timer 默认不挂载，
+            // 本夹具显式 opt-in 以覆盖 policy 门控的 timer 唤醒语义。
             timer_interval,
             min_wake_level: 3,
+            legacy_wake_triggers: true,
             ..Default::default()
         },
         Arc::new(crate::domains::agent::thing_agent::traits::NoopTicketResolutions),
