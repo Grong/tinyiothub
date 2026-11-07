@@ -251,4 +251,105 @@ mod tests {
         router.shutdown();
         assert!(router.shutdown.is_cancelled());
     }
+
+    #[tokio::test]
+    async fn tick_runs_wake_end_to_end() {
+        use crate::domains::agent::pool::AgentPool;
+        use crate::domains::agent::session::context::TurnContextRegistry;
+        use crate::domains::agent::session::events::test_support::RecordingSink;
+        use crate::domains::agent::session::runner::SessionRunner;
+        use crate::domains::agent::session::todos::TodoStore;
+        use crate::domains::agent::session::wake::WakeRunner;
+        use tinyiothub_agent::port::attribution::{Attributable, ModelProviderKind, ProviderKind, Role};
+        use tinyiothub_agent::port::memory::NoopMemory;
+        use tinyiothub_agent::port::observer::NoopObserver;
+        use tinyiothub_agent::port::provider::{ChatRequest, ChatResponse, ModelProvider};
+
+        struct ScriptedProvider;
+
+        #[async_trait::async_trait]
+        impl ModelProvider for ScriptedProvider {
+            async fn chat(
+                &self,
+                _request: ChatRequest<'_>,
+                _model: &str,
+                _temperature: Option<f64>,
+            ) -> anyhow::Result<ChatResponse> {
+                Ok(ChatResponse {
+                    text: Some("ok".into()),
+                    tool_calls: vec![],
+                    usage: None,
+                    reasoning_content: None,
+                })
+            }
+        }
+
+        impl Attributable for ScriptedProvider {
+            fn role(&self) -> Role {
+                Role::Provider(ProviderKind::Model(ModelProviderKind::Custom))
+            }
+
+            fn alias(&self) -> &str {
+                "ScriptedProvider"
+            }
+        }
+
+        let db = Arc::new(test_db().await);
+        let now = ts(1_800_000_000);
+        db.ensure_assistant_schedule("ws-e2e", "__assistant__ws-e2e", now)
+            .await
+            .unwrap();
+        let agent_pool = Arc::new(
+            AgentPool::new(
+                &tinyiothub_core::config::AgentSettings::default(),
+                Arc::new(NoopMemory),
+                Arc::new(NoopObserver),
+                Arc::new(|| Ok(Box::new(ScriptedProvider))),
+            )
+            .unwrap(),
+        );
+        let sink = Arc::new(RecordingSink::default());
+        let contexts = Arc::new(TurnContextRegistry::default());
+        let runner = Arc::new(SessionRunner::new(sink.clone(), contexts));
+        let wake = Arc::new(WakeRunner::from_parts(
+            db.clone(),
+            agent_pool,
+            sink.clone(),
+            Arc::new(TodoStore::default()),
+            runner,
+        ));
+        let router = Arc::new(TriggerRouter::new(db.clone(), wake));
+
+        for handle in router.tick(now).await {
+            handle.await.unwrap();
+        }
+
+        let events = sink.events.lock().await;
+        let types: Vec<&str> = events.iter().map(|event| event.event_type.as_str()).collect();
+        assert_eq!(
+            types,
+            vec![
+                "trigger.received",
+                "wake.dispatched",
+                "session.started",
+                "turn.started",
+                "message.created",
+                "turn.completed",
+                "session.ended",
+            ]
+        );
+        let session_key = events[2].payload_json["sessionId"]
+            .as_str()
+            .expect("session.started must carry sessionId")
+            .to_string();
+        assert_eq!(events[2].payload_json["kind"], "scheduled");
+        assert_eq!(events.last().unwrap().payload_json["outcome"], "completed");
+        drop(events);
+        let session = db.get_session(&session_key).await.unwrap().unwrap();
+        assert_eq!(session.kind, "scheduled");
+        assert_eq!(session.status, "ended");
+        let schedule = db.get_assistant_schedule("ws-e2e").await.unwrap().unwrap();
+        assert_eq!(schedule.next_wake_at, Some(now + chrono::Duration::seconds(300)));
+        assert_eq!(schedule.last_outcome.as_deref(), Some("completed"));
+    }
 }
