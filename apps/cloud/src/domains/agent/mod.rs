@@ -19,6 +19,7 @@ pub mod orchestrator;
 pub mod pool;
 pub mod prompt;
 pub mod runtime;
+pub mod session;
 pub mod snapshot;
 pub mod thing_agent;
 pub mod tools;
