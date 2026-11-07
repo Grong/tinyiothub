@@ -102,7 +102,7 @@ impl TriggerRouter {
     }
 
     async fn dispatch(self: Arc<Self>, schedule: AssistantSchedule, now: DateTime<Utc>) {
-        let report = self.executor.execute(schedule.clone()).await;
+        let report = self.executor.execute(schedule.clone(), self.shutdown.clone()).await;
         let next_wake_at = now + ChronoDuration::seconds(i64::from(schedule.interval_seconds));
         if let Err(error) = self
             .db
@@ -150,7 +150,7 @@ mod tests {
 
     #[async_trait::async_trait]
     impl WakeExecutor for RecordingExecutor {
-        async fn execute(&self, schedule: AssistantSchedule) -> WakeReport {
+        async fn execute(&self, schedule: AssistantSchedule, _cancel: CancellationToken) -> WakeReport {
             self.calls.fetch_add(1, Ordering::SeqCst);
             self.workspaces.lock().await.push(schedule.workspace_id);
             WakeReport {
@@ -168,13 +168,25 @@ mod tests {
 
     #[async_trait::async_trait]
     impl WakeExecutor for BlockingExecutor {
-        async fn execute(&self, _schedule: AssistantSchedule) -> WakeReport {
+        async fn execute(&self, _schedule: AssistantSchedule, _cancel: CancellationToken) -> WakeReport {
             self.calls.fetch_add(1, Ordering::SeqCst);
             self.started.notify_one();
             self.release.notified().await;
             WakeReport {
                 session_key: "s".into(),
                 outcome: crate::domains::agent::session::wake::WakeOutcome::Completed,
+            }
+        }
+    }
+
+    struct SkippedExecutor;
+
+    #[async_trait::async_trait]
+    impl WakeExecutor for SkippedExecutor {
+        async fn execute(&self, _schedule: AssistantSchedule, _cancel: CancellationToken) -> WakeReport {
+            WakeReport {
+                session_key: String::new(),
+                outcome: crate::domains::agent::session::wake::WakeOutcome::Skipped,
             }
         }
     }
@@ -213,6 +225,24 @@ mod tests {
 
         let handles = router.tick(now + chrono::Duration::seconds(299)).await;
         assert!(handles.is_empty(), "not due yet");
+    }
+
+    #[tokio::test]
+    async fn skipped_wake_still_advances_schedule() {
+        let db = Arc::new(test_db().await);
+        let now = ts(1_800_000_000);
+        db.ensure_assistant_schedule("ws-skip", "__assistant__ws-skip", now)
+            .await
+            .unwrap();
+        let router = Arc::new(TriggerRouter::new(db.clone(), Arc::new(SkippedExecutor)));
+
+        for handle in router.tick(now).await {
+            handle.await.unwrap();
+        }
+
+        let row = db.get_assistant_schedule("ws-skip").await.unwrap().unwrap();
+        assert_eq!(row.next_wake_at, Some(now + chrono::Duration::seconds(300)));
+        assert_eq!(row.last_outcome.as_deref(), Some("skipped"));
     }
 
     #[tokio::test]

@@ -5,6 +5,7 @@
 use std::sync::Arc;
 
 use serde_json::json;
+use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
 use tinyiothub_agent::config::AgentRuntimeConfig;
@@ -86,7 +87,7 @@ pub struct WakeReport {
 
 #[async_trait::async_trait]
 pub trait WakeExecutor: Send + Sync {
-    async fn execute(&self, schedule: AssistantSchedule) -> WakeReport;
+    async fn execute(&self, schedule: AssistantSchedule, cancel: CancellationToken) -> WakeReport;
 }
 
 pub struct WakeRunner {
@@ -128,8 +129,22 @@ impl WakeRunner {
         }
     }
 
-    pub async fn run(&self, schedule: &AssistantSchedule) -> WakeReport {
+    pub async fn run(&self, schedule: &AssistantSchedule, cancel: CancellationToken) -> WakeReport {
         if !schedule.enabled {
+            return WakeReport {
+                session_key: String::new(),
+                outcome: WakeOutcome::Skipped,
+            };
+        }
+        let autonomy_off = match self.db.load_autonomy_policy(&schedule.workspace_id).await {
+            Ok(Some(policy)) => policy.mode == tinyiothub_core::policy::AutonomyMode::Off,
+            Ok(None) => false,
+            Err(error) => {
+                tracing::warn!(%error, workspace_id = %schedule.workspace_id, "wake: load autonomy policy failed");
+                false
+            }
+        };
+        if autonomy_off {
             return WakeReport {
                 session_key: String::new(),
                 outcome: WakeOutcome::Skipped,
@@ -165,7 +180,7 @@ impl WakeRunner {
                 };
             }
         };
-        self.run_with_agent(schedule, agent, &message).await
+        self.run_with_agent(schedule, agent, &message, cancel).await
     }
 
     pub(crate) async fn run_with_agent(
@@ -173,6 +188,7 @@ impl WakeRunner {
         schedule: &AssistantSchedule,
         agent: AgentLoopHandle,
         message: &str,
+        cancel: CancellationToken,
     ) -> WakeReport {
         let session_key = format!(
             "agent:{}:{}/{}",
@@ -217,15 +233,21 @@ impl WakeRunner {
         )
         .await;
 
-        let outcome = {
+        let turn = {
             let guard = agent.lock().await;
             let _ = guard.clear_history().await;
-            let turn = self
-                .runner
-                .run_turn_bounded(&*guard, &context, message, None, SESSION_TURN_TIMEOUT)
-                .await;
+            let turn = tokio::select! {
+                _ = cancel.cancelled() => None,
+                outcome = self
+                    .runner
+                    .run_turn_bounded(&*guard, &context, message, None, SESSION_TURN_TIMEOUT) => Some(outcome),
+            };
             drop(guard);
-            outcome_with_todos(turn, &self.todos.get(&session_key))
+            turn
+        };
+        let outcome = match turn {
+            Some(turn) => outcome_with_todos(turn, &self.todos.get(&session_key)),
+            None => WakeOutcome::Cancelled,
         };
 
         self.emit(
@@ -253,8 +275,8 @@ impl WakeRunner {
 
 #[async_trait::async_trait]
 impl WakeExecutor for WakeRunner {
-    async fn execute(&self, schedule: AssistantSchedule) -> WakeReport {
-        self.run(&schedule).await
+    async fn execute(&self, schedule: AssistantSchedule, cancel: CancellationToken) -> WakeReport {
+        self.run(&schedule, cancel).await
     }
 }
 
@@ -342,6 +364,12 @@ mod tests {
     }
 
     async fn fixture() -> (WakeRunner, Arc<AgentPool>, Arc<RecordingSink>) {
+        fixture_with(Arc::new(|| Ok(Box::new(ScriptedProvider)))).await
+    }
+
+    async fn fixture_with(
+        provider_factory: tinyiothub_agent::provider::ProviderFactory,
+    ) -> (WakeRunner, Arc<AgentPool>, Arc<RecordingSink>) {
         let pool = sqlx::SqlitePool::connect("sqlite::memory:").await.unwrap();
         tinyiothub_storage::test_helpers::run_all_migrations(&pool)
             .await
@@ -352,7 +380,7 @@ mod tests {
                 &tinyiothub_core::config::AgentSettings::default(),
                 Arc::new(NoopMemory),
                 Arc::new(NoopObserver),
-                Arc::new(|| Ok(Box::new(ScriptedProvider))),
+                provider_factory,
             )
             .unwrap(),
         );
@@ -421,7 +449,9 @@ mod tests {
                 true,
             )
             .unwrap();
-        let report = wake.run_with_agent(&schedule, agent, "按默认职责巡检").await;
+        let report = wake
+            .run_with_agent(&schedule, agent, "按默认职责巡检", CancellationToken::new())
+            .await;
         assert_eq!(report.outcome, WakeOutcome::Completed);
         let parsed = tinyiothub_agent::session::SessionKey::parse(&report.session_key)
             .expect("wake session key must be a valid agent:<ws>:<assistant>/<session> key");
@@ -445,6 +475,104 @@ mod tests {
         assert_eq!(events.last().unwrap().payload_json["outcome"], "completed");
         let session = wake.db.get_session(&report.session_key).await.unwrap().unwrap();
         assert_eq!(session.kind, "scheduled");
+        assert_eq!(session.status, "ended");
+    }
+
+    #[tokio::test]
+    async fn autonomy_off_skips_wake() {
+        let (wake, agent_pool, sink) = fixture().await;
+        let policy = tinyiothub_core::policy::AutonomyPolicy {
+            mode: tinyiothub_core::policy::AutonomyMode::Off,
+            allowed_actions: vec![],
+            denied_actions: vec![],
+            max_actions_per_run: 0,
+            max_actions_per_hour: 0,
+        };
+        wake.db.save_autonomy_policy("ws", &policy, "test").await.unwrap();
+        let report = wake.run(&schedule(""), CancellationToken::new()).await;
+        assert_eq!(report.outcome, WakeOutcome::Skipped);
+        assert!(sink.events.lock().await.is_empty());
+        // schedule() uses assistant_agent_id("ws"); the wake agent must not have been created
+        assert_eq!(agent_pool.pool_size(), 0);
+    }
+
+    struct SleepingProvider;
+
+    #[async_trait::async_trait]
+    impl ModelProvider for SleepingProvider {
+        async fn chat(
+            &self,
+            _request: ChatRequest<'_>,
+            _model: &str,
+            _temperature: Option<f64>,
+        ) -> anyhow::Result<ChatResponse> {
+            tokio::time::sleep(std::time::Duration::from_secs(60)).await;
+            Ok(ChatResponse {
+                text: Some("too late".into()),
+                tool_calls: vec![],
+                usage: None,
+                reasoning_content: None,
+            })
+        }
+    }
+
+    impl Attributable for SleepingProvider {
+        fn role(&self) -> Role {
+            Role::Provider(ProviderKind::Model(ModelProviderKind::Custom))
+        }
+
+        fn alias(&self) -> &str {
+            "SleepingProvider"
+        }
+    }
+
+    #[tokio::test]
+    async fn cancel_during_wake_ends_session_as_cancelled() {
+        let (wake, _agent_pool, sink) = fixture_with(Arc::new(|| Ok(Box::new(SleepingProvider)))).await;
+        let wake = Arc::new(wake);
+        let cancel = CancellationToken::new();
+        let handle = {
+            let wake = wake.clone();
+            let cancel = cancel.clone();
+            tokio::spawn(async move { wake.run(&schedule(""), cancel).await })
+        };
+
+        // Wait until the turn has actually started before cancelling.
+        let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(5);
+        loop {
+            let started = sink
+                .events
+                .lock()
+                .await
+                .iter()
+                .any(|event| event.event_type == "turn.started");
+            if started {
+                break;
+            }
+            assert!(
+                tokio::time::Instant::now() < deadline,
+                "turn did not start before the deadline"
+            );
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+        cancel.cancel();
+
+        let report = tokio::time::timeout(std::time::Duration::from_secs(5), handle)
+            .await
+            .expect("cancelled wake must finish promptly")
+            .unwrap();
+        assert_eq!(report.outcome, WakeOutcome::Cancelled);
+
+        let events = sink.events.lock().await;
+        assert_eq!(
+            events.last().unwrap().event_type,
+            "session.ended",
+            "cancelled wake must still emit session.ended"
+        );
+        assert_eq!(events.last().unwrap().payload_json["outcome"], "cancelled");
+        drop(events);
+
+        let session = wake.db.get_session(&report.session_key).await.unwrap().unwrap();
         assert_eq!(session.status, "ended");
     }
 }
