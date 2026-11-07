@@ -1144,7 +1144,7 @@ mod tests {
 
 - [ ] **Step 2: 运行测试，确认失败**
 
-Run: `cargo test -p tinyiothub-cloud session::todos::tests session::tools::todo_write::tests -v`
+Run: `cargo test -p tinyiothub-cloud session::todos::tests -v && cargo test -p tinyiothub-cloud session::tools::todo_write::tests -v`
 
 Expected: FAIL，缺少模块/类型。
 
@@ -1526,7 +1526,7 @@ mod tests {
 
 - [ ] **Step 2: 运行测试，确认失败**
 
-Run: `cargo test -p tinyiothub-cloud session::questions::tests session::tools::ask_user::tests -v`
+Run: `cargo test -p tinyiothub-cloud session::questions::tests -v && cargo test -p tinyiothub-cloud session::tools::ask_user::tests -v`
 
 Expected: FAIL，缺少 `QuestionBroker` / `AskUserTool`。
 
@@ -2050,7 +2050,7 @@ mod tests {
 
 - [ ] **Step 2: 运行测试，确认失败**
 
-Run: `cargo test -p tinyiothub-cloud session::subagent::tests session::tools::spawn_subagent::tests -v`
+Run: `cargo test -p tinyiothub-cloud session::subagent::tests -v && cargo test -p tinyiothub-cloud session::tools::spawn_subagent::tests -v`
 
 Expected: FAIL，缺少 `SubagentSlot` / `SpawnSubagentTool`。
 
