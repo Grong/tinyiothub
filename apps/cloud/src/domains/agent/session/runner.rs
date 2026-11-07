@@ -176,18 +176,16 @@ impl SessionRunner {
             Err(error) => {
                 let cancelled = cancel.as_ref().is_some_and(|token| token.is_cancelled());
                 let error = error.to_string();
-                self.emit(
-                    context,
-                    "turn.completed",
-                    json!({
-                        "turnId": &context.turn_id,
-                        "outcome": if cancelled { "cancelled" } else { "failed" },
-                        "error": &error,
-                        "toolCalls": tool_calls,
-                        "usage": &usage
-                    }),
-                )
-                .await;
+                let mut payload = json!({
+                    "turnId": &context.turn_id,
+                    "outcome": if cancelled { "cancelled" } else { "failed" },
+                    "toolCalls": tool_calls,
+                    "usage": &usage
+                });
+                if !cancelled {
+                    payload["error"] = json!(&error);
+                }
+                self.emit(context, "turn.completed", payload).await;
                 if cancelled {
                     TurnOutcome::Cancelled
                 } else {
@@ -262,6 +260,80 @@ mod tests {
         }
     }
 
+    /// Loop that emits a fixed script of events, then returns a fixed result.
+    struct ScriptedLoop {
+        events: Vec<TurnEvent>,
+        result: Result<String, String>,
+    }
+
+    impl ScriptedLoop {
+        fn completed(events: Vec<TurnEvent>) -> Self {
+            Self {
+                events,
+                result: Ok("done".into()),
+            }
+        }
+
+        fn failed(error: &str) -> Self {
+            Self {
+                events: Vec::new(),
+                result: Err(error.to_string()),
+            }
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl AgentLoop for ScriptedLoop {
+        async fn turn_streamed(
+            &self,
+            _message: &str,
+            tx: tokio::sync::mpsc::Sender<TurnEvent>,
+            _cancel: Option<CancellationToken>,
+        ) -> anyhow::Result<String> {
+            for event in &self.events {
+                tx.send(event.clone()).await.unwrap();
+            }
+            match &self.result {
+                Ok(text) => Ok(text.clone()),
+                Err(error) => Err(anyhow::anyhow!(error.clone())),
+            }
+        }
+
+        async fn run_single(&self, _message: &str) -> anyhow::Result<String> {
+            unimplemented!()
+        }
+
+        async fn clear_history(&self) {}
+
+        async fn seed_history(&self, _messages: &[ChatMessage]) -> anyhow::Result<()> {
+            Ok(())
+        }
+    }
+
+    fn ctx() -> TurnContext {
+        TurnContext::new(
+            "ws".into(),
+            "agent_main".into(),
+            "agent:ws:agent_main/s1".into(),
+            "run1".into(),
+            0,
+        )
+    }
+
+    fn runner_and_sink() -> (SessionRunner, Arc<RecordingSink>) {
+        let sink = Arc::new(RecordingSink::default());
+        let runner = SessionRunner::new(sink.clone(), Arc::new(TurnContextRegistry::default()));
+        (runner, sink)
+    }
+
+    fn completed_payload(events: &[tinyiothub_core::harness::HarnessEventInput]) -> &serde_json::Value {
+        let event = events
+            .iter()
+            .find(|event| event.event_type == "turn.completed")
+            .expect("turn.completed emitted");
+        &event.payload_json
+    }
+
     #[derive(Default)]
     struct RecordingObserver {
         events: Mutex<Vec<TurnEvent>>,
@@ -314,5 +386,90 @@ mod tests {
         assert_eq!(events[4].payload_json["outcome"], "completed");
         assert_eq!(observer.events.lock().await.len(), 3);
         assert!(contexts.get("agent_main").is_none(), "guard clears turn context");
+    }
+
+    #[tokio::test]
+    async fn usage_is_accumulated_into_turn_completed() {
+        let (runner, sink) = runner_and_sink();
+        let agent = ScriptedLoop::completed(vec![
+            TurnEvent::Usage {
+                input_tokens: Some(10),
+                cached_input_tokens: Some(2),
+                output_tokens: Some(5),
+                cost_usd: Some(0.001),
+            },
+            TurnEvent::Usage {
+                input_tokens: Some(3),
+                cached_input_tokens: None,
+                output_tokens: Some(1),
+                cost_usd: None,
+            },
+        ]);
+
+        let outcome = runner.run_turn(&agent, &ctx(), "hello", None, None).await;
+
+        assert_eq!(
+            outcome,
+            TurnOutcome::Completed {
+                text: "done".into(),
+                tool_calls: 0
+            }
+        );
+        let events = sink.events.lock().await;
+        assert_eq!(
+            completed_payload(&events)["usage"],
+            json!({
+                "inputTokens": 13,
+                "cachedInputTokens": 2,
+                "outputTokens": 6,
+                "costUsd": 0.001
+            })
+        );
+    }
+
+    #[tokio::test]
+    async fn usage_is_null_without_usage_events() {
+        let (runner, sink) = runner_and_sink();
+
+        let outcome = runner.run_turn(&FakeLoop, &ctx(), "hello", None, None).await;
+
+        assert!(matches!(outcome, TurnOutcome::Completed { .. }));
+        let events = sink.events.lock().await;
+        assert!(
+            completed_payload(&events)["usage"].is_null(),
+            "usage is null when the turn reported none"
+        );
+    }
+
+    #[tokio::test]
+    async fn cancelled_turn_reports_cancelled() {
+        let (runner, sink) = runner_and_sink();
+        let cancel = CancellationToken::new();
+        cancel.cancel();
+
+        let outcome = runner
+            .run_turn(&ScriptedLoop::failed("aborted"), &ctx(), "hello", None, Some(cancel))
+            .await;
+
+        assert_eq!(outcome, TurnOutcome::Cancelled);
+        let events = sink.events.lock().await;
+        let payload = completed_payload(&events);
+        assert_eq!(payload["outcome"], "cancelled");
+        assert!(payload.get("error").is_none(), "cancelled turn omits error");
+    }
+
+    #[tokio::test]
+    async fn failed_turn_reports_error() {
+        let (runner, sink) = runner_and_sink();
+
+        let outcome = runner
+            .run_turn(&ScriptedLoop::failed("boom"), &ctx(), "hello", None, None)
+            .await;
+
+        assert_eq!(outcome, TurnOutcome::Failed { error: "boom".into() });
+        let events = sink.events.lock().await;
+        let payload = completed_payload(&events);
+        assert_eq!(payload["outcome"], "failed");
+        assert!(payload["error"].as_str().is_some_and(|error| error.contains("boom")));
     }
 }
