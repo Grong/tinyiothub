@@ -3121,6 +3121,22 @@ impl SessionRuntime {
 
 `#[derive(Clone, Default)]` 会自动给 `None/false`。
 
+同一 Task 中补齐 Task 9 因字段尚不存在而暂缓的赋值。把 `apps/cloud/src/domains/agent/host/chat/subagent.rs` 中：
+
+```rust
+        let runtime = self.pool.runtime_context().await;
+```
+
+改为：
+
+```rust
+        let mut runtime = self.pool.runtime_context().await;
+        runtime.agent_id = Some(child_id.clone());
+        runtime.session_tools_enabled = true;
+```
+
+并在提交前运行 `cargo test -p tinyiothub-cloud host::chat::subagent::tests`，确认子代理仍能完成并返回报告（子代理允许 `todo_write`，但 `ask_user`/`spawn_subagent` 已在 Task 9 过滤）。
+
 在 `apps/cloud/src/domains/agent/mod.rs` 的 `AgentState` 增加：
 
 ```rust
