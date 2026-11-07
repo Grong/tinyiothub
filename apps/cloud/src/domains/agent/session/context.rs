@@ -1,8 +1,9 @@
 //! TurnContext — 当前 Turn 的会话身份，供工具在 execute 时读取。
 //!
-//! AgentLoop 按 assistant_id 缓存并串行执行 Turn，因此每个 assistant 在任一时刻
-//! 最多只有一个 TurnContext。Registry 以 assistant_id 为键；TurnGuard 在 Drop
-//! 时只清除自己安装的 turn_id，避免慢 Turn 清掉后来者的上下文。
+//! Registry 以 assistant_id 为键；TurnGuard 在 Drop 时只清除自己安装的
+//! turn_id，避免慢 Turn 清掉后来者的上下文。Registry 本身不做串行化：同一
+//! assistant 的 Turn 由调用方（agent lock）串行；这里只保证并发的 set/drop
+//! 之间不会误删较新的 Turn。
 
 use std::sync::Arc;
 
@@ -71,14 +72,8 @@ impl TurnContextRegistry {
     }
 
     fn clear_if_current(&self, assistant_id: &str, turn_id: &str) {
-        let is_current = self
-            .inner
-            .get(assistant_id)
-            .map(|entry| entry.value().turn_id == turn_id)
-            .unwrap_or(false);
-        if is_current {
-            self.inner.remove(assistant_id);
-        }
+        self.inner
+            .remove_if(assistant_id, |_, context| context.turn_id == turn_id);
     }
 }
 
