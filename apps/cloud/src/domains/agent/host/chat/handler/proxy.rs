@@ -87,6 +87,7 @@ pub async fn chat_stream(
         &claims.workspace_id,
         &config,
         state.memory_service.clone(),
+        state.session_runtime.clone(),
     )
     .await
     {

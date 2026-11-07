@@ -21,17 +21,32 @@ use tinyiothub_agent::port::runtime::AgentLoopHandle;
 /// Ensure a pooled agent exists: cache hit returns immediately; on a miss the
 /// tools are resolved via the pool's ToolRegistry (composition-layer
 /// providers, Task 14) and injected into the pool's pure `create`.
+///
+/// `session_tools_enabled` exposes the session primitives (`todo_write`,
+/// `ask_user`, `spawn_subagent`) — only chat/subagent turns have a
+/// `TurnContext`, so heartbeat/autonomous callers pass `false`.
+///
+/// **Cache isolation constraint:** `AgentPool` caches by `agent_id` and the
+/// tool set is fixed on first creation. Chat and heartbeat/autonomous agents
+/// must therefore use distinct ids, or the first creator's tool set leaks to
+/// the other. Heartbeat uses `heartbeat_agent_id(workspace_id)`
+/// (`__heartbeat__:<ws>`); `get_or_create_agent` still uses `workspace_id` as
+/// the id and has no callers today — any future autonomous wiring must give it
+/// its own prefix.
 pub async fn ensure_agent(
     pool: &AgentPool,
     agent_id: &str,
     workspace_id: &str,
     config: &AgentRuntimeConfig,
+    session_tools_enabled: bool,
 ) -> Result<AgentLoopHandle, AgentError> {
     if let Some(agent) = pool.get_cached(agent_id) {
         return Ok(agent);
     }
     let trust_config = pool.trust_config(workspace_id);
-    let runtime = pool.runtime_context().await;
+    let mut runtime = pool.runtime_context().await;
+    runtime.agent_id = Some(agent_id.to_string());
+    runtime.session_tools_enabled = session_tools_enabled;
     let tools = pool
         .tool_registry()
         .resolve_tools_for_agent(config, workspace_id, trust_config, &runtime)
@@ -54,13 +69,14 @@ pub async fn send_with_pool(
     authorized_workspace: &str,
     config: &AgentRuntimeConfig,
     memory_service: Option<Arc<tinyiothub_memory::service::MemoryService>>,
+    session_runtime: Arc<crate::domains::agent::session::SessionRuntime>,
 ) -> Result<mpsc::Receiver<ChatEvent>, AgentError> {
     let parsed = tinyiothub_agent::session::SessionKey::parse(session_key)?;
     // Empty authorized workspace = unscoped (admin) token; nothing to check against.
     if !authorized_workspace.is_empty() {
         parsed.verify_workspace(authorized_workspace)?;
     }
-    let agent = ensure_agent(pool, agent_id, &parsed.workspace_id, config).await?;
+    let agent = ensure_agent(pool, agent_id, &parsed.workspace_id, config, true).await?;
     let event_publisher = pool.event_publisher.read().await.clone();
     send_message(
         &agent,
@@ -76,6 +92,7 @@ pub async fn send_with_pool(
         &parsed.workspace_id,
         agent_id,
         db_pool,
+        session_runtime,
     )
     .await
     .map_err(|e| AgentError::RequestFailed(e.to_string()))
@@ -156,6 +173,24 @@ fn turn_event_to_chat_event(evt: &TurnEvent, run_id: &str, session_key: &str) ->
     }
 }
 
+/// Adapts the runner's per-Turn events back into chat SSE events.
+struct ChatEventObserver {
+    tx: mpsc::Sender<ChatEvent>,
+    run_id: String,
+    session_key: String,
+}
+
+#[async_trait::async_trait]
+impl crate::domains::agent::session::TurnObserver for ChatEventObserver {
+    async fn on_turn_event(&self, event: &TurnEvent) {
+        if matches!(event, TurnEvent::Usage { .. }) {
+            return;
+        }
+        let chat = turn_event_to_chat_event(event, &self.run_id, &self.session_key);
+        let _ = self.tx.send(chat).await;
+    }
+}
+
 /// Send a chat message to a pooled agent loop and receive ChatEvents directly.
 ///
 /// Returns an mpsc::Receiver<ChatEvent> — no bytes round-trip.
@@ -174,13 +209,14 @@ pub async fn send_message(
     workspace_id: &str,
     agent_id: &str,
     db_pool: &sqlx::SqlitePool,
+    session_runtime: Arc<crate::domains::agent::session::SessionRuntime>,
 ) -> Result<mpsc::Receiver<ChatEvent>, ChatError> {
     let agent = Arc::clone(agent);
     // Resolve a leading `/trigger` skill token: prepend the full skill body to
     // this turn (so the model reliably has it) and keep a clean message for
     // display/reflection. A bare trigger (e.g. auto-`/workspace`) falls back to
     // a neutral default request.
-    let (turn_message, reflect_message) = {
+    let (turn_message, reflect_message, trigger_skill) = {
         let ws_dir = crate::domains::agent::prompt::paths::workspace_dir(workspace_id);
         let skills = crate::domains::agent::pool::load_workspace_skills(&ws_dir);
         match tinyiothub_skills::resolve_trigger(message, &skills) {
@@ -190,10 +226,15 @@ pub async fn send_message(
                 } else {
                     hit.cleaned_message
                 };
+                let version = skills
+                    .iter()
+                    .find(|skill| skill.name == hit.name)
+                    .map(|skill| skill.version.clone())
+                    .unwrap_or_default();
                 let turn = tinyiothub_skills::wrap_injected_skill(&hit.name, &hit.body, &user_text);
-                (turn, user_text)
+                (turn, user_text, Some((hit.name, version)))
             }
-            None => (message.to_string(), message.to_string()),
+            None => (message.to_string(), message.to_string(), None),
         }
     };
     let run_id = run_id.to_string();
@@ -206,35 +247,27 @@ pub async fn send_message(
     let reflection_model = model.to_string();
     let event_publisher = event_publisher.clone();
     let db_pool = db_pool.clone();
+    let session_runtime = session_runtime.clone();
 
     let (tx, rx) = mpsc::channel::<ChatEvent>(100);
 
     let run_id_for_handle = run_id.clone();
     let run_id_for_remove = run_id.clone();
     let handle = tokio::spawn(async move {
-        // Create TurnEvent channel
-        let (event_tx, event_rx) = tokio::sync::mpsc::channel::<TurnEvent>(32);
-        let event_rx = Arc::new(tokio::sync::Mutex::new(event_rx));
-
-        // Spawn forward task: TurnEvent → ChatEvent → tx
-        let forward_tx = tx.clone();
-        let forward_run = run_id.clone();
-        let forward_session = session_key.clone();
-        tokio::spawn(async move {
-            let mut rx = event_rx.lock().await;
-            while let Some(evt) = rx.recv().await {
-                let chat_event = turn_event_to_chat_event(&evt, &forward_run, &forward_session);
-                // Skip usage-only events
-                if let ChatEvent::Delta { message, .. } = &chat_event
-                    && message.get("__usage").is_some()
-                {
-                    continue;
+        // Probe before ensure_session inserts the row, so we know whether this
+        // turn opened the session.
+        let is_new_session =
+            match sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM chat_sessions WHERE session_key = ?")
+                .bind(&session_key)
+                .fetch_one(&db_pool)
+                .await
+            {
+                Ok(count) => count == 0,
+                Err(error) => {
+                    tracing::warn!(%error, %session_key, "Failed to probe chat session");
+                    false
                 }
-                if forward_tx.send(chat_event).await.is_err() {
-                    break;
-                }
-            }
-        });
+            };
 
         // One lock across reseed + turn: the agent's in-memory history is
         // shared across sessions, so each turn rebuilds context from THIS
@@ -284,16 +317,84 @@ pub async fn send_message(
             tracing::warn!(error = %e, %session_key, "Failed to persist user message");
         }
 
-        // Run turn_streamed with 120s timeout
-        let result = tokio::time::timeout(
-            std::time::Duration::from_secs(120),
-            ag.turn_streamed(&turn_message, event_tx, None),
-        )
-        .await;
+        let context = crate::domains::agent::session::TurnContext::new(
+            workspace_id.clone(),
+            agent_id.clone(),
+            session_key.clone(),
+            run_id.clone(),
+            0,
+        );
+        if is_new_session {
+            if let Err(error) = session_runtime
+                .events
+                .emit(crate::domains::agent::session::session_event(
+                    &context,
+                    "session.started",
+                    serde_json::json!({
+                        "sessionKey": context.session_key.as_str(),
+                        "assistantId": context.assistant_id.as_str()
+                    }),
+                ))
+                .await
+            {
+                tracing::warn!(%error, %session_key, "Failed to persist session.started event");
+            }
+        }
+        if let Err(error) = session_runtime
+            .events
+            .emit(crate::domains::agent::session::session_event(
+                &context,
+                "message.created",
+                serde_json::json!({
+                    "messageId": uuid::Uuid::new_v4().to_string(),
+                    "role": "user",
+                    "text": reflect_message.as_str()
+                }),
+            ))
+            .await
+        {
+            tracing::warn!(%error, %session_key, "Failed to persist user session event");
+        }
+        if let Some((skill_name, skill_version)) = trigger_skill {
+            if let Err(error) = session_runtime
+                .events
+                .emit(crate::domains::agent::session::session_event(
+                    &context,
+                    "skill.loaded",
+                    serde_json::json!({
+                        "skillId": skill_name,
+                        "name": skill_name,
+                        "version": skill_version
+                    }),
+                ))
+                .await
+            {
+                tracing::warn!(%error, %session_key, "Failed to persist skill.loaded event");
+            }
+        }
+
+        let observer: Arc<dyn crate::domains::agent::session::TurnObserver> = Arc::new(ChatEventObserver {
+            tx: tx.clone(),
+            run_id: run_id.clone(),
+            session_key: session_key.clone(),
+        });
+        let cancel = tokio_util::sync::CancellationToken::new();
+        let timer = {
+            let cancel = cancel.clone();
+            tokio::spawn(async move {
+                tokio::time::sleep(crate::domains::agent::session::SESSION_TURN_TIMEOUT).await;
+                cancel.cancel();
+            })
+        };
+        let outcome = session_runtime
+            .runner
+            .run_turn(&*ag, &context, &turn_message, Some(observer), Some(cancel))
+            .await;
+        timer.abort();
         drop(ag);
 
-        let final_text = match result {
-            Ok(Ok(text)) => {
+        let final_text = match outcome {
+            crate::domains::agent::session::TurnOutcome::Completed { text, .. } => {
                 let _ = tx
                     .send(ChatEvent::Final {
                         run_id: run_id.clone(),
@@ -306,22 +407,22 @@ pub async fn send_message(
                     .await;
                 Some(text)
             }
-            Ok(Err(e)) => {
+            crate::domains::agent::session::TurnOutcome::Cancelled => {
                 let _ = tx
                     .send(ChatEvent::Error {
                         run_id: run_id.clone(),
                         session_key: session_key.clone(),
-                        error: e.to_string(),
+                        error: "Agent execution cancelled".to_string(),
                     })
                     .await;
                 None
             }
-            Err(_) => {
+            crate::domains::agent::session::TurnOutcome::Failed { error } => {
                 let _ = tx
                     .send(ChatEvent::Error {
                         run_id: run_id.clone(),
                         session_key: session_key.clone(),
-                        error: "Agent execution timed out after 120 seconds".to_string(),
+                        error,
                     })
                     .await;
                 None
@@ -397,6 +498,10 @@ mod tests {
             tinyiothub_agent::provider::minimax_provider_factory(),
         )
         .expect("test AgentPool");
+        let session_runtime = Arc::new(crate::domains::agent::session::SessionRuntime::new(
+            Arc::new(tinyiothub_storage::Db::new(db.clone())),
+            Arc::new(crate::domains::agent::runtime::harness_stream::HarnessStreamHub::default()),
+        ));
         let err = send_with_pool(
             &pool,
             &db,
@@ -408,12 +513,20 @@ mod tests {
             "ws_mine",
             &AgentRuntimeConfig::default(),
             None,
+            session_runtime,
         )
         .await
         .unwrap_err();
         assert!(matches!(err, AgentError::NotFound(_)));
         // The workspace check must run before any agent is built.
         assert_eq!(pool.pool_size(), 0);
+    }
+
+    #[test]
+    fn chat_timeout_allows_question_answer() {
+        use crate::domains::agent::session::{ASK_USER_TIMEOUT, SESSION_TURN_TIMEOUT};
+        assert!(SESSION_TURN_TIMEOUT > ASK_USER_TIMEOUT);
+        assert!(SESSION_TURN_TIMEOUT >= std::time::Duration::from_secs(15 * 60));
     }
 
     #[test]
