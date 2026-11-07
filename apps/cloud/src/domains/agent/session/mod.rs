@@ -13,6 +13,7 @@ pub mod runner;
 pub mod subagent;
 pub mod todos;
 pub mod tools;
+pub mod trigger;
 pub mod types;
 pub mod wake;
 
@@ -22,6 +23,7 @@ pub use questions::QuestionBroker;
 pub use runner::{SessionRunner, TurnObserver, TurnOutcome};
 pub use subagent::{SubagentReport, SubagentRequest, SubagentRunner, SubagentSlot, SubagentStatus};
 pub use todos::TodoStore;
+pub use trigger::{TRIGGER_TICK_INTERVAL, TriggerRouter};
 pub use types::*;
 pub use wake::{WakeExecutor, WakeOutcome, WakeReport, WakeRunner, assistant_agent_id, build_wake_message};
 
