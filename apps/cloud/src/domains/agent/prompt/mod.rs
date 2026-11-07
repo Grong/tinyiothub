@@ -236,4 +236,13 @@ mod tests {
         // Should NOT contain the old persona header
         assert!(!result.contains("## Agent Persona（用户配置）"));
     }
+
+    #[tokio::test]
+    async fn empty_workspace_still_gets_identity_and_rules() {
+        let config = tinyiothub_core::config::SystemPromptsConfig::default();
+        let prompt = build_full_system_prompt(&config, Some("ws-empty"), None, None).await;
+        assert!(prompt.contains("Identity"), "identity template must load");
+        assert!(prompt.contains("Agent Rules"), "agent rules template must load");
+        assert!(prompt.contains("Capabilities"), "tools template must load");
+    }
 }

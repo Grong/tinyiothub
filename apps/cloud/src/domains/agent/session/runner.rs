@@ -459,6 +459,31 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn lifecycle_order_is_stable() {
+        let sink = Arc::new(RecordingSink::default());
+        let contexts = Arc::new(TurnContextRegistry::default());
+        let runner = SessionRunner::new(sink.clone(), contexts);
+        let ctx = TurnContext::new(
+            "ws".into(),
+            "agent_main".into(),
+            "agent:ws:agent_main/s1".into(),
+            "run1".into(),
+            0,
+        );
+        runner.run_turn(&FakeLoop, &ctx, "hello", None, None).await;
+        let events = sink.events.lock().await;
+        let index = |name: &str| {
+            events
+                .iter()
+                .position(|event| event.event_type == name)
+                .unwrap_or_else(|| panic!("missing {name}"))
+        };
+        assert!(index("turn.started") < index("tool.called"));
+        assert!(index("tool.returned") < index("message.created"));
+        assert!(index("message.created") < index("turn.completed"));
+    }
+
+    #[tokio::test]
     async fn failed_turn_reports_error() {
         let (runner, sink) = runner_and_sink();
 
