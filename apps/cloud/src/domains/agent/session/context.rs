@@ -24,13 +24,7 @@ pub struct TurnContext {
 }
 
 impl TurnContext {
-    pub fn new(
-        workspace_id: String,
-        assistant_id: String,
-        session_key: String,
-        run_id: String,
-        depth: u8,
-    ) -> Self {
+    pub fn new(workspace_id: String, assistant_id: String, session_key: String, run_id: String, depth: u8) -> Self {
         Self {
             workspace_id,
             assistant_id,
@@ -66,9 +60,7 @@ impl TurnContextRegistry {
     }
 
     pub fn get(&self, assistant_id: &str) -> Option<TurnContext> {
-        self.inner
-            .get(assistant_id)
-            .map(|entry| entry.value().clone())
+        self.inner.get(assistant_id).map(|entry| entry.value().clone())
     }
 
     fn clear_if_current(&self, assistant_id: &str, turn_id: &str) {
@@ -79,8 +71,7 @@ impl TurnContextRegistry {
 
 impl Drop for TurnGuard {
     fn drop(&mut self) {
-        self.registry
-            .clear_if_current(&self.assistant_id, &self.turn_id);
+        self.registry.clear_if_current(&self.assistant_id, &self.turn_id);
     }
 }
 
