@@ -33,4 +33,8 @@ pub struct ToolRuntimeContext {
     /// Optional Workflow revision policy applied when resolving tools for
     /// dispatch. `None` preserves the pre-descriptor behavior.
     pub tool_policy: Option<ToolPolicyContext>,
+    /// 当前解析工具所属的 assistant/agent id（Session 工具读取 TurnContext 用）。
+    pub agent_id: Option<String>,
+    /// 只有聊天/子代理 Turn 才暴露 todo_write / ask_user / spawn_subagent。
+    pub session_tools_enabled: bool,
 }

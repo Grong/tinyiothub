@@ -90,6 +90,8 @@ pub struct AgentState {
     pub effect_dispatch: Option<Arc<runtime::dispatch::EffectDispatch>>,
     /// Shared durable recorder used by the existing runtime stores.
     pub runtime_recorder: runtime::stream::RuntimeRecorder,
+    /// 统一 Session 运行时（事件、Todo、待答问题、子代理槽）。
+    pub session_runtime: Arc<crate::domains::agent::session::SessionRuntime>,
 }
 
 impl AgentState {

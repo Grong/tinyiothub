@@ -34,7 +34,9 @@ impl PoolSubagentRunner {
             request.subagent_id.replace('-', "_")
         );
 
-        let runtime = self.pool.runtime_context().await;
+        let mut runtime = self.pool.runtime_context().await;
+        runtime.agent_id = Some(child_id.clone());
+        runtime.session_tools_enabled = true;
         let tools = self
             .pool
             .tool_registry()
