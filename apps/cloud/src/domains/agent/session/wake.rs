@@ -23,7 +23,10 @@ use crate::domains::agent::session::runner::{SessionRunner, TurnOutcome};
 use crate::domains::agent::session::todos::TodoStore;
 use crate::domains::agent::session::types::{Todo, TodoStatus};
 
-pub const ASSISTANT_AGENT_PREFIX: &str = "__assistant__:";
+/// Assistant agent id 前缀。**不含冒号**：session key 的规范形状是
+/// `agent:<ws>:<assistant>/<session>`，id 里多一个 `:` 会让 `SessionKey::parse`
+/// 解析失败，scheduled 会话将无法被 chat 会话 API 打开/授权。
+pub const ASSISTANT_AGENT_PREFIX: &str = "__assistant__";
 
 /// 每个 workspace 一个常驻 Assistant 的 agent id。
 pub fn assistant_agent_id(workspace_id: &str) -> String {
@@ -420,6 +423,10 @@ mod tests {
             .unwrap();
         let report = wake.run_with_agent(&schedule, agent, "按默认职责巡检").await;
         assert_eq!(report.outcome, WakeOutcome::Completed);
+        let parsed = tinyiothub_agent::session::SessionKey::parse(&report.session_key)
+            .expect("wake session key must be a valid agent:<ws>:<assistant>/<session> key");
+        assert_eq!(parsed.workspace_id, "ws");
+        assert_eq!(parsed.agent_id, assistant_agent_id("ws"));
         let events = sink.events.lock().await;
         let types: Vec<&str> = events.iter().map(|event| event.event_type.as_str()).collect();
         assert_eq!(

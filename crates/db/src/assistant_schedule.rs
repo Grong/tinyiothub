@@ -232,7 +232,7 @@ mod tests {
         let db = test_db().await;
         let now = ts(1_800_000_000);
         let created = db
-            .ensure_assistant_schedule("ws-1", "__assistant__:ws-1", now)
+            .ensure_assistant_schedule("ws-1", "__assistant__ws-1", now)
             .await
             .unwrap();
         assert_eq!(created.interval_seconds, DEFAULT_ASSISTANT_INTERVAL_SECONDS);
@@ -242,7 +242,7 @@ mod tests {
 
         let later = ts(1_800_000_100);
         let again = db
-            .ensure_assistant_schedule("ws-1", "__assistant__:ws-1", later)
+            .ensure_assistant_schedule("ws-1", "__assistant__ws-1", later)
             .await
             .unwrap();
         assert_eq!(again.next_wake_at, Some(now), "ensure must not overwrite existing row");
@@ -252,17 +252,17 @@ mod tests {
     async fn due_scan_respects_enabled_and_time() {
         let db = test_db().await;
         let now = ts(1_800_000_000);
-        db.ensure_assistant_schedule("ws-due", "__assistant__:ws-due", now - chrono::Duration::seconds(10))
+        db.ensure_assistant_schedule("ws-due", "__assistant__ws-due", now - chrono::Duration::seconds(10))
             .await
             .unwrap();
         db.ensure_assistant_schedule(
             "ws-future",
-            "__assistant__:ws-future",
+            "__assistant__ws-future",
             now + chrono::Duration::seconds(300),
         )
         .await
         .unwrap();
-        db.ensure_assistant_schedule("ws-off", "__assistant__:ws-off", now - chrono::Duration::seconds(10))
+        db.ensure_assistant_schedule("ws-off", "__assistant__ws-off", now - chrono::Duration::seconds(10))
             .await
             .unwrap();
         db.update_assistant_schedule("ws-off", Some(false), None, None, None)
@@ -278,7 +278,7 @@ mod tests {
     async fn mark_wake_advances_and_records_outcome() {
         let db = test_db().await;
         let now = ts(1_800_000_000);
-        db.ensure_assistant_schedule("ws-1", "__assistant__:ws-1", now)
+        db.ensure_assistant_schedule("ws-1", "__assistant__ws-1", now)
             .await
             .unwrap();
         let next = now + chrono::Duration::seconds(300);
@@ -293,7 +293,7 @@ mod tests {
     async fn update_with_none_leaves_fields_and_validates_interval() {
         let db = test_db().await;
         let now = ts(1_800_000_000);
-        db.ensure_assistant_schedule("ws-1", "__assistant__:ws-1", now)
+        db.ensure_assistant_schedule("ws-1", "__assistant__ws-1", now)
             .await
             .unwrap();
         let next = now + chrono::Duration::seconds(600);
