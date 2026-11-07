@@ -120,7 +120,7 @@ mod tests {
         let db = test_db().await;
         let now = ts(1_800_000_000);
         let created = db
-            .ensure_assistant_schedule("ws-1", "__assistant__:ws-1", now)
+            .ensure_assistant_schedule("ws-1", "__assistant__ws-1", now)
             .await
             .unwrap();
         assert_eq!(created.interval_seconds, DEFAULT_ASSISTANT_INTERVAL_SECONDS);
@@ -130,7 +130,7 @@ mod tests {
 
         let later = ts(1_800_000_100);
         let again = db
-            .ensure_assistant_schedule("ws-1", "__assistant__:ws-1", later)
+            .ensure_assistant_schedule("ws-1", "__assistant__ws-1", later)
             .await
             .unwrap();
         assert_eq!(again.next_wake_at, Some(now), "ensure must not overwrite existing row");
@@ -140,13 +140,13 @@ mod tests {
     async fn due_scan_respects_enabled_and_time() {
         let db = test_db().await;
         let now = ts(1_800_000_000);
-        db.ensure_assistant_schedule("ws-due", "__assistant__:ws-due", now - chrono::Duration::seconds(10))
+        db.ensure_assistant_schedule("ws-due", "__assistant__ws-due", now - chrono::Duration::seconds(10))
             .await
             .unwrap();
-        db.ensure_assistant_schedule("ws-future", "__assistant__:ws-future", now + chrono::Duration::seconds(300))
+        db.ensure_assistant_schedule("ws-future", "__assistant__ws-future", now + chrono::Duration::seconds(300))
             .await
             .unwrap();
-        db.ensure_assistant_schedule("ws-off", "__assistant__:ws-off", now - chrono::Duration::seconds(10))
+        db.ensure_assistant_schedule("ws-off", "__assistant__ws-off", now - chrono::Duration::seconds(10))
             .await
             .unwrap();
         db.update_assistant_schedule("ws-off", Some(false), None, None, None)
@@ -162,7 +162,7 @@ mod tests {
     async fn mark_wake_advances_and_records_outcome() {
         let db = test_db().await;
         let now = ts(1_800_000_000);
-        db.ensure_assistant_schedule("ws-1", "__assistant__:ws-1", now)
+        db.ensure_assistant_schedule("ws-1", "__assistant__ws-1", now)
             .await
             .unwrap();
         let next = now + chrono::Duration::seconds(300);
@@ -177,7 +177,7 @@ mod tests {
     async fn update_with_none_leaves_fields_and_validates_interval() {
         let db = test_db().await;
         let now = ts(1_800_000_000);
-        db.ensure_assistant_schedule("ws-1", "__assistant__:ws-1", now)
+        db.ensure_assistant_schedule("ws-1", "__assistant__ws-1", now)
             .await
             .unwrap();
         let next = now + chrono::Duration::seconds(600);
@@ -1112,6 +1112,10 @@ mod tests {
         let session = wake.db.get_session(&report.session_key).await.unwrap().unwrap();
         assert_eq!(session.kind, "scheduled");
         assert_eq!(session.status, "ended");
+        let parsed = tinyiothub_agent::session::SessionKey::parse(&report.session_key)
+            .expect("wake session key must be a valid agent:<ws>:<assistant>/<session> key");
+        assert_eq!(parsed.workspace_id, "ws");
+        assert_eq!(parsed.agent_id, assistant_agent_id("ws"));
     }
 }
 ```
@@ -1168,7 +1172,7 @@ use crate::domains::agent::session::todos::TodoStore;
 use crate::domains::agent::session::types::{Todo, TodoStatus};
 use crate::domains::agent::session::SESSION_TURN_TIMEOUT;
 
-pub const ASSISTANT_AGENT_PREFIX: &str = "__assistant__:";
+pub const ASSISTANT_AGENT_PREFIX: &str = "__assistant__";
 
 /// 每个 workspace 一个常驻 Assistant 的 agent id。
 pub fn assistant_agent_id(workspace_id: &str) -> String {
@@ -1492,7 +1496,7 @@ mod tests {
     async fn tick_dispatches_due_and_advances() {
         let db = Arc::new(test_db().await);
         let now = ts(1_800_000_000);
-        db.ensure_assistant_schedule("ws-1", "__assistant__:ws-1", now).await.unwrap();
+        db.ensure_assistant_schedule("ws-1", "__assistant__ws-1", now).await.unwrap();
         let executor = Arc::new(RecordingExecutor::default());
         let router = Arc::new(TriggerRouter::new(db.clone(), executor.clone()));
 
@@ -2242,7 +2246,7 @@ async fn tick_runs_wake_end_to_end() {
 
     let db = Arc::new(test_db().await);
     let now = ts(1_800_000_000);
-    db.ensure_assistant_schedule("ws-e2e", "__assistant__:ws-e2e", now).await.unwrap();
+    db.ensure_assistant_schedule("ws-e2e", "__assistant__ws-e2e", now).await.unwrap();
     let agent_pool = Arc::new(
         AgentPool::new(
             &tinyiothub_core::config::AgentSettings::default(),
