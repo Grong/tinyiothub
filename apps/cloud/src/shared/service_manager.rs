@@ -374,6 +374,14 @@ impl ServiceManager {
                 });
                 self.service_handles.write().await.push(handle);
             }
+            // Session 子代理：用 AgentPool 创建一次性子 Agent 执行 spawn_subagent
+            // 请求；与 SessionRunner 共享 Turn 上下文/事件。
+            let subagent_runner: Arc<dyn crate::domains::agent::session::SubagentRunner> =
+                Arc::new(crate::domains::agent::host::chat::subagent::PoolSubagentRunner::new(
+                    app_state.agent_pool.clone(),
+                    app_state.session_runtime.runner.clone(),
+                ));
+            app_state.session_runtime.subagents.set(subagent_runner);
             tool_registry.register_provider(crate::domains::agent::host::tools::chat_builtin_tools_provider(
                 app_state.db.pool().clone(),
                 app_state.db.clone(),
@@ -403,6 +411,7 @@ impl ServiceManager {
                 Some(evidence.clone()),
                 Some(task_jobs.clone()),
                 app_state.runtime_recorder.clone(),
+                app_state.session_runtime.clone(),
             ));
             tool_registry.set_external_tool_factory(Arc::new(|| {
                 crate::domains::agent::host::ports::external_tool_registry()
