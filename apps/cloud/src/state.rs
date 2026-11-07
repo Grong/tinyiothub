@@ -117,6 +117,9 @@ pub struct AppState {
     /// Agent Pool — central agent lifecycle manager
     pub agent_pool: Arc<AgentPool>,
 
+    /// 统一 Session 运行时（事件、Todo、待答问题、子代理槽）。
+    pub session_runtime: Arc<crate::domains::agent::session::SessionRuntime>,
+
     /// 用户服务 - CRUD 操作
     pub user_service: Arc<crate::domains::user::UserService>,
 
@@ -397,6 +400,11 @@ impl AppState {
             .expect("failed to build AgentPool"),
         );
 
+        let session_runtime = Arc::new(crate::domains::agent::session::SessionRuntime::new(
+            database.clone(),
+            harness_stream.clone(),
+        ));
+
         alarm_service.set_device_cache(device_cache.clone());
 
         // 用户服务
@@ -567,6 +575,7 @@ impl AppState {
             secure_event_service,
             alarm_service,
             agent_pool,
+            session_runtime,
             orchestrator: None,
             heartbeat_last_ticks: None,
             thing_agents: None, // T13 bootstrap 装配时注入
@@ -1099,6 +1108,7 @@ impl axum::extract::FromRef<AppState> for crate::domains::agent::AgentState {
             harness_stream: state.harness_stream.clone(),
             effect_dispatch: state.effect_dispatch.clone(),
             runtime_recorder: state.runtime_recorder.clone(),
+            session_runtime: state.session_runtime.clone(),
         }
     }
 }

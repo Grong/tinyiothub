@@ -72,6 +72,9 @@ pub struct Agent {
     pub agent_id: String,
     pub workspace_id: String,
     pub config: AgentRuntimeConfig,
+    /// Tool-set flavor fixed at creation: whether the session primitives
+    /// (`todo_write` / `ask_user` / `spawn_subagent`) were exposed.
+    pub session_tools_enabled: bool,
 }
 
 // ============================================================================
@@ -207,6 +210,7 @@ impl AgentPool {
         workspace_id: &str,
         config: &AgentRuntimeConfig,
         tools: Vec<Box<dyn Tool>>,
+        session_tools_enabled: bool,
     ) -> Result<AgentLoopHandle, AgentError> {
         let namespaced: Arc<dyn Memory> = Arc::new(WorkspaceScopedMemory::new(
             Arc::clone(&self.shared_memory),
@@ -240,6 +244,7 @@ impl AgentPool {
             agent_id: agent_id.to_string(),
             workspace_id: workspace_id.to_string(),
             config: config.clone(),
+            session_tools_enabled,
         };
 
         // Double-checked insert: a concurrent creator may have won the race
@@ -259,6 +264,19 @@ impl AgentPool {
                 Ok(agent_arc)
             }
         }
+    }
+
+    /// 读取已缓存 Agent 的运行时配置（子代理继承父配置）。
+    pub fn agent_config(&self, agent_id: &str) -> Option<AgentRuntimeConfig> {
+        self.agents.get(agent_id).map(|entry| entry.metadata.config.clone())
+    }
+
+    /// Whether the cached agent was built with session primitives enabled.
+    /// `None` = not cached; callers use the mismatch to rebuild on id reuse.
+    pub fn agent_session_tools(&self, agent_id: &str) -> Option<bool> {
+        self.agents
+            .get(agent_id)
+            .map(|entry| entry.metadata.session_tools_enabled)
     }
 
     /// Remove an agent from the pool (on config change).
@@ -361,6 +379,7 @@ mod tests {
                 model: "test-model".to_string(),
                 ..Default::default()
             },
+            session_tools_enabled: false,
         };
         assert_eq!(metadata.agent_id, "a1");
         assert_eq!(metadata.workspace_id, "ws1");
@@ -394,7 +413,7 @@ mod tests {
         // Tools are caller-resolved and injected; the test passes an empty
         // list and the agent is built purely from the injected config.
         let a1 = pool
-            .create("a1", "ws-test", &config, vec![])
+            .create("a1", "ws-test", &config, vec![], false)
             .expect("create with injected config");
         let entry = pool.agents.get("a1").expect("cached entry");
         assert_eq!(entry.metadata.config.model, "injected-model");

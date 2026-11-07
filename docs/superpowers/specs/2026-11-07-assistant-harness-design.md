@@ -198,7 +198,7 @@ capability.unavailable
 
 ID 约定：`assistant_id`、`session_id`、`session_key`、`turn_id`、`message_id`、`task_id`、`run_id`、`todo_id`、`subagent_id`、`question_id`、`approval_id`、`effect_id`、`decision_id`、`tool_call_id`、`wake_event_id`、`event_id`。同一实体在所有层使用同一 ID 名；wire 为 camelCase，DB/Rust 为 snake_case，不做 `xxxId` / `xxx_id` 混用。
 
-`session_events` 现有 schema 只有 `session_id`；为支持全局 HUD 的"最近事件"，增加冗余 `workspace_id` 列与 `(workspace_id, occurred_at)` 索引。`session_id` 仍是会话内按序回放的主键。
+`session_events` 位于每个 workspace 独立的 Harness DB（`data/agents/<workspace>/harness/harness.db`），因此不需要冗余 `workspace_id` 列：全局 HUD 直接在该 workspace 的 DB 内按 `occurred_at`/`seq` 读取最近事件。为"最近事件"增加 `(occurred_at)` 索引；`session_id` 仍是会话内按序回放的主键。`HarnessEvent.workspace_id` 由调用方从 DB 归属补齐，不落列。
 
 #### 5.4.4 重命名映射
 

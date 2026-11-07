@@ -1,0 +1,82 @@
+use std::time::Duration;
+
+pub const ASK_USER_TIMEOUT: Duration = Duration::from_secs(10 * 60);
+pub const SESSION_TURN_TIMEOUT: Duration = Duration::from_secs(15 * 60);
+pub const SUBAGENT_TURN_TIMEOUT: Duration = Duration::from_secs(10 * 60);
+
+pub mod context;
+pub mod events;
+pub mod handler;
+pub mod questions;
+pub mod runner;
+pub mod subagent;
+pub mod todos;
+pub mod tools;
+pub mod types;
+
+pub use context::*;
+pub use events::*;
+pub use questions::QuestionBroker;
+pub use runner::{SessionRunner, TurnObserver, TurnOutcome};
+pub use subagent::{SubagentReport, SubagentRequest, SubagentRunner, SubagentSlot, SubagentStatus};
+pub use todos::TodoStore;
+pub use types::*;
+
+use std::sync::Arc;
+
+use crate::domains::agent::runtime::harness_stream::HarnessStreamHub;
+
+#[derive(Clone)]
+pub struct SessionRuntime {
+    pub events: Arc<dyn SessionEventSink>,
+    pub contexts: Arc<TurnContextRegistry>,
+    pub todos: Arc<TodoStore>,
+    pub questions: Arc<QuestionBroker>,
+    pub subagents: Arc<SubagentSlot>,
+    pub runner: Arc<SessionRunner>,
+}
+
+impl SessionRuntime {
+    pub fn new(db: Arc<tinyiothub_storage::Db>, hub: Arc<HarnessStreamHub>) -> Self {
+        let events: Arc<dyn SessionEventSink> = Arc::new(DbSessionEventSink::new(db, hub));
+        let contexts = Arc::new(TurnContextRegistry::default());
+        let todos = Arc::new(TodoStore::default());
+        let questions = Arc::new(QuestionBroker::default());
+        let subagents = Arc::new(SubagentSlot::default());
+        let runner = Arc::new(SessionRunner::new(events.clone(), contexts.clone()));
+        Self {
+            events,
+            contexts,
+            todos,
+            questions,
+            subagents,
+            runner,
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn runtime_wires_shared_components() {
+        let pool = sqlx::SqlitePool::connect("sqlite::memory:").await.unwrap();
+        let db = Arc::new(tinyiothub_storage::Db::new(pool));
+        let hub = Arc::new(crate::domains::agent::runtime::harness_stream::HarnessStreamHub::default());
+        let runtime = SessionRuntime::new(db, hub);
+
+        let context = TurnContext::new(
+            "ws".into(),
+            "agent_main".into(),
+            "agent:ws:agent_main/s1".into(),
+            "run1".into(),
+            0,
+        );
+        let guard = runtime.contexts.set(context);
+        assert!(runtime.contexts.get("agent_main").is_some());
+        drop(guard);
+        assert!(runtime.contexts.get("agent_main").is_none());
+        assert!(runtime.todos.get("agent:ws:agent_main/s1").is_empty());
+    }
+}

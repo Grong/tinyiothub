@@ -18,5 +18,21 @@ where
         .route("/abort", post(proxy::chat_abort))
         .route("/sessions", get(proxy::list_sessions))
         .route("/sessions/{session_key}/label", post(proxy::update_session_label))
+        .route(
+            "/sessions/{session_key}/events",
+            get(crate::domains::agent::session::handler::list_events),
+        )
+        .route(
+            "/sessions/{session_key}/events/stream",
+            get(crate::domains::agent::session::handler::stream_events),
+        )
+        .route(
+            "/sessions/{session_key}/todos",
+            get(crate::domains::agent::session::handler::todos),
+        )
+        .route(
+            "/sessions/{session_key}/questions/{question_id}/answer",
+            post(crate::domains::agent::session::handler::answer_question),
+        )
         .route("/sessions/{session_key}", axum::routing::delete(proxy::delete_session))
 }

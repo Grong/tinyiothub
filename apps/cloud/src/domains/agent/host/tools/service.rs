@@ -44,6 +44,7 @@ pub fn chat_builtin_tools_provider(
     evidence: Option<Arc<tinyiothub_runtime::media::evidence::EvidenceService>>,
     jobs: Option<tinyiothub_runtime::job::service::JobService>,
     runtime_recorder: crate::domains::agent::runtime::stream::RuntimeRecorder,
+    session: std::sync::Arc<crate::domains::agent::session::SessionRuntime>,
 ) -> ToolProvider {
     Arc::new(move |workspace_id: &str, runtime: &ToolRuntimeContext| {
         let mut tools: Vec<(Box<dyn Tool>, ToolSafety)> = Vec::new();
@@ -73,6 +74,40 @@ pub fn chat_builtin_tools_provider(
             },
         ));
 
+        // Session 原语（Todo / 提问 / 子代理）—— 只在聊天/子代理 Turn 暴露：
+        // 需要 agent_id 注册 TurnContext，并且仅聊天入口打开 flag。
+        if let Some(agent_id) = session_primitive_agent(runtime) {
+            use crate::domains::agent::session::tools::{AskUserTool, SpawnSubagentTool, TodoWriteTool};
+            tools.push((
+                Box::new(TodoWriteTool::new(
+                    agent_id.clone(),
+                    session.contexts.clone(),
+                    session.todos.clone(),
+                    session.events.clone(),
+                )),
+                ToolSafety::ReadOnly,
+            ));
+            tools.push((
+                Box::new(AskUserTool::new(
+                    agent_id.clone(),
+                    session.contexts.clone(),
+                    session.questions.clone(),
+                    session.events.clone(),
+                    crate::domains::agent::session::ASK_USER_TIMEOUT,
+                )),
+                ToolSafety::ReadOnly,
+            ));
+            tools.push((
+                Box::new(SpawnSubagentTool::new(
+                    agent_id,
+                    session.contexts.clone(),
+                    session.subagents.clone(),
+                    session.events.clone(),
+                )),
+                ToolSafety::ReadOnly,
+            ));
+        }
+
         // 用户指令派发工具（T14）—— chat Agent 专用；自治 thing-agent 工厂
         // （autonomous_factory.rs）不注册它，避免 loop 自我派发。
         tools.push((
@@ -91,6 +126,14 @@ pub fn chat_builtin_tools_provider(
     })
 }
 
+fn session_primitive_agent(runtime: &crate::domains::agent::tools::context::ToolRuntimeContext) -> Option<String> {
+    if runtime.session_tools_enabled {
+        runtime.agent_id.clone()
+    } else {
+        None
+    }
+}
+
 /// Effective (denylist-filtered) tool names for an agent — the
 /// `/tools/effective` API payload. db access stays on the cloud side; the
 /// caller supplies the pool's tool registry + runtime context snapshot.
@@ -107,4 +150,21 @@ pub async fn effective_tool_names(
     let effective = filter_by_denylist(all_tools, &config.tool_denylist);
     let names: Vec<&str> = effective.iter().map(|t| t.name()).collect();
     Ok(serde_json::json!({ "tools": names }))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn session_primitives_require_flag_and_agent() {
+        let mut runtime = crate::domains::agent::tools::context::ToolRuntimeContext::default();
+        assert_eq!(session_primitive_agent(&runtime), None);
+
+        runtime.agent_id = Some("agent_main".to_string());
+        assert_eq!(session_primitive_agent(&runtime), None);
+
+        runtime.session_tools_enabled = true;
+        assert_eq!(session_primitive_agent(&runtime), Some("agent_main".to_string()));
+    }
 }

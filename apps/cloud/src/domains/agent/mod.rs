@@ -19,6 +19,7 @@ pub mod orchestrator;
 pub mod pool;
 pub mod prompt;
 pub mod runtime;
+pub mod session;
 pub mod snapshot;
 pub mod thing_agent;
 pub mod tools;
@@ -89,6 +90,8 @@ pub struct AgentState {
     pub effect_dispatch: Option<Arc<runtime::dispatch::EffectDispatch>>,
     /// Shared durable recorder used by the existing runtime stores.
     pub runtime_recorder: runtime::stream::RuntimeRecorder,
+    /// 统一 Session 运行时（事件、Todo、待答问题、子代理槽）。
+    pub session_runtime: Arc<crate::domains::agent::session::SessionRuntime>,
 }
 
 impl AgentState {
