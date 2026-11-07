@@ -67,6 +67,11 @@ fn payload_digest(payload: &serde_json::Value) -> String {
     hash.iter().map(|byte| format!("{byte:02x}")).collect()
 }
 
+/// spec §5.4.3：`session.started { session_id, kind }` 的统一构造。
+pub fn session_started_payload(session_id: &str, kind: &str) -> serde_json::Value {
+    serde_json::json!({ "sessionId": session_id, "kind": kind })
+}
+
 #[cfg(test)]
 pub(crate) mod test_support {
     use super::*;
@@ -154,5 +159,12 @@ mod tests {
         let events = sink.events.lock().await;
         assert_eq!(events.len(), 1);
         assert_eq!(events[0].event_type, "turn.started");
+    }
+
+    #[test]
+    fn session_started_payload_matches_spec() {
+        let payload = session_started_payload("agent:ws:a/s1", "scheduled");
+        assert_eq!(payload["sessionId"], "agent:ws:a/s1");
+        assert_eq!(payload["kind"], "scheduled");
     }
 }

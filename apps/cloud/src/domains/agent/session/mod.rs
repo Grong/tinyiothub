@@ -14,6 +14,7 @@ pub mod subagent;
 pub mod todos;
 pub mod tools;
 pub mod types;
+pub mod wake;
 
 pub use context::*;
 pub use events::*;
@@ -22,6 +23,7 @@ pub use runner::{SessionRunner, TurnObserver, TurnOutcome};
 pub use subagent::{SubagentReport, SubagentRequest, SubagentRunner, SubagentSlot, SubagentStatus};
 pub use todos::TodoStore;
 pub use types::*;
+pub use wake::{WakeExecutor, WakeOutcome, WakeReport, WakeRunner, assistant_agent_id, build_wake_message};
 
 use std::sync::Arc;
 
