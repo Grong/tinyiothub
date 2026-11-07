@@ -2,6 +2,7 @@ use std::time::Duration;
 
 pub const ASK_USER_TIMEOUT: Duration = Duration::from_secs(10 * 60);
 pub const SESSION_TURN_TIMEOUT: Duration = Duration::from_secs(15 * 60);
+pub const SUBAGENT_TURN_TIMEOUT: Duration = Duration::from_secs(10 * 60);
 
 pub mod context;
 pub mod events;

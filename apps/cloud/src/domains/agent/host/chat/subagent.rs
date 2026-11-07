@@ -53,7 +53,7 @@ impl PoolSubagentRunner {
 
         let agent = self
             .pool
-            .create(&child_id, &request.workspace_id, &config, tools)
+            .create(&child_id, &request.workspace_id, &config, tools, true)
             .map_err(|error| error.to_string())?;
 
         let system_prompt = format!(
@@ -78,7 +78,13 @@ impl PoolSubagentRunner {
                 return Err(error.to_string());
             }
             self.runner
-                .run_turn(&*guard, &context, &request.prompt, None, None)
+                .run_turn_bounded(
+                    &*guard,
+                    &context,
+                    &request.prompt,
+                    None,
+                    crate::domains::agent::session::SUBAGENT_TURN_TIMEOUT,
+                )
                 .await
         };
 
@@ -179,10 +185,10 @@ mod tests {
             .unwrap(),
         );
         let config = AgentRuntimeConfig::default();
-        let _parent = pool.create("agent_main", "ws-test", &config, vec![]).unwrap();
+        let _parent = pool.create("agent_main", "ws-test", &config, vec![], false).unwrap();
         let sink = Arc::new(RecordingSink::default());
         let contexts = Arc::new(TurnContextRegistry::default());
-        let runner = Arc::new(SessionRunner::new(sink, contexts));
+        let runner = Arc::new(SessionRunner::new(sink.clone(), contexts));
         let subagents = PoolSubagentRunner::new(pool.clone(), runner);
 
         let report = subagents
@@ -202,5 +208,18 @@ mod tests {
         assert_eq!(report.status, SubagentStatus::Completed);
         assert_eq!(report.summary, "subagent done");
         assert_eq!(pool.pool_size(), 1, "child agent must be invalidated");
+
+        // The child turn runs through the bounded helper and reports its
+        // lifecycle under the parent session key.
+        let events = sink.events.lock().await;
+        let types: Vec<&str> = events.iter().map(|event| event.event_type.as_str()).collect();
+        assert_eq!(types, vec!["turn.started", "message.created", "turn.completed"]);
+        assert!(
+            events
+                .iter()
+                .all(|event| event.session_id == "agent:ws-test:agent_main/s1"),
+            "subagent events are attributed to the parent session"
+        );
+        assert_eq!(events[2].payload_json["outcome"], "completed");
     }
 }

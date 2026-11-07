@@ -195,6 +195,43 @@ impl SessionRunner {
         }
     }
 
+    /// Hard-bounded variant of [`Self::run_turn`]. The inner future is dropped
+    /// when `timeout` elapses, so a provider/tool that ignores the
+    /// cancellation token cannot hold the caller's agent lock forever.
+    pub async fn run_turn_bounded(
+        &self,
+        agent: &dyn AgentLoop,
+        context: &TurnContext,
+        message: &str,
+        observer: Option<Arc<dyn TurnObserver>>,
+        timeout: std::time::Duration,
+    ) -> TurnOutcome {
+        let cancel = CancellationToken::new();
+        match tokio::time::timeout(
+            timeout,
+            self.run_turn(agent, context, message, observer, Some(cancel.clone())),
+        )
+        .await
+        {
+            Ok(outcome) => outcome,
+            Err(_) => {
+                cancel.cancel();
+                self.emit(
+                    context,
+                    "turn.completed",
+                    json!({
+                        "turnId": &context.turn_id,
+                        "outcome": "cancelled",
+                        "toolCalls": 0,
+                        "usage": serde_json::Value::Null
+                    }),
+                )
+                .await;
+                TurnOutcome::Cancelled
+            }
+        }
+    }
+
     async fn emit(&self, context: &TurnContext, event_type: &str, payload: serde_json::Value) {
         if let Err(error) = self.events.emit(session_event(context, event_type, payload)).await {
             tracing::warn!(%error, event_type, "session event write failed");
@@ -496,5 +533,54 @@ mod tests {
         let payload = completed_payload(&events);
         assert_eq!(payload["outcome"], "failed");
         assert!(payload["error"].as_str().is_some_and(|error| error.contains("boom")));
+    }
+
+    /// Loop that ignores the cancellation token entirely — this is exactly the
+    /// provider/tool shape the hard timeout must defend against.
+    struct SleepingLoop;
+
+    #[async_trait::async_trait]
+    impl AgentLoop for SleepingLoop {
+        async fn turn_streamed(
+            &self,
+            _message: &str,
+            _tx: tokio::sync::mpsc::Sender<TurnEvent>,
+            _cancel: Option<CancellationToken>,
+        ) -> anyhow::Result<String> {
+            tokio::time::sleep(std::time::Duration::from_secs(60)).await;
+            Ok("never".into())
+        }
+
+        async fn run_single(&self, _message: &str) -> anyhow::Result<String> {
+            unimplemented!()
+        }
+
+        async fn clear_history(&self) {}
+
+        async fn seed_history(&self, _messages: &[ChatMessage]) -> anyhow::Result<()> {
+            Ok(())
+        }
+    }
+
+    #[tokio::test]
+    async fn hard_timeout_cancels_turn_that_ignores_token() {
+        let (runner, sink) = runner_and_sink();
+
+        let outcome = runner
+            .run_turn_bounded(
+                &SleepingLoop,
+                &ctx(),
+                "hello",
+                None,
+                std::time::Duration::from_millis(50),
+            )
+            .await;
+
+        assert_eq!(outcome, TurnOutcome::Cancelled);
+        let events = sink.events.lock().await;
+        let last = events.last().expect("turn events emitted");
+        assert_eq!(last.event_type, "turn.completed");
+        assert_eq!(last.payload_json["outcome"], "cancelled");
+        assert_eq!(last.payload_json["toolCalls"], 0);
     }
 }

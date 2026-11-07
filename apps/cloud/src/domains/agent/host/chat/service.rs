@@ -41,7 +41,12 @@ pub async fn ensure_agent(
     session_tools_enabled: bool,
 ) -> Result<AgentLoopHandle, AgentError> {
     if let Some(agent) = pool.get_cached(agent_id) {
-        return Ok(agent);
+        // The tool set is fixed at creation: a reused id with a different
+        // flavor must be rebuilt, otherwise the wrong primitives leak.
+        if pool.agent_session_tools(agent_id) == Some(session_tools_enabled) {
+            return Ok(agent);
+        }
+        pool.invalidate(agent_id);
     }
     let trust_config = pool.trust_config(workspace_id);
     let mut runtime = pool.runtime_context().await;
@@ -51,7 +56,7 @@ pub async fn ensure_agent(
         .tool_registry()
         .resolve_tools_for_agent(config, workspace_id, trust_config, &runtime)
         .await;
-    pool.create(agent_id, workspace_id, config, tools)
+    pool.create(agent_id, workspace_id, config, tools, session_tools_enabled)
 }
 
 /// Chat send formerly on `impl AgentPool` (`host/agent/chat.rs`). The session
@@ -376,19 +381,16 @@ pub async fn send_message(
             run_id: run_id.clone(),
             session_key: session_key.clone(),
         });
-        let cancel = tokio_util::sync::CancellationToken::new();
-        let timer = {
-            let cancel = cancel.clone();
-            tokio::spawn(async move {
-                tokio::time::sleep(crate::domains::agent::session::SESSION_TURN_TIMEOUT).await;
-                cancel.cancel();
-            })
-        };
         let outcome = session_runtime
             .runner
-            .run_turn(&*ag, &context, &turn_message, Some(observer), Some(cancel))
+            .run_turn_bounded(
+                &*ag,
+                &context,
+                &turn_message,
+                Some(observer),
+                crate::domains::agent::session::SESSION_TURN_TIMEOUT,
+            )
             .await;
-        timer.abort();
         drop(ag);
 
         let final_text = match outcome {
@@ -484,6 +486,41 @@ pub async fn send_message(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tinyiothub_agent::port::attribution::{Attributable, ProviderKind, Role};
+    use tinyiothub_agent::port::provider::{ChatRequest, ChatResponse, ModelProvider};
+
+    /// Builds without touching provider config (the minimax factory requires a
+    /// `[minimax]` config section at build time).
+    struct ScriptedProvider;
+
+    #[async_trait::async_trait]
+    impl ModelProvider for ScriptedProvider {
+        async fn chat(
+            &self,
+            _request: ChatRequest<'_>,
+            _model: &str,
+            _temperature: Option<f64>,
+        ) -> anyhow::Result<ChatResponse> {
+            Ok(ChatResponse {
+                text: Some("scripted".into()),
+                tool_calls: vec![],
+                usage: None,
+                reasoning_content: None,
+            })
+        }
+    }
+
+    impl Attributable for ScriptedProvider {
+        fn role(&self) -> Role {
+            Role::Provider(ProviderKind::Model(
+                tinyiothub_agent::port::attribution::ModelProviderKind::Custom,
+            ))
+        }
+
+        fn alias(&self) -> &str {
+            "ScriptedProvider"
+        }
+    }
 
     #[tokio::test]
     async fn send_with_pool_rejects_session_from_other_workspace() {
@@ -525,6 +562,39 @@ mod tests {
         use crate::domains::agent::session::{ASK_USER_TIMEOUT, SESSION_TURN_TIMEOUT};
         assert!(SESSION_TURN_TIMEOUT > ASK_USER_TIMEOUT);
         assert!(SESSION_TURN_TIMEOUT >= std::time::Duration::from_secs(15 * 60));
+    }
+
+    #[tokio::test]
+    async fn ensure_agent_rebuilds_when_session_tools_flip() {
+        let pool = AgentPool::new(
+            &tinyiothub_core::config::AgentSettings::default(),
+            Arc::new(tinyiothub_agent::port::memory::NoopMemory),
+            Arc::new(tinyiothub_agent::port::observer::NoopObserver),
+            Arc::new(|| Ok(Box::new(ScriptedProvider))),
+        )
+        .expect("test AgentPool");
+        let config = AgentRuntimeConfig::default();
+        let cached = pool
+            .create("agent_main", "ws-test", &config, vec![], false)
+            .expect("seed cached agent");
+        assert_eq!(pool.agent_session_tools("agent_main"), Some(false));
+
+        let rebuilt = ensure_agent(&pool, "agent_main", "ws-test", &config, true)
+            .await
+            .expect("rebuild with session tools");
+        assert!(
+            !Arc::ptr_eq(&cached, &rebuilt),
+            "tool-set mismatch must invalidate the cached agent"
+        );
+        assert_eq!(pool.agent_session_tools("agent_main"), Some(true));
+
+        let again = ensure_agent(&pool, "agent_main", "ws-test", &config, true)
+            .await
+            .expect("cache hit");
+        assert!(
+            Arc::ptr_eq(&rebuilt, &again),
+            "matching flavor reuses the cached handle"
+        );
     }
 
     #[test]
