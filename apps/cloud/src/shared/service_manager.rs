@@ -42,6 +42,11 @@ pub struct ServiceManager {
     /// Agent 持久化订阅者关停令牌（Task 9）：cancel 后主循环退出、
     /// 落库重试任务中止；句柄在 service_handles 中随关停排空。
     persistence_shutdown: Option<tokio_util::sync::CancellationToken>,
+
+    /// Plan 2：assistant schedule trigger router。句柄在 service_handles 中
+    /// 排空，但 router 自身只在 cancellation token 取消时退出——shutdown
+    /// 前必须持有一份并 cancel，否则 drain 会空等 10s 超时。
+    trigger_router: Arc<RwLock<Option<Arc<crate::domains::agent::session::TriggerRouter>>>>,
 }
 
 impl ServiceManager {
@@ -58,6 +63,7 @@ impl ServiceManager {
             orchestrator: None,
             event_publisher: None,
             persistence_shutdown: None,
+            trigger_router: Arc::new(RwLock::new(None)),
         }
     }
 
@@ -752,6 +758,7 @@ impl ServiceManager {
                 app_state.db.clone(),
                 wake_runner,
             ));
+            *self.trigger_router.write().await = Some(trigger_router.clone());
             let trigger_handle = trigger_router.clone().start();
             self.service_handles.write().await.push(trigger_handle);
             info!("✅ AI Orchestrator started ({} workspaces)", ws_ids.len());
@@ -881,6 +888,12 @@ impl ServiceManager {
 
         // 更新状态为关闭中
         *self.status.write().await = ServiceStatus::Stopping;
+
+        // Plan 2：先 cancel schedule trigger router 的 tick 循环，避免
+        // service_handles 排空时等它到 10s 超时。
+        if let Some(router) = self.trigger_router.write().await.take() {
+            router.shutdown();
+        }
 
         // 关闭 Cron 调度器
         if let Some(cron_scheduler) = self.cron_scheduler.write().await.take() {
