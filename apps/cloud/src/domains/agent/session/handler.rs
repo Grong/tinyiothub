@@ -1,0 +1,164 @@
+//! Session 事件、Todo、问题回答的 HTTP 端点。
+//!
+//! 所有端点先校验 session_key 的 workspace 归属，再访问 DB / broker。
+
+use std::convert::Infallible;
+use std::time::Duration;
+
+use async_stream::stream;
+use axum::Json;
+use axum::extract::{Path, Query, State};
+use axum::http::StatusCode;
+use axum::response::sse::{Event, KeepAlive, Sse};
+use axum::response::{IntoResponse, Response};
+use serde::Deserialize;
+use tinyiothub_agent::session::SessionKey;
+use tinyiothub_core::harness::ExecutionMode;
+use tinyiothub_storage::harness_event::EventFilter;
+use tinyiothub_web::security::Claims;
+
+use crate::domains::agent::AgentState;
+use crate::domains::agent::session::QuestionAnswer;
+
+#[derive(Debug, Deserialize)]
+pub struct EventQuery {
+    #[serde(default)]
+    pub after: i64,
+    pub limit: Option<i64>,
+}
+
+pub(crate) fn verify_session_workspace(session_key: &str, authorized_workspace: &str) -> Option<SessionKey> {
+    let parsed = SessionKey::parse(session_key).ok()?;
+    if parsed.workspace_id != authorized_workspace {
+        return None;
+    }
+    Some(parsed)
+}
+
+fn event_filter(session_id: &str) -> EventFilter {
+    EventFilter {
+        session_id: Some(session_id.to_string()),
+        run_id: None,
+        task_id: None,
+        execution_mode: ExecutionMode::Production,
+    }
+}
+
+pub async fn list_events(
+    State(state): State<AgentState>,
+    claims: Claims,
+    Path(session_key): Path<String>,
+    Query(query): Query<EventQuery>,
+) -> Response {
+    let Some(parsed) = verify_session_workspace(&session_key, &claims.workspace_id) else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+    let filter = event_filter(&parsed.session_key());
+    match state
+        .db
+        .session_event_page(&parsed.workspace_id, &filter, query.after, query.limit.unwrap_or(200))
+        .await
+    {
+        Ok(page) => Json(serde_json::json!({
+            "events": page.events,
+            "highWatermark": page.high_watermark,
+        }))
+        .into_response(),
+        Err(error) => {
+            tracing::warn!(%error, %session_key, "session event page failed");
+            StatusCode::INTERNAL_SERVER_ERROR.into_response()
+        }
+    }
+}
+
+pub async fn stream_events(
+    State(state): State<AgentState>,
+    claims: Claims,
+    Path(session_key): Path<String>,
+    Query(query): Query<EventQuery>,
+) -> Response {
+    let Some(parsed) = verify_session_workspace(&session_key, &claims.workspace_id) else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+    let filter = event_filter(&parsed.session_key());
+    let db = state.db.clone();
+
+    let event_stream = stream! {
+        let mut cursor = query.after;
+        loop {
+            match db
+                .session_event_page(&parsed.workspace_id, &filter, cursor, 200)
+                .await
+            {
+                Ok(page) => {
+                    for event in page.events {
+                        cursor = event.seq;
+                        if let Ok(frame) = Event::default()
+                            .event("session")
+                            .id(event.seq.to_string())
+                            .json_data(event)
+                        {
+                            yield Ok::<_, Infallible>(frame);
+                        }
+                    }
+                }
+                Err(error) => {
+                    tracing::warn!(%error, %session_key, "session event tail failed");
+                }
+            }
+            tokio::time::sleep(Duration::from_millis(500)).await;
+        }
+    };
+
+    Sse::new(event_stream).keep_alive(KeepAlive::default()).into_response()
+}
+
+pub async fn todos(State(state): State<AgentState>, claims: Claims, Path(session_key): Path<String>) -> Response {
+    let Some(parsed) = verify_session_workspace(&session_key, &claims.workspace_id) else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+    Json(state.session_runtime.todos.get(&parsed.session_key())).into_response()
+}
+
+pub async fn answer_question(
+    State(state): State<AgentState>,
+    claims: Claims,
+    Path((session_key, question_id)): Path<(String, String)>,
+    Json(answer): Json<QuestionAnswer>,
+) -> Response {
+    let Some(parsed) = verify_session_workspace(&session_key, &claims.workspace_id) else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+    match state
+        .session_runtime
+        .questions
+        .answer(&parsed.session_key(), &question_id, answer)
+    {
+        Ok(()) => StatusCode::NO_CONTENT.into_response(),
+        Err(crate::domains::agent::session::questions::QuestionError::NotFound) => {
+            StatusCode::NOT_FOUND.into_response()
+        }
+        Err(crate::domains::agent::session::questions::QuestionError::SessionMismatch) => {
+            StatusCode::FORBIDDEN.into_response()
+        }
+        Err(crate::domains::agent::session::questions::QuestionError::Closed) => StatusCode::CONFLICT.into_response(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn workspace_mismatch_is_rejected() {
+        let key = "agent:ws-a:agent_main/s1";
+        assert!(verify_session_workspace(key, "ws-a").is_some());
+        assert!(verify_session_workspace(key, "ws-b").is_none());
+    }
+
+    #[test]
+    fn malformed_session_key_is_rejected() {
+        assert!(verify_session_workspace("chat:ws:agent/s1", "ws").is_none());
+        assert!(verify_session_workspace("agent:ws:agent", "ws").is_none());
+    }
+}

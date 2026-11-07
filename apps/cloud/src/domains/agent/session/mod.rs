@@ -5,6 +5,7 @@ pub const SESSION_TURN_TIMEOUT: Duration = Duration::from_secs(15 * 60);
 
 pub mod context;
 pub mod events;
+pub mod handler;
 pub mod questions;
 pub mod runner;
 pub mod subagent;
