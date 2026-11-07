@@ -16,6 +16,7 @@ pub mod tools;
 pub mod trigger;
 pub mod types;
 pub mod wake;
+pub mod workspace_api;
 
 pub use context::*;
 pub use events::*;
