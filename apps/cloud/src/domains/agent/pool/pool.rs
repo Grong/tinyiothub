@@ -261,6 +261,11 @@ impl AgentPool {
         }
     }
 
+    /// 读取已缓存 Agent 的运行时配置（子代理继承父配置）。
+    pub fn agent_config(&self, agent_id: &str) -> Option<AgentRuntimeConfig> {
+        self.agents.get(agent_id).map(|entry| entry.metadata.config.clone())
+    }
+
     /// Remove an agent from the pool (on config change).
     pub fn invalidate(&self, agent_id: &str) {
         self.agents.remove(agent_id);

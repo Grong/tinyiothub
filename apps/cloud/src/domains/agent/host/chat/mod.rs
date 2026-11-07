@@ -8,3 +8,4 @@
 pub mod handler;
 pub mod history;
 pub mod service;
+pub mod subagent;
