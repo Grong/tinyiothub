@@ -7,6 +7,7 @@ pub const SUBAGENT_TURN_TIMEOUT: Duration = Duration::from_secs(10 * 60);
 pub mod context;
 pub mod events;
 pub mod handler;
+pub mod hud;
 pub mod questions;
 pub mod runner;
 pub mod subagent;
