@@ -308,7 +308,9 @@ session.ended     { session_id, outcome }
 - `完全访问` 只表示"会话内免逐次批准"，不表示"绕过联锁"；
 - 无人在线时，写动作不得因"自主运行"而自动放行。
 
-## 12. Migration
+## 12. Migration and Legacy Cleanup
+
+### 12.1 迁移映射
 
 | 现有 | 处理 |
 |---|---|
@@ -321,6 +323,84 @@ session.ended     { session_id, outcome }
 | 内置技能模板 | 改写为"步骤 + 注意事项"形态 |
 | 现有 chat 会话 | 映射为 `chat` 类型会话，历史保留 |
 | policy/trust/Effect/对账 | 不动 |
+
+### 12.2 清理原则
+
+- **只删被本次设计取代的代码**；与本次无关的死代码不动（遵守 CLAUDE.md 的 Surgical Changes）。
+- **分阶段删除**：每批删除必须在新路径上线、对应测试通过之后进行；禁止大爆炸。
+- **删除独立提交**：同一提交内同步删除对应测试，不留下测试孤儿。
+- **数据库不随代码一起删**：表先保留只读，单独迁移/备份后再下掉。
+- **安全与恢复内核一律保留**：Effect/Decision/unknown fence/对账、policy/trust、session_events。
+
+### 12.3 删除批次
+
+**Batch 0 — 停止继续沉淀**
+- 冻结 `2026-11-03-agent-harness-core.md` 计划，不再实现。
+- 旧 spec 标记为"产品方向已被取代；安全、Effect/Decision、恢复合同继续有效"。
+- 移除 `tools/types.rs`、`host/tools/handler.rs`、`host/config/handler.rs` 的 `#![allow(dead_code)]`，清掉未使用项。
+
+**Batch 1 — 统一循环切换后**
+- 删除 `AutonomousAgentProvider` 及其独立 prompt 拼装。
+- 删除 `thing_agent/runner.rs`、`scheduler.rs`、`governor.rs`、`watch_loop.rs`、`pushback.rs` 中被 Session Loop 取代的部分；按文件逐一标注保留/删除。
+- 保留 `approval_port.rs`、`registry.rs`、`active_runs.rs`、`traits.rs`、仲裁与审批相关代码。
+- 删除 `dispatch_thing_task` 工具及 chat 侧的甩单分支。
+- 删除旧 chat 循环与对应测试。
+
+**Batch 2 — 心跳退役**
+- 删除 `host/heartbeat.rs` 的 md 解析与一次性迁移代码。
+- 删除 `workspace_heartbeat.rs` 的 legacy 双读分支（`legacy_logs_from_agent_actions`，注释标注"切换完成后删除"）。
+- `get_default_tasks()` 的硬编码默认任务改写为 `inspection` 技能正文。
+- `heartbeat_tasks` 表保留只读；下一版本单独迁移后下掉。
+- 删除 `HEARTBEAT.md` 模板及 `.migrated` 相关代码路径。
+
+**Batch 3 — Workflow 实验退役**
+- 删除 `workflows/` 中的 Workflow 定义/修订/模板/dry-run/runner。
+- 删除 `harness.rs` 中 Workflow CRUD、模板实例化、simulation/dry-run 端点。
+- 先把 `workflows/health.rs`、`workflows/supervisor.rs` 中仍服务 HUD 的调度健康投影迁入 session 域，再删原文件；保留全局概览端点。
+- 删除仅被 Workflow 使用的 `runtime/harness_stream` 分支（若新时间线不复用）。
+- 前端删除 `harness-workflow-*`、`harness-templates`、`harness-dry-run` 及其测试；`harness-compaction` 若仍服务新会话投影则保留改造，否则删除。
+- `agent_workflows` / `workflow_revisions` 表保留只读，独立迁移后再下掉。
+
+**Batch 4 — 兼容层清除**
+- 删除 `host/skill.rs`、`host/reflect.rs` 的 backward-compat re-export。
+- 删除 `host/types.rs` 的 deprecated `ChatTurnMessage`。
+- 删除已无调用方的旧 handler 模块与测试。
+
+**Batch 5 — 前端收敛**
+- 新 Codex 式界面通过真实浏览器验收后，删除被取代的 `runtime-*` 视图、旧 `chat.ts`、`agents-*` 中由技能/主 prompt 编辑取代的 Tab。
+- 删除重复的样式与测试。
+- `runtime-url-state` 只保留旧书签重定向的薄兼容层；其余 URL 解析合并到一套。
+
+**Batch 6 — 文档收敛**
+- 旧 spec 顶部加状态：产品方向被取代，安全合同仍为规范。
+- 未跟踪的 2026-11-03 计划删除或移入 archive。
+- 更新 AGENTS.md / CLAUDE.md 中指向旧路径的说明。
+
+### 12.4 保留清单
+
+- `runtime/`：dispatch、controls、tasks、Effect/Decision、恢复与 unknown fence、stream。
+- `core::harness`：Effect/Decision/Recovery 类型。
+- policy / trust / approval / arbitration。
+- session_events / SSE / ledger。
+- skills loader、ToolRegistry、MCP。
+- 旧书签重定向薄兼容层（一个版本）。
+
+### 12.5 清理验收
+
+- 触达模块内无 `#![allow(dead_code)]`。
+- `cargo clippy --workspace --all-targets -- -D warnings` 通过。
+- `cargo test --workspace` 全绿，安全回归测试一条不少。
+- 前端 `pnpm type-check` / `pnpm build` / `pnpm test` 通过，并完成真实浏览器验收。
+- 路由审计：每条保留路由都有真实前端调用方，或被明确标注为兼容层。
+- 全局只有一个循环、一个 prompt builder、一套界面。
+- `git grep` 退役符号返回零命中，兼容层除外。
+
+### 12.6 清理风险
+
+- `thing_agent/` 内可能混有安全编排代码：删除前逐文件标注保留/删除，不按目录整删。
+- 数据库表下掉需要独立迁移、备份与回滚方案。
+- 前端删除可能破坏旧深链接：保留一个版本的重定向。
+- 采用分批门禁，避免一次性大删除导致不可定位的回归。
 
 ## 13. Recovery
 
@@ -353,19 +433,21 @@ session.ended     { session_id, outcome }
 - Critical 告警触发应急预案技能；
 - 无匹配技能时走通用循环。
 
-### 14.4 回归
+### 14.4 回归与清理
 
 - 现有 policy / trust / Effect / unknown / 对账测试全部保留并通过；
 - 现有 chat 会话历史可读；
-- `/chat/stream`、SSE、trace 行为不回退。
+- `/chat/stream`、SSE、trace 行为不回退；
+- 每批删除后按 12.5 重新执行 clippy、测试、前端构建与路由审计。
 
 ## 15. Non-Goals
 
 - Plan mode（只读规划 + 批准）——下一期。
-- Workflow 声明式引擎作为主路径——降为高级自动化，本期不推进。
+- Workflow 声明式引擎退役（按 12.3 彻底清理），不作为产品路径；仅保留 Effect/Decision/恢复内核。
 - 多层子代理——只做一层。
 - 重写安全、Effect、恢复层。
 - 通用文件系统/代码编辑工具——本期聚焦 IoT 域。
+- 不追求一次性删完旧代码；按批次推进，每批独立验收。
 
 ## 16. Open Questions
 
@@ -390,3 +472,4 @@ session.ended     { session_id, outcome }
 | 9 | 前端版式 | 参考 Codex：单列时间线、内联 todo、底部 composer、左侧会话抽屉 |
 | 10 | 顶部浮动 | 全局动态 HUD，跨会话不变 |
 | 11 | 权限 | 只读 / 需要审批（默认）/ 完全访问；不绕过联锁 |
+| 12 | 旧代码清理 | 彻底清理：分 6 批删除双循环旧路径、旧心跳、Workflow 实验、重复前端视图；安全/恢复内核保留 |
