@@ -25,6 +25,22 @@ pub struct TriggerRouter {
     shutdown: CancellationToken,
 }
 
+/// RAII guard for the per-workspace in-flight marker.
+///
+/// Removal happens in `Drop`, so a panicking (or cancelled) dispatch still
+/// clears the marker instead of permanently disabling future wakes for the
+/// workspace.
+struct InFlightGuard {
+    set: Arc<DashSet<String>>,
+    key: String,
+}
+
+impl Drop for InFlightGuard {
+    fn drop(&mut self) {
+        self.set.remove(&self.key);
+    }
+}
+
 impl TriggerRouter {
     pub fn new(db: Arc<Db>, executor: Arc<dyn WakeExecutor>) -> Self {
         Self {
@@ -72,8 +88,13 @@ impl TriggerRouter {
             if !self.in_flight.insert(schedule.workspace_id.clone()) {
                 continue;
             }
+            let guard = InFlightGuard {
+                set: Arc::clone(&self.in_flight),
+                key: schedule.workspace_id.clone(),
+            };
             let router = Arc::clone(self);
             handles.push(tokio::spawn(async move {
+                let _guard = guard;
                 router.dispatch(schedule, now).await;
             }));
         }
@@ -90,7 +111,6 @@ impl TriggerRouter {
         {
             tracing::warn!(%error, workspace_id = %schedule.workspace_id, "assistant schedule: mark wake failed");
         }
-        self.in_flight.remove(&schedule.workspace_id);
     }
 
     pub fn start(self: Arc<Self>) -> tokio::task::JoinHandle<Result<(), crate::shared::error::Error>> {
@@ -118,7 +138,7 @@ mod tests {
     use super::*;
     use chrono::TimeZone;
     use std::sync::atomic::{AtomicUsize, Ordering};
-    use tokio::sync::Mutex;
+    use tokio::sync::{Mutex, Notify};
 
     use crate::domains::agent::session::wake::WakeReport;
 
@@ -133,6 +153,25 @@ mod tests {
         async fn execute(&self, schedule: AssistantSchedule) -> WakeReport {
             self.calls.fetch_add(1, Ordering::SeqCst);
             self.workspaces.lock().await.push(schedule.workspace_id);
+            WakeReport {
+                session_key: "s".into(),
+                outcome: crate::domains::agent::session::wake::WakeOutcome::Completed,
+            }
+        }
+    }
+
+    struct BlockingExecutor {
+        calls: AtomicUsize,
+        started: Notify,
+        release: Notify,
+    }
+
+    #[async_trait::async_trait]
+    impl WakeExecutor for BlockingExecutor {
+        async fn execute(&self, _schedule: AssistantSchedule) -> WakeReport {
+            self.calls.fetch_add(1, Ordering::SeqCst);
+            self.started.notify_one();
+            self.release.notified().await;
             WakeReport {
                 session_key: "s".into(),
                 outcome: crate::domains::agent::session::wake::WakeOutcome::Completed,
@@ -174,6 +213,35 @@ mod tests {
 
         let handles = router.tick(now + chrono::Duration::seconds(299)).await;
         assert!(handles.is_empty(), "not due yet");
+    }
+
+    #[tokio::test]
+    async fn in_flight_suppresses_second_dispatch() {
+        let db = Arc::new(test_db().await);
+        let now = ts(1_800_000_000);
+        db.ensure_assistant_schedule("ws-1", "__assistant__ws-1", now)
+            .await
+            .unwrap();
+        let executor = Arc::new(BlockingExecutor {
+            calls: AtomicUsize::new(0),
+            started: Notify::new(),
+            release: Notify::new(),
+        });
+        let router = Arc::new(TriggerRouter::new(db.clone(), executor.clone()));
+
+        let mut handles = router.tick(now).await;
+        assert_eq!(handles.len(), 1);
+        executor.started.notified().await;
+
+        let suppressed = router.tick(now).await;
+        assert!(suppressed.is_empty(), "in-flight wake must suppress a second dispatch");
+
+        executor.release.notify_one();
+        handles.remove(0).await.unwrap();
+
+        assert_eq!(executor.calls.load(Ordering::SeqCst), 1);
+        let row = db.get_assistant_schedule("ws-1").await.unwrap().unwrap();
+        assert_eq!(row.next_wake_at, Some(now + chrono::Duration::seconds(300)));
     }
 
     #[tokio::test]
