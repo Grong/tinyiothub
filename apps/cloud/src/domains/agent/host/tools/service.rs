@@ -116,7 +116,7 @@ pub fn chat_builtin_tools_provider(
         ));
 
         // E2 ToolExec 接缝：所有内建工具经统一执行外壳（默认直通）。
-        let mut tools: Vec<(Box<dyn Tool>, ToolSafety)> = tools
+        let tools: Vec<(Box<dyn Tool>, ToolSafety)> = tools
             .into_iter()
             .map(|(tool, safety)| {
                 let wrapped: Box<dyn Tool> = Box::new(SeamTool::new(tool, Arc::clone(&tool_exec), workspace_id));
@@ -126,32 +126,49 @@ pub fn chat_builtin_tools_provider(
 
         // PermissionGuard：聊天/子代理 Turn 内按 Session 权限模式拦截写操作。
         // 复用 session_primitive_agent 作为唯一的会话 Turn 判定，避免条件漂移。
-        if let Some(assistant_id) = session_primitive_agent(runtime) {
-            tools = tools
-                .into_iter()
-                .map(|(tool, safety)| {
-                    if safety == ToolSafety::ReadOnly {
-                        (tool, safety)
-                    } else {
-                        (
-                            Box::new(crate::domains::agent::session::PermissionGuardTool::new(
-                                tool,
-                                assistant_id.clone(),
-                                session.contexts.clone(),
-                                session.approvals.clone(),
-                                session.events.clone(),
-                                safety,
-                                crate::domains::agent::session::APPROVAL_TIMEOUT,
-                            )) as Box<dyn Tool>,
-                            safety,
-                        )
-                    }
-                })
-                .collect();
-        }
-
-        tools
+        apply_permission_guard(
+            tools,
+            session_primitive_agent(runtime),
+            session.contexts.clone(),
+            session.approvals.clone(),
+            session.events.clone(),
+        )
     })
+}
+
+/// 按 Session 权限模式包裹写工具（ReadOnly 透传）。`agent_id` 为 `None`
+/// 时原样返回——与会话原语使用同一 Turn 判定。
+pub(crate) fn apply_permission_guard(
+    tools: Vec<(Box<dyn Tool>, ToolSafety)>,
+    agent_id: Option<String>,
+    contexts: std::sync::Arc<crate::domains::agent::session::TurnContextRegistry>,
+    approvals: std::sync::Arc<crate::domains::agent::session::ApprovalBroker>,
+    events: std::sync::Arc<dyn crate::domains::agent::session::SessionEventSink>,
+) -> Vec<(Box<dyn Tool>, ToolSafety)> {
+    let Some(agent_id) = agent_id else {
+        return tools;
+    };
+    tools
+        .into_iter()
+        .map(|(tool, safety)| {
+            if safety == ToolSafety::ReadOnly {
+                (tool, safety)
+            } else {
+                (
+                    Box::new(crate::domains::agent::session::PermissionGuardTool::new(
+                        tool,
+                        agent_id.clone(),
+                        contexts.clone(),
+                        approvals.clone(),
+                        events.clone(),
+                        safety,
+                        crate::domains::agent::session::APPROVAL_TIMEOUT,
+                    )) as Box<dyn Tool>,
+                    safety,
+                )
+            }
+        })
+        .collect()
 }
 
 fn session_primitive_agent(runtime: &crate::domains::agent::tools::context::ToolRuntimeContext) -> Option<String> {
@@ -207,5 +224,136 @@ mod tests {
 
         runtime.session_tools_enabled = true;
         assert_eq!(session_primitive_agent(&runtime), Some("agent_main".to_string()));
+    }
+
+    use crate::domains::agent::session::events::test_support::RecordingSink;
+    use crate::domains::agent::session::types::PermissionMode;
+    use crate::domains::agent::session::{ApprovalBroker, TurnContext, TurnContextRegistry, TurnGuard};
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use tinyiothub_agent::port::attribution::{Attributable, Role, ToolKind};
+    use tinyiothub_agent::port::tool::ToolResult;
+
+    struct EchoTool {
+        name: &'static str,
+        calls: Arc<AtomicUsize>,
+    }
+
+    #[async_trait::async_trait]
+    impl Tool for EchoTool {
+        fn name(&self) -> &str {
+            self.name
+        }
+        fn description(&self) -> &str {
+            "test"
+        }
+        fn parameters_schema(&self) -> serde_json::Value {
+            serde_json::json!({"type":"object"})
+        }
+        async fn execute(&self, _args: serde_json::Value) -> anyhow::Result<ToolResult> {
+            self.calls.fetch_add(1, Ordering::SeqCst);
+            Ok(ToolResult {
+                success: true,
+                output: "ok".into(),
+                error: None,
+                attachments: vec![],
+            })
+        }
+    }
+
+    impl Attributable for EchoTool {
+        fn role(&self) -> Role {
+            Role::Tool(ToolKind::Plugin)
+        }
+        fn alias(&self) -> &str {
+            self.name
+        }
+    }
+
+    fn echo(name: &'static str) -> (Box<dyn Tool>, Arc<AtomicUsize>) {
+        let calls = Arc::new(AtomicUsize::new(0));
+        (
+            Box::new(EchoTool {
+                name,
+                calls: calls.clone(),
+            }),
+            calls,
+        )
+    }
+
+    fn read_only_context(agent_id: &str) -> (Arc<TurnContextRegistry>, TurnGuard) {
+        let contexts = Arc::new(TurnContextRegistry::default());
+        let guard = contexts.set(
+            TurnContext::new(
+                "ws".into(),
+                agent_id.into(),
+                format!("agent:ws:{agent_id}/s1"),
+                "run1".into(),
+                0,
+            )
+            .with_permission_mode(PermissionMode::ReadOnly),
+        );
+        (contexts, guard)
+    }
+
+    #[tokio::test]
+    async fn apply_permission_guard_wraps_only_writes() {
+        let (write_inner, write_calls) = echo("set_device");
+        let (read_inner, read_calls) = echo("get_device");
+        let (contexts, _guard) = read_only_context("agent_main");
+
+        let guarded = apply_permission_guard(
+            vec![(write_inner, ToolSafety::Write), (read_inner, ToolSafety::ReadOnly)],
+            Some("agent_main".into()),
+            contexts,
+            Arc::new(ApprovalBroker::default()),
+            Arc::new(RecordingSink::default()),
+        );
+        assert_eq!(guarded.len(), 2);
+
+        let read_result = guarded[1].0.execute(serde_json::json!({})).await.unwrap();
+        assert!(read_result.success);
+        assert_eq!(read_calls.load(Ordering::SeqCst), 1);
+
+        let write_result = guarded[0].0.execute(serde_json::json!({})).await.unwrap();
+        assert!(!write_result.success);
+        assert!(write_result.error.unwrap().contains("只读"));
+        assert_eq!(write_calls.load(Ordering::SeqCst), 0);
+    }
+
+    #[tokio::test]
+    async fn apply_permission_guard_wraps_child_agent_tools() {
+        let child_id = "agent_ws_child";
+        let (write_inner, write_calls) = echo("set_device");
+        let (contexts, _guard) = read_only_context(child_id);
+
+        let mut guarded = apply_permission_guard(
+            vec![(write_inner, ToolSafety::Write)],
+            Some(child_id.to_string()),
+            contexts,
+            Arc::new(ApprovalBroker::default()),
+            Arc::new(RecordingSink::default()),
+        );
+        let result = guarded.pop().unwrap().0.execute(serde_json::json!({})).await.unwrap();
+        assert!(!result.success);
+        assert!(result.error.unwrap().contains("只读"));
+        assert_eq!(write_calls.load(Ordering::SeqCst), 0);
+    }
+
+    #[test]
+    fn classify_tool_safety_marks_device_writes_non_read_only() {
+        for name in [
+            "call_device",
+            "set_device",
+            "stop_device",
+            "write_properties",
+            "send_command",
+            "dispatch_thing_task",
+        ] {
+            assert_ne!(
+                classify_tool_safety(name),
+                ToolSafety::ReadOnly,
+                "{name} must require permission"
+            );
+        }
     }
 }

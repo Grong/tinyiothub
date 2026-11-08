@@ -810,5 +810,6 @@ mod tests {
             ]
         );
         assert_eq!(events[2].payload_json["kind"], "event");
+        assert_eq!(events[0].payload_json["sourceId"], "alarm-1");
     }
 }

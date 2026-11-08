@@ -14,9 +14,13 @@ pub async fn ensure_inspection_skill_at(workspace_dir: &Path, db: &Db, workspace
     let skills_dir = workspace_dir.join("skills");
     let path = skills_dir.join("inspection.md");
     if path.exists() {
-        let existing = std::fs::read_to_string(&path).unwrap_or_default();
-        if !existing.trim().is_empty() {
-            return Ok(false);
+        match std::fs::read_to_string(&path) {
+            Ok(existing) if !existing.trim().is_empty() => return Ok(false),
+            Ok(_) => {}
+            Err(error) => {
+                tracing::warn!(%error, path = %path.display(), "inspection skill exists but is unreadable; leaving it untouched");
+                return Ok(false);
+            }
         }
     }
     std::fs::create_dir_all(&skills_dir)?;
@@ -84,6 +88,25 @@ mod tests {
         let body = std::fs::read_to_string(dir.path().join("skills/inspection.md")).unwrap();
         assert!(body.contains("检查离线设备"));
         assert!(body.contains("name: inspection"));
+    }
+
+    #[tokio::test]
+    async fn unreadable_existing_skill_is_preserved() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = test_db().await;
+        let skills_dir = dir.path().join("skills");
+        std::fs::create_dir_all(&skills_dir).unwrap();
+        let path = skills_dir.join("inspection.md");
+        let bytes = [0xff, 0xfe];
+        std::fs::write(&path, bytes).unwrap();
+
+        assert!(
+            !ensure_inspection_skill_at(dir.path(), &db, "ws-unreadable")
+                .await
+                .unwrap(),
+            "an unreadable existing file must not be overwritten"
+        );
+        assert_eq!(std::fs::read(&path).unwrap(), bytes);
     }
 
     #[tokio::test]

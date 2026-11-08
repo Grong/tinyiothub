@@ -210,6 +210,11 @@ impl TriggerRouter {
                             let Some(wake) = wake else { return };
                             let workspace_id = wake.workspace_id.clone();
                             if !router.in_flight.insert(workspace_id.clone()) {
+                                tracing::warn!(
+                                    workspace_id = %workspace_id,
+                                    source_id = %wake.source_id,
+                                    "event wake dropped: workspace wake in flight"
+                                );
                                 continue;
                             }
                             let guard = InFlightGuard {
@@ -245,6 +250,21 @@ impl TriggerRouter {
     }
 }
 
+/// 把一条 AI 事件转换为 event wake：仅 Critical/Error 告警（大小写不敏感）
+/// 进入 Session Loop，其余事件忽略。
+pub(crate) fn event_wake_from_ai(ai: &AiEvent) -> Option<EventWake> {
+    let AiEvent::AlarmCreated(alarm) = ai else { return None };
+    if !(alarm.severity.eq_ignore_ascii_case("critical") || alarm.severity.eq_ignore_ascii_case("error")) {
+        return None;
+    }
+    Some(EventWake {
+        workspace_id: alarm.workspace_id.clone(),
+        trigger: "alarm".to_string(),
+        source_id: alarm.id.clone(),
+        summary: format!("{}（{}，设备 {}）", alarm.message, alarm.severity, alarm.thing_id),
+    })
+}
+
 /// 订阅 EventBus 上的 `AiEvent::AlarmCreated`，仅 Critical/Error 告警进入
 /// Session Loop。订阅在调用方同步完成（本函数只消费）。
 async fn subscribe_alarms(
@@ -271,22 +291,15 @@ async fn subscribe_alarms(
                 let Ok(ai) = serde_json::from_str::<AiEvent>(&text) else {
                     continue;
                 };
-                let AiEvent::AlarmCreated(alarm) = ai else {
+                let Some(wake) = event_wake_from_ai(&ai) else {
                     continue;
                 };
-                if !matches!(alarm.severity.as_str(), "critical" | "error") {
-                    continue;
-                }
-                let wake = EventWake {
-                    workspace_id: alarm.workspace_id.clone(),
-                    trigger: "alarm".to_string(),
-                    source_id: alarm.id.clone(),
-                    summary: format!("{}（{}，设备 {}）", alarm.message, alarm.severity, alarm.thing_id),
-                };
+                let workspace_id = wake.workspace_id.clone();
+                let source_id = wake.source_id.clone();
                 if tx.try_send(wake).is_err() {
                     tracing::warn!(
-                        workspace_id = %alarm.workspace_id,
-                        %alarm.id,
+                        %workspace_id,
+                        %source_id,
                         "alarm wake dropped: event queue full"
                     );
                 }
@@ -363,6 +376,40 @@ mod tests {
 
     fn ts(secs: i64) -> DateTime<Utc> {
         Utc.timestamp_opt(secs, 0).single().unwrap()
+    }
+
+    fn alarm(severity: &str) -> AiEvent {
+        AiEvent::AlarmCreated(tinyiothub_core::models::event::AlarmEvent {
+            id: "alarm-1".into(),
+            workspace_id: "ws-1".into(),
+            thing_id: "thing-1".into(),
+            alarm_type: "threshold".into(),
+            severity: severity.into(),
+            message: "温度过高".into(),
+            rule_id: None,
+            condition_desc: None,
+            resolved: false,
+            created_at: ts(1_800_000_000),
+        })
+    }
+
+    #[test]
+    fn event_wake_matches_severity_case_insensitively() {
+        for severity in ["Critical", "ERROR", "critical", "error"] {
+            let wake = event_wake_from_ai(&alarm(severity)).expect("critical/error alarm must produce a wake");
+            assert_eq!(wake.workspace_id, "ws-1");
+            assert_eq!(wake.trigger, "alarm");
+            assert_eq!(wake.source_id, "alarm-1");
+        }
+        assert!(event_wake_from_ai(&alarm("warning")).is_none());
+        assert!(
+            event_wake_from_ai(&AiEvent::AlarmResolved {
+                alarm_id: "alarm-1".into(),
+                thing_id: "thing-1".into(),
+                rule_id: None,
+            })
+            .is_none()
+        );
     }
 
     #[tokio::test]

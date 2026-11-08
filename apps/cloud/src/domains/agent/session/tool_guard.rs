@@ -78,7 +78,12 @@ impl Tool for PermissionGuardTool {
             return self.inner.execute(args).await;
         }
         let Some(context) = self.contexts.get(&self.assistant_id) else {
-            return self.inner.execute(args).await;
+            tracing::warn!(
+                assistant_id = %self.assistant_id,
+                tool = self.inner.name(),
+                "permission guard: missing turn context; denying non-read-only tool"
+            );
+            return Self::denied("权限检查失败：缺少 TurnContext，已拒绝执行");
         };
         match context.permission_mode {
             PermissionMode::FullAccess => self.inner.execute(args).await,
@@ -236,6 +241,24 @@ mod tests {
         let result = tool.execute(serde_json::json!({})).await.unwrap();
         assert!(!result.success);
         assert!(result.error.unwrap().contains("只读"));
+        assert_eq!(calls.load(Ordering::SeqCst), 0);
+    }
+
+    #[tokio::test]
+    async fn missing_context_denies_write_tool() {
+        let (inner, calls) = echo();
+        let contexts = Arc::new(TurnContextRegistry::default());
+        let tool = PermissionGuardTool::new(
+            inner,
+            "agent_main".into(),
+            contexts,
+            Arc::new(ApprovalBroker::default()),
+            Arc::new(RecordingSink::default()),
+            ToolSafety::Write,
+            std::time::Duration::from_secs(1),
+        );
+        let result = tool.execute(serde_json::json!({})).await.unwrap();
+        assert!(!result.success);
         assert_eq!(calls.load(Ordering::SeqCst), 0);
     }
 
