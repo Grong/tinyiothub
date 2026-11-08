@@ -45,10 +45,15 @@ const TRACE_MAX_RETRIES = 3;
 const TAB_LABELS: Record<BrainEventTab, string> = {
   needs_you: "需要你",
   all: "全部",
-  patrol: "巡检",
+  session: "会话",
   alarm: "报警",
+  // 一版兼容：旧页签后端仍映射到 session，但不再渲染。
+  patrol: "巡检",
   directive: "指令",
 };
+
+/** 渲染的页签（legacy patrol/directive 仅保留类型兼容）。 */
+const VISIBLE_TABS: BrainEventTab[] = ["needs_you", "all", "session", "alarm"];
 
 /** 状态徽章（导出供测试）：覆盖 brain_events 全部状态词，含 patrol_tick 行的 patrol_ok。 */
 export const BADGE_MAP: Record<BrainEventStatus, string> = {
@@ -63,6 +68,7 @@ export const BADGE_MAP: Record<BrainEventStatus, string> = {
   budget_skipped: "未受理",
   dispatch_suppressed: "未受理",
   patrol_ok: "巡检正常",
+  info: "事件",
 };
 
 /** 「需要你」= 待审批 + 需人工（F3/F15①，导出供测试）。 */
@@ -488,7 +494,7 @@ export class DispositionsView extends LitElement {
   private renderTabs(): TemplateResult {
     return html`
       <div class="disp-tabs" role="tablist">
-        ${(Object.keys(TAB_LABELS) as BrainEventTab[]).map((t) => {
+        ${VISIBLE_TABS.map((t) => {
           const count = tabCount(this.summary, t);
           return html`
             <button

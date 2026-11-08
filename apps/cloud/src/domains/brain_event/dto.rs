@@ -95,7 +95,8 @@ impl From<tinyiothub_storage::brain_event::BrainEventsSummary> for BrainEventsSu
 /// 注意：feed 查询恒有 48h 时间窗（同 judgment feed F12 契约）。
 #[derive(Debug, Deserialize)]
 pub struct BrainEventQueryParams {
-    /// needs_you | all | patrol | alarm | directive（默认 needs_you；未知值 400）
+    /// needs_you | all | session | alarm（默认 needs_you；未知值 400）。
+    /// 一版兼容：patrol/directive 映射到 session。
     pub tab: Option<String>,
     /// 游标（上一页最后一条 brain event id）
     pub before: Option<String>,

@@ -402,6 +402,54 @@ impl Db {
         Ok(events)
     }
 
+    /// Fetch one retained event by id. Used by the brain feed's
+    /// `session:<event_id>` detail path.
+    pub async fn session_event_by_id(&self, workspace_id: &str, event_id: &str) -> Result<Option<HarnessEvent>> {
+        let path = self
+            .workspace_store_root
+            .join(workspace_id)
+            .join("harness")
+            .join("harness.db");
+        if !tokio::fs::try_exists(&path).await.unwrap_or(false) {
+            return Ok(None);
+        }
+        let pool = self.workspace_pool(workspace_id).await?;
+        let row = sqlx::query_as::<_, SessionEventRow>(EVENT_BY_ID_SQL)
+            .bind(event_id)
+            .fetch_optional(&pool)
+            .await?;
+        row.map(|row| row.into_event(workspace_id)).transpose()
+    }
+
+    /// Page of recent Production events strictly older than a merged-feed
+    /// cursor. The cursor id is the brain-feed id (`session:<event_id>`), so
+    /// the comparison applies the same prefix the feed merges under.
+    pub async fn recent_session_events_before(
+        &self,
+        workspace_id: &str,
+        cursor_created_at: &str,
+        cursor_id: &str,
+        limit: i64,
+    ) -> Result<Vec<HarnessEvent>> {
+        let limit = if limit <= 0 { 20 } else { limit.min(200) };
+        let pool = self.workspace_pool(workspace_id).await?;
+        let rows = sqlx::query_as::<_, SessionEventRow>(
+            "SELECT seq, event_id, session_id, execution_mode, run_id, task_id, type, occurred_at, \
+             cause_id, schema_v, payload_digest, payload_json \
+             FROM session_events WHERE execution_mode = ? \
+               AND (occurred_at < ? OR (occurred_at = ? AND ('session:' || event_id) < ?)) \
+             ORDER BY occurred_at DESC, seq DESC LIMIT ?",
+        )
+        .bind(ExecutionMode::Production.as_str())
+        .bind(cursor_created_at)
+        .bind(cursor_created_at)
+        .bind(cursor_id)
+        .bind(limit)
+        .fetch_all(&pool)
+        .await?;
+        rows.into_iter().map(|row| row.into_event(workspace_id)).collect()
+    }
+
     /// 最近事件（跨会话，Production），按发生时间倒序。
     /// 只用于 HUD/概览；会话回放仍走 `session_event_page`。
     pub async fn recent_session_events(&self, workspace_id: &str, limit: i64) -> Result<Vec<HarnessEvent>> {

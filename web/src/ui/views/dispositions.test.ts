@@ -101,7 +101,7 @@ describe("dispositions view helpers", () => {
     expect(needsYou(ev({ status: "patrol_ok" }))).toBe(false);
   });
 
-  it("badge map covers all 11 states（含 patrol_tick 行的 patrol_ok）", () => {
+  it("badge map covers all 12 states（含 patrol_tick 的 patrol_ok 与 session 的 info）", () => {
     const all = [
       "investigating",
       "self_closed",
@@ -114,6 +114,7 @@ describe("dispositions view helpers", () => {
       "budget_skipped",
       "dispatch_suppressed",
       "patrol_ok",
+      "info",
     ] as const;
     for (const s of all) {
       expect(BADGE_MAP[s], `状态 ${s} 缺徽章`).toBeTruthy();

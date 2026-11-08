@@ -18,9 +18,12 @@ function unwrap<T>(res: { result: T | null }): T {
   return res.result;
 }
 
-export type BrainEventTab = 'needs_you' | 'all' | 'patrol' | 'alarm' | 'directive';
+/** `patrol` / `directive` are one-version aliases for `session`. */
+export type BrainEventTab = 'needs_you' | 'all' | 'session' | 'alarm' | 'patrol' | 'directive';
 
-export type BrainEventSource = 'alarm' | 'patrol' | 'patrol_tick' | 'directive';
+/** `patrol` / `patrol_tick` / `directive` are legacy sources still accepted by
+ *  the detail endpoint; list queries only emit `alarm` and `session`. */
+export type BrainEventSource = 'alarm' | 'session' | 'patrol' | 'patrol_tick' | 'directive';
 
 export type BrainEventStatus =
   | 'investigating'
@@ -33,7 +36,8 @@ export type BrainEventStatus =
   | 'dismissed'
   | 'budget_skipped'
   | 'dispatch_suppressed'
-  | 'patrol_ok';
+  | 'patrol_ok'
+  | 'info';
 
 /** 列表行（无 evidence——性能评审裁决：证据只由 detail 端点载）。 */
 export interface BrainEvent {
