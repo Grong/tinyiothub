@@ -258,10 +258,17 @@ impl WakeRunner {
                 outcome: WakeOutcome::Skipped,
             };
         }
-        let message = format!(
-            "收到告警：{}\n请按「应急预案」技能（如未加载则按默认职责）评估影响、给出处置建议；涉及写设备必须走审批。",
-            wake.summary
-        );
+        let message = match wake.trigger.as_str() {
+            "watch" => format!("收到设备值守命中：{}\n请评估影响；涉及写设备必须走审批。", wake.summary),
+            "thing_event" => format!(
+                "收到设备事件：{}\n请判断是否需要处理；涉及写设备必须走审批。",
+                wake.summary
+            ),
+            _ => format!(
+                "收到告警：{}\n请按「应急预案」技能（如未加载则按默认职责）评估影响、给出处置建议；涉及写设备必须走审批。",
+                wake.summary
+            ),
+        };
         let assistant_id = assistant_agent_id(&wake.workspace_id);
         let agent = match ensure_agent(
             &self.pool,
@@ -673,6 +680,7 @@ mod tests {
                     trigger: "alarm".into(),
                     source_id: "alarm-1".into(),
                     summary: "温度过高".into(),
+                    dedup_key: None,
                 },
                 CancellationToken::new(),
             )
@@ -788,6 +796,7 @@ mod tests {
                     trigger: "alarm".into(),
                     source_id: "alarm-1".into(),
                     summary: "温度过高".into(),
+                    dedup_key: None,
                 },
                 agent,
                 "收到告警：温度过高",

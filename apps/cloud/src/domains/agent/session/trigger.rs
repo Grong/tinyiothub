@@ -36,6 +36,16 @@ pub struct EventWake {
     pub trigger: String,
     pub source_id: String,
     pub summary: String,
+    pub dedup_key: Option<String>,
+}
+
+impl EventWake {
+    fn rate_key(&self) -> String {
+        match &self.dedup_key {
+            Some(key) => format!("{}:{}:{}", self.workspace_id, self.trigger, key),
+            None => format!("{}:{}", self.workspace_id, self.trigger),
+        }
+    }
 }
 
 /// 滑动窗口内已接受的 event 派发时间点。
@@ -90,13 +100,14 @@ impl TriggerRouter {
         }
     }
 
-    /// 提交一次事件 wake。同 workspace 在途时拒绝；同一 `{workspace}:{trigger}`
-    /// 60 秒窗口内超过 3 次时拒绝。
+    /// 提交一次事件 wake。同 workspace 在途时拒绝；同一
+    /// `{workspace}:{trigger}:{dedup_key}`（无 dedup 时退化为
+    /// `{workspace}:{trigger}`）60 秒窗口内超过 3 次时拒绝。
     pub fn submit_event(&self, wake: EventWake) -> bool {
         if self.in_flight.contains(&wake.workspace_id) {
             return false;
         }
-        let key = format!("{}:{}", wake.workspace_id, wake.trigger);
+        let key = wake.rate_key();
         let now = Instant::now();
         {
             let mut window = self
@@ -261,6 +272,42 @@ pub(crate) fn event_wake_from_ai(ai: &AiEvent) -> Option<EventWake> {
         trigger: "alarm".to_string(),
         source_id: alarm.id.clone(),
         summary: format!("{}（{}，设备 {}）", alarm.message, alarm.severity, alarm.thing_id),
+        // 沿用旧 watchdog 分键：同一设备同类告警共享限流预算，防止刷屏。
+        dedup_key: Some(format!("alarm:{}:{}", alarm.thing_id, alarm.alarm_type)),
+    })
+}
+
+/// 设备事件（如离线）→ event wake。纯映射，便于无 fixture 测试。
+#[allow(dead_code)] // 订阅点由 Task 2 接线；此处先提供纯映射与测试
+pub(crate) fn thing_event_wake(workspace_id: &str, thing_id: &str, event_name: &str, event_id: &str) -> EventWake {
+    EventWake {
+        workspace_id: workspace_id.to_string(),
+        trigger: "thing_event".to_string(),
+        source_id: event_id.to_string(),
+        summary: format!("设备事件 {event_name}（{thing_id}）"),
+        dedup_key: Some(format!("thing:{thing_id}:event:{event_name}")),
+    }
+}
+
+/// Watch 命中 → event wake。Task 所有的 watch 由 Task wake router 消费，此处跳过。
+#[allow(dead_code)] // 订阅点由 Task 2 接线；此处先提供纯映射与测试
+pub(crate) fn watch_wake(
+    workspace_id: &str,
+    rule_id: &str,
+    owner_task_id: Option<&str>,
+    current_value: &serde_json::Value,
+    health: &str,
+    zone: &str,
+) -> Option<EventWake> {
+    if owner_task_id.is_some() {
+        return None;
+    }
+    Some(EventWake {
+        workspace_id: workspace_id.to_string(),
+        trigger: "watch".to_string(),
+        source_id: rule_id.to_string(),
+        summary: format!("Watch 命中 {rule_id}：value={current_value} health={health} zone={zone}"),
+        dedup_key: Some(format!("watch:{rule_id}")),
     })
 }
 
@@ -592,6 +639,38 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn dedup_key_scopes_the_rate_window() {
+        let db = Arc::new(test_db().await);
+        let router = TriggerRouter::new(db, Arc::new(RecordingExecutor::default()));
+        let wake = |rule: &str| EventWake {
+            workspace_id: "ws-1".into(),
+            trigger: "watch".into(),
+            source_id: rule.into(),
+            summary: "hit".into(),
+            dedup_key: Some(format!("watch:{rule}")),
+        };
+        for _ in 0..3 {
+            assert!(router.submit_event(wake("r1")));
+        }
+        assert!(!router.submit_event(wake("r1")), "same rule limited");
+        assert!(router.submit_event(wake("r2")), "different rule has its own budget");
+    }
+
+    #[test]
+    fn watch_and_thing_mappings_produce_scoped_wakes() {
+        let watch = watch_wake("ws", "rule-1", None, &serde_json::json!(42), "Healthy", "A").unwrap();
+        assert_eq!(watch.trigger, "watch");
+        assert_eq!(watch.source_id, "rule-1");
+        assert_eq!(watch.dedup_key.as_deref(), Some("watch:rule-1"));
+        assert!(watch_wake("ws", "rule-1", Some("task-1"), &serde_json::json!(42), "Healthy", "A").is_none());
+
+        let thing = thing_event_wake("ws", "thing-1", "offline", "evt-1");
+        assert_eq!(thing.trigger, "thing_event");
+        assert_eq!(thing.source_id, "evt-1");
+        assert_eq!(thing.dedup_key.as_deref(), Some("thing:thing-1:event:offline"));
+    }
+
+    #[tokio::test]
     async fn event_wake_dedupes_while_in_flight_then_dispatches() {
         let db = Arc::new(test_db().await);
         let now = ts(1_800_000_000);
@@ -637,6 +716,7 @@ mod tests {
             trigger: "alarm".into(),
             source_id: "alarm-1".into(),
             summary: "3 号楼温度过高".into(),
+            dedup_key: None,
         }));
         executor.started.notified().await;
         assert!(!router.submit_event(EventWake {
@@ -644,6 +724,7 @@ mod tests {
             trigger: "alarm".into(),
             source_id: "alarm-2".into(),
             summary: "another".into(),
+            dedup_key: None,
         }));
         assert_eq!(executor.calls.load(Ordering::SeqCst), 0);
         executor.release.notify_one();
