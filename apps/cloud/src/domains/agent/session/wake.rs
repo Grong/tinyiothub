@@ -108,12 +108,15 @@ pub struct WakeRunner {
 }
 
 /// 一次 wake session 的来源（scheduled / event 共用同一套生命周期写入）。
+///
+/// `source_id` 为 `None` 时，`trigger.received.sourceId` 回落到本轮的
+/// `wake.dispatched.wakeEventId`（scheduled 路径的相关性保持）。
 struct SessionOrigin<'a> {
     workspace_id: &'a str,
     assistant_id: &'a str,
     kind: &'a str,
     trigger: &'a str,
-    source_id: &'a str,
+    source_id: Option<String>,
 }
 
 impl WakeRunner {
@@ -208,14 +211,13 @@ impl WakeRunner {
         message: &str,
         cancel: CancellationToken,
     ) -> WakeReport {
-        let source_id = Uuid::new_v4().to_string();
         self.run_session_with_agent(
             SessionOrigin {
                 workspace_id: &schedule.workspace_id,
                 assistant_id: &schedule.assistant_id,
                 kind: "scheduled",
                 trigger: "schedule",
-                source_id: &source_id,
+                source_id: None,
             },
             agent,
             message,
@@ -225,7 +227,25 @@ impl WakeRunner {
     }
 
     /// 告警等外部事件 wake：与定时 wake 共用生命周期事件，kind 为 `event`。
+    ///
+    /// 与定时 wake 一致：`AutonomyMode::Off` 的工作区不跑自主 Turn——告警仍
+    /// 进入 Session Loop 的准入层，但在暂停态下被跳过。
     pub async fn run_event(&self, wake: &EventWake, cancel: CancellationToken) -> WakeReport {
+        let workspace_id = &wake.workspace_id;
+        let autonomy_off = match self.db.load_autonomy_policy(workspace_id).await {
+            Ok(Some(policy)) => policy.mode == tinyiothub_core::policy::AutonomyMode::Off,
+            Ok(None) => false,
+            Err(error) => {
+                tracing::warn!(%error, %workspace_id, "event wake: load autonomy policy failed");
+                false
+            }
+        };
+        if autonomy_off {
+            return WakeReport {
+                session_key: String::new(),
+                outcome: WakeOutcome::Skipped,
+            };
+        }
         let message = format!(
             "收到告警：{}\n请按「应急预案」技能（如未加载则按默认职责）评估影响、给出处置建议；涉及写设备必须走审批。",
             wake.summary
@@ -267,7 +287,7 @@ impl WakeRunner {
                 assistant_id: &assistant_id,
                 kind: "event",
                 trigger: &wake.trigger,
-                source_id: &wake.source_id,
+                source_id: Some(wake.source_id.clone()),
             },
             agent,
             message,
@@ -311,10 +331,13 @@ impl WakeRunner {
             0,
         );
         let wake_event_id = Uuid::new_v4().to_string();
+        // scheduled 无显式 source：与本轮 wake.dispatched.wakeEventId 保持同一
+        // UUID（历史行为）；event 使用告警 id。
+        let trigger_source_id = origin.source_id.unwrap_or_else(|| wake_event_id.clone());
         self.emit(
             &context,
             "trigger.received",
-            json!({ "trigger": origin.trigger, "sourceId": origin.source_id }),
+            json!({ "trigger": origin.trigger, "sourceId": trigger_source_id }),
         )
         .await;
         self.emit(&context, "wake.dispatched", json!({ "wakeEventId": &wake_event_id }))
@@ -569,6 +592,10 @@ mod tests {
             ]
         );
         assert_eq!(events[2].payload_json["kind"], "scheduled");
+        assert_eq!(
+            events[0].payload_json["sourceId"], events[1].payload_json["wakeEventId"],
+            "scheduled trigger.received.sourceId must correlate with wake.dispatched.wakeEventId"
+        );
         assert_eq!(events.last().unwrap().payload_json["outcome"], "completed");
         let session = wake.db.get_session(&report.session_key).await.unwrap().unwrap();
         assert_eq!(session.kind, "scheduled");
@@ -591,6 +618,40 @@ mod tests {
         assert!(sink.events.lock().await.is_empty());
         // schedule() uses assistant_agent_id("ws"); the wake agent must not have been created
         assert_eq!(agent_pool.pool_size(), 0);
+    }
+
+    #[tokio::test]
+    async fn autonomy_off_skips_event_wake() {
+        let (wake, agent_pool, sink) = fixture().await;
+        let policy = tinyiothub_core::policy::AutonomyPolicy {
+            mode: tinyiothub_core::policy::AutonomyMode::Off,
+            allowed_actions: vec![],
+            denied_actions: vec![],
+            max_actions_per_run: 0,
+            max_actions_per_hour: 0,
+        };
+        wake.db.save_autonomy_policy("ws", &policy, "test").await.unwrap();
+        let report = wake
+            .run_event(
+                &EventWake {
+                    workspace_id: "ws".into(),
+                    trigger: "alarm".into(),
+                    source_id: "alarm-1".into(),
+                    summary: "温度过高".into(),
+                },
+                CancellationToken::new(),
+            )
+            .await;
+        assert_eq!(report.outcome, WakeOutcome::Skipped);
+        assert!(report.session_key.is_empty());
+        assert!(sink.events.lock().await.is_empty());
+        assert_eq!(
+            agent_pool.pool_size(),
+            0,
+            "no agent should be created for a skipped event wake"
+        );
+        let sessions = wake.db.list_sessions(Some("ws"), None, 10, 0).await.unwrap();
+        assert!(sessions.is_empty(), "no session row should be written");
     }
 
     struct SleepingProvider;

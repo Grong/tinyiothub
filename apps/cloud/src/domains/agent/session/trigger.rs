@@ -283,7 +283,13 @@ async fn subscribe_alarms(
                     source_id: alarm.id.clone(),
                     summary: format!("{}（{}，设备 {}）", alarm.message, alarm.severity, alarm.thing_id),
                 };
-                let _ = tx.try_send(wake);
+                if tx.try_send(wake).is_err() {
+                    tracing::warn!(
+                        workspace_id = %alarm.workspace_id,
+                        %alarm.id,
+                        "alarm wake dropped: event queue full"
+                    );
+                }
             }
         }
     }
