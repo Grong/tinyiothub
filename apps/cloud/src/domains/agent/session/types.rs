@@ -41,6 +41,25 @@ pub enum PermissionMode {
     FullAccess,
 }
 
+impl PermissionMode {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::ReadOnly => "read_only",
+            Self::Ask => "ask",
+            Self::FullAccess => "full_access",
+        }
+    }
+
+    pub fn parse(value: &str) -> Option<Self> {
+        match value {
+            "read_only" => Some(Self::ReadOnly),
+            "ask" => Some(Self::Ask),
+            "full_access" => Some(Self::FullAccess),
+            _ => None,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum TodoStatus {
@@ -158,6 +177,18 @@ mod tests {
     #[test]
     fn permission_mode_defaults_to_ask() {
         assert_eq!(PermissionMode::default(), PermissionMode::Ask);
+    }
+
+    #[test]
+    fn permission_mode_round_trips() {
+        for mode in [
+            PermissionMode::ReadOnly,
+            PermissionMode::Ask,
+            PermissionMode::FullAccess,
+        ] {
+            assert_eq!(PermissionMode::parse(mode.as_str()), Some(mode));
+        }
+        assert_eq!(PermissionMode::parse("allow_all"), None);
     }
 
     #[test]
