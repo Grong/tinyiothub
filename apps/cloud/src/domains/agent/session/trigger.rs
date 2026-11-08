@@ -196,8 +196,7 @@ impl TriggerRouter {
         // 关闭旧的报警桥，窗口内不丢告警（broadcast 会为已订阅 receiver 缓冲）。
         if let Some(bus) = self.event_bus.clone() {
             let receiver = bus.subscribe();
-            let tx = self.event_tx.clone();
-            tokio::spawn(subscribe_alarms(receiver, tx, self.shutdown.clone()));
+            tokio::spawn(subscribe_alarms(receiver, Arc::clone(&self), self.shutdown.clone()));
         }
         let event_receiver = self.event_rx.lock().take();
         if let Some(mut receiver) = event_receiver {
@@ -269,7 +268,7 @@ pub(crate) fn event_wake_from_ai(ai: &AiEvent) -> Option<EventWake> {
 /// Session Loop。订阅在调用方同步完成（本函数只消费）。
 async fn subscribe_alarms(
     mut receiver: broadcast::Receiver<Event>,
-    tx: mpsc::Sender<EventWake>,
+    router: Arc<TriggerRouter>,
     shutdown: CancellationToken,
 ) {
     loop {
@@ -294,13 +293,13 @@ async fn subscribe_alarms(
                 let Some(wake) = event_wake_from_ai(&ai) else {
                     continue;
                 };
-                let workspace_id = wake.workspace_id.clone();
-                let source_id = wake.source_id.clone();
-                if tx.try_send(wake).is_err() {
+                // 统一经 `submit_event` 准入：同 workspace 在途去重 + 3/min
+                // 速率窗口，与直接调用方一致。
+                if !router.submit_event(wake.clone()) {
                     tracing::warn!(
-                        %workspace_id,
-                        %source_id,
-                        "alarm wake dropped: event queue full"
+                        workspace_id = %wake.workspace_id,
+                        source_id = %wake.source_id,
+                        "alarm wake not admitted (in flight or rate limited)"
                     );
                 }
             }
