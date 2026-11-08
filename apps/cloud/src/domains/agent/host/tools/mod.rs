@@ -4,7 +4,6 @@ pub mod autonomous_invoke;
 pub mod canvas;
 pub mod dispatch_task;
 pub mod get_skill;
-pub mod handler;
 pub mod service;
 pub mod thing;
 
