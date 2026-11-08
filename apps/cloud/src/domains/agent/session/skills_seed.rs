@@ -1,33 +1,49 @@
 //! 把巡检职责从 heartbeat_tasks 迁移为 workspace 技能正文。
 //!
-//! 只在技能文件不存在时写入；已存在的用户编辑永不覆盖。
+//! 只在技能文件不存在（或内容为空）时写入；已存在的用户编辑永不覆盖。
+//! 写入走同目录临时文件 + rename，避免半截文件被后续调用当成有效技能。
 
 use std::path::Path;
 
 use tinyiothub_storage::Db;
 
-const DEFAULT_BODY: &str = "# 巡检\n\n## 执行步骤\n\n1. 检查离线设备并尝试自动重连。\n2. 扫描未处理的高优先级告警。\n3. 生成设备状态摘要（聚焦异常与离线设备）。\n\n## 注意事项\n\n- 涉及写设备必须先获得审批。\n";
+/// 技能模板（含 frontmatter）。编译期嵌入，默认正文与模板不再漂移。
+const INSPECTION_TEMPLATE: &str = include_str!("../../../../templates/skills/inspection.md");
 
 pub async fn ensure_inspection_skill_at(workspace_dir: &Path, db: &Db, workspace_id: &str) -> anyhow::Result<bool> {
     let skills_dir = workspace_dir.join("skills");
     let path = skills_dir.join("inspection.md");
     if path.exists() {
-        return Ok(false);
+        let existing = std::fs::read_to_string(&path).unwrap_or_default();
+        if !existing.trim().is_empty() {
+            return Ok(false);
+        }
     }
     std::fs::create_dir_all(&skills_dir)?;
-    let tasks = db.list_heartbeat_tasks(workspace_id).await.unwrap_or_default();
-    let body = if tasks.iter().any(|task| !task.paused) {
+    let tasks = match db.list_heartbeat_tasks(workspace_id).await {
+        Ok(tasks) => tasks,
+        Err(error) => {
+            tracing::warn!(
+                %workspace_id,
+                %error,
+                "read heartbeat tasks for inspection skill failed; using default body"
+            );
+            Vec::new()
+        }
+    };
+    let content = if tasks.iter().any(|task| !task.paused) {
         let mut body = String::from("# 巡检\n\n## 执行步骤\n\n");
         for (index, task) in tasks.iter().filter(|task| !task.paused).enumerate() {
             body.push_str(&format!("{}. {}\n", index + 1, task.text));
         }
         body.push_str("\n## 注意事项\n\n- 涉及写设备必须先获得审批。\n");
-        body
+        format!("---\nname: inspection\nversion: \"1\"\ntrigger: /inspection\ninject: index\n---\n\n{body}")
     } else {
-        DEFAULT_BODY.to_string()
+        INSPECTION_TEMPLATE.to_string()
     };
-    let content = format!("---\nname: inspection\nversion: \"1\"\ntrigger: /inspection\ninject: index\n---\n\n{body}");
-    std::fs::write(&path, content)?;
+    let tmp = skills_dir.join(".inspection.md.tmp");
+    std::fs::write(&tmp, content)?;
+    std::fs::rename(&tmp, &path)?;
     Ok(true)
 }
 
@@ -68,5 +84,22 @@ mod tests {
         let body = std::fs::read_to_string(dir.path().join("skills/inspection.md")).unwrap();
         assert!(body.contains("检查离线设备"));
         assert!(body.contains("name: inspection"));
+    }
+
+    #[tokio::test]
+    async fn repairs_empty_inspection_skill_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = test_db().await;
+        let skills_dir = dir.path().join("skills");
+        std::fs::create_dir_all(&skills_dir).unwrap();
+        std::fs::write(skills_dir.join("inspection.md"), "").unwrap();
+
+        assert!(
+            ensure_inspection_skill_at(dir.path(), &db, "ws-empty").await.unwrap(),
+            "an empty existing file must not satisfy the idempotency guard"
+        );
+        let body = std::fs::read_to_string(skills_dir.join("inspection.md")).unwrap();
+        assert!(body.contains("name: inspection"));
+        assert!(!body.trim().is_empty());
     }
 }

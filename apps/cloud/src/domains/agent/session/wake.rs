@@ -37,7 +37,8 @@ pub fn assistant_agent_id(workspace_id: &str) -> String {
 }
 
 /// 自定义 prompt > inspection 技能正文 > 未暂停的 legacy heartbeat tasks > 默认职责。
-/// 存在任务但全部暂停时返回 `None`（本轮不唤醒）。
+/// 只有未加载 inspection 技能时才会命中“任务全暂停 → `None`（本轮不唤醒）”分支；
+/// 加载了技能则技能正文优先。
 pub fn build_wake_message(
     schedule: &AssistantSchedule,
     inspection: Option<&LoadedSkill>,
