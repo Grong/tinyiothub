@@ -271,8 +271,9 @@ Record, without secrets or raw provider payloads:
 - matching `session_events` rows: `run.interrupted` and Task/Run lifecycle
   events;
 - for pre-cutover stores only: the retained Supervisor GET response and
-  `supervisor_state` reads showing `tick_seq`/timestamps, plus
-  `supervisor.stalled` / `supervisor.recovered` events;
+  `supervisor_state` reads showing `tick_seq`/timestamps; `supervisor.stalled`
+  / `supervisor.recovered` events may not exist on current deployments (the
+  Supervisor is not advanced after cutover);
 - for retry: the original `eventId`, target Task, failure reason, and the
   post-retry `dispatch_state='pending'` row with `retried_by`/`retried_at`;
 - host time source/skew if a rollback was involved.

@@ -120,6 +120,16 @@ async fn update_config_partial_update_merges_and_writes_through() {
     assert_eq!(cfg["intervalMinutes"], 45);
     assert_eq!(cfg["enabled"], true);
 
+    // I2：legacy interval 同步到 assistant_schedules（TriggerRouter 的判定集）。
+    let schedule = db
+        .get_assistant_schedule(WS)
+        .await
+        .expect("load schedule")
+        .expect("schedule row");
+    assert_eq!(schedule.interval_seconds, 45 * 60, "interval 分钟 → schedule 秒");
+    assert!(schedule.enabled, "legacy enabled 同步到 schedule");
+    assert!(schedule.next_wake_at.is_some(), "interval 变更须重算 next_wake_at");
+
     // 只改开关：interval 必须保持 45；enabled=false 写穿 trigger 判定集。
     let result = call(
         &app,
@@ -143,6 +153,15 @@ async fn update_config_partial_update_merges_and_writes_through() {
 
     let cfg = call(&app, get(&format!("/api/v1/workspaces/{WS}/heartbeat/config"), &token)).await;
     assert_eq!(cfg["enabled"], false);
+
+    // I2：legacy pause 落到 authoritative schedule。
+    let schedule = db
+        .get_assistant_schedule(WS)
+        .await
+        .expect("load schedule")
+        .expect("schedule row");
+    assert!(!schedule.enabled, "enabled=false 必须同步到 assistant_schedules");
+    assert_eq!(schedule.interval_seconds, 45 * 60);
 }
 
 // Value card
@@ -191,13 +210,15 @@ async fn update_tasks_is_deprecated_noop_and_get_config_exposes_last_tick() {
     let cfg = call(&app, get(&format!("/api/v1/workspaces/{WS}/heartbeat/config"), &token)).await;
     assert!(cfg["lastTick"].is_null(), "未 tick 过 lastTick 须为 null");
 
-    let tick_at = chrono::Utc::now();
-    manager.heartbeat_last_ticks().insert(WS.to_string(), tick_at);
+    let tick_at = chrono::DateTime::from_timestamp(chrono::Utc::now().timestamp(), 0).expect("timestamp");
+    db.mark_assistant_wake(WS, tick_at + chrono::Duration::seconds(300), tick_at, "completed")
+        .await
+        .expect("mark wake");
     let cfg = call(&app, get(&format!("/api/v1/workspaces/{WS}/heartbeat/config"), &token)).await;
     assert_eq!(
         cfg["lastTick"].as_str().expect("lastTick string"),
         tick_at.to_rfc3339(),
-        "lastTick 必须来自统一循环 last_ticks 共享表"
+        "lastTick 必须来自 assistant_schedules.last_wake_at"
     );
 }
 
@@ -254,4 +275,128 @@ async fn update_config_rate_limit_writes_through_and_survives_partial_update() {
         .expect("load")
         .expect("persisted config");
     assert_eq!(persisted.rate_limit_per_key_per_min, Some(7));
+}
+
+// Value card
+// - 覆盖路径：GET /heartbeat/config 的 enabled/interval 读 authoritative
+//   assistant_schedules（不是 legacy 内存表）。
+// - 真实回归场景：schedule 被 /agent/schedule 或旧 PUT 改成暂停/更长间隔后，
+//   legacy 内存表未同步（跨重启）——GET 必须反映真正会被 tick 派发的值。
+// - 失败信号：GET 返回 default enabled/300 而 schedule 是 disabled/720 即断口。
+#[tokio::test]
+async fn get_config_reads_schedule_as_authoritative_source() {
+    let (app, pool, manager) = app_with_manager().await;
+    let token = create_test_token("user-1", "tenant-1");
+    let db = Db::new(pool);
+
+    db.ensure_assistant_schedule(
+        WS,
+        &crate::domains::agent::session::wake::assistant_agent_id(WS),
+        chrono::Utc::now(),
+    )
+    .await
+    .expect("ensure schedule");
+    db.update_assistant_schedule(WS, Some(false), Some(720), None, None, None)
+        .await
+        .expect("pause schedule");
+
+    // 内存 legacy 表仍是默认值，不得影响读面。
+    assert!(manager.heartbeat_enabled(WS), "legacy 内存表未改");
+    let cfg = call(&app, get(&format!("/api/v1/workspaces/{WS}/heartbeat/config"), &token)).await;
+    assert_eq!(cfg["enabled"], false);
+    assert_eq!(cfg["intervalMinutes"], 12);
+}
+
+// Value card
+// - 覆盖路径：AI 运维页真实线格式 `intervalMinutes`（camelCase）→ handler
+//   反序列化 → assistant_schedules.interval_seconds/next_wake_at。
+// - 真实回归场景：请求体只认 snake_case 时 UI 的间隔选择被静默忽略，页面
+//   显示新间隔而 tick 仍按旧值。
+// - 失败信号：schedule.interval_seconds 仍为默认 300 即断口。
+#[tokio::test]
+async fn update_config_interval_camel_case_updates_schedule_and_recomputes_next_wake() {
+    let (app, pool, _manager) = app_with_manager().await;
+    let token = create_test_token("user-1", "tenant-1");
+    let before = chrono::Utc::now();
+    call(
+        &app,
+        put(
+            &format!("/api/v1/workspaces/{WS}/heartbeat/config"),
+            &token,
+            json!({"intervalMinutes": 10}),
+        ),
+    )
+    .await;
+    let after = chrono::Utc::now();
+
+    let db = Db::new(pool);
+    let row = db
+        .get_assistant_schedule(WS)
+        .await
+        .expect("load schedule")
+        .expect("schedule row");
+    assert_eq!(row.interval_seconds, 600, "10 分钟必须落 600 秒");
+    let next = row.next_wake_at.expect("interval 变更须重算 next_wake_at");
+    // assistant_schedules 以秒精度存储：用整秒边界避免亚秒截断误判。
+    let before_floor = chrono::DateTime::from_timestamp(before.timestamp(), 0).expect("timestamp");
+    let after_ceil = chrono::DateTime::from_timestamp(after.timestamp() + 1, 0).expect("timestamp");
+    assert!(next >= before_floor + chrono::Duration::seconds(600));
+    assert!(next <= after_ceil + chrono::Duration::seconds(600));
+}
+
+#[derive(Default)]
+struct CountingExecutor {
+    calls: std::sync::atomic::AtomicUsize,
+}
+
+#[async_trait::async_trait]
+impl crate::domains::agent::session::wake::WakeExecutor for CountingExecutor {
+    async fn execute(
+        &self,
+        _schedule: tinyiothub_storage::assistant_schedule::AssistantSchedule,
+        _cancel: tokio_util::sync::CancellationToken,
+    ) -> crate::domains::agent::session::wake::WakeReport {
+        self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        crate::domains::agent::session::wake::WakeReport {
+            session_key: "s".into(),
+            outcome: crate::domains::agent::session::wake::WakeOutcome::Completed,
+        }
+    }
+}
+
+// Value card
+// - 覆盖路径：legacy PUT /heartbeat/config enabled=false → assistant_schedules
+//   → TriggerRouter::tick 的启用过滤。
+// - 真实回归场景：AI 运维页暂停后 tick 仍派发 wake（页面「已停止」与
+//   Assistant 行为矛盾）。
+// - 失败信号：暂停工作区被 tick 派发（executor.calls > 0）即断口。
+#[tokio::test]
+async fn paused_workspace_is_not_dispatched_by_trigger_tick() {
+    use crate::domains::agent::session::trigger::TriggerRouter;
+    use std::sync::Arc;
+
+    let (app, pool, _manager) = app_with_manager().await;
+    let token = create_test_token("user-1", "tenant-1");
+    call(
+        &app,
+        put(
+            &format!("/api/v1/workspaces/{WS}/heartbeat/config"),
+            &token,
+            json!({"enabled": false}),
+        ),
+    )
+    .await;
+
+    let db = Arc::new(Db::new(pool));
+    let executor = Arc::new(CountingExecutor::default());
+    let router = Arc::new(TriggerRouter::new(db, executor.clone()));
+    let handles = router.tick(chrono::Utc::now() + chrono::Duration::seconds(3600)).await;
+    for handle in handles {
+        handle.await.expect("tick task");
+    }
+    assert_eq!(
+        executor.calls.load(std::sync::atomic::Ordering::SeqCst),
+        0,
+        "paused workspace must not be dispatched"
+    );
 }

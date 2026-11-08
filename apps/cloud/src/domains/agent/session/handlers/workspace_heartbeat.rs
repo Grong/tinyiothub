@@ -12,12 +12,14 @@ use axum::{
     Json,
     extract::{Extension, Path, State},
 };
+use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use tinyiothub_web::api_response::ApiResponse;
 use tinyiothub_web::response::ApiResponseBuilder;
 use tinyiothub_web::security::Claims;
 
 use crate::domains::agent::AgentState;
+use crate::domains::agent::session::wake::assistant_agent_id;
 
 /// Heartbeat routes (`/{id}/heartbeat/*`), nested at `/workspaces` by the
 /// composition layer next to `tinyiothub_tenant::workspace_router()` —
@@ -73,14 +75,16 @@ pub struct HeartbeatConfigResponse {
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct UpdateHeartbeatConfigRequest {
     #[serde(default)]
     pub enabled: Option<bool>,
-    #[serde(default)]
+    /// 前端（AI 运维页）发 `intervalMinutes`；旧调用方仍可发 `interval_minutes`。
+    #[serde(default, alias = "interval_minutes")]
     pub interval_minutes: Option<u32>,
     /// E1 同键限速覆盖（spec §3 heartbeat_config JSON 加键）：每 dedup_key
     /// 每分钟最多 N 次唤醒；缺省不改动当前值。
-    #[serde(default)]
+    #[serde(default, alias = "rate_limit_per_key_per_min")]
     pub rate_limit_per_key_per_min: Option<u32>,
 }
 
@@ -143,26 +147,23 @@ pub async fn get_config(
 
     let tasks = load_tasks(&state, &workspace_id).await;
 
-    // enabled/interval/last_tick 读统一循环共享表（T15 起唯一读源）；
-    // 未接线（测试/降级路径）回退缺省。
-    let default_interval = crate::domains::agent::heartbeat::types::HeartbeatConfig::default().interval_minutes;
-    let (enabled, interval_minutes) = match state.thing_agents.as_ref() {
-        Some(manager) => (
-            manager.heartbeat_enabled(&workspace_id),
-            manager
-                .heartbeat_interval_minutes(&workspace_id)
-                .unwrap_or(default_interval),
-        ),
-        None => (false, default_interval),
+    // enabled/interval/last_tick 的权威源是 `assistant_schedules`
+    // （`TriggerRouter::tick` 的唯一判定集）。legacy heartbeat 字段在此
+    // 一版兼容期只是它的投影。
+    let schedule = match state
+        .db
+        .ensure_assistant_schedule(&workspace_id, &assistant_agent_id(&workspace_id), Utc::now())
+        .await
+    {
+        Ok(schedule) => schedule,
+        Err(e) => {
+            tracing::error!(%workspace_id, "Failed to load assistant schedule: {}", e);
+            return ApiResponseBuilder::error("读取 Assistant 调度失败");
+        }
     };
-
-    // D13 实时字段：last_tick 读统一循环共享表（T15 起唯一读源）。历史/
-    // 归档仍读 DB，见 /logs。
-    let last_tick = state
-        .heartbeat_last_ticks
-        .as_ref()
-        .and_then(|t| t.get(&workspace_id).map(|r| *r.value()))
-        .map(|t| t.to_rfc3339());
+    let enabled = schedule.enabled;
+    let interval_minutes = schedule.interval_seconds / 60;
+    let last_tick = schedule.last_wake_at.map(|t| t.to_rfc3339());
 
     // E1 同键限速读侧：统一循环共享表优先（热改真相），miss 回退 DB 持久值。
     let rate_limit_per_key_per_min = match state
@@ -205,18 +206,31 @@ pub async fn update_config(
         return ApiResponseBuilder::error("心跳服务未启用");
     };
 
-    // Merge with persisted/current values so a partial update doesn't reset
-    // the other field（读统一循环共享表，T15 起唯一读源）。
-    let current_interval = manager
-        .heartbeat_interval_minutes(&workspace_id)
-        .unwrap_or(crate::domains::agent::heartbeat::types::HeartbeatConfig::default().interval_minutes);
-    let current_enabled = manager.heartbeat_enabled(&workspace_id);
-    let enabled = req.enabled.unwrap_or(current_enabled);
+    // Merge with the authoritative schedule so a partial update doesn't
+    // reset the other field（legacy 内存表不跨重启恢复，不能作归并源）。
+    let now = Utc::now();
+    let current_schedule = match state
+        .db
+        .ensure_assistant_schedule(&workspace_id, &assistant_agent_id(&workspace_id), now)
+        .await
+    {
+        Ok(schedule) => schedule,
+        Err(e) => {
+            tracing::error!(%workspace_id, "Failed to load assistant schedule: {}", e);
+            return ApiResponseBuilder::error("读取 Assistant 调度失败");
+        }
+    };
+    let current_interval =
+        (current_schedule.interval_seconds / 60).max(tinyiothub_core::heartbeat::MIN_HEARTBEAT_INTERVAL_MINUTES);
+    let enabled = req.enabled.unwrap_or(current_schedule.enabled);
     let interval = req.interval_minutes.unwrap_or(current_interval);
 
     let config = match tinyiothub_storage::heartbeat::WorkspaceHeartbeatConfig::validated(enabled, interval) {
         Ok(c) => c,
         Err(e) => return ApiResponseBuilder::error(&e),
+    };
+    let Some(interval_seconds) = interval.checked_mul(60) else {
+        return ApiResponseBuilder::error("心跳间隔过大");
     };
     // validated() 只构造 enabled/interval 两字段的基线——其余已持久化的扩展
     // 字段（ai_triage/triage_mode/rate_limit）必须从既有行归并，否则一次
@@ -247,6 +261,27 @@ pub async fn update_config(
     manager.set_heartbeat_interval_minutes(&workspace_id, interval);
     manager.set_heartbeat_enabled(&workspace_id, enabled);
     manager.heartbeat_reload_notify(&workspace_id).notify_one();
+
+    // 一版兼容：把 legacy pause/interval 同步到 `assistant_schedules`——
+    // `TriggerRouter::tick` 只认该表，否则页面显示「已停止」而 Assistant
+    // 仍在唤醒。失败必须报错，不能假装成功。
+    let recompute_next_wake = enabled && (req.enabled == Some(true) || req.interval_minutes.is_some());
+    let next_wake_at = recompute_next_wake.then(|| now + chrono::Duration::seconds(i64::from(interval_seconds)));
+    if let Err(e) = state
+        .db
+        .update_assistant_schedule(
+            &workspace_id,
+            Some(enabled),
+            Some(interval_seconds),
+            None,
+            next_wake_at,
+            None,
+        )
+        .await
+    {
+        tracing::error!(%workspace_id, "Failed to sync assistant schedule: {}", e);
+        return ApiResponseBuilder::error("同步 Assistant 调度失败");
+    }
 
     ApiResponseBuilder::success(serde_json::json!({
         "enabled": enabled,

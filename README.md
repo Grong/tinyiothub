@@ -468,7 +468,7 @@ web/
 - `PUT /api/v1/agents/{id}/config` - 更新 Agent 配置
 - `GET /api/v1/workspaces/{workspace_id}/agent/hud` - Assistant 全局 HUD（状态/设备/告警/待答/待批/调度）
 - `GET /api/v1/workspaces/{workspace_id}/agent/schedule` - 获取 Assistant 调度
-- `PUT /api/v1/workspaces/{workspace_id}/agent/schedule` - 更新 Assistant 调度（间隔/权限模式/提示词）
+- `PUT /api/v1/workspaces/{workspace_id}/agent/schedule` - 更新 Assistant 调度（启用状态/间隔/提示词；权限模式走 `/agent/policy`）
 - `GET /api/v1/workspaces/{workspace_id}/agent/tasks` - 获取 Task 列表
 - `POST /api/v1/workspaces/{workspace_id}/agent/tasks` - 创建 Task
 - `GET /api/v1/workspaces/{workspace_id}/agent/tasks/{task_id}/stream` - Task SSE 流

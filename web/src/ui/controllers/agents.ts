@@ -181,5 +181,3 @@ export async function updateSkillApi(state: AgentsState, name: string, data: Upd
     return false;
   }
 }
-
-

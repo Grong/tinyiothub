@@ -408,7 +408,7 @@ async fn approve_judgment(
         {
             tracing::error!(judgment_id = %id, error = %re, "rollback to awaiting_approval failed — SLA sweep will backstop");
         }
-        return ApiResponseBuilder::error("执行派发失败（队列满），已回滚待审批，可重试");
+        return ApiResponseBuilder::error("执行派发失败，已回滚待审批，请稍后重试");
     }
 
     crate::domains::agent::session::judge::judgment_subscriber::broadcast_judgment_pub(&state.sse_manager, ws, &id)
