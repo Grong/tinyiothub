@@ -61,6 +61,7 @@ export interface SessionSummary {
   label: string | null;
   kind: 'chat' | 'scheduled' | 'event' | string;
   status: 'active' | 'ended' | string;
+  permissionMode: 'read_only' | 'ask' | 'full_access' | string;
   createdAt: number;
   updatedAt: number;
 }
@@ -121,6 +122,22 @@ export async function renameChatSession(sessionKey: string, label: string): Prom
 
 export async function deleteChatSession(sessionKey: string): Promise<void> {
   await ApiClient.delete(sessionPath(sessionKey));
+}
+
+export async function updateSessionPermission(
+  sessionKey: string,
+  mode: 'read_only' | 'ask' | 'full_access',
+): Promise<void> {
+  const response = await fetch(buildUrl(sessionPath(sessionKey, '/permission')), {
+    method: 'PUT',
+    headers: authHeaders({ 'Content-Type': 'application/json' }),
+    credentials: 'include',
+    body: JSON.stringify({ mode }),
+  });
+  if (response.status === 204) return;
+  if (response.status === 404) throw new ApiError(404, '会话不存在');
+  if (response.status === 400) throw new ApiError(400, '权限模式无效');
+  throw new ApiError(response.status, '保存权限模式失败');
 }
 
 export async function fetchSessionEvents(

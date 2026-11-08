@@ -224,7 +224,8 @@
   }
 }
 .codex-composer-meta { display: flex; justify-content: flex-end; gap: 8px; margin-top: 6px; }
-.codex-mode { font-size: 11px; color: var(--muted); border: 1px solid var(--border); border-radius: 999px; padding: 3px 8px; }
+.permission-mode { font-size: 11px; color: var(--text); background: var(--card); border: 1px solid var(--border); border-radius: 999px; padding: 3px 8px; }
+.codex-mode-hint { font-size: 11px; color: var(--muted); }
 @media (max-width: 860px) {
   .codex-layout {
     grid-template-columns: minmax(0, 1fr);

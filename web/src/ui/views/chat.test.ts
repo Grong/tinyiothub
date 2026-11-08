@@ -5,6 +5,7 @@ const hoisted = vi.hoisted(() => ({
   connectSessionEvents: vi.fn((_opts: { sessionKey: string; after: number }) => () => {}),
   fetchSessionTodos: vi.fn(),
   listChatSessions: vi.fn().mockResolvedValue([]),
+  updateSessionPermission: vi.fn(),
   fetchAssistantHud: vi.fn(),
   getWorkspaceId: vi.fn(() => 'ws-1'),
   loadChatHistory: vi.fn(),
@@ -144,6 +145,22 @@ describe('view-chat codex layout', () => {
 
     expect(el.querySelector('.a2ui-surface--inline')).toBeTruthy();
     expect(el.textContent).toContain('A2UI 你好');
+  });
+
+  it('changes the session permission mode', async () => {
+    localStorage.setItem('tinyiothub_chat_last_session', 'agent:ws-1:default/s1');
+    hoisted.listChatSessions.mockResolvedValue([
+      { sessionKey: 'agent:ws-1:default/s1', kind: 'chat', status: 'active', label: '新会话', permissionMode: 'ask', updatedAt: 1 },
+    ]);
+    hoisted.updateSessionPermission.mockResolvedValue(undefined);
+    const el = document.createElement('view-chat') as ChatView;
+    document.body.appendChild(el);
+    await vi.waitFor(() => expect(el.querySelector('.permission-mode')).toBeTruthy());
+    const select = el.querySelector('.permission-mode') as HTMLSelectElement;
+    select.value = 'read_only';
+    select.dispatchEvent(new Event('change'));
+    await el.updateComplete;
+    expect(hoisted.updateSessionPermission).toHaveBeenCalledWith('agent:ws-1:default/s1', 'read_only');
   });
 
   it('hydrates a2ui history even when session events exist', async () => {
