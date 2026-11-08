@@ -1,4 +1,10 @@
 /* Codex 式单列时间线（Plan 3） */
+.content--chat > view-chat {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+}
 .codex-layout {
   display: grid;
   grid-template-columns: 240px minmax(0, 1fr);
@@ -217,6 +223,8 @@
     opacity: 1;
   }
 }
+.codex-composer-meta { display: flex; justify-content: flex-end; gap: 8px; margin-top: 6px; }
+.codex-mode { font-size: 11px; color: var(--muted); border: 1px solid var(--border); border-radius: 999px; padding: 3px 8px; }
 @media (max-width: 860px) {
   .codex-layout {
     grid-template-columns: minmax(0, 1fr);

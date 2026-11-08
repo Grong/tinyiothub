@@ -618,7 +618,7 @@ export class TinyIoTHubApp extends LitElement {
         >
           ${this.renderNav()}
         </nav>
-        <div class="content ${this.currentRoute === 'workspace' ? 'content--workspace' : this.currentRoute === 'ai-ops' ? 'content--heartbeat' : ''}" role="main" id="main-content">
+        <div class="content ${this.currentRoute === 'workspace' ? 'content--workspace' : this.currentRoute === 'ai-ops' ? 'content--heartbeat' : this.currentRoute === 'chat' ? 'content--chat' : ''}" role="main" id="main-content">
           ${this.currentRoute.startsWith('things/') || this.currentRoute === 'chat' || this.currentRoute === 'workspace' || this.currentRoute === 'ai-ops' || this.currentRoute === 'run-detail' || this.currentRoute === 'harness' || this.currentRoute.startsWith('runtime')
             ? nothing
             : html`
