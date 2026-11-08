@@ -7,11 +7,18 @@ const hoisted = vi.hoisted(() => ({
   listChatSessions: vi.fn().mockResolvedValue([]),
   fetchAssistantHud: vi.fn(),
   getWorkspaceId: vi.fn(() => 'ws-1'),
+  loadChatHistory: vi.fn(),
 }));
 vi.mock('../../api/assistant.js', () => hoisted);
 vi.mock('../../api/client.js', async () => {
   const actual = await vi.importActual<typeof import('../../api/client.js')>('../../api/client.js');
   return { ...actual, getWorkspaceId: hoisted.getWorkspaceId };
+});
+vi.mock('../controllers/chat.js', async () => {
+  const actual = await vi.importActual<typeof import('../controllers/chat.js')>(
+    '../controllers/chat.js',
+  );
+  return { ...actual, loadChatHistory: hoisted.loadChatHistory };
 });
 
 import './chat.js';
@@ -49,6 +56,7 @@ describe('view-chat codex layout', () => {
     hoisted.connectSessionEvents.mockReturnValue(() => {});
     hoisted.getWorkspaceId.mockReturnValue('ws-1');
     hoisted.fetchSessionTodos.mockResolvedValue([]);
+    hoisted.loadChatHistory.mockResolvedValue(undefined);
     hoisted.fetchAssistantHud.mockResolvedValue({
       assistant: { status: 'idle', lastOutcome: null },
       devices: { total: 0, online: 0, offline: 0 },
@@ -136,5 +144,30 @@ describe('view-chat codex layout', () => {
 
     expect(el.querySelector('.a2ui-surface--inline')).toBeTruthy();
     expect(el.textContent).toContain('A2UI 你好');
+  });
+
+  it('hydrates a2ui history even when session events exist', async () => {
+    hoisted.fetchSessionEvents.mockResolvedValue({ events: [turnStarted], highWatermark: 1 });
+    const historyA2ui = [
+      '{"createSurface":{"id":"hist-1","surfaceKind":"inline"}}',
+      '{"updateComponents":{"surfaceId":"hist-1","components":[{"id":"t1","componentKind":"Text","text":"历史 A2UI"}]}}',
+    ].join('\n');
+    hoisted.loadChatHistory.mockImplementation(async (state: unknown) => {
+      (state as { chatMessages: Array<Record<string, unknown>> }).chatMessages = [
+        {
+          role: 'assistant',
+          content: [{ type: 'text', text: '历史消息' }],
+          a2ui: historyA2ui,
+        },
+      ];
+    });
+
+    const el = document.createElement('view-chat') as ChatView;
+    document.body.appendChild(el);
+    await el.updateComplete;
+    await vi.waitFor(() => expect(el.textContent).toContain('历史 A2UI'));
+
+    expect(hoisted.loadChatHistory).toHaveBeenCalledTimes(1);
+    expect(el.querySelector('.timeline')).toBeTruthy();
   });
 });

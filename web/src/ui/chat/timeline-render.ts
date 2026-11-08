@@ -77,7 +77,7 @@ function renderTool(block: Extract<TimelineBlock, { kind: 'tool' }>): TemplateRe
   return html`
     <details class="timeline-tool">
       <summary class="timeline-tool__summary">
-        <span class="timeline-tool__icon" aria-hidden="true">${TOOL_ICONS[block.name] ?? '⚙'}</span>
+        <span class="timeline-tool__icon" aria-hidden="true">${Object.hasOwn(TOOL_ICONS, block.name) ? TOOL_ICONS[block.name] : '⚙'}</span>
         <span class="timeline-tool__text">${toolSummary(block)}</span>
         <span
           class="timeline-tool__state ${block.result ? 'timeline-tool__state--ok' : 'timeline-tool__state--pending'}"

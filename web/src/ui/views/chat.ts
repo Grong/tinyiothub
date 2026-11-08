@@ -126,30 +126,38 @@ export class ChatView extends LitElement {
     const key = sessionKey;
     const chatState = this.chatState;
     try {
-      let page = await fetchSessionEvents(key, 0, 200);
+      let pageCursor = 0;
+      let page = await fetchSessionEvents(key, pageCursor, 200);
       if (key !== this.sessionKey) return;
       this.timeline.ingest(page);
+      for (const event of page.events) pageCursor = Math.max(pageCursor, event.seq);
       let guard = 0;
-      while (this.timeline.cursor < page.highWatermark && guard < 10) {
-        page = await fetchSessionEvents(key, this.timeline.cursor, 200);
+      while (pageCursor < page.highWatermark && guard < 10) {
+        page = await fetchSessionEvents(key, pageCursor, 200);
         if (key !== this.sessionKey) return;
         if (page.events.length === 0) break;
         this.timeline.ingest(page);
+        for (const event of page.events) pageCursor = Math.max(pageCursor, event.seq);
         guard += 1;
       }
       const todos = await fetchSessionTodos(key);
       if (key !== this.sessionKey) return;
       if (todos.length > 0 && this.timeline.todos.length === 0) this.timeline.todos = todos;
-      if (this.timeline.blocks.length === 0 && chatState) {
+      if (chatState && !this.a2uiHydrated) {
         await loadChatHistory(chatState);
         if (key !== this.sessionKey) return;
-        this.timeline.blocks = timelineFromHistory(chatState.chatMessages);
-        if (!this.a2uiHydrated) {
-          for (const message of chatState.chatMessages as unknown as Array<Record<string, unknown>>) {
-            const a2ui = message.a2ui;
-            if (typeof a2ui === 'string' && a2ui) this.a2uiRenderer.handleA2uiMessage(a2ui);
-          }
-          this.a2uiHydrated = true;
+        for (const message of chatState.chatMessages as unknown as Array<Record<string, unknown>>) {
+          const a2ui = message.a2ui;
+          if (typeof a2ui === 'string' && a2ui) this.a2uiRenderer.handleA2uiMessage(a2ui);
+        }
+        this.a2uiHydrated = true;
+        if (this.timeline.blocks.length === 0) {
+          this.timeline.blocks = timelineFromHistory(
+            chatState.chatMessages as unknown as Array<{
+              role: string;
+              content?: Array<{ type: string; text?: string }>;
+            }>,
+          );
         }
       }
       this.error = '';
