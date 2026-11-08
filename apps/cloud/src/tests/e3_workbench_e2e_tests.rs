@@ -7,7 +7,7 @@ use std::collections::HashMap;
 use serde_json::json;
 use sqlx::SqlitePool;
 
-use crate::domains::agent::host::handler::ledger::fold_state;
+use crate::domains::agent::session::handlers::ledger::fold_state;
 use crate::domains::marketplace::template_rules::resolve_template_rules;
 use tinyiothub_storage::watch::{LedgerRow, append_ledger, latest_state_changes_at, list_ledger_range};
 
@@ -16,7 +16,7 @@ async fn pool() -> SqlitePool {
     tinyiothub_storage::test_helpers::run_all_migrations(&pool)
         .await
         .unwrap();
-    crate::domains::agent::host::test_utils::seed_test_workspace(&pool, "tenant-e3", "ws-e3").await;
+    crate::domains::agent::session::test_utils::seed_test_workspace(&pool, "tenant-e3", "ws-e3").await;
     for id in ["t1", "t2", "window", "panel"] {
         sqlx::query("INSERT INTO things (id, name, workspace_id, thing_type) VALUES (?, ?, 'ws-e3', 'device')")
             .bind(id)

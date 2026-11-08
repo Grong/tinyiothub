@@ -320,11 +320,11 @@ impl ServiceManager {
             // E1 Task 10：LiveState 读面迟绑定槽——此处注入 chat/自治两侧工具
             // 上下文，manager 就绪（runtime.thing_agents() 之后）set；未 set 时
             // get_thing_profile 的 live=null。
-            let live_summary_slot = crate::domains::agent::host::tools::thing::LiveSummarySlot::default();
-            let live_summary: Arc<dyn crate::domains::agent::host::tools::thing::LiveSummarySource> =
+            let live_summary_slot = crate::domains::agent::tool::thing::LiveSummarySlot::default();
+            let live_summary: Arc<dyn crate::domains::agent::tool::thing::LiveSummarySource> =
                 Arc::new(live_summary_slot.clone());
             // E2 watch/unwatch：manager 迟绑定槽（与 live_summary_slot 同点 set）。
-            let manager_slot = crate::domains::agent::host::tools::thing::ManagerSlot::default();
+            let manager_slot = crate::domains::agent::tool::thing::ManagerSlot::default();
             let media_store = Arc::new(
                 tinyiothub_runtime::media::evidence::LocalMediaStore::new(
                     crate::shared::paths::api_data_dir().join("media"),
@@ -362,12 +362,12 @@ impl ServiceManager {
             // Session 子代理：用 AgentPool 创建一次性子 Agent 执行 spawn_subagent
             // 请求；与 SessionRunner 共享 Turn 上下文/事件。
             let subagent_runner: Arc<dyn crate::domains::agent::session::SubagentRunner> =
-                Arc::new(crate::domains::agent::host::chat::subagent::PoolSubagentRunner::new(
+                Arc::new(crate::domains::agent::session::chat::subagent::PoolSubagentRunner::new(
                     app_state.agent_pool.clone(),
                     app_state.session_runtime.runner.clone(),
                 ));
             app_state.session_runtime.subagents.set(subagent_runner);
-            tool_registry.register_provider(crate::domains::agent::host::tools::chat_builtin_tools_provider(
+            tool_registry.register_provider(crate::domains::agent::tool::chat_builtin_tools_provider(
                 app_state.db.pool().clone(),
                 app_state.db.clone(),
                 Some(app_state.device_cache.clone()),
@@ -399,7 +399,7 @@ impl ServiceManager {
                 app_state.session_runtime.clone(),
             ));
             tool_registry.set_external_tool_factory(Arc::new(|| {
-                crate::domains::agent::host::ports::external_tool_registry()
+                crate::domains::agent::session::ports::external_tool_registry()
             }));
 
             // CEO review F11：容量对齐 spec D4 的 4096——256 在中等负载
@@ -420,7 +420,7 @@ impl ServiceManager {
                 snapshot,
                 crate::domains::agent::agent_runtime::RuntimeDeps {
                     agent_provider: Arc::new(
-                        crate::domains::agent::host::autonomous_factory::AutonomousAgentFactory::new(
+                        crate::domains::agent::session::factory::AutonomousAgentFactory::new(
                             pool.clone(),
                             policy_repo,
                             app_state.thing_event_bus.clone(),
@@ -429,7 +429,7 @@ impl ServiceManager {
                             app_state.agent_pool.observer(),
                             tinyiothub_agent::provider::minimax_provider_factory(),
                             tinyiothub_agent::config::AgentRuntimeConfig::default().model,
-                            crate::domains::agent::host::tools::ThingToolContext {
+                            crate::domains::agent::tool::ThingToolContext {
                                 db: Some(app_state.db.clone()),
                                 device_cache: Some(app_state.device_cache.clone()),
                                 data_server: app_state.data_server.clone(),
@@ -490,7 +490,7 @@ impl ServiceManager {
                     let db = app_state.db.clone();
                     let token = persist_shutdown.clone();
                     async move {
-                        crate::domains::agent::host::persist::persist::supervise_persistence_subscriber(
+                        crate::domains::agent::session::persist::persist::supervise_persistence_subscriber(
                             runtime,
                             db,
                             agent_events_supervisor,
@@ -515,7 +515,7 @@ impl ServiceManager {
                 let bus = agent_events_ticket.clone();
                 let token = ticket_shutdown.clone();
                 let handle = tokio::spawn(async move {
-                    crate::domains::agent::host::notify::ticket_subscriber::supervise_ticket_subscriber(
+                    crate::domains::agent::session::notify::ticket_subscriber::supervise_ticket_subscriber(
                         ticket_rx,
                         move || bus.subscribe(),
                         db,
@@ -540,7 +540,7 @@ impl ServiceManager {
                 let bus = agent_events_judgment.clone();
                 let token = judgment_shutdown.clone();
                 let handle = tokio::spawn(async move {
-                    crate::domains::agent::host::judge::judgment_subscriber::supervise_judgment_subscriber(
+                    crate::domains::agent::session::judge::judgment_subscriber::supervise_judgment_subscriber(
                         judgment_rx,
                         move || bus.subscribe(),
                         db,

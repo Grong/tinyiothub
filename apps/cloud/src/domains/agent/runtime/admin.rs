@@ -17,8 +17,8 @@ use tinyiothub_web::response::ApiResponseBuilder;
 use tinyiothub_web::security::Claims;
 
 use crate::domains::agent::AgentState;
-use crate::domains::agent::host::handler::agent_tasks::check_agent_admin_response;
 use crate::domains::agent::runtime::tasks::error_response;
+use crate::domains::agent::session::handlers::agent_tasks::check_agent_admin_response;
 
 pub fn create_router<S>() -> Router<S>
 where
@@ -120,7 +120,7 @@ async fn check_admin_read_access(
     if let Some(workspace_id) = workspace_id {
         return check_agent_admin_response(state, claims, workspace_id).await;
     }
-    if crate::domains::agent::host::handler::is_admin(&state.db, &claims.user_id).await {
+    if crate::domains::agent::session::handlers::is_admin(&state.db, &claims.user_id).await {
         Ok(())
     } else {
         Err(error_response(StatusCode::FORBIDDEN, "需要管理员权限"))

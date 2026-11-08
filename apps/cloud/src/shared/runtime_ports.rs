@@ -684,7 +684,7 @@ impl ApprovalTimeoutAdapter {
                 dedup_key: None,
             },
         };
-        crate::domains::agent::host::judge::judgment_subscriber::project(
+        crate::domains::agent::session::judge::judgment_subscriber::project(
             &event,
             &self.db,
             &self.sse,

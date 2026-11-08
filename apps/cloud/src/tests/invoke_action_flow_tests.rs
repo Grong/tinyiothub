@@ -281,17 +281,17 @@ impl tinyiothub_runtime::access::validator::AccessCallValidator for RejectingAcc
 async fn seeded_tool(
     ws: &str,
     rejection: AccessRejection,
-) -> (crate::domains::agent::host::tools::thing::InvokeActionTool, String) {
+) -> (crate::domains::agent::tool::thing::InvokeActionTool, String) {
     use std::sync::Arc;
 
-    use crate::domains::agent::host::tools::thing::PendingActionStore;
+    use crate::domains::agent::tool::thing::PendingActionStore;
     use crate::domains::thing::service::ThingService;
 
     let (app, pool, token) = setup(ws).await;
     let thing = create_thing(&app, &token, ws, &format!("dev-{ws}"), "device").await;
     register_action(&pool, &thing, "reboot").await;
 
-    let tool = crate::domains::agent::host::tools::thing::InvokeActionTool {
+    let tool = crate::domains::agent::tool::thing::InvokeActionTool {
         thing_service: Arc::new(ThingService::new(pool.clone())),
         pool,
         workspace_id: ws.to_string(),

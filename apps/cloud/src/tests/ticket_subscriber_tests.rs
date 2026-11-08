@@ -8,7 +8,7 @@ use crate::domains::agent::events::{AgentEventBus, AgentEventKind};
 use tinyiothub_core::agent_runs::{ActionRecord, ActionResult, EndReason, Outcome, RunReport};
 use tinyiothub_storage::Db;
 
-use crate::domains::agent::host::notify::ticket_subscriber::{
+use crate::domains::agent::session::notify::ticket_subscriber::{
     build_briefing, failure_hash, normalize, run_ticket_subscriber, should_ticket, synthesize_title, ticket_for_run,
 };
 use crate::domains::event::sse_manager::SseConnectionManager;

@@ -14,8 +14,8 @@ use tinyiothub_web::security::Claims;
 use super::RecoveryMode;
 
 use crate::domains::agent::AgentState;
-use crate::domains::agent::host::handler::agent_tasks::check_agent_admin_response;
 use crate::domains::agent::runtime::{projection, tasks::error_response};
+use crate::domains::agent::session::handlers::agent_tasks::check_agent_admin_response;
 use crate::domains::agent::thing_agent::task::coordinator::TaskError;
 use tinyiothub_core::agent_task::TaskStoreError;
 

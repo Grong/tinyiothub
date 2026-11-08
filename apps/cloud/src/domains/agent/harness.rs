@@ -28,9 +28,9 @@ use tinyiothub_web::response::{ApiResponse, ApiResponseBuilder};
 use tinyiothub_web::security::Claims;
 
 use crate::domains::agent::AgentState;
-use crate::domains::agent::host::handler::agent_tasks::check_agent_admin_response;
-use crate::domains::agent::host::handler::is_admin;
 use crate::domains::agent::runtime::tasks::error_response;
+use crate::domains::agent::session::handlers::agent_tasks::check_agent_admin_response;
+use crate::domains::agent::session::handlers::is_admin;
 use crate::domains::agent::workflows::{ProjectionComparison, ProjectionInspector, RetryOutcome, SupervisorHealth};
 
 const DEFAULT_ATTENTION_LIMIT: i64 = 5;

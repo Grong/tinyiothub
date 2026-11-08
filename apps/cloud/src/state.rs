@@ -156,7 +156,7 @@ pub struct AppState {
     pub permission_service: Arc<crate::domains::user::permission::PermissionService>,
 
     /// 会话服务 - Agent 聊天会话管理
-    pub session_service: Arc<crate::domains::agent::host::SessionService>,
+    pub session_service: Arc<crate::domains::agent::session::index::SessionService>,
 
     /// 缓存的系统信息对象，避免每次请求重新扫描
     pub sysinfo_system: Arc<std::sync::Mutex<sysinfo::System>>,
@@ -226,7 +226,7 @@ pub struct AppState {
     /// 进程启动时间（G3，替代 health::START_TIME 全局静态）
     pub started_at: std::time::SystemTime,
     /// 待确认动作暂存（G3，替代 PENDING_ACTIONS 全局静态）
-    pub pending_actions: std::sync::Arc<crate::domains::agent::host::tools::thing::PendingActionStore>,
+    pub pending_actions: std::sync::Arc<crate::domains::agent::tool::thing::PendingActionStore>,
     /// E1 仲裁（Task 9）：每设备互斥锁注册表，跨 chat/自治 run 共享
     pub arbitration: std::sync::Arc<crate::domains::agent::thing_agent::ArbitrationRegistry>,
     /// 驱动心跳状态/配置（G3，替代 HEARTBEAT_STATUS/CONFIG 双全局静态）
@@ -385,10 +385,11 @@ impl AppState {
         // 此后端影响。observer 暂保持 NoopObserver —— 观测接线待 phase 2
         // hooks 完成（已知降级，本任务接受）。
         let agents_base_dir = crate::shared::paths::agents_base_dir();
-        let agent_memory: Arc<dyn tinyiothub_agent::port::memory::Memory> =
-            Arc::new(crate::domains::agent::host::persist::memory::jsonl::JsonlMemory::new(
+        let agent_memory: Arc<dyn tinyiothub_agent::port::memory::Memory> = Arc::new(
+            crate::domains::agent::session::persist::memory::jsonl::JsonlMemory::new(
                 agents_base_dir.join("agent_memory.jsonl"),
-            ));
+            ),
+        );
         let agent_observer = Arc::new(tinyiothub_agent::port::observer::NoopObserver);
         let agent_pool: Arc<AgentPool> = Arc::new(
             AgentPool::new(
@@ -428,7 +429,9 @@ impl AppState {
         ));
 
         // 会话服务 - 用于 Agent 聊天会话管理
-        let session_service = Arc::new(crate::domains::agent::host::SessionService::new(database.clone()));
+        let session_service = Arc::new(crate::domains::agent::session::index::SessionService::new(
+            database.clone(),
+        ));
 
         // === 网关配对服务 ===
         let (mqtt_tx, mqtt_rx) =
@@ -484,12 +487,12 @@ impl AppState {
             }
         });
 
-        let pending_actions: std::sync::Arc<crate::domains::agent::host::tools::thing::PendingActionStore> =
+        let pending_actions: std::sync::Arc<crate::domains::agent::tool::thing::PendingActionStore> =
             std::sync::Arc::new(dashmap::DashMap::new());
         // F7：周期清扫超期确认 token——take 时的懒清扫只盖住有确认流量的路径。
         // handle 刻意 drop（不 let _：clippy let_underscore_future 拒绝）：任务
         // 进程级生命周期，关停随 tokio runtime 一起 abort。
-        drop(crate::domains::agent::host::tools::thing::spawn_pending_action_sweeper_default(pending_actions.clone()));
+        drop(crate::domains::agent::tool::thing::spawn_pending_action_sweeper_default(pending_actions.clone()));
 
         // E1 仲裁（Task 9）：每设备互斥锁注册表——chat 工具与自治 run 共享
         // 同一份，TTL 过期自动恢复，无清扫任务（acquire 时懒判定）。
@@ -497,7 +500,7 @@ impl AppState {
 
         // Thing action hooks（G5a）—— agent 侧实现 thing 域 trait，注入给 thing handler
         let thing_action_hooks: Arc<dyn crate::domains::thing::hooks::ThingActionHooks> = Arc::new(
-            crate::domains::agent::host::trigger::thing_action_hooks::AgentThingActionHooks::new(
+            crate::domains::agent::session::triggers::thing_action_hooks::AgentThingActionHooks::new(
                 database.pool().clone(),
                 pending_actions.clone(),
             ),
@@ -902,7 +905,7 @@ pub struct AgentPoolLifecycle {
 
 impl AgentPoolLifecycle {
     pub async fn create_agent(&self, workspace_id: &str, name: &str) -> Result<String, String> {
-        crate::domains::agent::host::config::service::create_agent(
+        crate::domains::agent::session::config::service::create_agent(
             &self.db_pool,
             &tinyiothub_agent::config::AgentConfig {
                 workspace_id: workspace_id.to_string(),
@@ -915,7 +918,7 @@ impl AgentPoolLifecycle {
     }
 
     pub async fn delete_agent(&self, agent_id: &str) -> Result<(), String> {
-        crate::domains::agent::host::config::service::delete_agent(&self.db_pool, agent_id)
+        crate::domains::agent::session::config::service::delete_agent(&self.db_pool, agent_id)
             .await
             .map_err(|e| e.to_string())?;
         self.pool.invalidate(agent_id);

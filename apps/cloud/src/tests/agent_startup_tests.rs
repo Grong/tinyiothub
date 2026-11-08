@@ -15,7 +15,7 @@ use tinyiothub_storage::Db;
 use tinyiothub_storage::heartbeat::WorkspaceHeartbeatConfig;
 
 use crate::bootstrap::{build_agent_snapshot, reconcile_zombie_runs};
-use crate::domains::agent::host::test_utils::seed_test_workspace;
+use crate::domains::agent::session::test_utils::seed_test_workspace;
 
 // ── fixtures ──────────────────────────────────────────────
 

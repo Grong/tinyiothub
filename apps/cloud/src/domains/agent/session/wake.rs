@@ -17,9 +17,9 @@ use tinyiothub_storage::assistant_schedule::AssistantSchedule;
 use tinyiothub_storage::session::Session;
 
 use super::trigger::EventWake;
-use crate::domains::agent::host::chat::service::ensure_agent;
 use crate::domains::agent::pool::AgentPool;
 use crate::domains::agent::session::SESSION_TURN_TIMEOUT;
+use crate::domains::agent::session::chat::service::ensure_agent;
 use crate::domains::agent::session::context::TurnContext;
 use crate::domains::agent::session::events::{SessionEventSink, session_event, session_started_payload};
 use crate::domains::agent::session::runner::{SessionRunner, TurnOutcome};

@@ -10,7 +10,7 @@
 
 use std::sync::Arc;
 
-use crate::domains::agent::host::thing_agent_host::CloudThingAgentHost;
+use crate::domains::agent::session::agent_host::CloudThingAgentHost;
 use crate::domains::agent::thing_agent::ThingAgentHost;
 use crate::domains::event::{
     bus::ThingEventBus,

@@ -44,9 +44,9 @@ use tinyiothub_runtime::ports::HubLedger;
 use tinyiothub_skills::trust::ToolSafety;
 use tinyiothub_storage::cache::ThingCache;
 
-use crate::domains::agent::host::composite::CompositeExecutor;
-use crate::domains::agent::host::tools::thing::PendingActionStore;
-use crate::domains::agent::host::tools::{ThingToolContext, create_thing_tools};
+use crate::domains::agent::tool::composite::CompositeExecutor;
+use crate::domains::agent::tool::thing::PendingActionStore;
+use crate::domains::agent::tool::{ThingToolContext, create_thing_tools};
 use crate::shared::access_ports::{DbAcceptanceStore, DbDeviceStore, DbDriverStore, DbProjectionStore, DbThingSource};
 use crate::shared::runtime_ports::ThingCacheAdapter;
 use crate::test_utils::seed_test_workspace;

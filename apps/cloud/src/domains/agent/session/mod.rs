@@ -4,11 +4,23 @@ pub const ASK_USER_TIMEOUT: Duration = Duration::from_secs(10 * 60);
 pub const SESSION_TURN_TIMEOUT: Duration = Duration::from_secs(15 * 60);
 pub const SUBAGENT_TURN_TIMEOUT: Duration = Duration::from_secs(10 * 60);
 
+pub mod agent_host;
 pub mod approvals;
+pub mod chat;
+pub mod chat_types;
+pub mod config;
 pub mod context;
 pub mod events;
+pub mod factory;
 pub mod handler;
+pub mod handlers;
 pub mod hud;
+pub mod index;
+pub mod judge;
+pub mod notify;
+pub mod persist;
+pub mod pool_adapter;
+pub mod ports;
 pub mod questions;
 pub mod runner;
 pub mod skills_seed;
@@ -17,9 +29,13 @@ pub mod todos;
 pub mod tool_guard;
 pub mod tools;
 pub mod trigger;
+pub mod triggers;
 pub mod types;
 pub mod wake;
 pub mod workspace_api;
+
+#[cfg(test)]
+pub(crate) mod test_utils;
 
 pub use approvals::{ApprovalBroker, ApprovalDecision, ApprovalError, ApprovalSummary};
 pub use context::*;

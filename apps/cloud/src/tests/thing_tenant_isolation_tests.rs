@@ -238,7 +238,7 @@ async fn test_cross_workspace_confirm_token_403() {
     let thing_a = create_thing(&app, &token_a, "ws-a", "thing-confirm-a").await;
 
     // Mint a pending-action token scoped to workspace A directly.
-    let confirm_token = crate::domains::agent::host::tools::thing::store_pending_action(
+    let confirm_token = crate::domains::agent::tool::thing::store_pending_action(
         &app_state.pending_actions,
         thing_a.clone(),
         "reboot".to_string(),

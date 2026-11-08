@@ -52,9 +52,8 @@ use tinyiothub_storage::Db;
 use tinyiothub_storage::assistant_schedule::AssistantSchedule;
 
 use crate::bootstrap::{build_agent_snapshot, reconcile_zombie_runs};
-use crate::domains::agent::host::{
-    autonomous_factory::AutonomousAgentFactory, persist::persist::run_persistence_subscriber, tools::ThingToolContext,
-};
+use crate::domains::agent::session::{factory::AutonomousAgentFactory, persist::persist::run_persistence_subscriber};
+use crate::domains::agent::tool::ThingToolContext;
 use crate::domains::event::{bus::ThingEventBus, router::ThrottleState};
 use crate::shared::runtime_ports::{HubLedgerAdapter, ThingCacheAdapter, WatchRuleStoreAdapter};
 use crate::state::AppState;

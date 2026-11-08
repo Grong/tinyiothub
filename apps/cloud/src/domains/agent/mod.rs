@@ -22,6 +22,7 @@ pub mod runtime;
 pub mod session;
 pub mod snapshot;
 pub mod thing_agent;
+pub mod tool;
 pub mod tools;
 pub mod trace_handler;
 pub mod workflows;
@@ -65,12 +66,12 @@ pub struct AgentState {
     pub agent_pool: Arc<crate::domains::agent::pool::AgentPool>,
     /// invoke_action 确认 token 存储 - 提案批准执行的自动确认（与 chat 工具
     /// provider 捕获的同一实例，token 才能互通）
-    pub pending_actions: Arc<host::tools::thing::PendingActionStore>,
+    pub pending_actions: Arc<tool::thing::PendingActionStore>,
     /// E1 仲裁（Task 9）：每设备互斥锁注册表——批准路径 dispatch 与
     /// chat/自治 run 共享同一份
     pub arbitration: Arc<crate::domains::agent::thing_agent::ArbitrationRegistry>,
     /// 会话服务 - chat sessions 列表/标签/删除
-    pub session_service: Arc<host::SessionService>,
+    pub session_service: Arc<session::index::SessionService>,
     /// System prompts 配置 - chat proxy 构造 full prompt
     pub system_prompts: Arc<crate::shared::config::SystemPromptsConfig>,
     /// E4a 驱动访问服务 - Hub stream 的 manifest/source 校验与需求订阅

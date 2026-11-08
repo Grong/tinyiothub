@@ -226,7 +226,8 @@ async fn submit_feedback(
         }
     }
 
-    crate::domains::agent::host::judge::judgment_subscriber::broadcast_judgment_pub(&state.sse_manager, ws, &id).await;
+    crate::domains::agent::session::judge::judgment_subscriber::broadcast_judgment_pub(&state.sse_manager, ws, &id)
+        .await;
     ApiResponseBuilder::success(serde_json::json!({"ok": true}))
 }
 
@@ -323,7 +324,7 @@ async fn approve_judgment(
 ) -> Json<ApiResponse<serde_json::Value>> {
     let ws = &claims.0.workspace_id;
     // F9：批准 = 物理动作授权，强制 admin；角色查询失败 fail-closed 403。
-    if !crate::domains::agent::host::handler::is_admin(&state.db, &claims.0.user_id).await {
+    if !crate::domains::agent::session::handlers::is_admin(&state.db, &claims.0.user_id).await {
         return ApiResponseBuilder::error_with_code(403, "需要管理员权限");
     }
     let judgment = match state.db.find_judgment_by_id(&id, ws).await {
@@ -410,7 +411,8 @@ async fn approve_judgment(
         return ApiResponseBuilder::error("执行派发失败（队列满），已回滚待审批，可重试");
     }
 
-    crate::domains::agent::host::judge::judgment_subscriber::broadcast_judgment_pub(&state.sse_manager, ws, &id).await;
+    crate::domains::agent::session::judge::judgment_subscriber::broadcast_judgment_pub(&state.sse_manager, ws, &id)
+        .await;
     ApiResponseBuilder::success(serde_json::json!({"ok": true, "status": "executing"}))
 }
 
@@ -447,6 +449,7 @@ async fn reject_judgment(
         Err(e) => return ApiResponseBuilder::error(format!("状态迁移失败: {e}")),
     }
 
-    crate::domains::agent::host::judge::judgment_subscriber::broadcast_judgment_pub(&state.sse_manager, ws, &id).await;
+    crate::domains::agent::session::judge::judgment_subscriber::broadcast_judgment_pub(&state.sse_manager, ws, &id)
+        .await;
     ApiResponseBuilder::success(serde_json::json!({"ok": true, "status": "dismissed"}))
 }

@@ -10,8 +10,8 @@ use tinyiothub_web::response::ApiResponseBuilder;
 use tinyiothub_web::security::Claims;
 
 use crate::domains::agent::AgentState;
-use crate::domains::agent::host::handler::agent_tasks::check_agent_admin_response;
 use crate::domains::agent::runtime::tasks::error_response;
+use crate::domains::agent::session::handlers::agent_tasks::check_agent_admin_response;
 
 async fn decide(
     state: AgentState,

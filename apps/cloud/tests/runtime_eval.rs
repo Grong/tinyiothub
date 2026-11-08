@@ -768,10 +768,10 @@ impl ModelProvider for SilentNonVisionProvider {
 /// `capability.unavailable`, and create zero Effects.
 #[tokio::test]
 async fn tool_descriptor_factory_capability_gate_emits_event_and_creates_zero_effects() {
-    use tinyiothub_cloud::domains::agent::host::autonomous_factory::AutonomousAgentFactory;
-    use tinyiothub_cloud::domains::agent::host::tools::ThingToolContext;
     use tinyiothub_cloud::domains::agent::runtime::stream::{RuntimeRecorder, RuntimeStreamHub};
+    use tinyiothub_cloud::domains::agent::session::factory::AutonomousAgentFactory;
     use tinyiothub_cloud::domains::agent::thing_agent::RunContextInner;
+    use tinyiothub_cloud::domains::agent::tool::ThingToolContext;
     use tinyiothub_cloud::domains::event::bus::ThingEventBus;
     use tinyiothub_cloud::domains::event::router::ThrottleState;
     use tinyiothub_storage::test_helpers::fixture_workspace;
@@ -1047,9 +1047,9 @@ async fn scripted_eval_declared_tool_uses_descriptor_single_source() {
 
 #[tokio::test]
 async fn scripted_eval_non_vision_capability_fails_closed() {
-    use tinyiothub_cloud::domains::agent::host::autonomous_factory::AutonomousAgentFactory;
-    use tinyiothub_cloud::domains::agent::host::tools::ThingToolContext;
+    use tinyiothub_cloud::domains::agent::session::factory::AutonomousAgentFactory;
     use tinyiothub_cloud::domains::agent::thing_agent::RunContextInner;
+    use tinyiothub_cloud::domains::agent::tool::ThingToolContext;
     use tinyiothub_cloud::domains::event::bus::ThingEventBus;
     use tinyiothub_cloud::domains::event::router::ThrottleState;
     use tokio::sync::RwLock;
