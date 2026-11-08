@@ -68,7 +68,8 @@ impl PoolSubagentRunner {
             request.parent_session_key.clone(),
             uuid::Uuid::new_v4().to_string(),
             request.depth,
-        );
+        )
+        .with_permission_mode(request.permission_mode);
 
         let result = {
             let guard = agent.lock().await;
@@ -132,6 +133,7 @@ mod tests {
     use super::*;
     use crate::domains::agent::pool::AgentPool;
     use crate::domains::agent::session::events::test_support::RecordingSink;
+    use crate::domains::agent::session::types::PermissionMode;
     use crate::domains::agent::session::{
         SessionRunner, SubagentRequest, SubagentRunner, SubagentStatus, TurnContextRegistry,
     };
@@ -201,6 +203,7 @@ mod tests {
                 description: "检查".into(),
                 prompt: "检查全部设备".into(),
                 depth: 1,
+                permission_mode: PermissionMode::Ask,
             })
             .await
             .unwrap();

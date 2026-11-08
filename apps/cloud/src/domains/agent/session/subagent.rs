@@ -8,6 +8,8 @@ use std::sync::Arc;
 use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
 
+use super::types::PermissionMode;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum SubagentStatus {
@@ -26,6 +28,7 @@ pub struct SubagentRequest {
     pub description: String,
     pub prompt: String,
     pub depth: u8,
+    pub permission_mode: PermissionMode,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

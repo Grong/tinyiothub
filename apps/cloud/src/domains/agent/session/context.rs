@@ -10,6 +10,8 @@ use std::sync::Arc;
 use dashmap::DashMap;
 use uuid::Uuid;
 
+use super::types::PermissionMode;
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TurnContext {
     pub workspace_id: String,
@@ -21,6 +23,8 @@ pub struct TurnContext {
     pub run_id: String,
     /// 0 = 主 Assistant；1 = 子代理；>=2 拒绝。
     pub depth: u8,
+    /// 本 Turn 的权限模式；由 Session 行注入，子代理继承父 Turn。
+    pub permission_mode: PermissionMode,
 }
 
 impl TurnContext {
@@ -32,7 +36,13 @@ impl TurnContext {
             run_id,
             depth,
             turn_id: Uuid::new_v4().to_string(),
+            permission_mode: PermissionMode::Ask,
         }
+    }
+
+    pub fn with_permission_mode(mut self, mode: PermissionMode) -> Self {
+        self.permission_mode = mode;
+        self
     }
 }
 
@@ -95,6 +105,14 @@ mod tests {
             run_id.to_string(),
             0,
         )
+    }
+
+    #[test]
+    fn turn_context_defaults_to_ask_and_overrides() {
+        let context = ctx("run1");
+        assert_eq!(context.permission_mode, PermissionMode::Ask);
+        let readonly = context.with_permission_mode(PermissionMode::ReadOnly);
+        assert_eq!(readonly.permission_mode, PermissionMode::ReadOnly);
     }
 
     #[test]
