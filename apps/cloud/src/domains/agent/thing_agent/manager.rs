@@ -26,11 +26,9 @@ use crate::domains::agent::events::AgentEventBus;
 use crate::domains::agent::thing_agent::active_runs::ActiveRunRegistry;
 use crate::domains::agent::thing_agent::governor::HeartbeatGovernor;
 use crate::domains::agent::thing_agent::runner::{AgentHandle, RunContextInner, Runner};
-use crate::domains::agent::thing_agent::scheduler::EnqueueError;
 use crate::domains::agent::thing_agent::task::coordinator::{CancelOutcome, TaskCoordinator, TaskError};
 use crate::domains::agent::thing_agent::task::wake::WakeRouter;
-use crate::domains::agent::thing_agent::traits::{DirectiveSink, SnapshotDemandSink};
-use crate::domains::agent::thing_agent::types::WakeSignal;
+use crate::domains::agent::thing_agent::traits::SnapshotDemandSink;
 use crate::domains::agent::thing_agent::watch_loop::{WatchCommand, WatchDeps, watch_engine_loop};
 use tinyiothub_core::heartbeat::{HeartbeatTask, TrustConfig};
 
@@ -112,8 +110,7 @@ struct WorkspaceWatch {
 }
 
 /// Per-workspace thing-agent manager. Owns the Task runtime and each
-/// workspace's watch engine; also the [`DirectiveSink`] routing point kept
-/// for the (now retired) directive callers.
+/// workspace's watch engine.
 pub struct ThingAgentManager {
     deps: PipelineDeps,
     workspaces: DashMap<String, WorkspaceWatch>,
@@ -546,31 +543,6 @@ impl Drop for ThingAgentManager {
     }
 }
 
-#[async_trait::async_trait]
-impl DirectiveSink for ThingAgentManager {
-    /// Judgment execution / re-investigation directives enter the Session loop
-    /// as `"directive"` event wakes. Only `UserDirective` signals have a
-    /// mapping; everything else has its own event bridge (closed here).
-    fn enqueue(&self, signal: WakeSignal) -> Result<(), EnqueueError> {
-        let Some(router) = self.session_router() else {
-            return Err(EnqueueError::Closed);
-        };
-        let Some(wake) = crate::domains::agent::session::trigger::directive_wake(&signal) else {
-            return Err(EnqueueError::Closed);
-        };
-        if router.submit_event(wake) {
-            Ok(())
-        } else {
-            // In-flight workspace or per-key 3/min window: the caller may
-            // retry (judgment approval rolls back to awaiting_approval).
-            Err(EnqueueError::Rejected)
-        }
-    }
-
-    /// O26 kill switch no-op: there is no per-workspace queue anymore.
-    async fn drain(&self, _workspace_id: &str) {}
-}
-
 /// E2：向 engine actor 要本工作区实时快照（120ms 超时，fail-soft）。
 pub(crate) async fn fetch_workspace_snapshot(
     cmds: &Arc<DashMap<String, mpsc::Sender<WatchCommand>>>,
@@ -614,6 +586,7 @@ pub(crate) async fn fetch_workspace_snapshot(
 pub(crate) mod tests {
     use super::*;
     use crate::domains::agent::events::AgentEventKind;
+    use crate::domains::agent::thing_agent::types::WakeSignal;
     use std::sync::Mutex;
 
     use tinyiothub_agent::port::attribution::{Attributable, ModelProviderKind, ProviderKind, Role};
@@ -1315,76 +1288,6 @@ pub(crate) mod tests {
         let executor = Arc::new(RecordingExecutor::default());
         let router = Arc::new(crate::domains::agent::session::TriggerRouter::new(db, executor.clone()));
         (router, executor)
-    }
-
-    // ── judgment execution directives → Session loop ─────────────
-
-    fn directive_signal(text: &str, problem_key: Option<&str>, dedup_key: Option<&str>) -> WakeSignal {
-        WakeSignal {
-            workspace_id: WS.into(),
-            priority: crate::domains::agent::thing_agent::types::Priority::High,
-            source: crate::domains::agent::thing_agent::types::TriggerSource::UserDirective {
-                user_id: "user_1".into(),
-                text: text.into(),
-                session_key: None,
-                source: Some("judgment-approval".into()),
-                problem_key: problem_key.map(str::to_string),
-            },
-            dedup_key: dedup_key.map(str::to_string),
-        }
-    }
-
-    /// I1 regression: the production `DirectiveSink` admits a judgment
-    /// execution directive through the real `TriggerRouter`.
-    #[tokio::test]
-    async fn enqueue_admits_judgment_directive_through_session_router() {
-        let parts = stub_manager().await;
-        let (router, executor) = recording_router().await;
-        let _router_handle = router.clone().start();
-        parts.manager.set_session_router(router);
-
-        parts
-            .manager
-            .enqueue(directive_signal(
-                "执行已批准的处置动作",
-                Some("exec:j1"),
-                Some("exec:j1"),
-            ))
-            .expect("directive must be admitted");
-
-        wait_until(|| executor.wakes().len() == 1, "directive wake").await;
-        let wake = executor.wakes().remove(0);
-        assert_eq!(wake.workspace_id, WS);
-        assert_eq!(wake.trigger, "directive");
-        assert_eq!(wake.source_id, "exec:j1");
-        assert_eq!(wake.dedup_key.as_deref(), Some("exec:j1"), "C5/T-14 dedup preserved");
-        assert_eq!(wake.summary, "执行已批准的处置动作");
-    }
-
-    #[tokio::test]
-    async fn enqueue_non_directive_signal_is_closed() {
-        let parts = stub_manager().await;
-        let (router, _executor) = recording_router().await;
-        let _router_handle = router.clone().start();
-        parts.manager.set_session_router(router);
-
-        let signal = WakeSignal {
-            workspace_id: WS.into(),
-            priority: crate::domains::agent::thing_agent::types::Priority::Normal,
-            source: crate::domains::agent::thing_agent::types::TriggerSource::Timer,
-            dedup_key: Some("timer:ws_01".into()),
-        };
-        assert_eq!(parts.manager.enqueue(signal), Err(EnqueueError::Closed));
-    }
-
-    #[tokio::test]
-    async fn enqueue_without_router_is_closed() {
-        let parts = stub_manager().await;
-        assert_eq!(
-            parts.manager.enqueue(directive_signal("执行", None, None)),
-            Err(EnqueueError::Closed),
-            "no Session router means no admission path"
-        );
     }
 
     #[tokio::test]

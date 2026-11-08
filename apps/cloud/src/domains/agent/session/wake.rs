@@ -255,9 +255,6 @@ impl WakeRunner {
         }
         let permission_mode = schedule.permission_mode;
         let message = match wake.trigger.as_str() {
-            // 判定执行/重调查：summary 已是指令正文（服务端模板生成），原样
-            // 下发，不再套告警提示词。
-            "directive" => format!("收到指令：{}\n请执行并反馈；涉及写设备必须走审批。", wake.summary),
             "watch" => format!("收到设备值守命中：{}\n请评估影响；涉及写设备必须走审批。", wake.summary),
             "thing_event" => format!(
                 "收到设备事件：{}\n请判断是否需要处理；涉及写设备必须走审批。",

@@ -597,9 +597,8 @@ impl ServiceManager {
 
             orchestrator.start();
 
-            // T14 用户指令入口：chat 工具 / HTTP 端点经 directive_sink 投递到
-            // 对应工作区的 thing-agent 调度器。
-            app_state.set_directive_sink(thing_agent_manager.clone());
+            // 判断执行指令（judgment execution）已退役：不再向 manager 注入
+            // DirectiveSink；判断批准端点返回 410，由 Assistant 会话承接处置。
             // AI 运行透明化 T5：/agent-runs/{id}/trace 实时分支数据源——与
             // manager 内 PipelineDeps 同一实例（克隆共享 DashMap）。
             app_state.set_active_runs(thing_agent_manager.active_run_registry());

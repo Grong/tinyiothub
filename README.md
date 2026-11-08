@@ -469,6 +469,7 @@ web/
 - `GET /api/v1/workspaces/{workspace_id}/agent/hud` - Assistant 全局 HUD（状态/设备/告警/待答/待批/调度）
 - `GET /api/v1/workspaces/{workspace_id}/agent/schedule` - 获取 Assistant 调度
 - `PUT /api/v1/workspaces/{workspace_id}/agent/schedule` - 更新 Assistant 调度（启用状态/间隔/提示词；权限模式走 `/agent/policy`）
+- `POST /api/v1/judgments/{id}/approve` - 已退役（410）：报警处置由 Assistant 会话承接，请在 Assistant 中确认设备写操作
 - `GET /api/v1/workspaces/{workspace_id}/agent/tasks` - 获取 Task 列表
 - `POST /api/v1/workspaces/{workspace_id}/agent/tasks` - 创建 Task
 - `GET /api/v1/workspaces/{workspace_id}/agent/tasks/{task_id}/stream` - Task SSE 流

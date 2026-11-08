@@ -144,12 +144,13 @@ async fn feedback_wrong_requires_reason() {
 }
 
 #[tokio::test]
-async fn approve_rejects_non_awaiting_status() {
+async fn approve_is_retired_and_preserves_awaiting_approval() {
     let (app_state, pool) = setup_test_app_with_pool().await;
     seed_test_workspace(&pool, "tenant-1", "ws-default-001").await;
     seed_admin_role(&pool, "user-1").await;
-    // investigating 状态（未 judged）不可批准
-    let jid = seed_judgment(&app_state, "ws-default-001", None).await;
+    let jid = seed_judgment(&app_state, "ws-default-001", Some("self_healable")).await;
+    // 退役路径不依赖执行通道（directive sink 已不再注入生产）。
+    assert!(app_state.directive_sink.is_none());
 
     let app = crate::api::create_router(&app_state);
     let app = axum::Router::new().nest("/api", app).with_state(app_state.clone());
@@ -163,9 +164,13 @@ async fn approve_rejects_non_awaiting_status() {
         ))
         .await
         .unwrap();
-    // 测试态无 directive_sink → 先报执行通道未就绪（状态未被翻转）
     let (_s, json) = response_parts(response).await;
-    assert!(json["code"].as_i64().unwrap() != 0, "should error without sink");
+    assert_eq!(json["code"], 410, "approve must return the retirement code");
+    assert!(
+        json["msg"].as_str().unwrap_or("").contains("已退役"),
+        "message must explain the retirement: {json}"
+    );
+
     let j = app_state
         .db
         .find_judgment_by_id(&jid, "ws-default-001")
@@ -174,8 +179,8 @@ async fn approve_rejects_non_awaiting_status() {
         .unwrap();
     assert_eq!(
         j.status,
-        tinyiothub_storage::judgment::JudgmentStatus::Investigating,
-        "状态未被错误翻转"
+        tinyiothub_storage::judgment::JudgmentStatus::AwaitingApproval,
+        "retired approve must not transition"
     );
 }
 
@@ -231,157 +236,13 @@ async fn reject_requires_reason_and_dismisses() {
     );
 }
 
-struct RecordingSink(std::sync::Mutex<Vec<crate::domains::agent::thing_agent::types::WakeSignal>>);
-
-#[async_trait::async_trait]
-impl crate::domains::agent::thing_agent::DirectiveSink for RecordingSink {
-    fn enqueue(
-        &self,
-        signal: crate::domains::agent::thing_agent::types::WakeSignal,
-    ) -> Result<(), crate::domains::agent::thing_agent::scheduler::EnqueueError> {
-        self.0.lock().unwrap().push(signal);
-        Ok(())
-    }
-}
-
-struct FailingSink;
-
-#[async_trait::async_trait]
-impl crate::domains::agent::thing_agent::DirectiveSink for FailingSink {
-    fn enqueue(
-        &self,
-        _signal: crate::domains::agent::thing_agent::types::WakeSignal,
-    ) -> Result<(), crate::domains::agent::thing_agent::scheduler::EnqueueError> {
-        Err(crate::domains::agent::thing_agent::scheduler::EnqueueError::Rejected)
-    }
-}
-
-#[tokio::test]
-async fn approve_dispatches_execution_signal() {
-    let (mut app_state, pool) = setup_test_app_with_pool().await;
-    seed_test_workspace(&pool, "tenant-1", "ws-default-001").await;
-    seed_admin_role(&pool, "user-1").await;
-    let jid = seed_judgment(&app_state, "ws-default-001", Some("self_healable")).await;
-    let sink = std::sync::Arc::new(RecordingSink(std::sync::Mutex::new(vec![])));
-    app_state.set_directive_sink(sink.clone());
-
-    let app = crate::api::create_router(&app_state);
-    let app = axum::Router::new().nest("/api", app).with_state(app_state.clone());
-    let token = create_test_token("user-1", "tenant-1");
-    let response = app
-        .oneshot(req(
-            "POST",
-            &format!("/api/v1/judgments/{jid}/approve"),
-            &token,
-            Some(json!({})),
-        ))
-        .await
-        .unwrap();
-    assert_eq!(response.status(), StatusCode::OK);
-
-    let j = app_state
-        .db
-        .find_judgment_by_id(&jid, "ws-default-001")
-        .await
-        .unwrap()
-        .unwrap();
-    assert_eq!(j.status, tinyiothub_storage::judgment::JudgmentStatus::Executing);
-
-    let signals = sink.0.lock().unwrap();
-    assert_eq!(signals.len(), 1, "恰好派发一条执行 directive");
-    let crate::domains::agent::thing_agent::types::TriggerSource::UserDirective { problem_key, .. } =
-        &signals[0].source
-    else {
-        panic!("exec 信号必须是 UserDirective");
-    };
-    assert_eq!(problem_key.as_deref(), Some(format!("exec:{jid}").as_str()));
-    assert_eq!(
-        signals[0].dedup_key.as_deref(),
-        Some(format!("exec:{jid}").as_str()),
-        "C5/T-14 防重"
-    );
-}
-
-#[tokio::test]
-async fn approve_enqueue_failure_rolls_back_to_awaiting() {
-    let (mut app_state, pool) = setup_test_app_with_pool().await;
-    seed_test_workspace(&pool, "tenant-1", "ws-default-001").await;
-    seed_admin_role(&pool, "user-1").await;
-    let jid = seed_judgment(&app_state, "ws-default-001", Some("self_healable")).await;
-    app_state.set_directive_sink(std::sync::Arc::new(FailingSink));
-
-    let app = crate::api::create_router(&app_state);
-    let app = axum::Router::new().nest("/api", app).with_state(app_state.clone());
-    let token = create_test_token("user-1", "tenant-1");
-    let response = app
-        .oneshot(req(
-            "POST",
-            &format!("/api/v1/judgments/{jid}/approve"),
-            &token,
-            Some(json!({})),
-        ))
-        .await
-        .unwrap();
-    let (_s, json) = response_parts(response).await;
-    assert!(json["code"].as_i64().unwrap() != 0, "派发失败必须报错");
-
-    let j = app_state
-        .db
-        .find_judgment_by_id(&jid, "ws-default-001")
-        .await
-        .unwrap()
-        .unwrap();
-    assert_eq!(
-        j.status,
-        tinyiothub_storage::judgment::JudgmentStatus::AwaitingApproval,
-        "D3 补偿回滚：executing → awaiting_approval，可重试"
-    );
-}
-
-/// 评审补测：approve 重复点击 → 409（条件迁移防并发互撞）。
-#[tokio::test]
-async fn approve_twice_second_gets_409() {
-    let (mut app_state, pool) = setup_test_app_with_pool().await;
-    seed_test_workspace(&pool, "tenant-1", "ws-default-001").await;
-    seed_admin_role(&pool, "user-1").await;
-    let jid = seed_judgment(&app_state, "ws-default-001", Some("self_healable")).await;
-    app_state.set_directive_sink(std::sync::Arc::new(RecordingSink(std::sync::Mutex::new(vec![]))));
-
-    let app = crate::api::create_router(&app_state);
-    let app = axum::Router::new().nest("/api", app).with_state(app_state.clone());
-    let token = create_test_token("user-1", "tenant-1");
-    let r1 = app
-        .clone()
-        .oneshot(req(
-            "POST",
-            &format!("/api/v1/judgments/{jid}/approve"),
-            &token,
-            Some(json!({})),
-        ))
-        .await
-        .unwrap();
-    assert_eq!(r1.status(), StatusCode::OK);
-    let r2 = app
-        .oneshot(req(
-            "POST",
-            &format!("/api/v1/judgments/{jid}/approve"),
-            &token,
-            Some(json!({})),
-        ))
-        .await
-        .unwrap();
-    let (_s, json) = response_parts(r2).await;
-    assert!(json["code"].as_i64().unwrap() != 0, "重复批准必须 409 风格报错");
-}
-
 /// F9：非 admin 用户批准 → 403（角色闸 fail-closed），状态不翻转。
 #[tokio::test]
 async fn approve_non_admin_gets_403() {
-    let (mut app_state, pool) = setup_test_app_with_pool().await;
+    let (app_state, pool) = setup_test_app_with_pool().await;
     seed_test_workspace(&pool, "tenant-1", "ws-default-001").await;
     // 注意：不 seed admin 角色——user-1 是 member
     let jid = seed_judgment(&app_state, "ws-default-001", Some("self_healable")).await;
-    app_state.set_directive_sink(std::sync::Arc::new(RecordingSink(std::sync::Mutex::new(vec![]))));
 
     let app = crate::api::create_router(&app_state);
     let app = axum::Router::new().nest("/api", app).with_state(app_state.clone());
@@ -522,6 +383,16 @@ async fn wrong_feedback_on_noise_restores_and_reopens() {
     assert_eq!(
         j.status,
         tinyiothub_storage::judgment::JudgmentStatus::Investigating,
-        "judgment 重开重调查"
+        "judgment 重开（由 Assistant 会话继续处置）"
     );
+
+    // 重派调查已退役，但「错」反馈仍写知识层——成功响应不虚报重调查。
+    let (memories,): (i64,) = sqlx::query_as(
+        "SELECT COUNT(*) FROM agent_memories \
+         WHERE workspace_id = 'ws-default-001' AND tags LIKE '%judgment-feedback%'",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(memories, 1, "wrong feedback must still record a memory");
 }

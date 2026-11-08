@@ -20,7 +20,7 @@ vi.mock("../../api/sse-client.js", () => ({
   connectSse: vi.fn(() => ({ close() {}, closed: true })),
 }));
 vi.mock("../../api/judgments.js", () => ({
-  judgmentApi: { feedback: vi.fn(), approve: vi.fn(), reject: vi.fn() },
+  judgmentApi: { feedback: vi.fn(), reject: vi.fn() },
 }));
 vi.mock("../components/toast.js", () => ({ success: vi.fn(), error: vi.fn() }));
 vi.mock("../../api/brain-events.js", async (importOriginal) => {
@@ -603,6 +603,39 @@ describe("组件级：完成态卡片展开区（T12：时间线 + narrative + �
     } finally {
       el.remove();
       window.location.hash = "";
+    }
+  });
+
+  it("alarm 判断批准执行已退役：无批准按钮，提示 + Assistant 链接，拒绝仍可用", async () => {
+    const evR = ev({ id: "alarm:retired", status: "awaiting_approval", reason: "可重连" });
+    const el = await mountView([evR]);
+    try {
+      // 批准执行按钮消失（reject 是普通 .btn，不是 .primary）。
+      expect(el.querySelector("button.primary")).toBeNull();
+      expect(el.textContent).not.toContain("批准执行");
+      expect(el.querySelector(".j-retired")?.textContent).toContain("执行已并入 Assistant");
+      const link = el.querySelector('a[href="#/assistant"]') as HTMLAnchorElement;
+      expect(link.textContent).toContain("前往 Assistant");
+
+      // 拒绝仍在，且点击后打开必填原因面板。
+      const reject = Array.from(el.querySelectorAll("button")).find((b) => b.textContent?.includes("拒绝"));
+      expect(reject).toBeTruthy();
+      reject!.click();
+      await vi.waitFor(() => expect(el.querySelector(".j-wrong-panel textarea")).toBeTruthy());
+    } finally {
+      el.remove();
+    }
+  });
+
+  it("patrol 提案保留批准执行按钮（postPatrolApproval 路径仍可用）", async () => {
+    const prop = ev({ id: "patrol:p-ret", source: "patrol", status: "awaiting_approval" });
+    const el = await mountView([prop]);
+    try {
+      const approve = Array.from(el.querySelectorAll("button")).find((b) => b.textContent?.includes("批准执行"));
+      expect(approve).toBeTruthy();
+      expect(el.querySelector(".j-retired")).toBeNull();
+    } finally {
+      el.remove();
     }
   });
 

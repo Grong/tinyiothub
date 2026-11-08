@@ -225,12 +225,28 @@ pub async fn update_config(
     let enabled = req.enabled.unwrap_or(current_schedule.enabled);
     let interval = req.interval_minutes.unwrap_or(current_interval);
 
+    // 先验 schedule 秒数范围（60..=86400）再写任何东西：heartbeat 校验只有
+    // 下限，若等到 schedule 同步才失败，legacy 行/内存表已经改了，两个源
+    // 会分叉。
+    let requested_interval_seconds = match req.interval_minutes {
+        Some(minutes) => {
+            let Some(seconds) = minutes.checked_mul(60) else {
+                return ApiResponseBuilder::error_with_code(400, "心跳间隔过大");
+            };
+            if !(tinyiothub_storage::assistant_schedule::MIN_ASSISTANT_INTERVAL_SECONDS
+                ..=tinyiothub_storage::assistant_schedule::MAX_ASSISTANT_INTERVAL_SECONDS)
+                .contains(&seconds)
+            {
+                return ApiResponseBuilder::error_with_code(400, "心跳间隔必须在 1..=1440 分钟之间");
+            }
+            Some(seconds)
+        }
+        None => None,
+    };
+
     let config = match tinyiothub_storage::heartbeat::WorkspaceHeartbeatConfig::validated(enabled, interval) {
         Ok(c) => c,
         Err(e) => return ApiResponseBuilder::error(&e),
-    };
-    let Some(interval_seconds) = interval.checked_mul(60) else {
-        return ApiResponseBuilder::error("心跳间隔过大");
     };
     // validated() 只构造 enabled/interval 两字段的基线——其余已持久化的扩展
     // 字段（ai_triage/triage_mode/rate_limit）必须从既有行归并，否则一次
@@ -265,14 +281,19 @@ pub async fn update_config(
     // 一版兼容：把 legacy pause/interval 同步到 `assistant_schedules`——
     // `TriggerRouter::tick` 只认该表，否则页面显示「已停止」而 Assistant
     // 仍在唤醒。失败必须报错，不能假装成功。
-    let recompute_next_wake = enabled && (req.enabled == Some(true) || req.interval_minutes.is_some());
-    let next_wake_at = recompute_next_wake.then(|| now + chrono::Duration::seconds(i64::from(interval_seconds)));
+    //
+    // 只有请求显式给了 interval_minutes 才写秒数：无关的 partial PUT（例如
+    // 只切 enabled）不得把 /agent/schedule 设的非整分钟间隔改写掉。
+    let effective_interval_seconds = requested_interval_seconds.unwrap_or(current_schedule.interval_seconds);
+    let recompute_next_wake = enabled && (req.enabled == Some(true) || requested_interval_seconds.is_some());
+    let next_wake_at =
+        recompute_next_wake.then(|| now + chrono::Duration::seconds(i64::from(effective_interval_seconds)));
     if let Err(e) = state
         .db
         .update_assistant_schedule(
             &workspace_id,
             Some(enabled),
-            Some(interval_seconds),
+            requested_interval_seconds,
             None,
             next_wake_at,
             None,

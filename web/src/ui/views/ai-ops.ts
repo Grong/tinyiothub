@@ -476,7 +476,6 @@ export class ViewAiOps extends LitElement {
 
     return html`
       <div class="ao-page">
-        <a class="ao-btn" href="#/ai-ops" style="display: inline-block; margin-bottom: 16px; text-decoration: none;">Runtime tasks</a>
         <!-- Top row: summary stats -->
         <div class="ao-top-row">
           ${this.renderSummaryCard()}

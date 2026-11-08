@@ -78,10 +78,6 @@ export const judgmentApi = {
     return unwrap(await apiPost<{ ok: boolean }>(`/judgments/${id}/feedback`, { verdict, reason }));
   },
 
-  async approve(id: string): Promise<{ ok: boolean; status: string }> {
-    return unwrap(await apiPost<{ ok: boolean; status: string }>(`/judgments/${id}/approve`, {}));
-  },
-
   async reject(id: string, reason: string): Promise<{ ok: boolean; status: string; ticketId: number | null }> {
     return unwrap(
       await apiPost<{ ok: boolean; status: string; ticketId: number | null }>(`/judgments/${id}/reject`, { reason }),

@@ -22,7 +22,6 @@ use tinyiothub_storage::assistant_schedule::AssistantSchedule;
 use crate::domains::agent::event::types::AiEvent;
 use crate::domains::agent::orchestrator::callbacks::extract_payload;
 use crate::domains::agent::session::wake::{WakeExecutor, assistant_agent_id};
-use crate::domains::agent::thing_agent::types::{TriggerSource, WakeSignal};
 
 pub const TRIGGER_TICK_INTERVAL: Duration = Duration::from_secs(30);
 const DUE_BATCH_LIMIT: i64 = 100;
@@ -355,36 +354,6 @@ pub(crate) fn watch_wake(
         source_id: rule_id.to_string(),
         summary: format!("Watch 命中 {rule_id}：value={current_value} health={health} zone={zone}"),
         dedup_key: Some(format!("watch:{rule_id}")),
-    })
-}
-
-/// 判定执行/误判重调查的 `UserDirective` → event wake（Session loop 准入）。
-///
-/// 只映射 `UserDirective`；其余来源各有自己的事件桥，directive sink 不是
-/// 它们的入口。`source_id` 依次回退 problem_key → session_key → user_id；
-/// `dedup_key` 保留调用方已带的键（判定批准为 `exec:{id}`，防重试双执行），
-/// 否则用 problem_key（同一报警的重调查共享限流预算）。
-pub(crate) fn directive_wake(signal: &WakeSignal) -> Option<EventWake> {
-    let TriggerSource::UserDirective {
-        text,
-        user_id,
-        session_key,
-        problem_key,
-        ..
-    } = &signal.source
-    else {
-        return None;
-    };
-    let source_id = problem_key
-        .clone()
-        .or_else(|| session_key.clone())
-        .unwrap_or_else(|| user_id.clone());
-    Some(EventWake {
-        workspace_id: signal.workspace_id.clone(),
-        trigger: "directive".to_string(),
-        source_id,
-        summary: text.clone(),
-        dedup_key: signal.dedup_key.clone().or_else(|| problem_key.clone()),
     })
 }
 
@@ -811,67 +780,6 @@ mod tests {
         assert_eq!(watch.source_id, "rule-1");
         assert_eq!(watch.dedup_key.as_deref(), Some("watch:rule-1"));
         assert!(watch_wake("ws", "rule-1", Some("task-1"), &serde_json::json!(42), "Healthy", "A").is_none());
-    }
-
-    fn directive_signal(
-        text: &str,
-        session_key: Option<&str>,
-        problem_key: Option<&str>,
-        dedup_key: Option<&str>,
-    ) -> WakeSignal {
-        WakeSignal {
-            workspace_id: "ws-1".into(),
-            priority: crate::domains::agent::thing_agent::types::Priority::High,
-            source: TriggerSource::UserDirective {
-                user_id: "user-1".into(),
-                text: text.into(),
-                session_key: session_key.map(str::to_string),
-                source: Some("judgment-approval".into()),
-                problem_key: problem_key.map(str::to_string),
-            },
-            dedup_key: dedup_key.map(str::to_string),
-        }
-    }
-
-    #[test]
-    fn directive_wake_keeps_caller_dedup_key() {
-        let wake = directive_wake(&directive_signal("执行 reboot", None, Some("exec:j1"), Some("exec:j1")))
-            .expect("user directive maps to a wake");
-        assert_eq!(wake.workspace_id, "ws-1");
-        assert_eq!(wake.trigger, "directive");
-        assert_eq!(wake.source_id, "exec:j1");
-        assert_eq!(wake.summary, "执行 reboot");
-        assert_eq!(wake.dedup_key.as_deref(), Some("exec:j1"));
-    }
-
-    #[test]
-    fn directive_wake_falls_back_to_problem_key_for_dedup_and_source() {
-        let wake = directive_wake(&directive_signal("重新调查", None, Some("alarm:t1:r1"), None))
-            .expect("user directive maps to a wake");
-        assert_eq!(wake.source_id, "alarm:t1:r1");
-        assert_eq!(wake.dedup_key.as_deref(), Some("alarm:t1:r1"));
-    }
-
-    #[test]
-    fn directive_wake_source_id_falls_back_to_session_then_user() {
-        let with_session = directive_wake(&directive_signal("hi", Some("agent:ws:a/s"), None, None)).unwrap();
-        assert_eq!(with_session.source_id, "agent:ws:a/s");
-        assert_eq!(with_session.dedup_key, None);
-
-        let plain = directive_wake(&directive_signal("hi", None, None, None)).unwrap();
-        assert_eq!(plain.source_id, "user-1");
-        assert_eq!(plain.dedup_key, None);
-    }
-
-    #[test]
-    fn non_directive_source_has_no_directive_wake() {
-        let signal = WakeSignal {
-            workspace_id: "ws-1".into(),
-            priority: crate::domains::agent::thing_agent::types::Priority::Normal,
-            source: TriggerSource::Timer,
-            dedup_key: Some("timer:ws-1".into()),
-        };
-        assert!(directive_wake(&signal).is_none());
     }
 
     #[tokio::test]

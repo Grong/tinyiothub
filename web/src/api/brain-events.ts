@@ -5,8 +5,9 @@
  * apiGet/apiPost 返回 ApiResponse<T>，在此解包 `.result`。
  * 列表行无 evidence——证据懒加载，展开才调 detail(id)。
  *
- * 变更操作路由（P0 不改端点）：alarm 源走 /judgments，patrol 源走
- * /workspaces/{id}/heartbeat/approvals——approve/reject 在此按 ev.source 分支。
+ * 变更操作路由（P0 不改端点）：alarm 源走 /judgments（反馈/拒绝；批准执行已
+ * 退役 410），patrol 源走 /workspaces/{id}/heartbeat/approvals——approve 仅
+ * patrol，reject 两源都在此按 ev.source 分支。
  */
 
 import { apiGet, apiPost, getWorkspaceId } from './client.js';
@@ -115,13 +116,14 @@ export const brainEventApi = {
     return unwrap(await apiGet<BrainEventDetail>(`/brain-events/${encodeURIComponent(id)}`));
   },
 
-  /** 批准：alarm 源 → /judgments/{id}/approve；patrol 源 → /heartbeat/approvals/{pid}/approve。 */
+  /** 批准：仅 patrol 源提案可用（/heartbeat/approvals/{pid}/approve）。
+   *  alarm 判断执行已退役（/judgments/{id}/approve → 410），处置在 Assistant 会话完成。 */
   async approve(ev: BrainEvent): Promise<void> {
     if (ev.source === 'patrol') {
       await postPatrolApproval(brainEventTargetId(ev), 'approve');
       return;
     }
-    await judgmentApi.approve(brainEventTargetId(ev));
+    throw new Error('判断执行已退役，请在 Assistant 会话中确认设备写操作');
   },
 
   /** 拒绝：alarm 源 → /judgments/{id}/reject（必填原因，X5：落 dismissed 不开工单）；

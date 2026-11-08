@@ -387,6 +387,13 @@ async fn paused_workspace_is_not_dispatched_by_trigger_tick() {
     )
     .await;
 
+    let schedule = Db::new(pool.clone())
+        .get_assistant_schedule(WS)
+        .await
+        .expect("load schedule")
+        .expect("schedule row");
+    assert!(!schedule.enabled, "legacy pause must persist to the schedule row");
+
     let db = Arc::new(Db::new(pool));
     let executor = Arc::new(CountingExecutor::default());
     let router = Arc::new(TriggerRouter::new(db, executor.clone()));
@@ -398,5 +405,111 @@ async fn paused_workspace_is_not_dispatched_by_trigger_tick() {
         executor.calls.load(std::sync::atomic::Ordering::SeqCst),
         0,
         "paused workspace must not be dispatched"
+    );
+}
+
+// Value card
+// - 覆盖路径：不带 intervalMinutes 的 partial PUT（只切 enabled）不得重写
+//   assistant_schedules 的间隔，也不得重置 ai_triage/triage_mode。
+// - 真实回归场景：/agent/schedule 设了 90s 间隔，运维页切暂停把间隔改写
+//   成 5 分钟；或一次 partial PUT 把分诊配置重置回默认。
+// - 失败信号：schedule.interval_seconds != 90 或 triage 字段被重置即断口。
+#[tokio::test]
+async fn partial_update_preserves_triage_and_non_minute_interval() {
+    let (app, pool, _manager) = app_with_manager().await;
+    let token = create_test_token("user-1", "tenant-1");
+    let db = Db::new(pool);
+
+    let mut config = WorkspaceHeartbeatConfig::validated(true, 5).expect("seed config");
+    config.ai_triage_enabled = false;
+    config.triage_mode = "suppress".to_string();
+    db.save_heartbeat_config(WS, &config)
+        .await
+        .expect("seed heartbeat config");
+    db.ensure_assistant_schedule(
+        WS,
+        &crate::domains::agent::session::wake::assistant_agent_id(WS),
+        chrono::Utc::now(),
+    )
+    .await
+    .expect("ensure schedule");
+    db.update_assistant_schedule(WS, None, Some(90), None, None, None)
+        .await
+        .expect("set 90s interval");
+
+    call(
+        &app,
+        put(
+            &format!("/api/v1/workspaces/{WS}/heartbeat/config"),
+            &token,
+            json!({"enabled": false}),
+        ),
+    )
+    .await;
+
+    let persisted = db
+        .load_heartbeat_config(WS)
+        .await
+        .expect("load")
+        .expect("persisted config");
+    assert!(
+        !persisted.ai_triage_enabled,
+        "partial PUT must preserve ai_triage_enabled"
+    );
+    assert_eq!(
+        persisted.triage_mode, "suppress",
+        "partial PUT must preserve triage_mode"
+    );
+
+    let schedule = db
+        .get_assistant_schedule(WS)
+        .await
+        .expect("load schedule")
+        .expect("schedule row");
+    assert!(!schedule.enabled);
+    assert_eq!(
+        schedule.interval_seconds, 90,
+        "unrelated partial PUT must not rewrite the schedule interval"
+    );
+}
+
+// Value card
+// - 覆盖路径：超出 schedule 范围（>1440 分钟）的 intervalMinutes 在任何
+//   持久化之前返回 400。
+// - 真实回归场景：heartbeat 校验无上限 → 先写 legacy 行/内存表，再在
+//   schedule 同步失败，两个源分叉。
+// - 失败信号：请求返回非 400，或 legacy heartbeat 行被写入即断口。
+#[tokio::test]
+async fn oversized_interval_is_rejected_before_any_write() {
+    use tower::ServiceExt;
+
+    let (app, pool, _manager) = app_with_manager().await;
+    let token = create_test_token("user-1", "tenant-1");
+    let db = Db::new(pool);
+
+    let response = app
+        .clone()
+        .oneshot(put(
+            &format!("/api/v1/workspaces/{WS}/heartbeat/config"),
+            &token,
+            json!({"intervalMinutes": 1441}),
+        ))
+        .await
+        .expect("request");
+    let (_status, json) = response_parts(response).await;
+    assert_eq!(json["code"], 400, "oversized interval must be rejected: {json}");
+
+    assert!(
+        db.load_heartbeat_config(WS).await.expect("load").is_none(),
+        "legacy heartbeat row must not be written before validation"
+    );
+    let schedule = db
+        .get_assistant_schedule(WS)
+        .await
+        .expect("load schedule")
+        .expect("schedule row");
+    assert_eq!(
+        schedule.interval_seconds, 300,
+        "schedule must keep its default interval"
     );
 }

@@ -4,7 +4,7 @@
 //! GET    /judgments              tab 筛选 + 游标分页（默认 needs_you）
 //! GET    /judgments/summary      头部摘要（消化数/需要你/学习计数）
 //! POST   /judgments/{id}/feedback  ✓/✕ 反馈（wrong 必填原因≥4字符；写记忆）
-//! POST   /judgments/{id}/approve   待审批 → 执行中 + 派发执行 directive
+//! POST   /judgments/{id}/approve   已退役（410）：处置改由 Assistant 会话承接
 //! POST   /judgments/{id}/reject    待审批 → 升级工单（必填原因，F14）
 //! ```
 
@@ -209,8 +209,8 @@ async fn submit_feedback(
     }
 
     // 误判恢复闭环（F-C/T-17/C6）：噪声判断被点「错」→ 恢复被抑制的报警 +
-    // 重开 judgment 为 investigating + 重派调查（「你判错了」的正确响应是
-    // 「那我重查」，不是把报警丢回人工列表）。
+    // 重开 judgment 为 investigating（重派独立调查已退役：由 Assistant 会话
+    // 继续处置；不在此假装会再派一次 run）。
     if req.verdict == "wrong" && judgment.status == tinyiothub_storage::judgment::JudgmentStatus::NoiseArchived {
         if let Some(alarm_id) = &judgment.alarm_id
             && let Err(e) = state.alarm_service.unsuppress_alarm(alarm_id, ws).await
@@ -219,7 +219,12 @@ async fn submit_feedback(
         }
         match state.db.reopen_judgment(&id).await {
             Ok(true) => {
-                redispatch_investigation(&state, &judgment).await;
+                // 重派调查已退役：不再经 directive sink 派发独立 run。判断在
+                // Assistant 会话中继续处置（误判原因已写记忆）。
+                tracing::info!(
+                    judgment_id = %id,
+                    "re-investigation dispatch retired — judgment reopened for Assistant session handling"
+                );
             }
             Ok(false) => tracing::debug!(judgment_id = %id, "reopen skipped (not noise_archived)"),
             Err(e) => tracing::warn!(judgment_id = %id, error = %e, "reopen failed"),
@@ -229,63 +234,6 @@ async fn submit_feedback(
     crate::domains::agent::session::judge::judgment_subscriber::broadcast_judgment_pub(&state.sse_manager, ws, &id)
         .await;
     ApiResponseBuilder::success(serde_json::json!({"ok": true}))
-}
-
-/// 重派调查（T-17/C6）：误判重开后用同一 problem_key 再次 dispatch。
-/// 失败只记日志——清扫器的 investigating SLA 是兜底。
-async fn redispatch_investigation(state: &AppState, judgment: &tinyiothub_storage::judgment::Judgment) {
-    let Some(sink) = &state.directive_sink else {
-        tracing::warn!(judgment_id = %judgment.id, "no directive sink — reopened judgment relies on SLA sweep");
-        return;
-    };
-    let alarm = match (&judgment.alarm_id, &judgment.thing_id) {
-        (Some(aid), Some(tid)) => match state.db.find_alarm_by_id(aid, Some(&judgment.workspace_id)).await {
-            Ok(Some(a)) => Some((aid.clone(), tid.clone(), a)),
-            _ => None,
-        },
-        _ => None,
-    };
-    let Some((alarm_id, thing_id, alarm)) = alarm else {
-        tracing::warn!(judgment_id = %judgment.id, "reopened judgment lacks alarm/thing context — relies on SLA sweep");
-        return;
-    };
-    let severity = alarm.alarm_level.as_str().to_string();
-    // 与 enter_disposition 同口径：调查指令携带规则条件，AI 不猜阈值
-    let condition_desc = match alarm.rule_id.as_deref() {
-        Some(rid) => match state.db.find_alarm_rule_by_id(rid).await {
-            Ok(Some(rule)) => Some(crate::domains::alarm::service::describe_condition(&rule.condition)),
-            _ => None,
-        },
-        None => None,
-    };
-    let ai_alarm = tinyiothub_core::models::event::AlarmEvent {
-        id: alarm_id,
-        workspace_id: judgment.workspace_id.clone(),
-        thing_id: thing_id.clone(),
-        alarm_type: format!("{}", alarm.alarm_type),
-        severity,
-        message: alarm.message.clone(),
-        rule_id: alarm.rule_id.clone(),
-        condition_desc,
-        resolved: false,
-        created_at: alarm.alarm_time,
-    };
-    let rule_part = alarm.rule_id.as_deref().unwrap_or("-");
-    let signal = crate::domains::agent::thing_agent::types::WakeSignal {
-        workspace_id: judgment.workspace_id.clone(),
-        priority: crate::domains::agent::thing_agent::types::Priority::High,
-        source: crate::domains::agent::thing_agent::types::TriggerSource::UserDirective {
-            user_id: "alarm-triage".to_string(),
-            text: crate::domains::agent::prompt::investigation::alarm_investigation_text(&ai_alarm),
-            session_key: None,
-            source: Some("alarm".to_string()),
-            problem_key: Some(format!("alarm:{}:{}", thing_id, rule_part)),
-        },
-        dedup_key: None,
-    };
-    if let Err(e) = sink.enqueue(signal) {
-        tracing::warn!(judgment_id = %judgment.id, error = %e, "re-investigation dispatch failed — SLA sweep backstops");
-    }
 }
 
 /// 「错」反馈写知识层（tags 便于后续按 judgment 追溯退役）。
@@ -316,7 +264,9 @@ async fn write_feedback_memory(
     store.put(input).await.map(|_| ()).map_err(|e| e.to_string())
 }
 
-/// 批准：awaiting_approval → executing + 派发执行 directive（problem_key=exec:{id}）。
+/// 批准执行：**已退役**（Plan 4B）。判断执行已并入 Assistant 会话；这里在
+/// 任何状态迁移之前返回 410，避免 200/executing 的假成功（该路径没有
+/// `RunRecorded` 结算，会一直挂到 SLA 误开工单）。
 async fn approve_judgment(
     Path(id): Path<String>,
     State(state): State<AppState>,
@@ -327,93 +277,17 @@ async fn approve_judgment(
     if !crate::domains::agent::session::handlers::is_admin(&state.db, &claims.0.user_id).await {
         return ApiResponseBuilder::error_with_code(403, "需要管理员权限");
     }
-    let judgment = match state.db.find_judgment_by_id(&id, ws).await {
-        Ok(Some(j)) => j,
+    match state.db.find_judgment_by_id(&id, ws).await {
+        Ok(Some(_)) => {}
         Ok(None) => return ApiResponseBuilder::error_with_code(404, "judgment 不存在"),
         Err(e) => return ApiResponseBuilder::error(format!("查询失败: {e}")),
     };
 
-    // 先验执行通道再迁移状态——sink 缺失时保持 awaiting_approval 不卡 executing
-    let Some(sink) = &state.directive_sink else {
-        return ApiResponseBuilder::error("执行通道未就绪");
-    };
-
-    // 条件迁移防并发互撞
-    match state
-        .db
-        .transit_judgment(
-            &id,
-            tinyiothub_storage::judgment::JudgmentStatus::AwaitingApproval,
-            tinyiothub_storage::judgment::JudgmentStatus::Executing,
-            None,
-        )
-        .await
-    {
-        Ok(true) => {}
-        Ok(false) => {
-            return ApiResponseBuilder::error_with_code(409, "该判断已不在待审批状态");
-        }
-        Err(e) => return ApiResponseBuilder::error(format!("状态迁移失败: {e}")),
-    }
-
-    // 派发执行 directive（执行结果由 judgment_subscriber 的 exec: 键路径收尾）。
-    // 4A/T-3：动作文本由服务端模板按 action_category 生成——LLM 的
-    // suggested_action 只做展示，不进执行指令（注入面收敛）。
-    // 6A/T-4：exec prompt 携带调查上下文（判断理由 + 证据摘录）。
-    // 模板已迁入 prompt 层（crate::domains::agent::prompt::exec，2026-09-20 提示词收敛）。
-    let action = crate::domains::agent::prompt::exec::exec_action_template(
-        judgment.action_category.as_deref(),
-        judgment.thing_id.as_deref(),
-    );
-    // 证据契约 v2：新行写完整 summary，老行是 excerpt——都认，截 300 字符进 prompt。
-    let evidence_excerpt = serde_json::from_str::<serde_json::Value>(&judgment.evidence_json)
-        .ok()
-        .and_then(|v| {
-            v.get("summary")
-                .or_else(|| v.get("excerpt"))
-                .and_then(|e| e.as_str())
-                .map(str::to_string)
-        })
-        .map(|e| e.chars().take(300).collect::<String>())
-        .unwrap_or_default();
-    let signal = crate::domains::agent::thing_agent::types::WakeSignal {
-        workspace_id: judgment.workspace_id.clone(),
-        priority: crate::domains::agent::thing_agent::types::Priority::High,
-        source: crate::domains::agent::thing_agent::types::TriggerSource::UserDirective {
-            user_id: claims.0.user_id.clone(),
-            text: format!(
-                "执行已批准的处置动作：{action}。\n调查结论：{}\n证据摘录：{}\n完成后简述结果。",
-                judgment.reason, evidence_excerpt
-            ),
-            session_key: None,
-            source: Some("judgment-approval".to_string()),
-            problem_key: Some(format!("exec:{id}")),
-        },
-        // C5/T-14：judgment_id 作 dedup_key——回滚后重批/网络重试不会执行两次
-        dedup_key: Some(format!("exec:{id}")),
-    };
-    if let Err(e) = sink.enqueue(signal) {
-        tracing::error!(judgment_id = %id, error = %e, "execution directive not admitted");
-        // D3：补偿回滚（executing → awaiting_approval），用户可重试；
-        // 回滚失败由 executing SLA 清扫兜底（转人工确认工单）。
-        if let Err(re) = state
-            .db
-            .transit_judgment(
-                &id,
-                tinyiothub_storage::judgment::JudgmentStatus::Executing,
-                tinyiothub_storage::judgment::JudgmentStatus::AwaitingApproval,
-                None,
-            )
-            .await
-        {
-            tracing::error!(judgment_id = %id, error = %re, "rollback to awaiting_approval failed — SLA sweep will backstop");
-        }
-        return ApiResponseBuilder::error("执行派发失败，已回滚待审批，请稍后重试");
-    }
-
-    crate::domains::agent::session::judge::judgment_subscriber::broadcast_judgment_pub(&state.sse_manager, ws, &id)
-        .await;
-    ApiResponseBuilder::success(serde_json::json!({"ok": true, "status": "executing"}))
+    // 状态保持 awaiting_approval（不迁移）；返回明确的退役信号。
+    ApiResponseBuilder::error_with_code(
+        410,
+        "判断执行已退役：报警处置由 Assistant 会话承接，请在 Assistant 中确认设备写操作。",
+    )
 }
 
 /// 拒绝：awaiting_approval → dismissed（X5，v3 既定语义：不开工单）；
