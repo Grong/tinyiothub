@@ -3,26 +3,55 @@
 //! 每 30 秒：确保所有 workspace 有 Schedule 行 → 扫描到期且启用的行 →
 //! 每个 workspace 至多一个在途 wake → 交给 `WakeExecutor` 并推进 `next_wake_at`。
 
+use std::collections::VecDeque;
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use chrono::{DateTime, Duration as ChronoDuration, Utc};
-use dashmap::DashSet;
+use dashmap::{DashMap, DashSet};
+use parking_lot::Mutex as ParkingMutex;
+use tokio::sync::broadcast;
+use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 
+use tinyiothub_core::models::event::{Event, EventType};
+use tinyiothub_runtime::event_bus::EventBus;
 use tinyiothub_storage::Db;
 use tinyiothub_storage::assistant_schedule::AssistantSchedule;
 
+use crate::domains::agent::event::types::AiEvent;
+use crate::domains::agent::orchestrator::callbacks::extract_payload;
 use crate::domains::agent::session::wake::{WakeExecutor, assistant_agent_id};
 
 pub const TRIGGER_TICK_INTERVAL: Duration = Duration::from_secs(30);
 const DUE_BATCH_LIMIT: i64 = 100;
+/// 每 workspace + trigger 的窗口内最多派发次数（3/min 去重）。
+const EVENT_RATE_LIMIT: usize = 3;
+const EVENT_RATE_WINDOW: Duration = Duration::from_secs(60);
+
+/// 告警等外部事件触发的一次 wake 请求。
+#[derive(Debug, Clone)]
+pub struct EventWake {
+    pub workspace_id: String,
+    pub trigger: String,
+    pub source_id: String,
+    pub summary: String,
+}
+
+/// 滑动窗口内已接受的 event 派发时间点。
+struct RateWindow {
+    hits: VecDeque<Instant>,
+}
 
 pub struct TriggerRouter {
     db: Arc<Db>,
     executor: Arc<dyn WakeExecutor>,
     in_flight: Arc<DashSet<String>>,
     shutdown: CancellationToken,
+    event_bus: Option<Arc<EventBus>>,
+    event_tx: mpsc::Sender<EventWake>,
+    event_rx: ParkingMutex<Option<mpsc::Receiver<EventWake>>>,
+    rate: DashMap<String, RateWindow>,
 }
 
 /// RAII guard for the per-workspace in-flight marker.
@@ -42,13 +71,51 @@ impl Drop for InFlightGuard {
 }
 
 impl TriggerRouter {
+    /// 无事件总线版本（既有测试与不接报警的装配路径）。
     pub fn new(db: Arc<Db>, executor: Arc<dyn WakeExecutor>) -> Self {
+        Self::new_with_event_bus(db, executor, None)
+    }
+
+    pub fn new_with_event_bus(db: Arc<Db>, executor: Arc<dyn WakeExecutor>, event_bus: Option<Arc<EventBus>>) -> Self {
+        let (event_tx, event_rx) = mpsc::channel(256);
         Self {
             db,
             executor,
             in_flight: Arc::new(DashSet::new()),
             shutdown: CancellationToken::new(),
+            event_bus,
+            event_tx,
+            event_rx: ParkingMutex::new(Some(event_rx)),
+            rate: DashMap::new(),
         }
+    }
+
+    /// 提交一次事件 wake。同 workspace 在途时拒绝；同一 `{workspace}:{trigger}`
+    /// 60 秒窗口内超过 3 次时拒绝。
+    pub fn submit_event(&self, wake: EventWake) -> bool {
+        if self.in_flight.contains(&wake.workspace_id) {
+            return false;
+        }
+        let key = format!("{}:{}", wake.workspace_id, wake.trigger);
+        let now = Instant::now();
+        {
+            let mut window = self
+                .rate
+                .entry(key)
+                .or_insert_with(|| RateWindow { hits: VecDeque::new() });
+            while window
+                .hits
+                .front()
+                .is_some_and(|at| now.duration_since(*at) >= EVENT_RATE_WINDOW)
+            {
+                window.hits.pop_front();
+            }
+            if window.hits.len() >= EVENT_RATE_LIMIT {
+                return false;
+            }
+            window.hits.push_back(now);
+        }
+        self.event_tx.try_send(wake).is_ok()
     }
 
     /// 扫描并派发到期的 wake；返回已派发任务的句柄（生产方忽略，测试可 await）。
@@ -113,7 +180,56 @@ impl TriggerRouter {
         }
     }
 
+    async fn dispatch_event(self: Arc<Self>, wake: EventWake) {
+        let cancel = self.shutdown.clone();
+        let report = self.executor.execute_event(wake.clone(), cancel).await;
+        tracing::info!(
+            workspace_id = %wake.workspace_id,
+            source_id = %wake.source_id,
+            outcome = report.outcome.as_str(),
+            "event wake dispatched"
+        );
+    }
+
     pub fn start(self: Arc<Self>) -> tokio::task::JoinHandle<Result<(), crate::shared::error::Error>> {
+        // 先同步订阅再 spawn，保证 `start` 返回时新订阅已存在——调用方随后
+        // 关闭旧的报警桥，窗口内不丢告警（broadcast 会为已订阅 receiver 缓冲）。
+        if let Some(bus) = self.event_bus.clone() {
+            let receiver = bus.subscribe();
+            tokio::spawn(subscribe_alarms(receiver, Arc::clone(&self), self.shutdown.clone()));
+        }
+        let event_receiver = self.event_rx.lock().take();
+        if let Some(mut receiver) = event_receiver {
+            let router = Arc::clone(&self);
+            tokio::spawn(async move {
+                loop {
+                    tokio::select! {
+                        _ = router.shutdown.cancelled() => return,
+                        wake = receiver.recv() => {
+                            let Some(wake) = wake else { return };
+                            let workspace_id = wake.workspace_id.clone();
+                            if !router.in_flight.insert(workspace_id.clone()) {
+                                tracing::warn!(
+                                    workspace_id = %workspace_id,
+                                    source_id = %wake.source_id,
+                                    "event wake dropped: workspace wake in flight"
+                                );
+                                continue;
+                            }
+                            let guard = InFlightGuard {
+                                set: Arc::clone(&router.in_flight),
+                                key: workspace_id,
+                            };
+                            let router = Arc::clone(&router);
+                            tokio::spawn(async move {
+                                let _guard = guard;
+                                router.dispatch_event(wake).await;
+                            });
+                        }
+                    }
+                }
+            });
+        }
         tokio::spawn(async move {
             let mut ticker = tokio::time::interval(TRIGGER_TICK_INTERVAL);
             ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
@@ -130,6 +246,64 @@ impl TriggerRouter {
 
     pub fn shutdown(&self) {
         self.shutdown.cancel();
+    }
+}
+
+/// 把一条 AI 事件转换为 event wake：仅 Critical/Error 告警（大小写不敏感）
+/// 进入 Session Loop，其余事件忽略。
+pub(crate) fn event_wake_from_ai(ai: &AiEvent) -> Option<EventWake> {
+    let AiEvent::AlarmCreated(alarm) = ai else { return None };
+    if !(alarm.severity.eq_ignore_ascii_case("critical") || alarm.severity.eq_ignore_ascii_case("error")) {
+        return None;
+    }
+    Some(EventWake {
+        workspace_id: alarm.workspace_id.clone(),
+        trigger: "alarm".to_string(),
+        source_id: alarm.id.clone(),
+        summary: format!("{}（{}，设备 {}）", alarm.message, alarm.severity, alarm.thing_id),
+    })
+}
+
+/// 订阅 EventBus 上的 `AiEvent::AlarmCreated`，仅 Critical/Error 告警进入
+/// Session Loop。订阅在调用方同步完成（本函数只消费）。
+async fn subscribe_alarms(
+    mut receiver: broadcast::Receiver<Event>,
+    router: Arc<TriggerRouter>,
+    shutdown: CancellationToken,
+) {
+    loop {
+        tokio::select! {
+            _ = shutdown.cancelled() => return,
+            event = receiver.recv() => {
+                let event = match event {
+                    Ok(event) => event,
+                    // 慢消费者丢帧：跳过继续消费；总线关闭则退出。
+                    Err(broadcast::error::RecvError::Lagged(_)) => continue,
+                    Err(broadcast::error::RecvError::Closed) => return,
+                };
+                if !matches!(event.event_type(), EventType::Ai(_)) {
+                    continue;
+                }
+                let Some(text) = extract_payload(event.content()) else {
+                    continue;
+                };
+                let Ok(ai) = serde_json::from_str::<AiEvent>(&text) else {
+                    continue;
+                };
+                let Some(wake) = event_wake_from_ai(&ai) else {
+                    continue;
+                };
+                // 统一经 `submit_event` 准入：同 workspace 在途去重 + 3/min
+                // 速率窗口，与直接调用方一致。
+                if !router.submit_event(wake.clone()) {
+                    tracing::warn!(
+                        workspace_id = %wake.workspace_id,
+                        source_id = %wake.source_id,
+                        "alarm wake not admitted (in flight or rate limited)"
+                    );
+                }
+            }
+        }
     }
 }
 
@@ -201,6 +375,40 @@ mod tests {
 
     fn ts(secs: i64) -> DateTime<Utc> {
         Utc.timestamp_opt(secs, 0).single().unwrap()
+    }
+
+    fn alarm(severity: &str) -> AiEvent {
+        AiEvent::AlarmCreated(tinyiothub_core::models::event::AlarmEvent {
+            id: "alarm-1".into(),
+            workspace_id: "ws-1".into(),
+            thing_id: "thing-1".into(),
+            alarm_type: "threshold".into(),
+            severity: severity.into(),
+            message: "温度过高".into(),
+            rule_id: None,
+            condition_desc: None,
+            resolved: false,
+            created_at: ts(1_800_000_000),
+        })
+    }
+
+    #[test]
+    fn event_wake_matches_severity_case_insensitively() {
+        for severity in ["Critical", "ERROR", "critical", "error"] {
+            let wake = event_wake_from_ai(&alarm(severity)).expect("critical/error alarm must produce a wake");
+            assert_eq!(wake.workspace_id, "ws-1");
+            assert_eq!(wake.trigger, "alarm");
+            assert_eq!(wake.source_id, "alarm-1");
+        }
+        assert!(event_wake_from_ai(&alarm("warning")).is_none());
+        assert!(
+            event_wake_from_ai(&AiEvent::AlarmResolved {
+                alarm_id: "alarm-1".into(),
+                thing_id: "thing-1".into(),
+                rule_id: None,
+            })
+            .is_none()
+        );
     }
 
     #[tokio::test]
@@ -381,5 +589,65 @@ mod tests {
         let schedule = db.get_assistant_schedule("ws-e2e").await.unwrap().unwrap();
         assert_eq!(schedule.next_wake_at, Some(now + chrono::Duration::seconds(300)));
         assert_eq!(schedule.last_outcome.as_deref(), Some("completed"));
+    }
+
+    #[tokio::test]
+    async fn event_wake_dedupes_while_in_flight_then_dispatches() {
+        let db = Arc::new(test_db().await);
+        let now = ts(1_800_000_000);
+        db.ensure_assistant_schedule("ws-1", "__assistant__ws-1", now)
+            .await
+            .unwrap();
+
+        struct BlockingExecutor {
+            calls: AtomicUsize,
+            started: Notify,
+            release: Notify,
+        }
+
+        #[async_trait::async_trait]
+        impl WakeExecutor for BlockingExecutor {
+            async fn execute(&self, _schedule: AssistantSchedule, _cancel: CancellationToken) -> WakeReport {
+                WakeReport {
+                    session_key: "s".into(),
+                    outcome: crate::domains::agent::session::wake::WakeOutcome::Completed,
+                }
+            }
+            async fn execute_event(&self, _wake: EventWake, _cancel: CancellationToken) -> WakeReport {
+                self.started.notify_one();
+                self.release.notified().await;
+                self.calls.fetch_add(1, Ordering::SeqCst);
+                WakeReport {
+                    session_key: "e".into(),
+                    outcome: crate::domains::agent::session::wake::WakeOutcome::Completed,
+                }
+            }
+        }
+
+        let executor = Arc::new(BlockingExecutor {
+            calls: AtomicUsize::new(0),
+            started: Notify::new(),
+            release: Notify::new(),
+        });
+        let router = Arc::new(TriggerRouter::new(db.clone(), executor.clone()));
+        let _handle = router.clone().start();
+
+        assert!(router.submit_event(EventWake {
+            workspace_id: "ws-1".into(),
+            trigger: "alarm".into(),
+            source_id: "alarm-1".into(),
+            summary: "3 号楼温度过高".into(),
+        }));
+        executor.started.notified().await;
+        assert!(!router.submit_event(EventWake {
+            workspace_id: "ws-1".into(),
+            trigger: "alarm".into(),
+            source_id: "alarm-2".into(),
+            summary: "another".into(),
+        }));
+        assert_eq!(executor.calls.load(Ordering::SeqCst), 0);
+        executor.release.notify_one();
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        assert_eq!(executor.calls.load(Ordering::SeqCst), 1);
     }
 }

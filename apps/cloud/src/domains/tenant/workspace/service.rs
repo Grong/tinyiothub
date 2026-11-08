@@ -76,6 +76,9 @@ impl WorkspaceService {
         {
             hooks.heartbeat_tasks_seeded(&workspace.id, tasks);
         }
+        if let Err(error) = crate::domains::agent::session::ensure_inspection_skill(&self.db, &workspace.id).await {
+            tracing::warn!(workspace_id = %workspace.id, %error, "seed inspection skill failed");
+        }
         if let Some(ref publisher) = *self.event_publisher.lock().unwrap() {
             publisher.publish_workspace_created(workspace.id.clone());
         }

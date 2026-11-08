@@ -63,6 +63,25 @@ describe('TimelineModel', () => {
     expect(block).toMatchObject({ tone: 'answered' });
   });
 
+  it('tracks approval lifecycle', () => {
+    const model = new TimelineModel();
+    model.ingestEvent(event(1, 'approval.requested', { approvalId: 'a1', action: 'set_device', summary: '设 24℃' }));
+    expect(model.pendingApprovals.map((pending) => pending.approvalId)).toEqual(['a1']);
+    model.ingestEvent(event(2, 'approval.resolved', { approvalId: 'a1', resolution: 'approved' }));
+    expect(model.pendingApprovals).toEqual([]);
+  });
+
+  it('tracks multiple pending approvals independently', () => {
+    const model = new TimelineModel();
+    model.ingestEvent(event(1, 'approval.requested', { approvalId: 'a1', action: 'set_device', summary: '设 24℃' }));
+    model.ingestEvent(event(2, 'approval.requested', { approvalId: 'a2', action: 'call_device', summary: '打开开关' }));
+    model.ingestEvent(event(3, 'approval.requested', { approvalId: 'a1', action: 'set_device', summary: '设 24℃' }));
+    expect(model.pendingApprovals.map((pending) => pending.approvalId)).toEqual(['a1', 'a2']);
+
+    model.ingestEvent(event(4, 'approval.resolved', { approvalId: 'a1', resolution: 'approved' }));
+    expect(model.pendingApprovals.map((pending) => pending.approvalId)).toEqual(['a2']);
+  });
+
   it('updates subagent lifecycle and turn status', () => {
     const model = new TimelineModel();
     model.ingestEvent(event(1, 'subagent.started', { subagentId: 's1', description: '分析离线', subagentType: 'general-purpose' }));

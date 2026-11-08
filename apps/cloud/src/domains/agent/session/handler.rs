@@ -19,6 +19,8 @@ use tinyiothub_web::security::Claims;
 
 use crate::domains::agent::AgentState;
 use crate::domains::agent::session::QuestionAnswer;
+use crate::domains::agent::session::types::PermissionMode;
+use crate::domains::agent::session::{ApprovalDecision, ApprovalError};
 
 #[derive(Debug, Deserialize)]
 pub struct EventQuery {
@@ -33,6 +35,42 @@ pub(crate) fn verify_session_workspace(session_key: &str, authorized_workspace: 
         return None;
     }
     Some(parsed)
+}
+
+pub(crate) fn parse_permission_mode(value: &str) -> Option<PermissionMode> {
+    PermissionMode::parse(value.trim())
+}
+
+#[derive(Debug, Deserialize)]
+pub struct UpdatePermissionRequest {
+    pub mode: String,
+}
+
+pub async fn update_permission(
+    State(state): State<AgentState>,
+    claims: Claims,
+    Path(session_key): Path<String>,
+    Json(request): Json<UpdatePermissionRequest>,
+) -> Response {
+    let Some(parsed) = verify_session_workspace(&session_key, &claims.workspace_id) else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+    let Some(mode) = parse_permission_mode(&request.mode) else {
+        return StatusCode::BAD_REQUEST.into_response();
+    };
+    let key = parsed.session_key();
+    let Some(mut session) = state.db.get_session(&key).await.ok().flatten() else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+    session.permission_mode = mode.as_str().to_string();
+    session.touch();
+    match state.db.update_session(&session).await {
+        Ok(()) => StatusCode::NO_CONTENT.into_response(),
+        Err(error) => {
+            tracing::warn!(%error, %key, "update session permission failed");
+            StatusCode::INTERNAL_SERVER_ERROR.into_response()
+        }
+    }
 }
 
 fn event_filter(session_id: &str) -> EventFilter {
@@ -145,6 +183,43 @@ pub async fn answer_question(
     }
 }
 
+pub(crate) fn parse_approval_decision(value: &str) -> Option<ApprovalDecision> {
+    match value.trim() {
+        "approved" => Some(ApprovalDecision::Approved),
+        "denied" => Some(ApprovalDecision::Denied),
+        _ => None,
+    }
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ApprovalAnswerRequest {
+    pub decision: String,
+}
+
+pub async fn answer_approval(
+    State(state): State<AgentState>,
+    claims: Claims,
+    Path((session_key, approval_id)): Path<(String, String)>,
+    Json(request): Json<ApprovalAnswerRequest>,
+) -> Response {
+    let Some(parsed) = verify_session_workspace(&session_key, &claims.workspace_id) else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+    let Some(decision) = parse_approval_decision(&request.decision) else {
+        return StatusCode::BAD_REQUEST.into_response();
+    };
+    match state
+        .session_runtime
+        .approvals
+        .answer(&parsed.session_key(), &approval_id, decision)
+    {
+        Ok(()) => StatusCode::NO_CONTENT.into_response(),
+        Err(ApprovalError::NotFound) => StatusCode::NOT_FOUND.into_response(),
+        Err(ApprovalError::SessionMismatch) => StatusCode::FORBIDDEN.into_response(),
+        Err(ApprovalError::Closed) => StatusCode::CONFLICT.into_response(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -160,5 +235,19 @@ mod tests {
     fn malformed_session_key_is_rejected() {
         assert!(verify_session_workspace("chat:ws:agent/s1", "ws").is_none());
         assert!(verify_session_workspace("agent:ws:agent", "ws").is_none());
+    }
+
+    #[test]
+    fn permission_mode_body_defaults_and_rejects_unknown() {
+        assert_eq!(parse_permission_mode("ask"), Some(PermissionMode::Ask));
+        assert_eq!(parse_permission_mode("read_only"), Some(PermissionMode::ReadOnly));
+        assert_eq!(parse_permission_mode("admin"), None);
+    }
+
+    #[test]
+    fn approval_decision_parses() {
+        assert_eq!(parse_approval_decision("approved"), Some(ApprovalDecision::Approved));
+        assert_eq!(parse_approval_decision("denied"), Some(ApprovalDecision::Denied));
+        assert_eq!(parse_approval_decision("maybe"), None);
     }
 }

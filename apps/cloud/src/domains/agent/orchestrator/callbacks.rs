@@ -45,6 +45,9 @@ pub struct HeartbeatBridge {
     /// 与 ThingAgentManager 的 heartbeat governor 共享同一实例（T13 bootstrap
     /// 接线；agent crate 内 runtime.rs 先行共享）。
     governor: HeartbeatGovernor,
+    /// Plan 4A Task 7：告警派发开关。TriggerRouter 接管报警后由
+    /// `Orchestrator::set_alarm_dispatch(false)` 关闭，避免双路派发。
+    alarm_dispatch: Arc<AtomicBool>,
 }
 
 impl HeartbeatBridge {
@@ -53,7 +56,13 @@ impl HeartbeatBridge {
             registry,
             sink,
             governor,
+            alarm_dispatch: Arc::new(AtomicBool::new(true)),
         }
+    }
+
+    /// 开关 legacy 告警派发路径（默认 true，供既有测试/装配不变）。
+    pub fn set_alarm_dispatch(&self, enabled: bool) {
+        self.alarm_dispatch.store(enabled, Ordering::SeqCst);
     }
 
     /// O11 ack 抑制入口（Task 6，fix round 1 行级保真）：cloud 侧 ack 端点
@@ -76,6 +85,9 @@ impl HeartbeatBridge {
     /// 30s merge window）承担；Critical 告警映射 Priority::Critical，绕 merge
     /// window 与节流（scheduler ②），不被在途 tick 吞（N3）。
     pub async fn dispatch_alarm_investigation(&self, alarm: &tinyiothub_core::models::event::AlarmEvent) {
+        if !self.alarm_dispatch.load(Ordering::SeqCst) {
+            return;
+        }
         let signal = HeartbeatSignal {
             workspace_id: alarm.workspace_id.clone(),
             reason: format!("Alarm: {}", alarm.message),
@@ -170,6 +182,13 @@ impl AiEventHandler {
     pub fn mark_problem_acked(&self, workspace_id: &str, problem_key: &str, run_id: &str) {
         if let Some(bridge) = &self.heartbeat_bridge {
             bridge.mark_problem_acked(workspace_id, problem_key, run_id);
+        }
+    }
+
+    /// Plan 4A Task 7：转发报警派发开关到心跳桥；无桥时 no-op。
+    pub fn set_alarm_dispatch(&self, enabled: bool) {
+        if let Some(bridge) = &self.heartbeat_bridge {
+            bridge.set_alarm_dispatch(enabled);
         }
     }
 
@@ -271,7 +290,7 @@ impl tinyiothub_core::event::EventHandler for AiEventHandler {
     }
 }
 
-fn extract_payload(content: &RichContent) -> Option<String> {
+pub(crate) fn extract_payload(content: &RichContent) -> Option<String> {
     content.elements().iter().find_map(|el| match el {
         ContentElement::Text { content, .. } => Some(content.clone()),
         _ => None,
@@ -631,6 +650,21 @@ pub(crate) mod tests {
         async fn alarm_created_without_bridge_is_noop() {
             let handler = make_handler(None, None, false);
             handler.handle_ai_event(&wrap_ai_event(&alarm_event("error"))).await;
+        }
+
+        /// Plan 4A Task 7：TriggerRouter 接管后关闭 legacy 告警桥——派发被抑制。
+        #[tokio::test]
+        async fn alarm_dispatch_can_be_disabled() {
+            let (bridge, sink) = bridge(RunRegistry::new());
+            bridge.set_alarm_dispatch(false);
+            let AiEvent::AlarmCreated(alarm) = alarm_event("critical") else {
+                unreachable!()
+            };
+            bridge.dispatch_alarm_investigation(&alarm).await;
+            assert!(
+                sink.signals.lock().unwrap().is_empty(),
+                "disabled bridge must not dispatch alarms"
+            );
         }
 
         /// T-8(T11 形态):告警路径不做 outcome 抑制——历史 Failed run 不固化

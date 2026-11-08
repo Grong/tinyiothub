@@ -11,10 +11,12 @@ use uuid::Uuid;
 use tinyiothub_agent::config::AgentRuntimeConfig;
 use tinyiothub_agent::port::runtime::AgentLoopHandle;
 use tinyiothub_core::heartbeat::HeartbeatTask;
+use tinyiothub_skills::LoadedSkill;
 use tinyiothub_storage::Db;
 use tinyiothub_storage::assistant_schedule::AssistantSchedule;
 use tinyiothub_storage::session::Session;
 
+use super::trigger::EventWake;
 use crate::domains::agent::host::chat::service::ensure_agent;
 use crate::domains::agent::pool::AgentPool;
 use crate::domains::agent::session::SESSION_TURN_TIMEOUT;
@@ -34,12 +36,20 @@ pub fn assistant_agent_id(workspace_id: &str) -> String {
     format!("{ASSISTANT_AGENT_PREFIX}{workspace_id}")
 }
 
-/// 自定义 prompt > 未暂停的 legacy heartbeat tasks > 默认职责。
-/// 存在任务但全部暂停时返回 `None`（本轮不唤醒）。
-pub fn build_wake_message(schedule: &AssistantSchedule, tasks: &[HeartbeatTask]) -> Option<String> {
+/// 自定义 prompt > inspection 技能正文 > 未暂停的 legacy heartbeat tasks > 默认职责。
+/// 只有未加载 inspection 技能时才会命中“任务全暂停 → `None`（本轮不唤醒）”分支；
+/// 加载了技能则技能正文优先。
+pub fn build_wake_message(
+    schedule: &AssistantSchedule,
+    inspection: Option<&LoadedSkill>,
+    tasks: &[HeartbeatTask],
+) -> Option<String> {
     let custom = schedule.prompt.trim();
     if !custom.is_empty() {
         return Some(custom.to_string());
+    }
+    if let Some(skill) = inspection {
+        return Some(format!("按「{}」技能执行本轮检查。\n\n{}", skill.title, skill.body));
     }
     let active: Vec<&HeartbeatTask> = tasks.iter().filter(|task| !task.paused).collect();
     if !tasks.is_empty() && active.is_empty() {
@@ -88,6 +98,14 @@ pub struct WakeReport {
 #[async_trait::async_trait]
 pub trait WakeExecutor: Send + Sync {
     async fn execute(&self, schedule: AssistantSchedule, cancel: CancellationToken) -> WakeReport;
+
+    /// 事件 wake 入口。默认跳过——既有实现者无需改动即可继续编译。
+    async fn execute_event(&self, _wake: EventWake, _cancel: CancellationToken) -> WakeReport {
+        WakeReport {
+            session_key: String::new(),
+            outcome: WakeOutcome::Skipped,
+        }
+    }
 }
 
 pub struct WakeRunner {
@@ -96,6 +114,18 @@ pub struct WakeRunner {
     events: Arc<dyn SessionEventSink>,
     todos: Arc<TodoStore>,
     runner: Arc<SessionRunner>,
+}
+
+/// 一次 wake session 的来源（scheduled / event 共用同一套生命周期写入）。
+///
+/// `source_id` 为 `None` 时，`trigger.received.sourceId` 回落到本轮的
+/// `wake.dispatched.wakeEventId`（scheduled 路径的相关性保持）。
+struct SessionOrigin<'a> {
+    workspace_id: &'a str,
+    assistant_id: &'a str,
+    kind: &'a str,
+    trigger: &'a str,
+    source_id: Option<String>,
 }
 
 impl WakeRunner {
@@ -155,7 +185,10 @@ impl WakeRunner {
             .list_heartbeat_tasks(&schedule.workspace_id)
             .await
             .unwrap_or_default();
-        let Some(message) = build_wake_message(schedule, &tasks) else {
+        let ws_dir = crate::domains::agent::prompt::paths::workspace_dir(&schedule.workspace_id);
+        let skills = crate::domains::agent::pool::load_workspace_skills(&ws_dir);
+        let inspection = skills.iter().find(|skill| skill.name == "inspection");
+        let Some(message) = build_wake_message(schedule, inspection, &tasks) else {
             return WakeReport {
                 session_key: String::new(),
                 outcome: WakeOutcome::Skipped,
@@ -190,18 +223,110 @@ impl WakeRunner {
         message: &str,
         cancel: CancellationToken,
     ) -> WakeReport {
+        self.run_session_with_agent(
+            SessionOrigin {
+                workspace_id: &schedule.workspace_id,
+                assistant_id: &schedule.assistant_id,
+                kind: "scheduled",
+                trigger: "schedule",
+                source_id: None,
+            },
+            agent,
+            message,
+            cancel,
+        )
+        .await
+    }
+
+    /// 告警等外部事件 wake：与定时 wake 共用生命周期事件，kind 为 `event`。
+    ///
+    /// 与定时 wake 一致：`AutonomyMode::Off` 的工作区不跑自主 Turn——告警仍
+    /// 进入 Session Loop 的准入层，但在暂停态下被跳过。
+    pub async fn run_event(&self, wake: &EventWake, cancel: CancellationToken) -> WakeReport {
+        let workspace_id = &wake.workspace_id;
+        let autonomy_off = match self.db.load_autonomy_policy(workspace_id).await {
+            Ok(Some(policy)) => policy.mode == tinyiothub_core::policy::AutonomyMode::Off,
+            Ok(None) => false,
+            Err(error) => {
+                tracing::warn!(%error, %workspace_id, "event wake: load autonomy policy failed");
+                false
+            }
+        };
+        if autonomy_off {
+            return WakeReport {
+                session_key: String::new(),
+                outcome: WakeOutcome::Skipped,
+            };
+        }
+        let message = format!(
+            "收到告警：{}\n请按「应急预案」技能（如未加载则按默认职责）评估影响、给出处置建议；涉及写设备必须走审批。",
+            wake.summary
+        );
+        let assistant_id = assistant_agent_id(&wake.workspace_id);
+        let agent = match ensure_agent(
+            &self.pool,
+            &assistant_id,
+            &wake.workspace_id,
+            &AgentRuntimeConfig::default(),
+            true,
+        )
+        .await
+        {
+            Ok(agent) => agent,
+            Err(error) => {
+                return WakeReport {
+                    session_key: String::new(),
+                    outcome: WakeOutcome::Failed {
+                        error: error.to_string(),
+                    },
+                };
+            }
+        };
+        self.run_event_with_agent(wake.clone(), agent, &message, cancel).await
+    }
+
+    pub(crate) async fn run_event_with_agent(
+        &self,
+        wake: EventWake,
+        agent: AgentLoopHandle,
+        message: &str,
+        cancel: CancellationToken,
+    ) -> WakeReport {
+        let assistant_id = assistant_agent_id(&wake.workspace_id);
+        self.run_session_with_agent(
+            SessionOrigin {
+                workspace_id: &wake.workspace_id,
+                assistant_id: &assistant_id,
+                kind: "event",
+                trigger: &wake.trigger,
+                source_id: Some(wake.source_id.clone()),
+            },
+            agent,
+            message,
+            cancel,
+        )
+        .await
+    }
+
+    async fn run_session_with_agent(
+        &self,
+        origin: SessionOrigin<'_>,
+        agent: AgentLoopHandle,
+        message: &str,
+        cancel: CancellationToken,
+    ) -> WakeReport {
         let session_key = format!(
             "agent:{}:{}/{}",
-            schedule.workspace_id,
-            schedule.assistant_id,
+            origin.workspace_id,
+            origin.assistant_id,
             Uuid::new_v4()
         );
         let session = Session::new(
             session_key.clone(),
-            schedule.workspace_id.clone(),
-            schedule.assistant_id.clone(),
+            origin.workspace_id.to_string(),
+            origin.assistant_id.to_string(),
         )
-        .with_kind("scheduled");
+        .with_kind(origin.kind);
         if let Err(error) = self.db.create_session(&session).await {
             return WakeReport {
                 session_key,
@@ -211,17 +336,20 @@ impl WakeRunner {
             };
         }
         let context = TurnContext::new(
-            schedule.workspace_id.clone(),
-            schedule.assistant_id.clone(),
+            origin.workspace_id.to_string(),
+            origin.assistant_id.to_string(),
             session_key.clone(),
             Uuid::new_v4().to_string(),
             0,
         );
         let wake_event_id = Uuid::new_v4().to_string();
+        // scheduled 无显式 source：与本轮 wake.dispatched.wakeEventId 保持同一
+        // UUID（历史行为）；event 使用告警 id。
+        let trigger_source_id = origin.source_id.unwrap_or_else(|| wake_event_id.clone());
         self.emit(
             &context,
             "trigger.received",
-            json!({ "trigger": "schedule", "sourceId": &wake_event_id }),
+            json!({ "trigger": origin.trigger, "sourceId": trigger_source_id }),
         )
         .await;
         self.emit(&context, "wake.dispatched", json!({ "wakeEventId": &wake_event_id }))
@@ -229,7 +357,7 @@ impl WakeRunner {
         self.emit(
             &context,
             "session.started",
-            session_started_payload(&session_key, "scheduled"),
+            session_started_payload(&session_key, origin.kind),
         )
         .await;
 
@@ -277,6 +405,10 @@ impl WakeRunner {
 impl WakeExecutor for WakeRunner {
     async fn execute(&self, schedule: AssistantSchedule, cancel: CancellationToken) -> WakeReport {
         self.run(&schedule, cancel).await
+    }
+
+    async fn execute_event(&self, wake: EventWake, cancel: CancellationToken) -> WakeReport {
+        self.run_event(&wake, cancel).await
     }
 }
 
@@ -394,17 +526,40 @@ mod tests {
 
     #[test]
     fn wake_message_uses_custom_prompt_first() {
-        let message = build_wake_message(&schedule("检查 3 号楼"), &[task("离线事件", false)]);
+        let message = build_wake_message(&schedule("检查 3 号楼"), None, &[task("离线事件", false)]);
         assert_eq!(message.as_deref(), Some("检查 3 号楼"));
     }
 
     #[test]
     fn wake_message_lists_active_tasks_and_skips_all_paused() {
-        let message = build_wake_message(&schedule(""), &[task("离线事件", false), task("设备异常", true)]).unwrap();
+        let message =
+            build_wake_message(&schedule(""), None, &[task("离线事件", false), task("设备异常", true)]).unwrap();
         assert!(message.contains("- 离线事件"));
         assert!(!message.contains("设备异常"));
-        assert!(build_wake_message(&schedule(""), &[task("离线事件", true)]).is_none());
-        assert!(build_wake_message(&schedule(""), &[]).unwrap().contains("默认职责"));
+        assert!(build_wake_message(&schedule(""), None, &[task("离线事件", true)]).is_none());
+        assert!(
+            build_wake_message(&schedule(""), None, &[])
+                .unwrap()
+                .contains("默认职责")
+        );
+    }
+
+    #[test]
+    fn wake_message_prefers_inspection_skill_over_tasks() {
+        let skill = tinyiothub_skills::LoadedSkill {
+            name: "inspection".into(),
+            title: "巡检".into(),
+            description: String::new(),
+            version: "1".into(),
+            inject: tinyiothub_skills::InjectMode::Trigger,
+            trigger: Some("/inspection".into()),
+            body: "# 巡检\n## 执行步骤\n1. 检查离线设备".into(),
+        };
+        let message = build_wake_message(&schedule(""), Some(&skill), &[task("旧任务", false)]).unwrap();
+        assert!(message.contains("检查离线设备"));
+        assert!(!message.contains("旧任务"));
+        let custom = build_wake_message(&schedule("自定义"), Some(&skill), &[task("旧任务", false)]).unwrap();
+        assert_eq!(custom, "自定义");
     }
 
     #[test]
@@ -472,6 +627,10 @@ mod tests {
             ]
         );
         assert_eq!(events[2].payload_json["kind"], "scheduled");
+        assert_eq!(
+            events[0].payload_json["sourceId"], events[1].payload_json["wakeEventId"],
+            "scheduled trigger.received.sourceId must correlate with wake.dispatched.wakeEventId"
+        );
         assert_eq!(events.last().unwrap().payload_json["outcome"], "completed");
         let session = wake.db.get_session(&report.session_key).await.unwrap().unwrap();
         assert_eq!(session.kind, "scheduled");
@@ -494,6 +653,40 @@ mod tests {
         assert!(sink.events.lock().await.is_empty());
         // schedule() uses assistant_agent_id("ws"); the wake agent must not have been created
         assert_eq!(agent_pool.pool_size(), 0);
+    }
+
+    #[tokio::test]
+    async fn autonomy_off_skips_event_wake() {
+        let (wake, agent_pool, sink) = fixture().await;
+        let policy = tinyiothub_core::policy::AutonomyPolicy {
+            mode: tinyiothub_core::policy::AutonomyMode::Off,
+            allowed_actions: vec![],
+            denied_actions: vec![],
+            max_actions_per_run: 0,
+            max_actions_per_hour: 0,
+        };
+        wake.db.save_autonomy_policy("ws", &policy, "test").await.unwrap();
+        let report = wake
+            .run_event(
+                &EventWake {
+                    workspace_id: "ws".into(),
+                    trigger: "alarm".into(),
+                    source_id: "alarm-1".into(),
+                    summary: "温度过高".into(),
+                },
+                CancellationToken::new(),
+            )
+            .await;
+        assert_eq!(report.outcome, WakeOutcome::Skipped);
+        assert!(report.session_key.is_empty());
+        assert!(sink.events.lock().await.is_empty());
+        assert_eq!(
+            agent_pool.pool_size(),
+            0,
+            "no agent should be created for a skipped event wake"
+        );
+        let sessions = wake.db.list_sessions(Some("ws"), None, 10, 0).await.unwrap();
+        assert!(sessions.is_empty(), "no session row should be written");
     }
 
     struct SleepingProvider;
@@ -574,5 +767,49 @@ mod tests {
 
         let session = wake.db.get_session(&report.session_key).await.unwrap().unwrap();
         assert_eq!(session.status, "ended");
+    }
+
+    #[tokio::test]
+    async fn event_wake_writes_event_session_lifecycle() {
+        let (wake, agent_pool, sink) = fixture().await;
+        let agent = agent_pool
+            .create(
+                &assistant_agent_id("ws"),
+                "ws",
+                &AgentRuntimeConfig::default(),
+                vec![],
+                true,
+            )
+            .unwrap();
+        let report = wake
+            .run_event_with_agent(
+                EventWake {
+                    workspace_id: "ws".into(),
+                    trigger: "alarm".into(),
+                    source_id: "alarm-1".into(),
+                    summary: "温度过高".into(),
+                },
+                agent,
+                "收到告警：温度过高",
+                tokio_util::sync::CancellationToken::new(),
+            )
+            .await;
+        assert_eq!(report.outcome, WakeOutcome::Completed);
+        let events = sink.events.lock().await;
+        let types: Vec<&str> = events.iter().map(|event| event.event_type.as_str()).collect();
+        assert_eq!(
+            types,
+            vec![
+                "trigger.received",
+                "wake.dispatched",
+                "session.started",
+                "turn.started",
+                "message.created",
+                "turn.completed",
+                "session.ended"
+            ]
+        );
+        assert_eq!(events[2].payload_json["kind"], "event");
+        assert_eq!(events[0].payload_json["sourceId"], "alarm-1");
     }
 }

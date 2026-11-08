@@ -81,6 +81,7 @@ impl SpawnSubagentTool {
                 description,
                 prompt,
                 depth: context.depth + 1,
+                permission_mode: context.permission_mode,
             })
             .await
         {

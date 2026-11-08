@@ -31,8 +31,16 @@ where
             get(crate::domains::agent::session::handler::todos),
         )
         .route(
+            "/sessions/{session_key}/permission",
+            axum::routing::put(crate::domains::agent::session::handler::update_permission),
+        )
+        .route(
             "/sessions/{session_key}/questions/{question_id}/answer",
             post(crate::domains::agent::session::handler::answer_question),
+        )
+        .route(
+            "/sessions/{session_key}/approvals/{approval_id}/answer",
+            post(crate::domains::agent::session::handler::answer_approval),
         )
         .route("/sessions/{session_key}", axum::routing::delete(proxy::delete_session))
 }

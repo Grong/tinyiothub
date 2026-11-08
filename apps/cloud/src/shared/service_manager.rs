@@ -688,6 +688,10 @@ impl ServiceManager {
                     Ok(_) => {}
                     Err(e) => tracing::warn!(%ws_id, error = %e, "list heartbeat tasks failed"),
                 }
+                if let Err(error) = crate::domains::agent::session::ensure_inspection_skill(&app_state.db, ws_id).await
+                {
+                    tracing::warn!(%ws_id, %error, "seed inspection skill failed");
+                }
             }
 
             // Start unified agent loops for existing workspaces（heartbeat
@@ -754,13 +758,17 @@ impl ServiceManager {
                 app_state.agent_pool.clone(),
                 &app_state.session_runtime,
             ));
-            let trigger_router = Arc::new(crate::domains::agent::session::TriggerRouter::new(
+            let trigger_router = Arc::new(crate::domains::agent::session::TriggerRouter::new_with_event_bus(
                 app_state.db.clone(),
                 wake_runner,
+                Some(app_state.event_bus.clone()),
             ));
             *self.trigger_router.write().await = Some(trigger_router.clone());
             let trigger_handle = trigger_router.clone().start();
             self.service_handles.write().await.push(trigger_handle);
+            // Plan 4A Task 7：TriggerRouter 已同步订阅报警后再关闭 legacy 心跳
+            // 桥的告警派发（顺序保证窗口内不丢告警）。watch 触发保持旧路径。
+            orchestrator.set_alarm_dispatch(false);
             info!("✅ AI Orchestrator started ({} workspaces)", ws_ids.len());
 
             // Boot race 恢复：AI 接线完成前创建的报警（publisher 未接线时

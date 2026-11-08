@@ -322,13 +322,21 @@ pub async fn send_message(
             tracing::warn!(error = %e, %session_key, "Failed to persist user message");
         }
 
+        let permission_mode = tinyiothub_storage::Db::new(db_pool.clone())
+            .get_session(&session_key)
+            .await
+            .ok()
+            .flatten()
+            .and_then(|session| crate::domains::agent::session::types::PermissionMode::parse(&session.permission_mode))
+            .unwrap_or_default();
         let context = crate::domains::agent::session::TurnContext::new(
             workspace_id.clone(),
             agent_id.clone(),
             session_key.clone(),
             run_id.clone(),
             0,
-        );
+        )
+        .with_permission_mode(permission_mode);
         if is_new_session
             && let Err(error) = session_runtime
                 .events

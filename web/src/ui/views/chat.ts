@@ -5,6 +5,8 @@ import {
   connectSessionEvents,
   fetchSessionEvents,
   fetchSessionTodos,
+  listChatSessions,
+  updateSessionPermission,
 } from '../../api/assistant.js';
 import {
   abortChatRun,
@@ -23,9 +25,12 @@ import { renderTimeline, renderTodoPanel } from '../chat/timeline-render.js';
 import { A2uiRendererEngine } from '../chat/a2ui/a2ui-renderer.js';
 import '../chat/session-drawer.js';
 import '../chat/question-card.js';
+import '../chat/approval-card.js';
 import '../components/global-hud.js';
 
 const AGENT_ID = 'default';
+
+type PermissionMode = 'read_only' | 'ask' | 'full_access';
 
 @customElement('view-chat')
 export class ChatView extends LitElement {
@@ -38,6 +43,7 @@ export class ChatView extends LitElement {
   @state() private liveText = '';
   @state() private sending = false;
   @state() private error = '';
+  @state() private permissionMode: PermissionMode = 'ask';
 
   private timeline = new TimelineModel();
   private chatState: ChatState | null = null;
@@ -87,6 +93,7 @@ export class ChatView extends LitElement {
     this.liveText = '';
     this.error = '';
     this.sending = false;
+    this.permissionMode = 'ask';
     this.sessionKey = sessionKey;
     localStorage.setItem('tinyiothub_chat_last_session', sessionKey);
     this.chatState = createChatState(sessionKey, AGENT_ID);
@@ -105,6 +112,7 @@ export class ChatView extends LitElement {
       this.requestUpdate();
     };
     this.refreshDrawer();
+    void this.loadPermissionMode();
     void this.loadTimeline(sessionKey);
     this.closeEvents = connectSessionEvents({
       sessionKey,
@@ -195,6 +203,13 @@ export class ChatView extends LitElement {
     void this.loadTimeline(this.sessionKey);
   }
 
+  private onApprovalAnswered(event: CustomEvent<string>): void {
+    this.timeline.pendingApprovals = this.timeline.pendingApprovals.filter(
+      (pending) => pending.approvalId !== event.detail,
+    );
+    void this.loadTimeline(this.sessionKey);
+  }
+
   private handleA2uiAction(functionId: string, data: Record<string, unknown>): void {
     const thingId = (data.thingId ?? data.deviceId) as string | undefined;
     if ((functionId === 'viewDevice' || functionId === 'controlDevice') && thingId) {
@@ -206,6 +221,34 @@ export class ChatView extends LitElement {
       void sendChatMessage(this.chatState, `[操作] ${functionId}: ${JSON.stringify(data)}`);
     }
     this.requestUpdate();
+  }
+
+  private async loadPermissionMode(): Promise<void> {
+    try {
+      const sessions = await listChatSessions(AGENT_ID);
+      const current = sessions.find((session) => session.sessionKey === this.sessionKey);
+      const mode = current?.permissionMode;
+      if (mode === 'read_only' || mode === 'ask' || mode === 'full_access') {
+        this.permissionMode = mode;
+      }
+    } catch {
+      // 读取失败保持当前值；发送/审批仍受后端会话模式约束。
+    }
+  }
+
+  private async handlePermissionChange(mode: PermissionMode): Promise<void> {
+    const key = this.sessionKey;
+    const previous = this.permissionMode;
+    this.permissionMode = mode;
+    try {
+      await updateSessionPermission(key, mode);
+      if (this.sessionKey !== key) return;
+      this.refreshDrawer();
+    } catch (error) {
+      if (this.sessionKey !== key) return;
+      this.permissionMode = previous;
+      this.error = (error as Error).message || '保存权限模式失败';
+    }
   }
 
   private refreshDrawer(): void {
@@ -253,6 +296,13 @@ export class ChatView extends LitElement {
                   @answered=${() => this.answerPending()}
                 ></question-card>`
               : ''}
+            ${this.timeline.pendingApprovals.map(
+              (pending) => html`<approval-card
+                .sessionKey=${this.sessionKey}
+                .pending=${pending}
+                @answered=${(event: CustomEvent<string>) => this.onApprovalAnswered(event)}
+              ></approval-card>`,
+            )}
             ${renderTimeline(this.timeline.blocks, { liveText: this.liveText, sending: this.sending })}
             ${this.a2uiRenderer.renderSurfacesByKind('inline')}
             ${this.a2uiRenderer.renderSurfacesByKind('overlay')}
@@ -270,7 +320,24 @@ export class ChatView extends LitElement {
               @keydown=${(event: KeyboardEvent) => this.onKeydown(event)}
             ></textarea>
             <div class="codex-composer-meta">
-              <span class="codex-mode" title="权限模式接线在 Plan 4">需要审批</span>
+              <select
+                class="permission-mode"
+                .value=${this.permissionMode}
+                aria-label="会话权限模式"
+                title="会话权限模式"
+                @change=${(event: Event) =>
+                  this.handlePermissionChange(
+                    (event.target as HTMLSelectElement).value as PermissionMode,
+                  )}
+              >
+                <option value="read_only">只读</option>
+                <option value="ask">需要审批</option>
+                <option value="full_access">完全访问</option>
+              </select>
+              <span
+                class="codex-mode-hint"
+                title="完全访问只免除逐次审批，不绕过急停/联锁/Effect"
+              >?</span>
               ${this.sending
                 ? html`<button class="chat-abort-btn" @click=${() => this.stop()}>停止</button>`
                 : html`<button

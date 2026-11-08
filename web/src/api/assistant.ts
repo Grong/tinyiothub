@@ -61,6 +61,7 @@ export interface SessionSummary {
   label: string | null;
   kind: 'chat' | 'scheduled' | 'event' | string;
   status: 'active' | 'ended' | string;
+  permissionMode: 'read_only' | 'ask' | 'full_access' | string;
   createdAt: number;
   updatedAt: number;
 }
@@ -123,6 +124,22 @@ export async function deleteChatSession(sessionKey: string): Promise<void> {
   await ApiClient.delete(sessionPath(sessionKey));
 }
 
+export async function updateSessionPermission(
+  sessionKey: string,
+  mode: 'read_only' | 'ask' | 'full_access',
+): Promise<void> {
+  const response = await fetch(buildUrl(sessionPath(sessionKey, '/permission')), {
+    method: 'PUT',
+    headers: authHeaders({ 'Content-Type': 'application/json' }),
+    credentials: 'include',
+    body: JSON.stringify({ mode }),
+  });
+  if (response.status === 204) return;
+  if (response.status === 404) throw new ApiError(404, '会话不存在');
+  if (response.status === 400) throw new ApiError(400, '权限模式无效');
+  throw new ApiError(response.status, '保存权限模式失败');
+}
+
 export async function fetchSessionEvents(
   sessionKey: string,
   after = 0,
@@ -162,6 +179,27 @@ export async function answerQuestion(
   if (response.status === 403) throw httpError(403, '问题属于其他会话');
   if (response.status === 409) throw httpError(409, '问题已关闭');
   throw httpError(response.status, '提交回答失败');
+}
+
+export async function answerApproval(
+  sessionKey: string,
+  approvalId: string,
+  decision: 'approved' | 'denied',
+): Promise<void> {
+  const response = await fetch(
+    buildUrl(sessionPath(sessionKey, `/approvals/${encodeURIComponent(approvalId)}/answer`)),
+    {
+      method: 'POST',
+      headers: authHeaders({ 'Content-Type': 'application/json' }),
+      credentials: 'include',
+      body: JSON.stringify({ decision }),
+    },
+  );
+  if (response.status === 204) return;
+  if (response.status === 404) throw httpError(404, '审批不存在或已处理');
+  if (response.status === 403) throw httpError(403, '审批属于其他会话');
+  if (response.status === 409) throw httpError(409, '审批已关闭');
+  throw httpError(response.status, '提交审批失败');
 }
 
 export async function fetchAssistantHud(workspaceId: string): Promise<HudSnapshot> {

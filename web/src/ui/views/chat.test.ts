@@ -5,6 +5,7 @@ const hoisted = vi.hoisted(() => ({
   connectSessionEvents: vi.fn((_opts: { sessionKey: string; after: number }) => () => {}),
   fetchSessionTodos: vi.fn(),
   listChatSessions: vi.fn().mockResolvedValue([]),
+  updateSessionPermission: vi.fn(),
   fetchAssistantHud: vi.fn(),
   getWorkspaceId: vi.fn(() => 'ws-1'),
   loadChatHistory: vi.fn(),
@@ -144,6 +145,66 @@ describe('view-chat codex layout', () => {
 
     expect(el.querySelector('.a2ui-surface--inline')).toBeTruthy();
     expect(el.textContent).toContain('A2UI 你好');
+  });
+
+  it('changes the session permission mode', async () => {
+    localStorage.setItem('tinyiothub_chat_last_session', 'agent:ws-1:default/s1');
+    hoisted.listChatSessions.mockResolvedValue([
+      { sessionKey: 'agent:ws-1:default/s1', kind: 'chat', status: 'active', label: '新会话', permissionMode: 'ask', updatedAt: 1 },
+    ]);
+    hoisted.updateSessionPermission.mockResolvedValue(undefined);
+    const el = document.createElement('view-chat') as ChatView;
+    document.body.appendChild(el);
+    await vi.waitFor(() => expect(el.querySelector('.permission-mode')).toBeTruthy());
+    const select = el.querySelector('.permission-mode') as HTMLSelectElement;
+    select.value = 'read_only';
+    select.dispatchEvent(new Event('change'));
+    await el.updateComplete;
+    expect(hoisted.updateSessionPermission).toHaveBeenCalledWith('agent:ws-1:default/s1', 'read_only');
+  });
+
+  it('ignores a stale permission rollback after switching sessions', async () => {
+    localStorage.setItem('tinyiothub_chat_last_session', 'agent:ws-1:default/a');
+    hoisted.listChatSessions.mockResolvedValue([
+      { sessionKey: 'agent:ws-1:default/a', kind: 'chat', status: 'active', label: 'A', permissionMode: 'ask', updatedAt: 1 },
+      { sessionKey: 'agent:ws-1:default/b', kind: 'chat', status: 'active', label: 'B', permissionMode: 'full_access', updatedAt: 2 },
+    ]);
+    hoisted.fetchSessionEvents.mockResolvedValue({ events: [], highWatermark: 0 });
+    let rejectPut!: (error: Error) => void;
+    hoisted.updateSessionPermission.mockReturnValue(
+      new Promise<void>((_resolve, reject) => {
+        rejectPut = reject;
+      }),
+    );
+    const el = document.createElement('view-chat') as ChatView;
+    document.body.appendChild(el);
+    await vi.waitFor(() =>
+      expect((el.querySelector('.permission-mode') as HTMLSelectElement)?.value).toBe('ask'),
+    );
+
+    const select = el.querySelector('.permission-mode') as HTMLSelectElement;
+    select.value = 'read_only';
+    select.dispatchEvent(new Event('change'));
+    await el.updateComplete;
+    expect(hoisted.updateSessionPermission).toHaveBeenCalledWith('agent:ws-1:default/a', 'read_only');
+
+    el.querySelector('session-drawer')!.dispatchEvent(
+      new CustomEvent('session-select', {
+        detail: 'agent:ws-1:default/b',
+        bubbles: true,
+        composed: true,
+      }),
+    );
+    await vi.waitFor(() =>
+      expect((el.querySelector('.permission-mode') as HTMLSelectElement).value).toBe('full_access'),
+    );
+
+    rejectPut(new Error('保存权限模式失败'));
+    await Promise.resolve();
+    await el.updateComplete;
+
+    expect((el.querySelector('.permission-mode') as HTMLSelectElement).value).toBe('full_access');
+    expect(el.querySelector('.timeline-notice')).toBeNull();
   });
 
   it('hydrates a2ui history even when session events exist', async () => {

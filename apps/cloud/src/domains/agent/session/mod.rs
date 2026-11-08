@@ -4,26 +4,32 @@ pub const ASK_USER_TIMEOUT: Duration = Duration::from_secs(10 * 60);
 pub const SESSION_TURN_TIMEOUT: Duration = Duration::from_secs(15 * 60);
 pub const SUBAGENT_TURN_TIMEOUT: Duration = Duration::from_secs(10 * 60);
 
+pub mod approvals;
 pub mod context;
 pub mod events;
 pub mod handler;
 pub mod hud;
 pub mod questions;
 pub mod runner;
+pub mod skills_seed;
 pub mod subagent;
 pub mod todos;
+pub mod tool_guard;
 pub mod tools;
 pub mod trigger;
 pub mod types;
 pub mod wake;
 pub mod workspace_api;
 
+pub use approvals::{ApprovalBroker, ApprovalDecision, ApprovalError, ApprovalSummary};
 pub use context::*;
 pub use events::*;
 pub use questions::QuestionBroker;
 pub use runner::{SessionRunner, TurnObserver, TurnOutcome};
+pub use skills_seed::ensure_inspection_skill;
 pub use subagent::{SubagentReport, SubagentRequest, SubagentRunner, SubagentSlot, SubagentStatus};
 pub use todos::TodoStore;
+pub use tool_guard::{APPROVAL_TIMEOUT, PermissionGuardTool};
 pub use trigger::{TRIGGER_TICK_INTERVAL, TriggerRouter};
 pub use types::*;
 pub use wake::{WakeExecutor, WakeOutcome, WakeReport, WakeRunner, assistant_agent_id, build_wake_message};
@@ -38,6 +44,7 @@ pub struct SessionRuntime {
     pub contexts: Arc<TurnContextRegistry>,
     pub todos: Arc<TodoStore>,
     pub questions: Arc<QuestionBroker>,
+    pub approvals: Arc<ApprovalBroker>,
     pub subagents: Arc<SubagentSlot>,
     pub runner: Arc<SessionRunner>,
 }
@@ -48,6 +55,7 @@ impl SessionRuntime {
         let contexts = Arc::new(TurnContextRegistry::default());
         let todos = Arc::new(TodoStore::default());
         let questions = Arc::new(QuestionBroker::default());
+        let approvals = Arc::new(ApprovalBroker::default());
         let subagents = Arc::new(SubagentSlot::default());
         let runner = Arc::new(SessionRunner::new(events.clone(), contexts.clone()));
         Self {
@@ -55,6 +63,7 @@ impl SessionRuntime {
             contexts,
             todos,
             questions,
+            approvals,
             subagents,
             runner,
         }
