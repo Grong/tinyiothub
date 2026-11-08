@@ -33,9 +33,10 @@ of on-time execution. A chat or Assistant wake is **not** process liveness.
 ## 2. Read the panel and API
 
 The operator view is the Assistant view `#/assistant`. Its HUD calls
-`GET /api/v1/workspaces/{workspace_id}/agent/hud`; its schedule panel calls
-`GET/PUT /api/v1/workspaces/{workspace_id}/agent/schedule`. Both return the
-schedule row above.
+`GET /api/v1/workspaces/{workspace_id}/agent/hud` and displays the schedule
+read-only (a nested summary). Schedule changes are made through
+`PUT /api/v1/workspaces/{workspace_id}/agent/schedule` (API/ops); that endpoint
+returns the full schedule DTO, while the HUD returns the read-only summary.
 
 The retained Supervisor API is:
 
@@ -132,14 +133,20 @@ it.
 
 ### 4.3 Persisted clock rollback (retained Supervisor)
 
-1. Compare host UTC time with `last_completed_at` in `supervisor_state`. This
-   retained field is not advanced by the Assistant scheduler.
+`supervisor_state` is a retained legacy row: no production path advances it
+after the Assistant cutover, so a persisted clock rollback here is historical
+diagnostic data, not Assistant scheduler health.
+
+1. Compare host UTC time with `last_completed_at` in `supervisor_state`.
 2. If the host clock is wrong, fix time synchronization and restart.
-3. Do not update `last_completed_at` by hand. A correct clock plus a completed
-   tick is the recovery evidence.
+3. Do not update `last_completed_at` by hand. The observable recovery check is
+   the Assistant schedule: after restart, a due row is dispatched and
+   `assistant_schedules.last_wake_at`/`next_wake_at` advance. A store error
+   appears as `assistant schedule: due scan failed` in the logs.
 4. If a restored backup legitimately contains future timestamps, record the
-   backup identity and the observed skew as evidence, then restart with the
-   corrected clock and verify `supervisor.recovered`.
+   backup identity and the observed skew as evidence. Do not wait for a
+   `supervisor.recovered` event; it is not emitted by the current Assistant
+   scheduler.
 
 ## 5. Per-row dead-wake retry
 

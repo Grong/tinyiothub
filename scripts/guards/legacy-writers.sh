@@ -122,7 +122,7 @@ check_rust \
 check_rust \
   "runtime event construction outside telemetry writers" \
   'RuntimeEventInput\s*\{' \
-  '^(crates/db/src/(runtime_event|task_approval|device_job|watch|media_evidence|agent_runs)\.rs|apps/cloud/src/domains/agent/runtime/(stream|tasks)\.rs|apps/cloud/src/domains/agent/host/tools/thing/device\.rs|apps/cloud/src/domains/agent/tools/capabilities\.rs):'
+  '^(crates/db/src/(runtime_event|task_approval|device_job|watch|media_evidence|agent_runs)\.rs|apps/cloud/src/domains/agent/runtime/(stream|tasks)\.rs|apps/cloud/src/domains/agent/tool/thing/device\.rs|apps/cloud/src/domains/agent/tools/capabilities\.rs):'
 
 # ── Retired platform Task/Job fact plane (Task 19C4) ───────
 # Task/Run/Wake/Job facts live only in each workspace Harness generation.
@@ -220,7 +220,7 @@ check_rust \
 check_rust \
   "device_jobs write outside the Job owner" \
   '(INSERT INTO device_jobs|UPDATE device_jobs)' \
-  '^(crates/db/src/(device_job|harness_effect|harness_job)\.rs|apps/cloud/src/domains/agent/host/autonomous_factory\.rs|apps/cloud/src/domains/agent/runtime/api_cutover_tests\.rs):'
+  '^(crates/db/src/(device_job|harness_effect|harness_job)\.rs|apps/cloud/src/domains/agent/session/factory\.rs|apps/cloud/src/domains/agent/runtime/api_cutover_tests\.rs):'
 # task_approval.rs deliberately has no device_jobs SQL: it calls
 # crate::device_job::insert_job_projection inside its own transaction.
 
@@ -268,19 +268,19 @@ if [ -n "$DEVICE_JOB_UNGATED" ]; then
   fail "platform device_jobs writer outside cfg(any(test, feature = \"testing\"))"
 fi
 
-# autonomous_factory.rs may write device_jobs only inside its #[cfg(test)]
+# session/factory.rs may write device_jobs only inside its #[cfg(test)]
 # module (its fixture seeds legacy Jobs).
-AUTONOMOUS_FIRST_TEST=$(grep -nE '^#\[cfg\(test\)\]' apps/cloud/src/domains/agent/host/autonomous_factory.rs | head -1 | cut -d: -f1)
-if [ -z "$AUTONOMOUS_FIRST_TEST" ]; then
-  fail "autonomous_factory.rs lost its #[cfg(test)] module; device_jobs writes must stay test-only"
-  AUTONOMOUS_FIRST_TEST=0
+FACTORY_FIRST_TEST=$(grep -nE '^#\[cfg\(test\)\]' apps/cloud/src/domains/agent/session/factory.rs | head -1 | cut -d: -f1)
+if [ -z "$FACTORY_FIRST_TEST" ]; then
+  fail "session/factory.rs lost its #[cfg(test)] module; device_jobs writes must stay test-only"
+  FACTORY_FIRST_TEST=0
 fi
-AUTONOMOUS_WRITES=$(rg -n '(INSERT INTO device_jobs|UPDATE device_jobs)' \
-    apps/cloud/src/domains/agent/host/autonomous_factory.rs 2>/dev/null \
-  | awk -F: -v limit="$AUTONOMOUS_FIRST_TEST" '$1 < limit {print}' || true)
-if [ -n "$AUTONOMOUS_WRITES" ]; then
-  echo "$AUTONOMOUS_WRITES"
-  fail "device_jobs write in autonomous_factory outside its #[cfg(test)] module"
+FACTORY_WRITES=$(rg -n '(INSERT INTO device_jobs|UPDATE device_jobs)' \
+    apps/cloud/src/domains/agent/session/factory.rs 2>/dev/null \
+  | awk -F: -v limit="$FACTORY_FIRST_TEST" '$1 < limit {print}' || true)
+if [ -n "$FACTORY_WRITES" ]; then
+  echo "$FACTORY_WRITES"
+  fail "device_jobs write in session/factory.rs outside its #[cfg(test)] module"
 fi
 
 check_rust \

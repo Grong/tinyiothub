@@ -131,9 +131,10 @@ be recorded as executed and playback stays blocked.
 The canonical route `#/assistant` (with
 `#/assistant/sessions/{encoded_session_key}` deep links) and its sidebar entry
 are always registered; there is no flag. Legacy Workbench hashes (`#/runtime`,
-`#/runtime/new`, `#/runtime/tasks/{id}`, and all `#/harness/*` routes) redirect
-once to `#/assistant`. Keyboard, responsive, approval-conflict, and Task-switch
-checks can be recorded against staging. Player-lifecycle and one-hour
+`#/runtime/new`, `#/runtime/tasks/{id}`, and all recognized `#/harness/*`
+routes) redirect once to `#/assistant`; unrecognized segments fall through.
+Keyboard, responsive, approval-conflict, and Task-switch checks can be recorded
+against staging. Player-lifecycle and one-hour
 observation checks stay BLOCKED with section 4 because no real playback
 provider exists.
 

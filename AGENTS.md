@@ -157,7 +157,8 @@ Each Harness fact has exactly one writer. New code must use these paths:
 |------|-------|
 | Session events | `Db::append_session_event` / `Db::apply_workspace_transition` |
 | Effects | Harness transitions in `crates/db/src/harness_effect.rs` |
-| Tasks / Runs / Wakes | The owning workspace generation: `crates/db/src/harness_task.rs` (TaskStore port) plus the Task runtime in `apps/cloud/src/domains/agent/thing_agent/task/coordinator.rs`; `harness_effect.rs` and `harness_command.rs` own Effect and decision-command transitions |
+| Tasks / Runs / Wakes (scheduling) | The owning workspace generation: `crates/db/src/harness_task.rs` (TaskStore port) plus the Task runtime in `apps/cloud/src/domains/agent/thing_agent/task/coordinator.rs`; `harness_effect.rs` and `harness_command.rs` own Effect and decision-command transitions |
+| Task pause / resume / cancel | Retained Task-control writer `crates/db/src/harness_workflow.rs` (`pause_workflow_task` / `resume_workflow_task` / `cancel_workflow_task`), called by `apps/cloud/src/domains/agent/runtime/controls.rs` |
 | Device jobs | The owning workspace generation: `crates/db/src/harness_effect.rs` / `harness_job.rs` |
 | Approvals / decisions | `decisions` (workspace DB) |
 | Commands / wakes | Workspace `commands` and `task_wake_outbox` |
