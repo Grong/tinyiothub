@@ -7,8 +7,6 @@
 //   GET  /tasks — read heartbeat tasks (DB)
 //   PUT  /tasks — replace heartbeat tasks (DB)
 
-use crate::domains::agent::heartbeat::types::NewHeartbeatTask;
-use crate::domains::agent::host::heartbeat;
 use crate::verify_workspace_access_port;
 use axum::{
     Json,
@@ -20,7 +18,6 @@ use tinyiothub_web::response::ApiResponseBuilder;
 use tinyiothub_web::security::Claims;
 
 use crate::domains::agent::AgentState;
-use crate::domains::agent::prompt::paths;
 
 /// Heartbeat routes (`/{id}/heartbeat/*`), nested at `/workspaces` by the
 /// composition layer next to `tinyiothub_tenant::workspace_router()` —
@@ -320,14 +317,12 @@ pub async fn get_logs(
 ) -> Json<ApiResponse<HeartbeatLogsResponse>> {
     verify_workspace_access_port!(state, claims, workspace_id);
 
-    // Task 10（C6 读侧切换）：主查询读 agent_runs（trigger 前缀 heartbeat:），
-    // 每行经纯函数适配器 RunReport→ExecutionRecord 映射；提案/auto_executed
-    // 明细数据源不变（agent_actions，按 tick_id=run_id 联结）。
-    // 兼容期 fallback：agent_runs 查空且旧 agent_actions 锚行仍在时回旧查询
-    // （双读；切换完成后删 legacy 分支）。
+    // 单一读源：agent_runs（trigger 前缀 heartbeat:），每行经纯函数适配器
+    // RunReport→ExecutionRecord 映射；legacy agent_actions 分支已随
+    // AutonomyMode/heartbeat 退役删除。
     let logs = match state.db.list_heartbeat_run_rows(&workspace_id, 50).await {
         Ok(runs) if !runs.is_empty() => assemble_logs_from_runs(&state, &workspace_id, runs).await,
-        Ok(_) => legacy_logs_from_agent_actions(&state, &workspace_id).await,
+        Ok(_) => vec![],
         Err(e) => {
             tracing::error!(%workspace_id, "Failed to query heartbeat runs: {}", e);
             vec![]
@@ -419,76 +414,6 @@ fn parse_proposal_detail(content: &str) -> Option<ProposalDetail> {
     })
 }
 
-/// 兼容期 fallback（Task 10 前旧路径，原样保留）：读 agent_actions 锚行
-/// （summary/error）驱动时间线，同 created_at 的提案/动作行嵌进条目。
-/// agent_runs 查空且锚行仍在时启用；切换完成后删除。
-async fn legacy_logs_from_agent_actions(state: &AgentState, workspace_id: &str) -> Vec<HeartbeatLogEntry> {
-    // Fetch all heartbeat rows (summary + error + auto_executed + proposal)
-    let rows = state.db.list_agent_heartbeat_actions(workspace_id).await;
-
-    match rows {
-        Ok(rows) => {
-            // Group rows by timestamp — summary/error rows drive the timeline,
-            // auto_executed/proposal rows from the same tick are nested inside
-            let mut summaries: Vec<(String, String, String)> = Vec::new(); // (status, content, created_at)
-            let mut details: std::collections::HashMap<String, Vec<(String, String)>> =
-                std::collections::HashMap::new(); // created_at -> [(action_type, content)]
-
-            for (action_type, content, created_at) in rows {
-                match action_type.as_str() {
-                    "summary" | "error" => {
-                        summaries.push((action_type, content, created_at));
-                    }
-                    "auto_executed" | "proposal" => {
-                        details
-                            .entry(created_at.clone())
-                            .or_default()
-                            .push((action_type, content));
-                    }
-                    _ => {}
-                }
-            }
-
-            summaries.truncate(50); // cap at 50 timeline entries
-
-            summaries
-                .into_iter()
-                .map(|(action_type, content, created_at)| {
-                    let status = if action_type == "error" { "error" } else { "success" };
-                    let (task_count, message) = parse_action_content(&content);
-
-                    let related = details.remove(&created_at).unwrap_or_default();
-                    let auto_executed: Vec<ActionDetail> = related
-                        .iter()
-                        .filter(|(t, _)| t == "auto_executed")
-                        .filter_map(|(_, c)| parse_auto_executed_detail(c))
-                        .collect();
-                    let pending_proposals: Vec<ProposalDetail> = related
-                        .iter()
-                        .filter(|(t, _)| t == "proposal")
-                        .filter_map(|(_, c)| parse_proposal_detail(c))
-                        .collect();
-
-                    HeartbeatLogEntry {
-                        timestamp: created_at,
-                        task_count,
-                        status: status.to_string(),
-                        error_message: if status == "error" { message.clone() } else { None },
-                        result: if status == "success" { message } else { None },
-                        auto_executed,
-                        pending_proposals,
-                        trace: parse_action_trace(&content),
-                    }
-                })
-                .collect()
-        }
-        Err(e) => {
-            tracing::error!(%workspace_id, "Failed to query heartbeat logs: {}", e);
-            vec![]
-        }
-    }
-}
-
 // ── GET /{id}/heartbeat/tasks ──
 
 pub async fn get_tasks(
@@ -505,49 +430,34 @@ pub async fn get_tasks(
 
 // ── PUT /{id}/heartbeat/tasks ──
 
+/// 一版兼容响应：任务写入已退役（改由 `inspection` 技能承接）。旧前端在
+/// Batch 5 删除前仍收到 200，但写入被忽略。
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DeprecatedTasksResponse {
+    tasks: Vec<HeartbeatTaskDef>,
+    deprecated: bool,
+}
+
 pub async fn update_tasks(
     State(state): State<AgentState>,
     Extension(claims): Extension<Claims>,
     Path(workspace_id): Path<String>,
     Json(req): Json<UpdateHeartbeatTasksRequest>,
-) -> Json<ApiResponse<Vec<HeartbeatTaskDef>>> {
+) -> Json<ApiResponse<DeprecatedTasksResponse>> {
     verify_workspace_access_port!(state, claims, workspace_id);
 
-    let Some(ref manager) = state.thing_agents else {
-        return ApiResponseBuilder::error("心跳服务未启用");
-    };
-
-    let new_tasks: Vec<NewHeartbeatTask> = req
-        .tasks
-        .iter()
-        .map(|t| NewHeartbeatTask {
-            priority: t.priority.clone(),
-            text: t.text.clone(),
-            paused: t.paused,
-        })
-        .collect();
-
-    // D11-⑤ 写序：先写 DB，成功后注入统一循环任务共享表 + notify 立即
-    // tick（trigger 每轮重读任务表）。
-    if let Err(e) = state.db.replace_heartbeat_tasks(&workspace_id, &new_tasks).await {
-        tracing::error!(%workspace_id, "Failed to save heartbeat tasks: {}", e);
-        return ApiResponseBuilder::error("保存心跳任务失败");
-    }
-
-    // 回读 DB 行（含 id/version 等 server 字段）作为内存真源。回读失败
-    // 必须返错：DB 已是真源，内存未更新可安全报错；吞掉会把空集注入内存
-    // 且客户端误收 success（Task 5 fix round 1）。
-    let stored = match state.db.list_heartbeat_tasks(&workspace_id).await {
-        Ok(tasks) => tasks,
-        Err(e) => {
-            tracing::error!(%workspace_id, "Failed to read back heartbeat tasks: {}", e);
-            return ApiResponseBuilder::error("读取心跳任务失败");
-        }
-    };
-    manager.set_heartbeat_tasks(&workspace_id, stored);
-    manager.heartbeat_reload_notify(&workspace_id).notify_one();
-
-    ApiResponseBuilder::success(req.tasks)
+    // 写入忽略（一版兼容）：任务已由 inspection 技能承接，heartbeat_tasks
+    // 表只读保留。
+    tracing::info!(
+        %workspace_id,
+        ignored = req.tasks.len(),
+        "heartbeat tasks write ignored; use the inspection skill instead"
+    );
+    ApiResponseBuilder::success(DeprecatedTasksResponse {
+        tasks: Vec::new(),
+        deprecated: true,
+    })
 }
 
 // ── GET /{id}/heartbeat/approvals ──
@@ -975,72 +885,24 @@ async fn update_proposal_status(
 
 // ── Helpers ──
 
-/// DB is the single source of truth for heartbeat tasks. Migrates legacy
-/// HEARTBEAT.md on first access（幂等：表空且文件在才迁）；读库失败回退
-/// 文件/缺省（T15 起迁移门与 runner 存在性无关，始终走 DB 路径）。
+/// `heartbeat_tasks` is read-only for one version: the legacy table is still
+/// read (the inspection skill seed also consumes it), but no file migration
+/// or default-task fallback runs.
 async fn load_tasks(state: &AgentState, workspace_id: &str) -> Vec<HeartbeatTaskDef> {
-    fn to_def(t: heartbeat::HeartbeatTask) -> HeartbeatTaskDef {
-        HeartbeatTaskDef {
-            priority: t.priority,
-            text: t.text,
-            paused: t.paused,
-        }
-    }
-    // DB 门面只依赖连接池，就地取用。
-    let workspace_dir = paths::workspace_dir(workspace_id);
-    if let Err(e) = heartbeat::migrate_file_tasks_to_db(&state.db, workspace_id, &workspace_dir).await {
-        tracing::warn!(%workspace_id, "Heartbeat task migration failed: {}", e);
-    }
     match state.db.list_heartbeat_tasks(workspace_id).await {
-        Ok(tasks) => {
-            return tasks
-                .into_iter()
-                .map(|t| HeartbeatTaskDef {
-                    priority: t.priority,
-                    text: t.text,
-                    paused: t.paused,
-                })
-                .collect();
-        }
+        Ok(tasks) => tasks
+            .into_iter()
+            .map(|t| HeartbeatTaskDef {
+                priority: t.priority,
+                text: t.text,
+                paused: t.paused,
+            })
+            .collect(),
         Err(e) => {
             tracing::warn!(%workspace_id, "Failed to list heartbeat tasks: {}", e);
+            Vec::new()
         }
     }
-    heartbeat::read_heartbeat_tasks(&workspace_dir)
-        .await
-        .map(|tasks| tasks.into_iter().map(to_def).collect())
-        .unwrap_or_else(|e| {
-            tracing::warn!(%workspace_id, "Failed to read HEARTBEAT.md: {}", e);
-            heartbeat::get_default_tasks().into_iter().map(to_def).collect()
-        })
-}
-
-fn parse_action_content(content: &str) -> (u32, Option<String>) {
-    // New format: {"taskCount": N, "result": "..."} or {"taskCount": N, "error": "..."}
-    if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(content) {
-        let task_count = parsed
-            .get("taskCount")
-            .and_then(|v| v.as_u64())
-            .map(|n| n as u32)
-            .unwrap_or(0);
-        let message = parsed
-            .get("result")
-            .or_else(|| parsed.get("error"))
-            .and_then(|v| v.as_str())
-            .map(|s| s.to_string());
-        return (task_count, message);
-    }
-    // Legacy format: plain text content
-    (0, Some(content.to_string()))
-}
-
-/// 从 anchor content JSON 提取 trace（T9 起写入；旧 tick/缺字段/解析失败 → 空）。
-fn parse_action_trace(content: &str) -> Vec<tinyiothub_core::agent_runs::ToolTraceEntry> {
-    serde_json::from_str::<serde_json::Value>(content)
-        .ok()
-        .and_then(|v| v.get("trace").cloned())
-        .and_then(|t| serde_json::from_value(t).ok())
-        .unwrap_or_default()
 }
 
 #[cfg(test)]

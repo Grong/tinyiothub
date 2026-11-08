@@ -19,7 +19,7 @@ use axum::{
     routing::{get, post},
 };
 use serde::{Deserialize, Serialize};
-use tinyiothub_policy::autonomy::{AutonomyMode, AutonomyPolicy};
+use tinyiothub_policy::autonomy::{AutonomyPolicy, PermissionMode};
 use tinyiothub_web::api_response::ApiResponse;
 use tinyiothub_web::response::ApiResponseBuilder;
 use tinyiothub_web::security::Claims;
@@ -247,7 +247,8 @@ pub async fn ack_run(
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PolicyView {
-    pub mode: String,
+    /// `read_only` | `ask`（`full_access` 仅会话级，工作区策略拒绝）。
+    pub permission_mode: String,
     #[serde(default = "default_allowed_actions")]
     pub allowed_actions: Vec<String>,
     #[serde(default)]
@@ -271,10 +272,11 @@ fn default_max_actions_per_hour() -> u32 {
 }
 
 impl PolicyView {
-    /// 无持久化行时的默认策略（与 migration 默认值一致）
-    fn default_off() -> Self {
+    /// 无持久化行时的默认视图：没有策略行时 gate 拒绝一切写动作，
+    /// 因此对外的等价权限是 `read_only`。
+    fn default_read_only() -> Self {
         Self {
-            mode: "off".to_string(),
+            permission_mode: PermissionMode::ReadOnly.as_str().to_string(),
             allowed_actions: vec!["*".to_string()],
             denied_actions: vec![],
             max_actions_per_run: 3,
@@ -286,7 +288,7 @@ impl PolicyView {
 impl From<AutonomyPolicy> for PolicyView {
     fn from(p: AutonomyPolicy) -> Self {
         Self {
-            mode: p.mode.as_str().to_string(),
+            permission_mode: p.permission_mode.as_str().to_string(),
             allowed_actions: p.allowed_actions,
             denied_actions: p.denied_actions,
             max_actions_per_run: p.max_actions_per_run,
@@ -304,7 +306,7 @@ pub async fn get_policy(
 
     match state.db.load_autonomy_policy(&workspace_id).await {
         Ok(Some(policy)) => ApiResponseBuilder::success(PolicyView::from(policy)),
-        Ok(None) => ApiResponseBuilder::success(PolicyView::default_off()),
+        Ok(None) => ApiResponseBuilder::success(PolicyView::default_read_only()),
         Err(e) => {
             tracing::error!(%workspace_id, "Failed to load autonomy policy: {}", e);
             ApiResponseBuilder::error("读取策略失败")
@@ -320,11 +322,16 @@ pub async fn update_policy(
 ) -> Json<ApiResponse<PolicyView>> {
     verify_agent_admin!(state, claims, workspace_id);
 
-    let Some(mode) = AutonomyMode::from_db(&req.mode) else {
-        return ApiResponseBuilder::error_with_code(400, "无效的 mode，可选: off / diagnose / act");
+    let Some(permission_mode) = PermissionMode::parse(req.permission_mode.trim()) else {
+        return ApiResponseBuilder::error_with_code(400, "无效的 permissionMode，可选: read_only / ask");
     };
+    // `full_access` is session-explicit only; a workspace policy must never
+    // grant it.
+    if permission_mode == PermissionMode::FullAccess {
+        return ApiResponseBuilder::error_with_code(400, "full_access 仅会话级可用");
+    }
     let policy = AutonomyPolicy {
-        mode,
+        permission_mode,
         allowed_actions: req.allowed_actions,
         denied_actions: req.denied_actions,
         max_actions_per_run: req.max_actions_per_run,
@@ -340,18 +347,8 @@ pub async fn update_policy(
         return ApiResponseBuilder::error("保存策略失败");
     }
 
-    // O26 kill switch：mode 切到 off 时清空该工作区调度器的待处理队列
-    // （不取消在跑的 run，drain 返回时其已完成）。sink 未接线时跳过。
-    if policy.mode == AutonomyMode::Off
-        && let Some(sink) = state.directive_sink.as_ref()
-    {
-        sink.drain(&workspace_id).await;
-        tracing::info!(
-            metric = "agent_queue_drained",
-            workspace_id = %workspace_id,
-            "policy mode→off：待处理队列已清空（O26）"
-        );
-    }
+    // 旧 O26 `off` kill switch 随 AutonomyMode 退役：暂停 Assistant 请使用
+    // `/workspaces/{id}/agent/schedule`（enabled=false），不再 drain 队列。
 
     ApiResponseBuilder::success(PolicyView::from(policy))
 }

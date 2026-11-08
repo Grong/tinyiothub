@@ -1,15 +1,14 @@
 //! Agent-side implementation of the tenant domain's `AgentHooks` seam (G5b).
 //!
-//! Adapts the agent domain's heartbeat-task knowledge (the default task set)
-//! to the tenant-owned trait so the tenant domain carries no dependency edge
-//! on the agent domain. Dependency direction: agent → tenant.
+//! The legacy default heartbeat task set is retired (inspection skill owns
+//! wake steps); the seam remains so the tenant domain carries no dependency
+//! edge on the agent domain. Dependency direction: agent → tenant.
 
 use std::sync::{Arc, RwLock};
 
 use tinyiothub_core::heartbeat::HeartbeatTask;
 
 use crate::domains::agent::agent_runtime::AgentRuntime;
-use crate::domains::agent::host::heartbeat;
 
 /// [`AgentHooks`](crate::domains::tenant::hooks::AgentHooks) backed by the
 /// agent domain's real implementations.
@@ -38,14 +37,8 @@ impl AgentHooksImpl {
 
 impl crate::domains::tenant::hooks::AgentHooks for AgentHooksImpl {
     fn default_heartbeat_tasks(&self) -> Vec<crate::domains::tenant::hooks::HeartbeatTaskDef> {
-        heartbeat::get_default_tasks()
-            .into_iter()
-            .map(|t| crate::domains::tenant::hooks::HeartbeatTaskDef {
-                priority: t.priority,
-                text: t.text,
-                paused: t.paused,
-            })
-            .collect()
+        // 默认任务集随 heartbeat md 退役；巡检步骤由 inspection 技能承接。
+        Vec::new()
     }
 
     fn heartbeat_tasks_seeded(&self, workspace_id: &str, tasks: Vec<HeartbeatTask>) {

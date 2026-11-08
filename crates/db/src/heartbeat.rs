@@ -854,8 +854,8 @@ mod tests {
             .await
             .expect("insert_result must succeed against the real schema");
 
-        // Same query as the legacy fallback branch of get_logs
-        // (workspace_heartbeat.rs legacy_logs_from_agent_actions, Task 10)
+        // Same query the retired legacy get_logs fallback used
+        // (removed in Plan 4B Batch 2 with AutonomyMode/heartbeat retirement).
         let rows: Vec<(String, String, String)> = sqlx::query_as(
             "SELECT action_type, content, created_at FROM agent_actions \
              WHERE workspace_id = ? AND event_type = 'heartbeat' \

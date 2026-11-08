@@ -146,22 +146,21 @@ async fn update_config_partial_update_merges_and_writes_through() {
 }
 
 // Value card
-// - 覆盖路径：PUT /heartbeat/tasks 的 D11-⑤ 写序（replace DB → 回读 →
-//   set_heartbeat_tasks 写穿统一循环任务表 → notify）+ get_config 的
-//   last_tick 读统一循环 last_ticks 共享表（D13 实时读，T15 唯一读源）。
-// - 真实回归场景：写穿漏调 set_heartbeat_tasks——DB 已改但 trigger/prompt
-//   仍读旧任务表，下一次 tick 巡检过期任务集；last_tick 读错表则前端
-//   「最近巡检」恒 null。
-// - 失败信号：manager.heartbeat_tasks 与 DB/get_tasks 不一致即断口；
-//   get_config.lastTick 与注入值不符即读源错误。
-// - 覆盖理由：manager 层写穿测试不经 handler 的 DB 先写与回读步骤；
-//   last_tick 透出此前只有 manager 层写入测试，无 handler 读侧断言。
+// - 覆盖路径：PUT /heartbeat/tasks 一版兼容（写入忽略 → 200 空列表 +
+//   deprecated:true）+ get_config 的 last_tick 读统一循环 last_ticks
+//   共享表（D13 实时读，T15 唯一读源）。
+// - 真实回归场景：旧前端在 Batch 5 删除前仍会 PUT tasks——必须 200 而非
+//   运行时报错；若写穿残留，旧任务表会再次驱动巡检；last_tick 读错表则
+//   前端「最近巡检」恒 null。
+// - 失败信号：PUT 返回非 200/非 deprecated，或 DB/manager 任务表被改写，
+//   或 get_config.lastTick 与注入值不符即断口。
 #[tokio::test]
-async fn update_tasks_writes_through_and_get_config_exposes_last_tick() {
-    let (app, _pool, manager) = app_with_manager().await;
+async fn update_tasks_is_deprecated_noop_and_get_config_exposes_last_tick() {
+    let (app, pool, manager) = app_with_manager().await;
     let token = create_test_token("user-1", "tenant-1");
+    let db = Db::new(pool);
 
-    call(
+    let result = call(
         &app,
         put(
             &format!("/api/v1/workspaces/{WS}/heartbeat/tasks"),
@@ -173,15 +172,20 @@ async fn update_tasks_writes_through_and_get_config_exposes_last_tick() {
         ),
     )
     .await;
+    assert_eq!(result["deprecated"], true, "PUT tasks must be deprecated: {result}");
+    assert_eq!(result["tasks"], json!([]), "PUT tasks must return an empty list");
 
+    // 写入被忽略：DB 与统一循环共享表都保持空。
     let tasks = call(&app, get(&format!("/api/v1/workspaces/{WS}/heartbeat/tasks"), &token)).await;
-    assert_eq!(tasks.as_array().expect("tasks array").len(), 2);
-
-    // handler 回读 DB 后写穿统一循环任务表（trigger/prompt 读侧同一真源）。
-    let shared = manager.heartbeat_tasks(WS);
-    assert_eq!(shared.len(), 2, "任务表写穿统一循环共享表");
-    assert!(shared.iter().any(|t| t.text == "巡检设备在线率" && !t.paused));
-    assert!(shared.iter().any(|t| t.text == "检查固件版本" && t.paused));
+    assert_eq!(tasks.as_array().expect("tasks array").len(), 0);
+    assert!(
+        manager.heartbeat_tasks(WS).is_empty(),
+        "write must not reach the shared table"
+    );
+    assert!(
+        db.list_heartbeat_tasks(WS).await.expect("list tasks").is_empty(),
+        "write must not reach the DB"
+    );
 
     // D13：last_tick 读统一循环共享表（无 tick 过为 null）。
     let cfg = call(&app, get(&format!("/api/v1/workspaces/{WS}/heartbeat/config"), &token)).await;

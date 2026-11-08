@@ -211,7 +211,7 @@ async fn endpoints_require_admin_role() {
         (
             "PUT",
             format!("/api/v1/workspaces/{WS}/agent/policy"),
-            Some(json!({"mode": "act"})),
+            Some(json!({"permissionMode": "ask"})),
         ),
     ] {
         let app = app.clone();
@@ -393,7 +393,7 @@ async fn policy_round_trip_with_updated_by() {
     let (app, pool, _db) = app_with_sink(Arc::new(StubDirectiveSink::default())).await;
     let token = create_test_token("user-1", "tenant-1");
 
-    // 默认策略（无行）：mode=off
+    // 默认策略（无行）：没有策略行时 gate 拒绝写动作 → read_only
     let (_status, json) = response_parts(
         app.clone()
             .oneshot(auth_request(
@@ -407,9 +407,9 @@ async fn policy_round_trip_with_updated_by() {
     )
     .await;
     assert_eq!(json["code"], 0);
-    assert_eq!(json["result"]["mode"], "off");
+    assert_eq!(json["result"]["permissionMode"], "read_only");
 
-    // PUT 三态策略
+    // PUT 权限策略
     let (_status, json) = response_parts(
         app.clone()
             .oneshot(auth_request(
@@ -417,7 +417,7 @@ async fn policy_round_trip_with_updated_by() {
                 &format!("/api/v1/workspaces/{WS}/agent/policy"),
                 &token,
                 Some(json!({
-                    "mode": "act",
+                    "permissionMode": "ask",
                     "allowedActions": ["*"],
                     "deniedActions": ["wipe_thing"],
                     "maxActionsPerRun": 5,
@@ -443,7 +443,7 @@ async fn policy_round_trip_with_updated_by() {
             .unwrap(),
     )
     .await;
-    assert_eq!(json["result"]["mode"], "act");
+    assert_eq!(json["result"]["permissionMode"], "ask");
     assert_eq!(json["result"]["deniedActions"], json!(["wipe_thing"]));
     assert_eq!(json["result"]["maxActionsPerRun"], 5);
     assert_eq!(json["result"]["maxActionsPerHour"], 10);
@@ -457,60 +457,34 @@ async fn policy_round_trip_with_updated_by() {
             .expect("updated_by");
     assert_eq!(updated_by, "user-1");
 
-    // 非法 mode → 400
+    // 非法 permissionMode → 400
+    let (_status, json) = response_parts(
+        app.clone()
+            .oneshot(auth_request(
+                "PUT",
+                &format!("/api/v1/workspaces/{WS}/agent/policy"),
+                &token,
+                Some(json!({"permissionMode": "yolo"})),
+            ))
+            .await
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(json["code"], 400, "invalid permissionMode must be 400: {json}");
+
+    // full_access 仅会话级：工作区策略必须拒绝。
     let (_status, json) = response_parts(
         app.oneshot(auth_request(
             "PUT",
             &format!("/api/v1/workspaces/{WS}/agent/policy"),
             &token,
-            Some(json!({"mode": "yolo"})),
+            Some(json!({"permissionMode": "full_access"})),
         ))
         .await
         .unwrap(),
     )
     .await;
-    assert_eq!(json["code"], 400, "invalid mode must be 400: {json}");
-}
-
-// O26 kill switch：PUT policy mode→off 必须 drain 该工作区待处理队列；
-// 其他 mode 不触发。
-#[tokio::test]
-async fn policy_mode_to_off_drains_pending_queue() {
-    async fn put_policy(app: &Router, token: &str, mode: &str) -> Value {
-        let (_status, json) = response_parts(
-            app.clone()
-                .oneshot(auth_request(
-                    "PUT",
-                    &format!("/api/v1/workspaces/{WS}/agent/policy"),
-                    token,
-                    Some(json!({"mode": mode, "allowedActions": ["*"]})),
-                ))
-                .await
-                .unwrap(),
-        )
-        .await;
-        json
-    }
-
-    let stub = Arc::new(StubDirectiveSink::default());
-    let (app, _pool, _db) = app_with_sink(stub.clone()).await;
-    let token = create_test_token("user-1", "tenant-1");
-
-    // act / diagnose：不 drain。
-    let json = put_policy(&app, &token, "act").await;
-    assert_eq!(json["code"], 0, "PUT act: {json}");
-    let json = put_policy(&app, &token, "diagnose").await;
-    assert_eq!(json["code"], 0, "PUT diagnose: {json}");
-    assert!(stub.drained().is_empty(), "non-off modes must not drain");
-
-    // off：drain 一次，目标为本工作区。
-    let json = put_policy(&app, &token, "off").await;
-    assert_eq!(json["code"], 0, "PUT off: {json}");
-    assert_eq!(
-        stub.drained(),
-        vec![WS.to_string()],
-        "mode→off must drain the workspace queue"
-    );
+    assert_eq!(json["code"], 400, "workspace full_access must be 400: {json}");
 }
 
 /// F9 覆盖补钉：find_agent_run_owner 数据库故障 → 500 + 错误日志，

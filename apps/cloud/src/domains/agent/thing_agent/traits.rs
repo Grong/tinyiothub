@@ -78,13 +78,13 @@ pub(crate) mod test_stubs {
     use std::collections::HashMap;
     use std::sync::Mutex;
 
-    use tinyiothub_core::policy::{AutonomyMode, AutonomyPolicy};
+    use tinyiothub_core::policy::{AutonomyPolicy, PermissionMode};
 
     /// 与 db 播种夹具等价的策略值（allowed_actions=["*"]，宽松配额）。
     #[allow(dead_code)] // 测试夹具：仅测试路径使用
-    pub(crate) fn policy(mode: AutonomyMode) -> AutonomyPolicy {
+    pub(crate) fn policy(permission_mode: PermissionMode) -> AutonomyPolicy {
         AutonomyPolicy {
-            mode,
+            permission_mode,
             allowed_actions: vec!["*".to_string()],
             denied_actions: vec![],
             max_actions_per_run: 10,
@@ -108,9 +108,9 @@ pub(crate) mod test_stubs {
             }
         }
 
-        pub(crate) fn with_policy(workspace_id: &str, mode: AutonomyMode) -> Self {
+        pub(crate) fn with_policy(workspace_id: &str, permission_mode: PermissionMode) -> Self {
             let stub = Self::new();
-            stub.save(workspace_id, policy(mode));
+            stub.save(workspace_id, policy(permission_mode));
             stub
         }
 

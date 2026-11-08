@@ -50,13 +50,13 @@ impl PolicySeam for DefaultPolicy {
 
 #[cfg(test)]
 mod tests {
-    use tinyiothub_policy::autonomy::AutonomyMode;
+    use tinyiothub_policy::autonomy::PermissionMode;
 
     use super::*;
 
     fn policy() -> AutonomyPolicy {
         AutonomyPolicy {
-            mode: AutonomyMode::Act,
+            permission_mode: PermissionMode::Ask,
             allowed_actions: vec!["reboot".to_string()],
             denied_actions: vec!["wipe".to_string()],
             max_actions_per_run: 3,
@@ -88,9 +88,15 @@ mod tests {
         assert_eq!(
             seam.evaluate(&input(None, "reboot", 0, 0)),
             PolicyDecision::Deny {
-                code: "autonomy_not_act".into(),
-                message: "autonomy_not_act".into()
+                code: "policy_not_configured".into(),
+                message: "policy_not_configured".into()
             }
+        );
+        let mut readonly = policy();
+        readonly.permission_mode = PermissionMode::ReadOnly;
+        assert_eq!(
+            code(seam.evaluate(&input(Some(&readonly), "reboot", 0, 0))),
+            "action_not_allowed"
         );
         assert_eq!(code(seam.evaluate(&input(Some(&p), "wipe", 0, 0))), "action_denied");
         assert_eq!(

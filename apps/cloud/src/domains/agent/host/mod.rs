@@ -12,7 +12,7 @@
 //
 // host 壳（平铺保留）：
 // thing_agent_host.rs / service.rs / scaffold.rs / pool_adapter.rs
-// heartbeat.rs / ports.rs / reflect.rs / skill.rs / types.rs / autonomous_factory.rs
+// ports.rs / reflect.rs / skill.rs / types.rs / autonomous_factory.rs
 //
 // 每组 mod.rs 头部有三行契约（做什么/谁调用/依赖谁）。注册表关系注记
 // （RunRegistry vs ActiveRunRegistry，eng S1-P3）见 persist/mod.rs。
@@ -32,7 +32,6 @@ pub mod reflect;
 pub mod tools;
 pub mod trigger;
 
-pub mod heartbeat;
 pub mod pool_adapter;
 pub mod scaffold;
 pub mod thing_agent_host;

@@ -10,7 +10,6 @@ use axum::routing::get;
 use axum::{Json, Router};
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
-use tinyiothub_core::policy::AutonomyMode;
 use tinyiothub_storage::alarm::{AlarmLevel, AlarmQueryCriteria, AlarmStatus};
 use tinyiothub_storage::assistant_schedule::AssistantSchedule;
 use tinyiothub_web::security::Claims;
@@ -64,6 +63,8 @@ fn validate_interval(interval_seconds: u32) -> Result<u32, String> {
 pub struct ScheduleDto {
     pub enabled: bool,
     pub interval_seconds: u32,
+    /// Wire value of [`tinyiothub_core::policy::PermissionMode`].
+    pub permission_mode: String,
     pub prompt: String,
     pub next_wake_at: Option<chrono::DateTime<Utc>>,
     pub last_wake_at: Option<chrono::DateTime<Utc>>,
@@ -75,6 +76,7 @@ impl From<&AssistantSchedule> for ScheduleDto {
         Self {
             enabled: schedule.enabled,
             interval_seconds: schedule.interval_seconds,
+            permission_mode: schedule.permission_mode.as_str().to_string(),
             prompt: schedule.prompt.clone(),
             next_wake_at: schedule.next_wake_at,
             last_wake_at: schedule.last_wake_at,
@@ -146,6 +148,7 @@ pub async fn update_schedule(
             Some(interval_seconds),
             request.prompt.as_deref(),
             next_wake_at,
+            None,
         )
         .await
     {
@@ -172,12 +175,7 @@ pub async fn get_hud(
         Ok(schedule) => schedule,
         Err(error) => return internal(error),
     };
-    let autonomy_off = match state.db.load_autonomy_policy(&workspace_id).await {
-        Ok(Some(policy)) => policy.mode == AutonomyMode::Off,
-        Ok(None) => false,
-        Err(error) => return internal(error),
-    };
-    let paused = autonomy_off || !schedule.enabled;
+    let paused = !schedule.enabled;
 
     let total = match state.db.count_things_total(Some(workspace_id.as_str())).await {
         Ok(value) => value,
@@ -270,6 +268,7 @@ mod tests {
         let dto = ScheduleDto {
             enabled: true,
             interval_seconds: 300,
+            permission_mode: "ask".to_string(),
             prompt: String::new(),
             next_wake_at: None,
             last_wake_at: None,

@@ -32,33 +32,9 @@ impl SessionKind {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
-#[serde(rename_all = "snake_case")]
-pub enum PermissionMode {
-    ReadOnly,
-    #[default]
-    Ask,
-    FullAccess,
-}
-
-impl PermissionMode {
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            Self::ReadOnly => "read_only",
-            Self::Ask => "ask",
-            Self::FullAccess => "full_access",
-        }
-    }
-
-    pub fn parse(value: &str) -> Option<Self> {
-        match value {
-            "read_only" => Some(Self::ReadOnly),
-            "ask" => Some(Self::Ask),
-            "full_access" => Some(Self::FullAccess),
-            _ => None,
-        }
-    }
-}
+// 值类型住 core（db/assistant_schedule 也持久化该模式）；此处 re-export
+// 保持会话模块的既有路径 `session::types::PermissionMode` 不变。
+pub use tinyiothub_core::policy::PermissionMode;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]

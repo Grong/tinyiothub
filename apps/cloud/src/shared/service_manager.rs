@@ -286,15 +286,11 @@ impl ServiceManager {
         // 4. Build and start AI subsystem (AgentRuntime 门面，Task 9 启动顺序)
         #[cfg(not(feature = "harmonyos"))]
         {
-            let heartbeat_task_db = app_state.db.clone();
-
             let event_publisher = Arc::new(
                 crate::domains::agent::event::bus::AiEventPublisher::new(app_state.event_bus.clone())
                     .with_drop_notifier(Arc::new(crate::domains::agent::event::bus::LoggingDropNotifier)),
             );
 
-            // 遗留文件任务 → DB 一次性迁移必须先于快照装配，否则迁移落库
-            // 的任务不在 restore 预热的内存真源中（start 会跳过）。
             let ws_ids = match app_state.workspace_service.list_all_ids().await {
                 Ok(ids) => ids,
                 Err(e) => {
@@ -302,18 +298,6 @@ impl ServiceManager {
                     Vec::new()
                 }
             };
-            for ws_id in &ws_ids {
-                let workspace_dir = crate::shared::paths::workspace_dir(ws_id);
-                if let Err(e) = crate::domains::agent::host::heartbeat::migrate_file_tasks_to_db(
-                    heartbeat_task_db.as_ref(),
-                    ws_id,
-                    &workspace_dir,
-                )
-                .await
-                {
-                    warn!(%ws_id, "⚠️ Heartbeat task migration failed: {}", e);
-                }
-            }
 
             // ── Task 9 启动顺序（D11-①③，错序即丢事件）──
             // 1. 从 DB 构造 RestoreSnapshot（活跃 heartbeat 配置/任务 +
@@ -586,15 +570,6 @@ impl ServiceManager {
             app_state.workspace_service.set_event_publisher(Arc::new(
                 crate::shared::ai_adapter::WorkspaceAiPublisherAdapter::new(event_publisher.clone()),
             ));
-            app_state
-                .workspace_service
-                .set_heartbeat_task_db(heartbeat_task_db.clone());
-            // Task 9：runtime 注入 agent hooks —— WorkspaceCreated 种子任务
-            // 在发布事件前同步推入统一循环共享表（D11-⑤：DB 已先写），随后
-            // 的 trigger tick 才能读到任务集。
-            app_state.workspace_service.set_agent_hooks(Arc::new(
-                crate::domains::agent::host::trigger::agent_hooks::AgentHooksImpl::new().with_runtime(runtime.clone()),
-            ));
 
             // T15 退役接线：Metrics 所有权自旧 runner 迁出——MemoryService
             // 的反射统计继续落同一类型实例（由此处持有并注入）。
@@ -629,40 +604,9 @@ impl ServiceManager {
             // manager 内 PipelineDeps 同一实例（克隆共享 DashMap）。
             app_state.set_active_runs(thing_agent_manager.active_run_registry());
 
-            // 启动补种（2026-09-16）：老工作区（早于 WorkspaceCreated 播种
-            // 功能）heartbeat_tasks 为 0，心跳永不 tick（统一循环 trigger
-            // 空任务抑制）——AI 巡检完全空转。0 任务时补种默认任务：先写
-            // DB，再 reload 统一循环共享表，trigger 随即能读到任务集。
+            // 启动补种：legacy heartbeat tasks 已退役（唤醒步骤由 inspection
+            // 技能承接）；只为已有工作区补齐缺失的 inspection 技能。
             for ws_id in &ws_ids {
-                match app_state.db.list_heartbeat_tasks(ws_id).await {
-                    Ok(tasks) if tasks.is_empty() => {
-                        let defaults: Vec<tinyiothub_core::heartbeat::NewHeartbeatTask> =
-                            crate::domains::agent::host::heartbeat::get_default_tasks()
-                                .into_iter()
-                                .map(|t| tinyiothub_core::heartbeat::NewHeartbeatTask {
-                                    priority: t.priority,
-                                    text: t.text,
-                                    paused: t.paused,
-                                })
-                                .collect();
-                        match app_state.db.replace_heartbeat_tasks(ws_id, &defaults).await {
-                            Ok(()) => match app_state.db.list_heartbeat_tasks(ws_id).await {
-                                Ok(seeded) => {
-                                    runtime.reload_heartbeat_tasks(ws_id, seeded);
-                                    info!(%ws_id, "seeded default heartbeat tasks at boot");
-                                }
-                                Err(e) => {
-                                    tracing::warn!(%ws_id, error = %e, "read back seeded heartbeat tasks failed")
-                                }
-                            },
-                            Err(e) => {
-                                tracing::warn!(%ws_id, error = %e, "seed default heartbeat tasks failed")
-                            }
-                        }
-                    }
-                    Ok(_) => {}
-                    Err(e) => tracing::warn!(%ws_id, error = %e, "list heartbeat tasks failed"),
-                }
                 if let Err(error) = crate::domains::agent::session::ensure_inspection_skill(&app_state.db, ws_id).await
                 {
                     tracing::warn!(%ws_id, %error, "seed inspection skill failed");

@@ -774,7 +774,7 @@ mod tests {
     use crate::domains::agent::thing_agent::RunContextInner;
     use crate::domains::thing::service::ThingService;
     use tinyiothub_agent::port::tool::Tool;
-    use tinyiothub_policy::autonomy::{AutonomyMode, AutonomyPolicy};
+    use tinyiothub_policy::autonomy::{AutonomyPolicy, PermissionMode};
 
     use super::*;
     use crate::domains::agent::host::test_utils::seed_test_workspace;
@@ -818,7 +818,7 @@ mod tests {
 
     fn act_policy() -> AutonomyPolicy {
         AutonomyPolicy {
-            mode: AutonomyMode::Act,
+            permission_mode: PermissionMode::Ask,
             allowed_actions: vec!["*".to_string()],
             denied_actions: vec!["wipe_thing".to_string()],
             max_actions_per_run: 3,
@@ -902,14 +902,14 @@ mod tests {
     // ── deny cases (structured, LLM-readable) ──────────────────
 
     #[tokio::test]
-    async fn deny_when_mode_off_returns_structured_denied() {
-        let fx = fixture("ws-off").await;
-        seed_thing(&fx.pool, "ws-off", "dev-1", "device").await;
+    async fn deny_when_read_only_returns_structured_denied() {
+        let fx = fixture("ws-ro").await;
+        seed_thing(&fx.pool, "ws-ro", "dev-1", "device").await;
         register_action(&fx.pool, "dev-1", "reboot").await;
         let mut policy = act_policy();
-        policy.mode = AutonomyMode::Off;
+        policy.permission_mode = PermissionMode::ReadOnly;
         fx.policy_repo
-            .save_autonomy_policy("ws-off", &policy, "test")
+            .save_autonomy_policy("ws-ro", &policy, "test")
             .await
             .unwrap();
 
@@ -920,7 +920,7 @@ mod tests {
         );
         let out = output_json(&result);
         assert_eq!(out["denied"], true);
-        assert_eq!(out["reason"], "autonomy_not_act");
+        assert_eq!(out["reason"], "action_not_allowed");
         assert_eq!(
             agent_event_count(&fx.pool, "dev-1").await,
             0,
@@ -937,7 +937,7 @@ mod tests {
         let result = dispatch(&fx, "dev-1", "reboot").await;
         let out = output_json(&result);
         assert_eq!(out["denied"], true);
-        assert_eq!(out["reason"], "autonomy_not_act");
+        assert_eq!(out["reason"], "policy_not_configured");
     }
 
     /// E2 替换证明：Policy 接缝替换实现走真实工具路径生效（只能收窄）。
@@ -1134,24 +1134,24 @@ mod tests {
             .await
             .unwrap();
 
-        // Act 档:放行。
+        // Ask 档:放行。
         let result = dispatch(&fx, "dev-1", "reboot").await;
         let out = output_json(&result);
-        assert!(out.get("denied").is_none(), "Act mode must allow: {out}");
+        assert!(out.get("denied").is_none(), "Ask mode must allow: {out}");
 
-        // kill switch:同一 DB 行翻成 Off —— 下一次调用立即拒。
-        let mut off = act_policy();
-        off.mode = AutonomyMode::Off;
+        // kill switch:同一 DB 行翻成 ReadOnly —— 下一次调用立即拒。
+        let mut readonly = act_policy();
+        readonly.permission_mode = PermissionMode::ReadOnly;
         fx.policy_repo
-            .save_autonomy_policy("ws-o7", &off, "test")
+            .save_autonomy_policy("ws-o7", &readonly, "test")
             .await
             .unwrap();
         let result = dispatch(&fx, "dev-1", "reboot").await;
         let out = output_json(&result);
         assert_eq!(out["denied"], true);
-        assert_eq!(out["reason"], "autonomy_not_act");
+        assert_eq!(out["reason"], "action_not_allowed");
 
-        // 翻回 Act:立即恢复放行(双向都锁,无快照窗口)。
+        // 翻回 Ask:立即恢复放行(双向都锁,无快照窗口)。
         fx.policy_repo
             .save_autonomy_policy("ws-o7", &act_policy(), "test")
             .await

@@ -675,7 +675,7 @@ mod tests {
 
     fn act_policy() -> tinyiothub_policy::autonomy::AutonomyPolicy {
         tinyiothub_policy::autonomy::AutonomyPolicy {
-            mode: tinyiothub_policy::autonomy::AutonomyMode::Act,
+            permission_mode: tinyiothub_policy::autonomy::PermissionMode::Ask,
             allowed_actions: vec!["*".to_string()],
             denied_actions: vec![],
             max_actions_per_run: 5,

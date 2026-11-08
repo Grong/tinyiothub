@@ -1,8 +1,6 @@
 use std::sync::{Arc, Mutex};
 
-use tinyiothub_core::heartbeat::NewHeartbeatTask;
-
-use crate::domains::tenant::hooks::{AgentHooks, WorkspaceEventPublisher};
+use crate::domains::tenant::hooks::WorkspaceEventPublisher;
 
 use tinyiothub_core::error::Result;
 use tinyiothub_core::models::workspace::ResourceType;
@@ -12,8 +10,6 @@ use tinyiothub_storage::workspace::{ResourceSearchResult, Workspace, WorkspaceRe
 pub struct WorkspaceService {
     db: Arc<Db>,
     event_publisher: Mutex<Option<Arc<dyn WorkspaceEventPublisher>>>,
-    heartbeat_task_db: Mutex<Option<Arc<Db>>>,
-    agent_hooks: Mutex<Option<Arc<dyn AgentHooks>>>,
 }
 
 impl WorkspaceService {
@@ -21,21 +17,11 @@ impl WorkspaceService {
         Self {
             db,
             event_publisher: Mutex::new(None),
-            heartbeat_task_db: Mutex::new(None),
-            agent_hooks: Mutex::new(None),
         }
     }
 
     pub fn set_event_publisher(&self, publisher: Arc<dyn WorkspaceEventPublisher>) {
         *self.event_publisher.lock().unwrap() = Some(publisher);
-    }
-
-    pub fn set_heartbeat_task_db(&self, db: Arc<Db>) {
-        *self.heartbeat_task_db.lock().unwrap() = Some(db);
-    }
-
-    pub fn set_agent_hooks(&self, hooks: Arc<dyn AgentHooks>) {
-        *self.agent_hooks.lock().unwrap() = Some(hooks);
     }
 
     pub async fn list_all_ids(&self) -> Result<Vec<String>> {
@@ -67,15 +53,7 @@ impl WorkspaceService {
             .db
             .create_workspace(tenant_id, name, description, agent_id, agent_config)
             .await?;
-        let seeded = self.seed_default_heartbeat_tasks(&workspace.id).await;
-        // Task 9：种子任务在发布 WorkspaceCreated 之前同步推入 agent
-        // 运行时内存真源 —— 事件经队列异步派发，其 heartbeat start 回调
-        // 读 runner 内存；不先注入则任务集为空、loop 跳过启动。
-        if let Some(tasks) = seeded
-            && let Some(ref hooks) = *self.agent_hooks.lock().unwrap()
-        {
-            hooks.heartbeat_tasks_seeded(&workspace.id, tasks);
-        }
+        // 新工作区不再种 legacy heartbeat tasks；唤醒步骤来自 inspection 技能。
         if let Err(error) = crate::domains::agent::session::ensure_inspection_skill(&self.db, &workspace.id).await {
             tracing::warn!(workspace_id = %workspace.id, %error, "seed inspection skill failed");
         }
@@ -83,39 +61,6 @@ impl WorkspaceService {
             publisher.publish_workspace_created(workspace.id.clone());
         }
         Ok(workspace)
-    }
-
-    /// New workspaces start with the default heartbeat task set. Failure to
-    /// seed must not fail workspace creation — tasks can be added later.
-    /// 成功时返回 DB 回读的全量任务行（供调用方注入 agent 内存真源）。
-    async fn seed_default_heartbeat_tasks(
-        &self,
-        workspace_id: &str,
-    ) -> Option<Vec<tinyiothub_core::heartbeat::HeartbeatTask>> {
-        let db = self.heartbeat_task_db.lock().unwrap().clone();
-        let db = db?;
-        let hooks = self.agent_hooks.lock().unwrap().clone();
-        let hooks = hooks?;
-        let defaults: Vec<NewHeartbeatTask> = hooks
-            .default_heartbeat_tasks()
-            .into_iter()
-            .map(|t| NewHeartbeatTask {
-                priority: t.priority,
-                text: t.text,
-                paused: t.paused,
-            })
-            .collect();
-        if let Err(e) = db.replace_heartbeat_tasks(workspace_id, &defaults).await {
-            tracing::warn!(%workspace_id, "Failed to seed default heartbeat tasks: {}", e);
-            return None;
-        }
-        match db.list_heartbeat_tasks(workspace_id).await {
-            Ok(tasks) => Some(tasks),
-            Err(e) => {
-                tracing::warn!(%workspace_id, "Failed to read back seeded heartbeat tasks: {}", e);
-                None
-            }
-        }
     }
 
     pub async fn update(
@@ -237,38 +182,6 @@ impl WorkspaceService {
 mod tests {
 
     use super::*;
-    use crate::domains::tenant::hooks::HeartbeatTaskDef;
-
-    /// Tenant-local stub of the agent-owned default-task capability — the
-    /// real set lives in the agent domain and must not be named here (G5b).
-    struct StubAgentHooks;
-
-    impl AgentHooks for StubAgentHooks {
-        fn default_heartbeat_tasks(&self) -> Vec<HeartbeatTaskDef> {
-            vec![
-                HeartbeatTaskDef {
-                    priority: "high".into(),
-                    text: "t1".into(),
-                    paused: false,
-                },
-                HeartbeatTaskDef {
-                    priority: "medium".into(),
-                    text: "t2".into(),
-                    paused: false,
-                },
-                HeartbeatTaskDef {
-                    priority: "low".into(),
-                    text: "t3".into(),
-                    paused: true,
-                },
-                HeartbeatTaskDef {
-                    priority: "low".into(),
-                    text: "t4".into(),
-                    paused: true,
-                },
-            ]
-        }
-    }
 
     /// Records published workspace lifecycle events (synchronously, so no
     /// drain/shutdown is needed unlike the real queued publisher).
@@ -317,39 +230,17 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn create_seeds_default_heartbeat_tasks() {
+    async fn create_does_not_seed_legacy_heartbeat_tasks() {
         let (db, _pool) = real_db().await;
-        let service = WorkspaceService::new(db);
-        let hb_pool = sqlx::sqlite::SqlitePoolOptions::new()
-            .max_connections(1)
-            .connect(":memory:")
-            .await
-            .expect("in-memory sqlite");
-        tinyiothub_storage::test_helpers::run_all_migrations(&hb_pool)
-            .await
-            .expect("migrations");
-        let db = Arc::new(tinyiothub_storage::Db::new(hb_pool));
-        service.set_heartbeat_task_db(db.clone());
-        service.set_agent_hooks(Arc::new(StubAgentHooks));
-
+        let service = WorkspaceService::new(db.clone());
         let ws = service
             .create("tenant_1", "ws", None, None, None)
             .await
             .expect("create");
 
+        // Wake steps now live in the inspection skill, not heartbeat_tasks.
         let tasks = db.list_heartbeat_tasks(&ws.id).await.expect("list tasks");
-        assert_eq!(tasks.len(), 4, "new workspace gets the default heartbeat task set");
-        assert!(tasks.iter().any(|t| t.priority == "high" && !t.paused));
-    }
-
-    #[tokio::test]
-    async fn create_without_task_repo_still_succeeds() {
-        let (db, _pool) = real_db().await;
-        let service = WorkspaceService::new(db);
-        service
-            .create("tenant_1", "ws", None, None, None)
-            .await
-            .expect("create");
+        assert!(tasks.is_empty(), "new workspace must not seed legacy tasks");
     }
 
     #[tokio::test]

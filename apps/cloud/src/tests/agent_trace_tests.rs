@@ -212,16 +212,15 @@ async fn judgments_list_carries_run_id() {
     assert_eq!(rows[0]["runId"], "run-j-1", "JudgmentDto 必须带 runId");
 }
 
-/// 心跳执行历史的 trace 透出（investigate 断口修复）：anchor content 含
-/// trace（T9 起落库）→ get_logs 必须透到 HeartbeatLogEntry，不得丢弃。
+/// 心跳执行历史的 trace 透出（investigate 断口修复）：统一内核 run report
+/// 含 trace（T9 起落库）→ get_logs 必须透到 HeartbeatLogEntry，不得丢弃。
 #[tokio::test]
-async fn heartbeat_logs_carry_anchor_trace() {
+async fn heartbeat_logs_carry_run_trace() {
     let (app_state, pool) = setup_test_app_with_pool().await;
     seed_test_workspace(&pool, "tenant-1", "ws-default-001").await;
 
-    let content = serde_json::json!({
-        "taskCount": 2,
-        "result": "巡检完成，温度正常",
+    let report = serde_json::json!({
+        "task_count": 2,
         "trace": [{
             "id": "c1",
             "name": "read_property",
@@ -230,10 +229,12 @@ async fn heartbeat_logs_carry_anchor_trace() {
         }],
     });
     sqlx::query(
-        "INSERT INTO agent_actions (id, workspace_id, agent_id, event_type, action_type, content, tick_id, created_at)
-         VALUES ('hb-trace-1', 'ws-default-001', 'agent1', 'heartbeat', 'summary', ?, 'tick-1', '2026-10-12 10:00:00')",
+        "INSERT INTO agent_runs
+             (id, workspace_id, trigger_type, trigger_context, outcome, summary, report, created_at)
+         VALUES ('hb-trace-1', 'ws-default-001', 'heartbeat', 'heartbeat:ws-default-001',
+                 'acted', '巡检完成，温度正常', ?, '2026-10-12 10:00:00')",
     )
-    .bind(content.to_string())
+    .bind(report.to_string())
     .execute(&pool)
     .await
     .unwrap();
