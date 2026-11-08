@@ -540,7 +540,7 @@ mod tests {
         .expect("test AgentPool");
         let session_runtime = Arc::new(crate::domains::agent::session::SessionRuntime::new(
             Arc::new(tinyiothub_storage::Db::new(db.clone())),
-            Arc::new(crate::domains::agent::runtime::harness_stream::HarnessStreamHub::default()),
+            Arc::new(crate::domains::agent::runtime::session_stream::SessionStreamHub::default()),
         ));
         let err = send_with_pool(
             &pool,

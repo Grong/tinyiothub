@@ -439,7 +439,7 @@ pub async fn runtime_metrics(
     let db_query_ms = started.elapsed().as_millis() as u64;
     // The routed Harness SSE owns the live counters; the legacy recorder hub
     // no longer has a connection path (Task 19C4 L1).
-    let stream = state.harness_stream.metrics();
+    let stream = state.session_stream.metrics();
     let mut system = sysinfo::System::new_all();
     system.refresh_memory();
     let rss_bytes = system

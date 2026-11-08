@@ -37,7 +37,7 @@ async fn decide(
         Ok(outcome) => outcome,
         Err(error) => return harness_approval_error(error),
     };
-    state.harness_stream.notify(&workspace_id);
+    state.session_stream.notify(&workspace_id);
     // An approval answer is the fact that can unblock a Prepared Effect. Run
     // the bounded workspace dispatch pass now so the answer is not waiting for
     // the recovery interval. The continuation wake is owned by the answer
@@ -145,7 +145,7 @@ pub async fn reconcile_effect(
         .await
     {
         Ok(()) => {
-            state.harness_stream.notify(&workspace_id);
+            state.session_stream.notify(&workspace_id);
             ApiResponseBuilder::success(json!({"accepted": true})).into_response()
         }
         Err(error) => error_response(StatusCode::CONFLICT, error),
@@ -168,7 +168,7 @@ mod tests {
     use tower::ServiceExt;
 
     use crate::domains::agent::runtime::dispatch::EffectDispatch;
-    use crate::domains::agent::runtime::harness_stream::HarnessStreamHub;
+    use crate::domains::agent::runtime::session_stream::SessionStreamHub;
     use crate::test_utils::{
         auth_header, create_test_token, response_parts, seed_test_workspace, test_app_state_on_pool,
     };
@@ -751,7 +751,7 @@ mod tests {
             fallback.args_json
         );
 
-        let hub = Arc::new(HarnessStreamHub::default());
+        let hub = Arc::new(SessionStreamHub::default());
         let mut connection = hub
             .connect(fixture.db.clone(), WS, "task-secret", None)
             .await

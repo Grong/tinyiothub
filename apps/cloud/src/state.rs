@@ -105,7 +105,7 @@ pub struct AppState {
     /// Durable Task runtime stream hub.
     pub runtime_stream: Arc<crate::domains::agent::runtime::stream::RuntimeStreamHub>,
     /// Workspace-Harness Task SSE tail (Task 19B cutover).
-    pub harness_stream: Arc<crate::domains::agent::runtime::harness_stream::HarnessStreamHub>,
+    pub session_stream: Arc<crate::domains::agent::runtime::session_stream::SessionStreamHub>,
     /// Production Harness Effect dispatcher (Task 19C1).
     pub effect_dispatch: Option<Arc<crate::domains::agent::runtime::dispatch::EffectDispatch>>,
     /// Shared runtime event recorder for Task/Run/Job/watch facts.
@@ -298,7 +298,7 @@ impl AppState {
         // 创建事件总线
         let event_bus = Arc::new(EventBus::new());
         let runtime_stream = Arc::new(crate::domains::agent::runtime::stream::RuntimeStreamHub::default());
-        let harness_stream = Arc::new(crate::domains::agent::runtime::harness_stream::HarnessStreamHub::default());
+        let session_stream = Arc::new(crate::domains::agent::runtime::session_stream::SessionStreamHub::default());
         let runtime_recorder =
             crate::domains::agent::runtime::stream::RuntimeRecorder::new(database.clone(), runtime_stream.clone());
 
@@ -402,7 +402,7 @@ impl AppState {
 
         let session_runtime = Arc::new(crate::domains::agent::session::SessionRuntime::new(
             database.clone(),
-            harness_stream.clone(),
+            session_stream.clone(),
         ));
 
         alarm_service.set_device_cache(device_cache.clone());
@@ -567,7 +567,7 @@ impl AppState {
             redis,
             event_bus,
             runtime_stream,
-            harness_stream,
+            session_stream,
             effect_dispatch: None,
             runtime_recorder,
             sse_manager,
@@ -1105,7 +1105,7 @@ impl axum::extract::FromRef<AppState> for crate::domains::agent::AgentState {
             data_server: state.data_server.clone(),
             event_bus: state.event_bus.clone(),
             runtime_stream: state.runtime_stream.clone(),
-            harness_stream: state.harness_stream.clone(),
+            session_stream: state.session_stream.clone(),
             effect_dispatch: state.effect_dispatch.clone(),
             runtime_recorder: state.runtime_recorder.clone(),
             session_runtime: state.session_runtime.clone(),

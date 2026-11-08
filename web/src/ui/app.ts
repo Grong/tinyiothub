@@ -343,7 +343,7 @@ export class TinyIoTHubApp extends LitElement {
   }
 
   handleRoute() {
-    // Canonical Harness hash routes own Workflow, Task list/new/detail and overview.
+    // Canonical Harness hash routes own the overview, Task list/new/detail.
     const harnessRoute = parseHarnessHash(window.location.hash);
     if (harnessRoute) {
       if (!this.isAuthenticated) {
@@ -570,7 +570,7 @@ export class TinyIoTHubApp extends LitElement {
       workspace: 'AI 驱动的可视化分析与 3D 场景画布',
       heartbeat: 'AI 自主巡检 — 自动发现物异常，智能分析并执行恢复操作',
       'ai-ops': 'AI 自主运维 — 审批、历史、信任配置与知识管理',
-      harness: '例外优先的 Workflow、调度与 Main/Subagent 工作台',
+      harness: '例外优先的 Main/Subagent 工作台',
       runtime: '当前与最近的 Harness 任务',
       'runtime-new': '创建一个持续 Runtime 任务',
       'runtime-task': 'Task 时间线、设备事实与就地控制',

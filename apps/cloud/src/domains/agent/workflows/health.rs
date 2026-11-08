@@ -7,12 +7,14 @@
 //! detect a real rollback. Normal ticks never append permanent events — only
 //! `stalled`/`recovered` transitions do.
 
+use std::str::FromStr;
 use std::time::{Duration, Instant};
 
 use chrono::{DateTime, Utc};
+use cron::Schedule;
 use serde::Serialize;
 use sha2::Digest;
-use tinyiothub_core::harness::{ExecutionMode, HarnessEventInput, WorkflowTrigger};
+use tinyiothub_core::harness::{ExecutionMode, HarnessEventInput, WorkflowDefinition, WorkflowTrigger};
 use tinyiothub_storage::Db;
 use tinyiothub_storage::error::DbError;
 use tinyiothub_storage::harness_supervisor::{
@@ -21,7 +23,22 @@ use tinyiothub_storage::harness_supervisor::{
 
 pub use tinyiothub_storage::harness_supervisor::DeadWakeRetryOutcome as RetryOutcome;
 
-use super::next_wake_at;
+/// Cron-backed definitions expose their next planned wake. Watch/event
+/// triggers are not time based, so they have no planned timestamp.
+fn next_wake_at(definition: &WorkflowDefinition, now: DateTime<Utc>) -> Option<DateTime<Utc>> {
+    let WorkflowTrigger::Cron { expression, .. } = &definition.trigger else {
+        return None;
+    };
+    Schedule::from_str(&normalize_cron(expression)).ok()?.after(&now).next()
+}
+
+fn normalize_cron(expression: &str) -> String {
+    if expression.split_whitespace().count() == 5 {
+        format!("0 {expression}")
+    } else {
+        expression.to_string()
+    }
+}
 
 /// A tick that starts and does not finish within this window is stalled.
 pub const DEFAULT_TICK_DEADLINE: Duration = Duration::from_secs(30);

@@ -6,11 +6,10 @@ import type {
   HarnessMainTaskSummary,
   HarnessOverview,
   HarnessSubagentSummary,
-  HarnessWorkflowSummary,
 } from '../../types/harness.js';
 import './harness-overview.js';
 import type { HarnessOverviewView } from './harness-overview.js';
-import { parseHarnessHash, type HarnessRoute } from './harness-url-state.js';
+import { parseHarnessHash } from './harness-url-state.js';
 
 vi.mock('../../api/harness.js', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../../api/harness.js')>();
@@ -18,10 +17,6 @@ vi.mock('../../api/harness.js', async (importOriginal) => {
     ...actual,
     getHarnessOverview: vi.fn(),
     listHarnessSubagents: vi.fn(),
-    getHarnessWorkflow: vi.fn().mockResolvedValue({ code: 0, msg: '', result: null }),
-    listHarnessWorkflowTemplates: vi
-      .fn()
-      .mockResolvedValue({ code: 0, msg: '', result: { templates: [] } }),
   };
 });
 
@@ -40,19 +35,6 @@ function attention(id: string): HarnessAttentionItem {
     runId: `run:${id}`,
     eventId: `event:${id}`,
     actionLabel: '查看并处理',
-  };
-}
-
-function workflow(id: string, enabled = true): HarnessWorkflowSummary {
-  return {
-    workflowId: id,
-    objective: `工作流 ${id}`,
-    enabled,
-    version: 2,
-    triggerLabel: enabled ? '每 5 分钟' : '已暂停',
-    nextRunAt: enabled ? '2026-11-03T10:05:00Z' : null,
-    lastResult: '上一次运行正常',
-    updatedAt: '2026-11-03T09:55:00Z',
   };
 }
 
@@ -87,7 +69,6 @@ function main(
 function overview(overrides: Partial<HarnessOverview> = {}): HarnessOverview {
   return {
     attention: { items: [attention('1')], total: 1, limit: 5, offset: 0 },
-    workflows: [workflow('wf:1')],
     coordination: [main([subagent('child:1')], 1)],
     ...overrides,
   };
@@ -106,13 +87,12 @@ async function settle(): Promise<void> {
 
 async function mount(
   result: HarnessOverview = overview(),
-  options: { anchor?: string; route?: HarnessRoute } = {},
+  options: { anchor?: string } = {},
 ): Promise<void> {
   overviewApi.mockResolvedValue(response(result));
   view = document.createElement('view-harness-overview') as HarnessOverviewView;
   view.workspaceId = 'ws_1';
   view.anchor = options.anchor ?? null;
-  view.route = options.route ?? null;
   document.body.append(view);
   await settle();
 }
@@ -129,16 +109,16 @@ afterEach(() => {
 });
 
 describe('Harness exception-first overview', () => {
-  it('orders 需要处理 → Workflow 与调度 → 当前 Main/Subagent', async () => {
+  it('orders 需要处理 → 当前 Main/Subagent', async () => {
     await mount();
 
     const sections = [...view.querySelectorAll<HTMLElement>('[data-harness-section]')].map(
       (section) => section.dataset.harnessSection,
     );
-    expect(sections).toEqual(['attention', 'workflows', 'coordination']);
+    expect(sections).toEqual(['attention', 'coordination']);
 
     const headings = [...view.querySelectorAll('h2')].map((heading) => heading.textContent?.trim());
-    expect(headings).toEqual(['需要处理', 'Workflow 与调度', '当前 Main / Subagent']);
+    expect(headings).toEqual(['需要处理', '当前 Main / Subagent']);
     expect(view.textContent).toContain('结果未知');
   });
 
@@ -155,52 +135,18 @@ describe('Harness exception-first overview', () => {
     expect(view.textContent).not.toContain('已停止');
   });
 
-  it('has exactly one page-level primary action: 从模板新建', async () => {
+  it('offers the Supervisor and compaction entry points', async () => {
     await mount();
 
-    const primary = [...view.querySelectorAll<HTMLElement>('.btn--primary')];
-    expect(primary).toHaveLength(1);
-    expect(primary[0].textContent?.trim()).toBe('从模板新建');
-    expect(primary[0].getAttribute('href')).toBe('#/harness/workflows/templates');
     expect(
-      view.querySelector<HTMLAnchorElement>('.harness-overview__actions a[href="#/harness/workflows/new"]'),
+      view.querySelector<HTMLAnchorElement>('.harness-overview__actions a[href="#/harness/supervisor"]'),
+    ).not.toBeNull();
+    expect(
+      view.querySelector<HTMLAnchorElement>('.harness-overview__actions a[href="#/harness/compaction"]'),
     ).not.toBeNull();
 
     const h1 = view.querySelector('h1');
     expect(h1?.textContent).toContain('Harness');
-  });
-
-  it('routes the template-first journey to the templates view', async () => {
-    await mount(overview(), { route: { name: 'templates' } });
-
-    const templates = view.querySelector('view-harness-templates') as
-      | (HTMLElement & { workspaceId: string })
-      | null;
-    expect(templates).not.toBeNull();
-    expect(templates?.workspaceId).toBe('ws_1');
-    expect(view.querySelector('.harness-overview')).toBeNull();
-  });
-
-  it('routes workflow creation and editing to the shared editor', async () => {
-    await mount(overview(), {
-      route: { name: 'workflows', workflowId: null, creating: true, version: null },
-    });
-
-    const editor = view.querySelector('view-harness-workflow-edit') as
-      | (HTMLElement & { workflowId: string })
-      | null;
-    expect(editor).not.toBeNull();
-    expect(editor?.workflowId).toBe('');
-    expect(view.querySelector('.harness-overview')).toBeNull();
-
-    view.remove();
-    await mount(overview(), {
-      route: { name: 'workflows', workflowId: 'wf:1', creating: false, version: null },
-    });
-    const existing = view.querySelector('view-harness-workflow-edit') as
-      | (HTMLElement & { workflowId: string })
-      | null;
-    expect(existing?.workflowId).toBe('wf:1');
   });
 
   it('expands and scrolls the anchored Main when returning from a child Task', async () => {
@@ -355,17 +301,6 @@ describe('Harness exception-first overview', () => {
     expect(view.querySelectorAll('.harness-attention__item')).toHaveLength(2);
   });
 
-  it('shows workflows and scheduling without KPI cards', async () => {
-    await mount();
-
-    const workflows = view.querySelector('[data-harness-section="workflows"]')!;
-    expect(workflows.textContent).toContain('工作流 wf:1');
-    expect(workflows.textContent).toContain('已启用');
-    expect(workflows.textContent).toContain('每 5 分钟');
-    expect(workflows.textContent).toContain('下一次：');
-    expect(view.querySelector('.harness-kpi')).toBeNull();
-  });
-
   it('expands a Main into isolated Subagent rows with status, wait reason and recent result', async () => {
     await mount();
     expect(view.querySelectorAll('.harness-subagent')).toHaveLength(0);
@@ -434,32 +369,18 @@ describe('Harness exception-first overview', () => {
     expect(view.querySelector('[role="alert"]')?.textContent).toContain('接口未提供');
     expect(view.textContent).toContain('无法加载，请重试');
     expect(view.textContent).not.toContain('显示上次结果');
-    expect(view.textContent).not.toContain('尚未配置 Workflow');
     expect(view.querySelectorAll('[data-harness-section]')).toHaveLength(0);
   });
 
-  it('shows Chinese empty states, the template-first action and a visible error state', async () => {
+  it('shows Chinese empty states and a visible error state', async () => {
     await mount(
       overview({
         attention: { items: [], total: 0, limit: 5, offset: 0 },
-        workflows: [],
         coordination: [],
       }),
     );
     expect(view.textContent).toContain('当前没有需要处理的事项');
-    expect(view.textContent).toContain('尚未配置 Workflow');
     expect(view.textContent).toContain('当前没有 Main 任务');
-    const primaries = [...view.querySelectorAll<HTMLElement>('.btn--primary')];
-    expect(primaries).toHaveLength(1);
-    expect(primaries[0].textContent?.trim()).toBe('从模板新建');
-    const emptyActions = view.querySelector<HTMLElement>('.harness-empty__actions');
-    expect(emptyActions?.querySelector('.btn--primary')?.textContent?.trim()).toBe('从模板新建');
-    expect(
-      emptyActions?.querySelector<HTMLAnchorElement>('a[href="#/harness/workflows/templates"]'),
-    ).not.toBeNull();
-    expect(
-      emptyActions?.querySelector<HTMLAnchorElement>('a[href="#/harness/workflows/new"]'),
-    ).not.toBeNull();
 
     overviewApi.mockRejectedValueOnce(new ApiError(503, '服务暂不可用'));
     view.querySelector<HTMLButtonElement>('.harness-overview__retry')!.click();

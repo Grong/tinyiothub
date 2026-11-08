@@ -1502,8 +1502,6 @@ impl SubagentExecutor for EvalOutcomeExecutor {
 
 #[tokio::test]
 async fn scripted_eval_task_outcome_schema_and_evidence_refs() {
-    use tinyiothub_cloud::domains::agent::workflows::SubagentRunner;
-
     let scenario = harness_eval_scenario("task-outcome-schema");
     assert_eq!(scenario.kind, "task_outcome");
     let outcome = TaskOutcome {
@@ -1513,11 +1511,11 @@ async fn scripted_eval_task_outcome_schema_and_evidence_refs() {
         evidence_refs: scenario.expected.evidence_refs.clone(),
         recommended_actions: vec![],
     };
-    let runner = SubagentRunner::new(Arc::new(EvalOutcomeExecutor {
+    let runner = EvalOutcomeExecutor {
         outcome: outcome.clone(),
-    }));
+    };
     let returned = runner
-        .run(tinyiothub_agent::harness::SubagentInput {
+        .execute(tinyiothub_agent::harness::SubagentInput {
             session_id: "caller-must-not-win".into(),
             task_id: "task-outcome-eval".into(),
             run_id: "run-outcome-eval".into(),

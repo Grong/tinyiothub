@@ -3,11 +3,6 @@
  *
  * Canonical:
  *   #/harness
- *   #/harness/workflows
- *   #/harness/workflows/templates
- *   #/harness/workflows/{workflow_id}
- *   #/harness/workflows/{workflow_id}/dry-run?version=…&snapshot=…&task=…
- *   #/harness/workflows/new
  *   #/harness/supervisor
  *   #/harness/compaction
  *   #/harness/tasks
@@ -15,7 +10,9 @@
  *   #/harness/tasks/{task_id}?view=flow&device=…&at=…&event=…&from=…
  *
  * Old #/runtime list/new/task links are redirected once by the app router and
- * keep the encoded Task ID and replay/device query unchanged.
+ * keep the encoded Task ID and replay/device query unchanged. Retired
+ * #/harness/workflows… links fall back to the overview instead of breaking a
+ * stale bookmark.
  */
 
 import {
@@ -29,21 +26,6 @@ import {
 
 export type HarnessRoute =
   | { name: 'overview'; anchor?: string }
-  | {
-      name: 'workflows';
-      workflowId: string | null;
-      creating: boolean;
-      /** Fixed historical revision detail; null means the current revision. */
-      version: number | null;
-    }
-  | {
-      name: 'dry-run';
-      workflowId: string;
-      version: number;
-      snapshotSeq: number | null;
-      taskId: string | null;
-    }
-  | { name: 'templates' }
   | { name: 'supervisor' }
   | { name: 'compaction' }
   | { name: 'tasks' }
@@ -60,28 +42,6 @@ export type HarnessRoute =
 export interface HarnessTaskUrlState extends RuntimeTaskUrlState {
   /** Safe in-app parent location, e.g. `#/harness#main-task:1`. */
   from?: string | null;
-}
-
-function positiveInteger(value: string | null): number | null {
-  if (!value || !/^[1-9][0-9]*$/.test(value)) return null;
-  const parsed = Number(value);
-  return Number.isSafeInteger(parsed) ? parsed : null;
-}
-
-/**
- * A fixed-revision simulation page. `version` is mandatory so a dry-run can
- * never follow the current revision implicitly; the snapshot and result Task
- * are carried once chosen.
- */
-export function toHarnessDryRunUrl(
-  workflowId: string,
-  version: number,
-  state: { snapshotSeq?: number | null; taskId?: string | null } = {},
-): string {
-  const params = new URLSearchParams({ version: String(version) });
-  if (state.snapshotSeq != null) params.set('snapshot', String(state.snapshotSeq));
-  if (state.taskId) params.set('task', state.taskId);
-  return `#/harness/workflows/${encodeURIComponent(workflowId)}/dry-run?${params.toString()}`;
 }
 
 /** Only in-app Harness locations are valid return paths (no javascript: URLs). */
@@ -101,43 +61,16 @@ export function parseHarnessHash(hash: string): HarnessRoute | null {
   }
   if (path === '#/harness/tasks') return { name: 'tasks' };
   if (path === '#/harness/tasks/new') return { name: 'new' };
-  if (path === '#/harness/workflows') {
-    return { name: 'workflows', workflowId: null, creating: false, version: null };
-  }
-  if (path === '#/harness/workflows/templates') {
-    return { name: 'templates' };
+  // The Workflow experiment was retired. Any stale workflow/template/dry-run
+  // hash lands on the overview rather than rendering a broken route.
+  if (path === '#/harness/workflows' || path.startsWith('#/harness/workflows/')) {
+    return { name: 'overview' };
   }
   if (path === '#/harness/supervisor') {
     return { name: 'supervisor' };
   }
   if (path === '#/harness/compaction') {
     return { name: 'compaction' };
-  }
-
-  const dryRunMatch = path.match(/^#\/harness\/workflows\/([^/]+)\/dry-run$/);
-  if (dryRunMatch) {
-    const workflowId = decodeHashId(dryRunMatch[1]);
-    const version = positiveInteger(params.get('version'));
-    if (!workflowId || version === null) return null;
-    const snapshot = params.get('snapshot');
-    const snapshotSeq = snapshot === null ? null : positiveInteger(snapshot);
-    if (snapshot !== null && snapshotSeq === null) return null;
-    const taskParam = params.get('task');
-    const taskId = taskParam === null ? null : decodeHashId(taskParam);
-    if (taskParam !== null && !taskId) return null;
-    return { name: 'dry-run', workflowId, version, snapshotSeq, taskId };
-  }
-
-  const workflowMatch = path.match(/^#\/harness\/workflows\/([^/]+)$/);
-  if (workflowMatch) {
-    if (workflowMatch[1] === 'new') {
-      return { name: 'workflows', workflowId: null, creating: true, version: null };
-    }
-    const workflowId = decodeHashId(workflowMatch[1]);
-    const versionParam = params.get('version');
-    const version = versionParam === null ? null : positiveInteger(versionParam);
-    if (versionParam !== null && version === null) return null;
-    return workflowId ? { name: 'workflows', workflowId, creating: false, version } : null;
   }
 
   const taskMatch = path.match(/^#\/harness\/tasks\/([^/]+)$/);

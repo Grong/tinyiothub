@@ -7,7 +7,6 @@ import type {
   HarnessMainTaskSummary,
   HarnessOverview,
   HarnessSubagentSummary,
-  HarnessWorkflowSummary,
 } from '../../types/harness.js';
 import { toHarnessTaskUrl, type HarnessRoute } from './harness-url-state.js';
 import {
@@ -15,9 +14,6 @@ import {
   nextAnnouncement,
   renderHarnessStatus,
 } from './harness-status.js';
-import './harness-workflow-edit.js';
-import './harness-templates.js';
-import './harness-dry-run.js';
 import './harness-supervisor.js';
 import './harness-compaction.js';
 import './harness-overview.css';
@@ -84,12 +80,7 @@ export class HarnessOverviewView extends LitElement {
 
   connectedCallback(): void {
     super.connectedCallback();
-    if (
-      this.route?.name === 'workflows' ||
-      this.route?.name === 'dry-run' ||
-      this.route?.name === 'supervisor' ||
-      this.route?.name === 'compaction'
-    ) {
+    if (this.route?.name === 'supervisor' || this.route?.name === 'compaction') {
       this.connection = 'online';
       return;
     }
@@ -117,31 +108,16 @@ export class HarnessOverviewView extends LitElement {
   }
 
   willUpdate(changed: PropertyValues<this>): void {
-    if (changed.has('route')) {
-      const previous = changed.get('route');
-      if (previous?.name === 'workflows' && this.route?.name !== 'workflows' && !this.overview) {
-        void this.load(this.attentionOffset);
-      }
-    }
     if (!changed.has('workspaceId')) return;
     const previous = changed.get('workspaceId');
-    if (
-      previous !== undefined &&
-      previous !== '' &&
-      this.workspaceId !== this.loadedWorkspace &&
-      this.route?.name !== 'workflows'
-    ) {
+    if (previous !== undefined && previous !== '' && this.workspaceId !== this.loadedWorkspace) {
       this.attentionOffset = 0;
       void this.load(0);
     }
   }
 
   private async load(offset: number): Promise<void> {
-    if (
-      this.route?.name === 'workflows' ||
-      this.route?.name === 'supervisor' ||
-      this.route?.name === 'compaction'
-    ) {
+    if (this.route?.name === 'supervisor' || this.route?.name === 'compaction') {
       this.connection = 'online';
       return;
     }
@@ -376,92 +352,6 @@ export class HarnessOverviewView extends LitElement {
     `;
   }
 
-  private renderWorkflowRow(workflow: HarnessWorkflowSummary) {
-    return html`
-      <tr class="harness-workflow" role="row" data-workflow-id=${workflow.workflowId}>
-        <th scope="row" role="rowheader">工作流 ${workflow.objective}</th>
-        <td role="cell">
-          <span class="harness-workflow-table__field">启停：</span>
-          ${renderHarnessStatus(workflow.enabled ? 'enabled' : 'disabled')}
-        </td>
-        <td role="cell">
-          <span class="harness-workflow-table__field">触发：</span>${workflow.triggerLabel}
-        </td>
-        <td role="cell">
-          <span class="harness-workflow-table__field">下一次：</span>
-          ${workflow.enabled ? formatHarnessTime(workflow.nextRunAt) : '未计划'}
-        </td>
-        <td role="cell">
-          <span class="harness-workflow-table__field">最近结果：</span>${workflow.lastResult ?? '暂无'}
-        </td>
-        <td role="cell">
-          <span class="harness-workflow-table__field">版本：</span>${workflow.version}
-        </td>
-        <td role="cell">
-          <span class="harness-workflow-table__field">操作：</span>
-          <a
-            class="harness-workflow__action"
-            href=${`#/harness/workflows/${encodeURIComponent(workflow.workflowId)}`}
-            >编辑</a
-          >
-        </td>
-      </tr>
-    `;
-  }
-
-  private renderWorkflows() {
-    const workflows = this.overview?.workflows ?? [];
-    return html`
-      <section
-        class="harness-section harness-workflows"
-        data-harness-section="workflows"
-        aria-labelledby="harness-workflows-title"
-      >
-        <div class="harness-section__header">
-          <div>
-            <h2 id="harness-workflows-title">Workflow 与调度</h2>
-            <p class="harness-section__summary">
-              已启用 ${workflows.filter((workflow) => workflow.enabled).length} 个，共
-              ${workflows.length} 个。
-            </p>
-          </div>
-        </div>
-        ${
-          workflows.length === 0
-            ? html`<div class="harness-empty">
-                <p>
-                  尚未配置 Workflow。持续 Workflow 会按声明自动调度 Agent 并留下证据；
-                  从模板开始只需选择设备、数据源与策略。
-                </p>
-                <div class="harness-empty__actions">
-                  <a class="btn btn--primary" href="#/harness/workflows/templates">从模板新建</a>
-                  <a class="btn" href="#/harness/workflows/new">空白新建</a>
-                </div>
-              </div>`
-            : html`<div class="harness-workflow__scroll">
-                <table class="harness-workflow-table" role="table">
-                  <caption class="harness-sr-only">当前 Workflow 配置与调度状态</caption>
-                  <thead role="rowgroup">
-                    <tr role="row">
-                      <th scope="col" role="columnheader">目标</th>
-                      <th scope="col" role="columnheader">启停</th>
-                      <th scope="col" role="columnheader">触发</th>
-                      <th scope="col" role="columnheader">下一次</th>
-                      <th scope="col" role="columnheader">最近结果</th>
-                      <th scope="col" role="columnheader">版本</th>
-                      <th scope="col" role="columnheader">操作</th>
-                    </tr>
-                  </thead>
-                  <tbody role="rowgroup">
-                    ${workflows.map((workflow) => this.renderWorkflowRow(workflow))}
-                  </tbody>
-                </table>
-              </div>`
-        }
-      </section>
-    `;
-  }
-
   private renderSubagent(main: HarnessMainTaskSummary, child: HarnessSubagentSummary) {
     return html`
       <li class="harness-subagent" data-task-id=${child.taskId}>
@@ -585,18 +475,6 @@ export class HarnessOverviewView extends LitElement {
   }
 
   render() {
-    if (this.route?.name === 'workflows') {
-      return html`<view-harness-workflow-edit
-        .workspaceId=${this.workspaceId}
-        .workflowId=${this.route.workflowId ?? ''}
-        .fixedVersion=${this.route.version ?? 0}
-      ></view-harness-workflow-edit>`;
-    }
-    if (this.route?.name === 'templates') {
-      return html`<view-harness-templates
-        .workspaceId=${this.workspaceId}
-      ></view-harness-templates>`;
-    }
     if (this.route?.name === 'supervisor') {
       return html`<view-harness-supervisor
         .workspaceId=${this.workspaceId}
@@ -607,24 +485,12 @@ export class HarnessOverviewView extends LitElement {
         .workspaceId=${this.workspaceId}
       ></view-harness-compaction>`;
     }
-    if (this.route?.name === 'dry-run') {
-      return html`<view-harness-dry-run
-        .workspaceId=${this.workspaceId}
-        .workflowId=${this.route.workflowId}
-        .version=${this.route.version}
-        .snapshotSeq=${this.route.snapshotSeq}
-        .taskId=${this.route.taskId ?? ''}
-      ></view-harness-dry-run>`;
-    }
-    // DR10 keeps exactly one primary CTA per view: the empty state owns
-    // "从模板新建"; once Workflows exist the header owns it instead.
-    const hasWorkflows = (this.overview?.workflows.length ?? 0) > 0;
     return html`
       <section class="harness-overview" aria-labelledby="harness-overview-title">
         <header class="harness-overview__header">
           <div class="harness-overview__intro">
             <h1 id="harness-overview-title">Harness 工作台</h1>
-            <p>例外优先：先处理需要你确认的事项，再查看计划任务与当前协调。</p>
+            <p>例外优先：先处理需要你确认的事项，再查看当前协调。</p>
           </div>
           <div class="harness-overview__actions">
             <a class="btn harness-overview__supervisor" href="#/harness/supervisor"
@@ -634,16 +500,6 @@ export class HarnessOverviewView extends LitElement {
             <button type="button" class="btn harness-overview__retry" @click=${() => this.retry()}>
               刷新
             </button>
-            ${
-              hasWorkflows
-                ? html`<a
-                    class="btn btn--primary harness-overview__primary"
-                    href="#/harness/workflows/templates"
-                    >从模板新建</a
-                  >`
-                : nothing
-            }
-            <a class="btn" href="#/harness/workflows/new">空白新建</a>
           </div>
         </header>
         ${this.renderStatus()}
@@ -658,7 +514,7 @@ export class HarnessOverviewView extends LitElement {
         ${
           this.overview
             ? html`<div class="harness-overview__sections">
-                ${this.renderAttention()} ${this.renderWorkflows()} ${this.renderCoordination()}
+                ${this.renderAttention()} ${this.renderCoordination()}
               </div>`
             : nothing
         }

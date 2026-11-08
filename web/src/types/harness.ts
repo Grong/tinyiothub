@@ -80,18 +80,6 @@ export interface HarnessAttentionPage {
   offset: number;
 }
 
-/** Current Workflow revision summary; the editor consumes the full definition in Task 11B. */
-export interface HarnessWorkflowSummary {
-  workflowId: string;
-  objective: string;
-  enabled: boolean;
-  version: number;
-  triggerLabel: string;
-  nextRunAt: string | null;
-  lastResult: string | null;
-  updatedAt: string | null;
-}
-
 /** Workspace Harness statuses extend the platform Runtime TaskStatus union. */
 export type HarnessTaskStatus =
   | TaskStatus
@@ -127,7 +115,6 @@ export interface HarnessMainTaskSummary {
 /** Exception-first overview aggregate for one workspace. */
 export interface HarnessOverview {
   attention: HarnessAttentionPage;
-  workflows: HarnessWorkflowSummary[];
   coordination: HarnessMainTaskSummary[];
 }
 
@@ -136,91 +123,6 @@ export interface HarnessSubagentPage {
   total: number;
   limit: number;
   offset: number;
-}
-
-/** Declarative trigger. `cron` carries the expression; watch/event only an id. */
-export type WorkflowTrigger =
-  | { type: 'cron'; triggerId: string; expression: string }
-  | { type: 'watch'; triggerId: string }
-  | { type: 'event'; triggerId: string };
-
-/**
- * Versioned Workflow declaration. Selectors and policies stay opaque JSON so
- * the editor can round-trip fields the UI does not interpret yet.
- */
-export interface WorkflowDefinition {
-  objective: string;
-  trigger: WorkflowTrigger;
-  deviceSelector: unknown;
-  sourceSelector: unknown;
-  toolIds: string[];
-  skillRefs: string[];
-  requiredCapabilities: string[];
-  approvalPolicy: unknown;
-  evidencePolicy: unknown;
-}
-
-export interface WorkflowRevision {
-  workflowId: string;
-  version: number;
-  enabled: boolean;
-  definition: WorkflowDefinition;
-  createdAt: string;
-  /** Next planned cron wake; null for disabled/watch/event workflows. */
-  nextWakeAt?: string | null;
-}
-
-/** One versioned built-in template (X1). */
-export interface HarnessWorkflowTemplate {
-  id: string;
-  version: number;
-  title: string;
-  description: string;
-  definition: WorkflowDefinition;
-}
-
-export interface HarnessWorkflowTemplateList {
-  templates: HarnessWorkflowTemplate[];
-}
-
-/**
- * Instantiation parameters. Selectors replace the template defaults and the
- * approval policy may only tighten the template's mandatory policy.
- */
-export interface HarnessWorkflowTemplateInput {
-  workflowId: string;
-  deviceSelector: unknown;
-  sourceSelector: unknown;
-  approvalPolicy: unknown;
-}
-
-/**
- * Error shape accepted by the editor's field mapper. `ApiError` satisfies it;
- * keeping this structural avoids coupling the types module to the API client.
- */
-export interface HarnessApiError extends Error {
-  code: number;
-  data?: unknown;
-}
-
-/** One historical stamped snapshot selectable for an isolated dry-run. */
-export interface HarnessWorkflowSnapshot {
-  seq: number;
-  observedAt: string;
-  declarationHash: string;
-  driverVersion: string;
-}
-
-export interface HarnessWorkflowSnapshotList {
-  workflowId: string;
-  version: number;
-  snapshots: HarnessWorkflowSnapshot[];
-}
-
-/** Isolated simulation Task/Run pair; never a production Run. */
-export interface HarnessDryRunResult {
-  taskId: string;
-  runId: string;
 }
 
 /** Scheduler health status. `idle` is normal, never a stalled alias. */
@@ -271,49 +173,6 @@ export interface HarnessSupervisor {
   deadWakes: HarnessDeadWake[];
   canRetry: boolean;
   readOnly: boolean;
-}
-
-/** Generic read-only Run projection reused by the simulation page. */
-export interface HarnessSimulationStep {
-  id: string;
-  name: string;
-  args: unknown;
-  output: string | null;
-}
-
-export interface HarnessSimulationError {
-  type: string;
-  message: string;
-  occurredAt: string;
-}
-
-export interface HarnessSimulationOutcome {
-  status: string;
-  summary: string;
-  observations: string[];
-  evidenceRefs: string[];
-  recommendedActions: string[];
-}
-
-export interface HarnessSimulationProjection {
-  executionMode: 'simulation';
-  readOnly: true;
-  taskId: string;
-  runId: string | null;
-  status: HarnessTaskStatus;
-  workflowId: string | null;
-  workflowVersion: number | null;
-  objective: string | null;
-  snapshot: {
-    seq: number | null;
-    observedAt: string | null;
-    declarationHash: string | null;
-    driverVersion: string | null;
-  };
-  steps: HarnessSimulationStep[];
-  evidence: string[];
-  errors: HarnessSimulationError[];
-  outcome: HarnessSimulationOutcome | null;
 }
 
 export type HarnessCompactionStatus =

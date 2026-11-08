@@ -4,7 +4,7 @@
 //! workspace high-watermark (or replays a bounded page after a caller cursor),
 //! then tails committed `session_events` by `seq`. Live rows are read after
 //! commit, so a write that happened while the connection was waking up is
-//! still delivered exactly once. Writers call [`HarnessStreamHub::notify`] to
+//! still delivered exactly once. Writers call [`SessionStreamHub::notify`] to
 //! wake tails immediately; a short interval keeps tails correct even when a
 //! writer in another process cannot signal this hub.
 
@@ -77,7 +77,7 @@ pub struct HarnessStreamMetrics {
 }
 
 #[derive(Default)]
-pub struct HarnessStreamHub {
+pub struct SessionStreamHub {
     notifications: DashMap<String, Arc<Notify>>,
     connections: DashMap<String, usize>,
     connections_opened: AtomicU64,
@@ -88,7 +88,7 @@ pub struct HarnessStreamHub {
     first_frame_ms_total: AtomicU64,
 }
 
-impl HarnessStreamHub {
+impl SessionStreamHub {
     fn notifier(&self, workspace_id: &str) -> Arc<Notify> {
         self.notifications
             .entry(workspace_id.to_string())
@@ -196,12 +196,12 @@ impl HarnessStreamHub {
 }
 
 struct ConnectionGuard {
-    hub: Arc<HarnessStreamHub>,
+    hub: Arc<SessionStreamHub>,
     workspace_id: String,
 }
 
 impl ConnectionGuard {
-    fn new(hub: &Arc<HarnessStreamHub>, workspace_id: &str) -> Self {
+    fn new(hub: &Arc<SessionStreamHub>, workspace_id: &str) -> Self {
         Self {
             hub: hub.clone(),
             workspace_id: workspace_id.to_string(),
@@ -238,7 +238,7 @@ pub struct HarnessConnection {
     seen: SeenEvents,
     notify: Arc<Notify>,
     ticker: tokio::time::Interval,
-    hub: Arc<HarnessStreamHub>,
+    hub: Arc<SessionStreamHub>,
     connected_at: Instant,
     first_frame: bool,
     _connected: ConnectionGuard,
@@ -386,7 +386,7 @@ impl HarnessConnection {
     }
 }
 
-impl HarnessStreamHub {
+impl SessionStreamHub {
     fn record_first_frame(&self, elapsed_ms: u64) {
         self.first_frames.fetch_add(1, Ordering::Relaxed);
         self.first_frame_ms_total.fetch_add(elapsed_ms, Ordering::Relaxed);
@@ -426,7 +426,7 @@ pub async fn stream_task(
         return response;
     }
     let mut connection = match state
-        .harness_stream
+        .session_stream
         .connect(state.db.clone(), &workspace_id, &task_id, query.after)
         .await
     {
@@ -460,7 +460,7 @@ mod tests {
     use tinyiothub_core::harness::{ExecutionMode, HarnessEventInput};
     use tinyiothub_storage::test_helpers::fixture_workspace;
 
-    use super::{HarnessStreamHub, SEEN_EVENT_LIMIT, SeenEvents};
+    use super::{SEEN_EVENT_LIMIT, SeenEvents, SessionStreamHub};
 
     async fn seed_task(db: &tinyiothub_storage::Db, workspace_id: &str, task_id: &str) {
         let pool = db.workspace_pool_for_testing(workspace_id).await.expect("pool");
@@ -505,7 +505,7 @@ mod tests {
         seed_task(&fixture.db, "ws-harness-stream", "task-1").await;
         let first = append(&fixture.db, "ws-harness-stream", "task-1", "event-1").await;
         append(&fixture.db, "ws-harness-stream", "task-1", "event-2").await;
-        let hub = Arc::new(HarnessStreamHub::default());
+        let hub = Arc::new(SessionStreamHub::default());
         let mut connection = hub
             .connect(Arc::new(fixture.db.clone()), "ws-harness-stream", "task-1", Some(first))
             .await
@@ -543,7 +543,7 @@ mod tests {
             )
             .await;
         }
-        let hub = Arc::new(HarnessStreamHub::default());
+        let hub = Arc::new(SessionStreamHub::default());
         let mut connection = hub
             .connect(Arc::new(fixture.db.clone()), "ws-harness-stream-live", "task-1", None)
             .await
@@ -616,7 +616,7 @@ mod tests {
             .expect("simulation append")
             .seq;
         assert!(simulation > production, "simulation seq must trail the production seq");
-        let hub = Arc::new(HarnessStreamHub::default());
+        let hub = Arc::new(SessionStreamHub::default());
         let mut connection = hub
             .connect(Arc::new(fixture.db.clone()), ws, "task-1", None)
             .await
@@ -641,7 +641,7 @@ mod tests {
         let fixture = fixture_workspace("ws-harness-stream-multi-version").await;
         let ws = "ws-harness-stream-multi-version";
         seed_task(&fixture.db, ws, "task-1").await;
-        let hub = Arc::new(HarnessStreamHub::default());
+        let hub = Arc::new(SessionStreamHub::default());
         let mut connection = hub
             .connect(Arc::new(fixture.db.clone()), ws, "task-1", None)
             .await
@@ -679,10 +679,10 @@ mod tests {
 
     #[test]
     fn resume_cursor_never_rewinds_behind_a_known_caller_cursor() {
-        assert_eq!(HarnessStreamHub::resume_cursor(4, Some(7), false), 7);
-        assert_eq!(HarnessStreamHub::resume_cursor(4, Some(2), false), 4);
-        assert_eq!(HarnessStreamHub::resume_cursor(4, None, false), 4);
-        assert_eq!(HarnessStreamHub::resume_cursor(4, Some(7), true), 4);
+        assert_eq!(SessionStreamHub::resume_cursor(4, Some(7), false), 7);
+        assert_eq!(SessionStreamHub::resume_cursor(4, Some(2), false), 4);
+        assert_eq!(SessionStreamHub::resume_cursor(4, None, false), 4);
+        assert_eq!(SessionStreamHub::resume_cursor(4, Some(7), true), 4);
     }
 
     #[test]
@@ -697,7 +697,7 @@ mod tests {
 
     #[test]
     fn hub_metrics_are_exposed() {
-        let hub = HarnessStreamHub::default();
+        let hub = SessionStreamHub::default();
         assert_eq!(hub.metrics().active_connections, 0);
     }
 }

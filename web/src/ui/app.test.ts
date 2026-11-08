@@ -122,15 +122,11 @@ describe("app router · canonical Harness hash routes", () => {
     expect(el.currentRoute).toBe("harness");
     expect(el.harnessRoute).toEqual({ name: "overview" });
 
+    // Retired Workflow links land on the overview instead of breaking.
     window.location.hash = "#/harness/workflows/wf%3A1";
     el.handleRoute();
     expect(el.currentRoute).toBe("harness");
-    expect(el.harnessRoute).toEqual({
-      name: "workflows",
-      workflowId: "wf:1",
-      creating: false,
-      version: null,
-    });
+    expect(el.harnessRoute).toEqual({ name: "overview" });
 
     window.location.hash = "#/harness/tasks";
     el.handleRoute();

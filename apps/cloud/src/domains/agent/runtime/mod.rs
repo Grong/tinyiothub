@@ -38,8 +38,8 @@ pub mod approvals;
 pub mod controls;
 pub mod dispatch;
 pub mod harness_store;
-pub mod harness_stream;
 pub mod projection;
+pub mod session_stream;
 pub mod stream;
 pub mod tasks;
 

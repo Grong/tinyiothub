@@ -36,7 +36,7 @@ pub use wake::{WakeExecutor, WakeOutcome, WakeReport, WakeRunner, assistant_agen
 
 use std::sync::Arc;
 
-use crate::domains::agent::runtime::harness_stream::HarnessStreamHub;
+use crate::domains::agent::runtime::session_stream::SessionStreamHub;
 
 #[derive(Clone)]
 pub struct SessionRuntime {
@@ -50,7 +50,7 @@ pub struct SessionRuntime {
 }
 
 impl SessionRuntime {
-    pub fn new(db: Arc<tinyiothub_storage::Db>, hub: Arc<HarnessStreamHub>) -> Self {
+    pub fn new(db: Arc<tinyiothub_storage::Db>, hub: Arc<SessionStreamHub>) -> Self {
         let events: Arc<dyn SessionEventSink> = Arc::new(DbSessionEventSink::new(db, hub));
         let contexts = Arc::new(TurnContextRegistry::default());
         let todos = Arc::new(TodoStore::default());
@@ -78,7 +78,7 @@ mod tests {
     async fn runtime_wires_shared_components() {
         let pool = sqlx::SqlitePool::connect("sqlite::memory:").await.unwrap();
         let db = Arc::new(tinyiothub_storage::Db::new(pool));
-        let hub = Arc::new(crate::domains::agent::runtime::harness_stream::HarnessStreamHub::default());
+        let hub = Arc::new(crate::domains::agent::runtime::session_stream::SessionStreamHub::default());
         let runtime = SessionRuntime::new(db, hub);
 
         let context = TurnContext::new(

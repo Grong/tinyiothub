@@ -13,7 +13,7 @@ use tinyiothub_storage::{Db, DbError};
 use uuid::Uuid;
 
 use super::context::TurnContext;
-use crate::domains::agent::runtime::harness_stream::HarnessStreamHub;
+use crate::domains::agent::runtime::session_stream::SessionStreamHub;
 
 pub const SESSION_EVENT_SCHEMA_V: i64 = 1;
 
@@ -24,11 +24,11 @@ pub trait SessionEventSink: Send + Sync {
 
 pub struct DbSessionEventSink {
     db: Arc<Db>,
-    hub: Arc<HarnessStreamHub>,
+    hub: Arc<SessionStreamHub>,
 }
 
 impl DbSessionEventSink {
-    pub fn new(db: Arc<Db>, hub: Arc<HarnessStreamHub>) -> Self {
+    pub fn new(db: Arc<Db>, hub: Arc<SessionStreamHub>) -> Self {
         Self { db, hub }
     }
 }

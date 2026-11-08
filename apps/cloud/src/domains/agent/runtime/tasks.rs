@@ -88,7 +88,7 @@ pub async fn create_persistent(
     let store = HarnessTaskStore::new(state.db.clone());
     match store.create_task_with_wake(&task, &wake).await {
         Ok(outcome) => {
-            state.harness_stream.notify(workspace_id);
+            state.session_stream.notify(workspace_id);
             ApiResponseBuilder::success(json!({
                 "taskId": outcome.task.id,
                 "status": "accepted",

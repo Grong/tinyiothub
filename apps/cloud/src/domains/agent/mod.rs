@@ -83,7 +83,7 @@ pub struct AgentState {
     /// Ledger-backed Task runtime deltas for cursor SSE.
     pub runtime_stream: Arc<runtime::stream::RuntimeStreamHub>,
     /// Workspace-Harness Task SSE tail (Task 19B cutover).
-    pub harness_stream: Arc<runtime::harness_stream::HarnessStreamHub>,
+    pub session_stream: Arc<runtime::session_stream::SessionStreamHub>,
     /// Production Harness Effect dispatcher (Task 19C1). None in unit tests
     /// and unfinished compositions; approval answers then leave dispatch to
     /// the bounded background pass.

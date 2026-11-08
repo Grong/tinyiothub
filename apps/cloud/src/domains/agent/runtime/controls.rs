@@ -71,7 +71,7 @@ async fn pause_resume(
     .map_err(control_error);
     match result {
         Ok(_) => {
-            state.harness_stream.notify(&workspace_id);
+            state.session_stream.notify(&workspace_id);
             projection::response(&state, &workspace_id, &task_id).await
         }
         Err(response) => response,
@@ -113,20 +113,20 @@ pub async fn cancel(
             // Workflow-owned Subagents are cancelled while the root is still
             // non-`cancelling`, so their workspace drain cannot finalize it.
             if let Err(error) = controls.cancel_children(&task_id).await {
-                state.harness_stream.notify(&workspace_id);
+                state.session_stream.notify(&workspace_id);
                 return control_error(error);
             }
             match manager.cancel_task(&workspace_id, &task_id).await {
                 Ok(_) => {
                     if let Err(error) = controls.cancel_root_effects_if_terminal(&task_id).await {
-                        state.harness_stream.notify(&workspace_id);
+                        state.session_stream.notify(&workspace_id);
                         return control_error(error);
                     }
                     Ok(())
                 }
                 Err(TaskError::NotFound) => controls.cancel(&task_id).await.map_err(control_error),
                 Err(error) => {
-                    state.harness_stream.notify(&workspace_id);
+                    state.session_stream.notify(&workspace_id);
                     Err(coordinator_error(error))
                 }
             }
@@ -135,7 +135,7 @@ pub async fn cancel(
     };
     match result {
         Ok(()) => {
-            state.harness_stream.notify(&workspace_id);
+            state.session_stream.notify(&workspace_id);
             projection::response(&state, &workspace_id, &task_id).await
         }
         Err(response) => response,
@@ -188,7 +188,7 @@ pub async fn stop_job(
             }
         }
     }
-    state.harness_stream.notify(&workspace_id);
+    state.session_stream.notify(&workspace_id);
     projection::response(&state, &workspace_id, &task_id).await
 }
 

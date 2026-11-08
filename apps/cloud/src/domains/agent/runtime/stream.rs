@@ -9,7 +9,7 @@ use tokio::sync::broadcast::Sender;
 
 // The legacy platform-backed Task SSE (`connect`/`stream_task`) was retired in
 // Task 19C4 together with the platform Task fact plane. The routed stream is
-// `harness_stream::HarnessStreamHub`; this hub remains the recorder fan-out
+// `session_stream::SessionStreamHub`; this hub remains the recorder fan-out
 // used by device, watch, and media-evidence telemetry.
 
 #[derive(Clone, Serialize)]

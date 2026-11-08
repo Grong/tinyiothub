@@ -1,10 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import {
-  parseHarnessHash,
-  runtimeToHarnessUrl,
-  toHarnessDryRunUrl,
-  toHarnessTaskUrl,
-} from './harness-url-state.js';
+import { parseHarnessHash, runtimeToHarnessUrl, toHarnessTaskUrl } from './harness-url-state.js';
 
 describe('Harness canonical URL state', () => {
   it('parses exactly the canonical Harness routes', () => {
@@ -19,32 +14,8 @@ describe('Harness canonical URL state', () => {
     });
     expect(parseHarnessHash('#/harness/tasks')).toEqual({ name: 'tasks' });
     expect(parseHarnessHash('#/harness/tasks/new')).toEqual({ name: 'new' });
-    expect(parseHarnessHash('#/harness/workflows')).toEqual({
-      name: 'workflows',
-      workflowId: null,
-      creating: false,
-      version: null,
-    });
-    expect(parseHarnessHash('#/harness/workflows/wf%3A1')).toEqual({
-      name: 'workflows',
-      workflowId: 'wf:1',
-      creating: false,
-      version: null,
-    });
-    expect(parseHarnessHash('#/harness/workflows/wf%3A1?version=2')).toEqual({
-      name: 'workflows',
-      workflowId: 'wf:1',
-      creating: false,
-      version: 2,
-    });
-    expect(parseHarnessHash('#/harness/workflows/new')).toEqual({
-      name: 'workflows',
-      workflowId: null,
-      creating: true,
-      version: null,
-    });
-    expect(parseHarnessHash('#/harness/workflows/templates')).toEqual({ name: 'templates' });
     expect(parseHarnessHash('#/harness/supervisor')).toEqual({ name: 'supervisor' });
+    expect(parseHarnessHash('#/harness/compaction')).toEqual({ name: 'compaction' });
     expect(parseHarnessHash('#/harness/tasks/task%3A1')).toMatchObject({
       name: 'task',
       taskId: 'task:1',
@@ -55,27 +26,18 @@ describe('Harness canonical URL state', () => {
     });
   });
 
-  it('pins the dry-run route to a revision, snapshot and optional simulation task', () => {
-    expect(parseHarnessHash('#/harness/workflows/wf%3A1/dry-run?version=3')).toEqual({
-      name: 'dry-run',
-      workflowId: 'wf:1',
-      version: 3,
-      snapshotSeq: null,
-      taskId: null,
-    });
-    expect(
-      parseHarnessHash('#/harness/workflows/wf%3A1/dry-run?version=3&snapshot=12&task=task%3A9'),
-    ).toEqual({
-      name: 'dry-run',
-      workflowId: 'wf:1',
-      version: 3,
-      snapshotSeq: 12,
-      taskId: 'task:9',
-    });
-    expect(toHarnessDryRunUrl('wf:1', 3)).toBe('#/harness/workflows/wf%3A1/dry-run?version=3');
-    expect(toHarnessDryRunUrl('wf:1', 3, { snapshotSeq: 12, taskId: 'task:9' })).toBe(
+  it('lands retired Workflow hashes on the overview instead of breaking', () => {
+    for (const hash of [
+      '#/harness/workflows',
+      '#/harness/workflows/',
+      '#/harness/workflows/new',
+      '#/harness/workflows/templates',
+      '#/harness/workflows/wf%3A1',
+      '#/harness/workflows/wf%3A1?version=2',
       '#/harness/workflows/wf%3A1/dry-run?version=3&snapshot=12&task=task%3A9',
-    );
+    ]) {
+      expect(parseHarnessHash(hash), hash).toEqual({ name: 'overview' });
+    }
   });
 
   it('returns null for invalid Harness routes', () => {
@@ -84,11 +46,6 @@ describe('Harness canonical URL state', () => {
     expect(parseHarnessHash('/harness')).toBeNull();
     expect(parseHarnessHash('#/runtime')).toBeNull();
     expect(parseHarnessHash('#/harness/tasks/')).toBeNull();
-    expect(parseHarnessHash('#/harness/workflows/')).toBeNull();
-    expect(parseHarnessHash('#/harness/workflows/wf%3A1/dry-run')).toBeNull();
-    expect(parseHarnessHash('#/harness/workflows/wf%3A1/dry-run?version=0')).toBeNull();
-    expect(parseHarnessHash('#/harness/workflows/wf%3A1/dry-run?version=nope')).toBeNull();
-    expect(parseHarnessHash('#/harness/workflows/wf%3A1?version=0')).toBeNull();
   });
 
   it('round-trips encoded Task IDs, view, device and history state', () => {

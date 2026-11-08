@@ -49,7 +49,7 @@ use tinyiothub_storage::Db;
 use tinyiothub_storage::harness_effect::EffectRecoveryItem;
 
 use super::controls::WorkflowControls;
-use super::harness_stream::HarnessStreamHub;
+use super::session_stream::SessionStreamHub;
 use super::{EffectRecovery, EffectSender, scope_transition_wake};
 
 /// Dispatch cadence. Same family as the wake router (25 ms claim loop); a
@@ -248,7 +248,7 @@ impl EffectSender for JobEffectSender {
 pub struct EffectDispatch {
     db: Arc<Db>,
     jobs: JobService,
-    stream: Option<Arc<HarnessStreamHub>>,
+    stream: Option<Arc<SessionStreamHub>>,
     notify: Arc<tokio::sync::Notify>,
 }
 
@@ -262,7 +262,7 @@ impl EffectDispatch {
         }
     }
 
-    pub fn with_stream(mut self, stream: Arc<HarnessStreamHub>) -> Self {
+    pub fn with_stream(mut self, stream: Arc<SessionStreamHub>) -> Self {
         self.stream = Some(stream);
         self
     }

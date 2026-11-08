@@ -169,7 +169,7 @@ impl ServiceManager {
         // it then settles the matching workspace Effect.
         let effect_dispatch = Arc::new(
             crate::domains::agent::runtime::dispatch::EffectDispatch::new(app_state.db.clone(), task_jobs.clone())
-                .with_stream(app_state.harness_stream.clone()),
+                .with_stream(app_state.session_stream.clone()),
         );
         app_state.effect_dispatch = Some(effect_dispatch.clone());
         data_server.set_job_result_sink(Arc::new(
