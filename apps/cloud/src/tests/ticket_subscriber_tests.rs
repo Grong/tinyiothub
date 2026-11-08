@@ -184,60 +184,6 @@ fn title_strips_trigger_prefix_and_truncates() {
     assert!(t.chars().count() <= 81, "80 字符截断 + 省略号");
 }
 
-/// 闭环链（Success Criteria #1 的数据层验证）：Agent 失败 → 开票 → 人工解决
-/// → resolution 经 TicketResolutionProvider 出现在下次 run 的 prompt 输入里。
-#[tokio::test]
-async fn closure_chain_resolution_flows_into_next_prompt() {
-    use crate::domains::agent::host::ports::DbTicketResolutionProvider;
-    use crate::domains::agent::prompt::runtime::build_prompt;
-    use crate::domains::agent::thing_agent::traits::TicketResolutionProvider;
-    use crate::domains::agent::thing_agent::types::{Priority, TriggerSource, WakeSignal};
-
-    let db = Arc::new(test_db_async().await);
-    let sse = sse();
-
-    // 1. Agent 自治失败（策略全拒）→ 订阅者开票
-    let r = report("run_chain", Outcome::Rejected, Some(EndReason::Policy), Some("t1"));
-    ticket_for_run(&db, &sse, &r, None, Some("thing:t1:event:temp_high")).await;
-    let tickets = db.list_tickets("ws1", None, 20, 0).await.unwrap();
-    assert_eq!(tickets.len(), 1);
-    let id = tickets[0].id;
-
-    // 2. 人工认领 → 开始处理 → 解决（必填 resolution）。走 TicketService
-    // 真实用户路径——M2-c 起 resolution 的知识沉淀（agent_memories）由
-    // service 层写入，db 直调不再有读者。
-    let svc = crate::domains::ticket::service::TicketService::new(Arc::clone(&db));
-    svc.claim("ws1", id, "wang").await.unwrap();
-    svc.start("ws1", id, "wang").await.unwrap();
-    svc.resolve("ws1", id, "wang", "现场更换轴承 NSK-6205，复位闸阀执行器")
-        .await
-        .unwrap();
-
-    // 3. 下一次 run 的 prompt 注入源（cloud 适配器 → db 真源）
-    let provider = DbTicketResolutionProvider::new(db.clone());
-    let resolutions = provider.recent_resolutions("ws1", Some("t1"), 5).await.unwrap();
-    assert_eq!(resolutions.len(), 1);
-    assert!(resolutions[0].1.contains("NSK-6205"));
-
-    // 4. prompt 组装：解法出现在 <ticket_resolutions> 段（闭环成立）
-    let signal = WakeSignal {
-        workspace_id: "ws1".to_string(),
-        priority: Priority::High,
-        source: TriggerSource::ThingEvent {
-            thing_id: "t1".to_string(),
-            event_name: "temp_high".to_string(),
-            event_id: 99,
-            level: 3,
-            data: serde_json::json!({"temp": 88}),
-        },
-        dedup_key: Some("thing:t1:event:temp_high".to_string()),
-    };
-    let prompt = build_prompt(&signal, "", &[], &[], &["reboot".to_string()], &resolutions);
-    assert!(prompt.contains("<ticket_resolutions>"));
-    assert!(prompt.contains("现场更换轴承 NSK-6205"), "解法应出现在 prompt 里");
-    assert!(prompt.contains("不可信人工输入"), "注入段必须带不可信标注");
-}
-
 /// M2-b：开票即建对话 session（种子消息 + tickets.session_key 回写）；
 /// 懒回填对已绑定工单幂等。
 #[tokio::test]

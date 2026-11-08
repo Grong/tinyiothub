@@ -258,6 +258,65 @@ impl TriggerRouter {
     pub fn shutdown(&self) {
         self.shutdown.cancel();
     }
+
+    /// 共享关停令牌：随 `start` 启动的附加订阅（thing-event 桥等）与路由
+    /// 生命周期一致。
+    pub fn shutdown_token(&self) -> CancellationToken {
+        self.shutdown.clone()
+    }
+}
+
+/// 设备事件桥：把 `ThingEventBus` 上的持久化设备事件转发到 `TriggerRouter`。
+///
+/// 只准入与 legacy `ThingEventTrigger` 相同的判定集：未知事件、agent 自身
+/// 产生的事件（防共振）与低于 warning 级（level < 3）的事件不唤醒。
+pub fn spawn_thing_event_bridge(
+    bus: Arc<crate::domains::event::bus::ThingEventBus>,
+    router: Arc<TriggerRouter>,
+    shutdown: CancellationToken,
+) {
+    tokio::spawn(async move {
+        let mut rx = bus.subscribe();
+        loop {
+            tokio::select! {
+                _ = shutdown.cancelled() => return,
+                signal = rx.recv() => {
+                    let signal = match signal {
+                        Ok(signal) => signal,
+                        Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
+                        Err(_) => return,
+                    };
+                    if signal.is_unknown || signal.actor == "agent" || signal.level < 3 {
+                        continue;
+                    }
+                    let wake = thing_event_wake(
+                        &signal.workspace_id,
+                        &signal.thing_id,
+                        &signal.event_name,
+                        &signal.event_id.to_string(),
+                    );
+                    if !router.submit_event(wake) {
+                        tracing::warn!(
+                            workspace_id = %signal.workspace_id,
+                            event_id = %signal.event_id,
+                            "thing event wake not admitted (in flight or rate limited)"
+                        );
+                    }
+                }
+            }
+        }
+    });
+}
+
+/// 设备事件（如离线）→ event wake。纯映射，便于无 fixture 测试。
+pub(crate) fn thing_event_wake(workspace_id: &str, thing_id: &str, event_name: &str, event_id: &str) -> EventWake {
+    EventWake {
+        workspace_id: workspace_id.to_string(),
+        trigger: "thing_event".to_string(),
+        source_id: event_id.to_string(),
+        summary: format!("设备事件 {event_name}（{thing_id}）"),
+        dedup_key: Some(format!("thing:{thing_id}:event:{event_name}")),
+    }
 }
 
 /// 把一条 AI 事件转换为 event wake：仅 Critical/Error 告警（大小写不敏感）
@@ -354,6 +413,7 @@ mod tests {
     struct RecordingExecutor {
         calls: AtomicUsize,
         workspaces: Mutex<Vec<String>>,
+        events: Mutex<Vec<EventWake>>,
     }
 
     #[async_trait::async_trait]
@@ -366,6 +426,68 @@ mod tests {
                 outcome: crate::domains::agent::session::wake::WakeOutcome::Completed,
             }
         }
+
+        async fn execute_event(&self, wake: EventWake, _cancel: CancellationToken) -> WakeReport {
+            self.events.lock().await.push(wake);
+            WakeReport {
+                session_key: String::new(),
+                outcome: crate::domains::agent::session::wake::WakeOutcome::Completed,
+            }
+        }
+    }
+
+    fn thing_signal(actor: &str, level: i32, event_id: i64) -> tinyiothub_core::models::event::ThingEventSignal {
+        tinyiothub_core::models::event::ThingEventSignal {
+            workspace_id: "ws-1".into(),
+            thing_id: "thing-1".into(),
+            event_name: "offline".into(),
+            event_id,
+            level,
+            data: serde_json::Value::Null,
+            is_unknown: false,
+            actor: actor.into(),
+        }
+    }
+
+    #[tokio::test]
+    async fn thing_event_bridge_forwards_device_events_and_skips_agent_events() {
+        let db = Arc::new(test_db().await);
+        let executor = Arc::new(RecordingExecutor::default());
+        let router = Arc::new(TriggerRouter::new(db, executor.clone()));
+        let bus = Arc::new(crate::domains::event::bus::ThingEventBus::new());
+        let shutdown = CancellationToken::new();
+        let _tick = router.clone().start();
+        spawn_thing_event_bridge(bus.clone(), router.clone(), shutdown.clone());
+        for _ in 0..10_000 {
+            if bus.receiver_count() > 0 {
+                break;
+            }
+            tokio::task::yield_now().await;
+        }
+        assert!(bus.receiver_count() > 0, "thing-event bridge must subscribe");
+
+        bus.publish(thing_signal("device", 4, 41));
+        for _ in 0..10_000 {
+            if executor.events.lock().await.len() == 1 {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+        let events = executor.events.lock().await.clone();
+        assert_eq!(events.len(), 1, "one device event -> one wake");
+        assert_eq!(events[0].workspace_id, "ws-1");
+        assert_eq!(events[0].trigger, "thing_event");
+        assert_eq!(events[0].source_id, "41");
+
+        bus.publish(thing_signal("agent", 5, 42));
+        bus.publish(thing_signal("device", 2, 43));
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        assert_eq!(
+            executor.events.lock().await.len(),
+            1,
+            "agent-actor and below-warning events must not wake"
+        );
+        shutdown.cancel();
     }
 
     struct BlockingExecutor {

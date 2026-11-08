@@ -722,6 +722,13 @@ impl ServiceManager {
             *self.trigger_router.write().await = Some(trigger_router.clone());
             let trigger_handle = trigger_router.clone().start();
             self.service_handles.write().await.push(trigger_handle);
+            // 设备事件（警告级及以上、非 agent 自产）同样经 TriggerRouter
+            // 进入 Session Loop，替代已删除的 ThingEventTrigger。
+            crate::domains::agent::session::trigger::spawn_thing_event_bridge(
+                app_state.thing_event_bus.clone(),
+                trigger_router.clone(),
+                trigger_router.shutdown_token(),
+            );
             for ws_id in &ws_ids {
                 thing_agent_manager.start_workspace_watch(ws_id);
             }

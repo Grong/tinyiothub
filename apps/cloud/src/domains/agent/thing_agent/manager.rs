@@ -341,7 +341,14 @@ impl ThingAgentManager {
                 if hit.workspace_id != hit_ws {
                     continue;
                 }
-                let Some(router) = router.clone() else { continue };
+                let Some(router) = router.clone() else {
+                    tracing::warn!(
+                        workspace_id = %hit.workspace_id,
+                        rule_id = %hit.rule_id,
+                        "watch hit dropped: session router not wired"
+                    );
+                    continue;
+                };
                 if let Some(wake) = crate::domains::agent::session::trigger::watch_wake(
                     &hit.workspace_id,
                     &hit.rule_id,
