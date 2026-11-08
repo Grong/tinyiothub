@@ -20,6 +20,7 @@ import {
   type PendingQuestion,
 } from '../chat/timeline-model.js';
 import { renderTimeline, renderTodoPanel } from '../chat/timeline-render.js';
+import { A2uiRendererEngine } from '../chat/a2ui/a2ui-renderer.js';
 import '../chat/session-drawer.js';
 import '../chat/question-card.js';
 import '../components/global-hud.js';
@@ -41,6 +42,10 @@ export class ChatView extends LitElement {
   private timeline = new TimelineModel();
   private chatState: ChatState | null = null;
   private closeEvents: (() => void) | null = null;
+  private a2uiRenderer = new A2uiRendererEngine((functionId, data) =>
+    this.handleA2uiAction(functionId, data),
+  );
+  private a2uiHydrated = false;
 
   connectedCallback(): void {
     super.connectedCallback();
@@ -71,16 +76,26 @@ export class ChatView extends LitElement {
   private selectSession(sessionKey: string): void {
     this.closeEvents?.();
     this.closeEvents = null;
+    if (this.chatState?.chatSending) {
+      void abortChatRun(this.chatState);
+    }
+    if (this.chatState) this.chatState.onChange = () => {};
     this.timeline.reset();
     this.liveText = '';
     this.error = '';
     this.sessionKey = sessionKey;
     localStorage.setItem('tinyiothub_chat_last_session', sessionKey);
     this.chatState = createChatState(sessionKey, AGENT_ID);
+    this.a2uiRenderer.clear();
+    this.a2uiHydrated = false;
     this.chatState.onChange = () => {
       this.liveText = this.chatState?.chatStream ?? '';
       this.sending = Boolean(this.chatState?.chatSending);
       this.error = this.chatState?.lastError ?? '';
+      this.requestUpdate();
+    };
+    this.chatState.onA2ui = (jsonl: string) => {
+      this.a2uiRenderer.handleA2uiMessage(jsonl);
       this.requestUpdate();
     };
     this.refreshDrawer();
@@ -89,10 +104,12 @@ export class ChatView extends LitElement {
       sessionKey,
       after: 0,
       onEvent: (event) => {
+        if (this.sessionKey !== sessionKey) return;
         this.timeline.ingestEvent(event);
         this.requestUpdate();
       },
       onError: (error) => {
+        if (this.sessionKey !== sessionKey) return;
         this.error = error.message;
         this.requestUpdate();
       },
@@ -100,26 +117,41 @@ export class ChatView extends LitElement {
   }
 
   private async loadTimeline(sessionKey: string): Promise<void> {
+    const key = sessionKey;
+    const chatState = this.chatState;
     try {
-      let page = await fetchSessionEvents(sessionKey, 0, 200);
+      let page = await fetchSessionEvents(key, 0, 200);
+      if (key !== this.sessionKey) return;
       this.timeline.ingest(page);
       let guard = 0;
       while (this.timeline.cursor < page.highWatermark && guard < 10) {
-        page = await fetchSessionEvents(sessionKey, this.timeline.cursor, 200);
+        page = await fetchSessionEvents(key, this.timeline.cursor, 200);
+        if (key !== this.sessionKey) return;
         if (page.events.length === 0) break;
         this.timeline.ingest(page);
         guard += 1;
       }
-      const todos = await fetchSessionTodos(sessionKey);
+      const todos = await fetchSessionTodos(key);
+      if (key !== this.sessionKey) return;
       if (todos.length > 0 && this.timeline.todos.length === 0) this.timeline.todos = todos;
-      if (this.timeline.blocks.length === 0 && this.chatState) {
-        await loadChatHistory(this.chatState);
-        this.timeline.blocks = timelineFromHistory(this.chatState.chatMessages);
+      if (this.timeline.blocks.length === 0 && chatState) {
+        await loadChatHistory(chatState);
+        if (key !== this.sessionKey) return;
+        this.timeline.blocks = timelineFromHistory(chatState.chatMessages);
+        if (!this.a2uiHydrated) {
+          for (const message of chatState.chatMessages as unknown as Array<Record<string, unknown>>) {
+            const a2ui = message.a2ui;
+            if (typeof a2ui === 'string' && a2ui) this.a2uiRenderer.handleA2uiMessage(a2ui);
+          }
+          this.a2uiHydrated = true;
+        }
       }
       this.error = '';
     } catch (error) {
+      if (key !== this.sessionKey) return;
       this.error = (error as Error).message || '加载会话失败';
     }
+    if (key !== this.sessionKey) return;
     this.requestUpdate();
   }
 
@@ -149,6 +181,19 @@ export class ChatView extends LitElement {
     void this.loadTimeline(this.sessionKey);
   }
 
+  private handleA2uiAction(functionId: string, data: Record<string, unknown>): void {
+    const thingId = (data.thingId ?? data.deviceId) as string | undefined;
+    if ((functionId === 'viewDevice' || functionId === 'controlDevice') && thingId) {
+      window.history.pushState({}, '', `/things/${thingId}`);
+      window.dispatchEvent(new PopStateEvent('popstate'));
+      return;
+    }
+    if (this.chatState) {
+      void sendChatMessage(this.chatState, `[操作] ${functionId}: ${JSON.stringify(data)}`);
+    }
+    this.requestUpdate();
+  }
+
   private refreshDrawer(): void {
     const drawer = this.querySelector('session-drawer') as
       | (HTMLElement & { refresh(): Promise<void> })
@@ -156,8 +201,12 @@ export class ChatView extends LitElement {
     void drawer?.refresh();
   }
 
-  private async newSession(): Promise<void> {
-    this.selectSession(await resolveSessionKey(AGENT_ID));
+  private newSessionKey(): string {
+    return `agent:${this.workspaceId}:${AGENT_ID}/${crypto.randomUUID()}`;
+  }
+
+  private newSession(): void {
+    this.selectSession(this.newSessionKey());
   }
 
   protected updated(_changed: PropertyValues): void {
@@ -173,9 +222,9 @@ export class ChatView extends LitElement {
           .agentId=${AGENT_ID}
           .current=${this.sessionKey}
           @session-select=${(event: CustomEvent<string>) => this.selectSession(event.detail)}
-          @session-new=${() => void this.newSession()}
+          @session-new=${() => this.newSession()}
           @session-deleted=${(event: CustomEvent<string>) => {
-            if (event.detail === this.sessionKey) void this.newSession();
+            if (event.detail === this.sessionKey) this.newSession();
             else this.refreshDrawer();
           }}
         ></session-drawer>
@@ -191,6 +240,8 @@ export class ChatView extends LitElement {
                 ></question-card>`
               : ''}
             ${renderTimeline(this.timeline.blocks, { liveText: this.liveText, sending: this.sending })}
+            ${this.a2uiRenderer.renderSurfacesByKind('inline')}
+            ${this.a2uiRenderer.renderSurfacesByKind('overlay')}
             ${this.error
               ? html`<div class="timeline-notice timeline-notice--timed_out">${this.error}</div>`
               : ''}
