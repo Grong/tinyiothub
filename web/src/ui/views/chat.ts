@@ -79,13 +79,18 @@ export class ChatView extends LitElement {
     if (this.chatState?.chatSending) {
       void abortChatRun(this.chatState);
     }
-    if (this.chatState) this.chatState.onChange = () => {};
+    if (this.chatState) {
+      this.chatState.onChange = () => {};
+      this.chatState.onA2ui = () => {};
+    }
     this.timeline.reset();
     this.liveText = '';
     this.error = '';
+    this.sending = false;
     this.sessionKey = sessionKey;
     localStorage.setItem('tinyiothub_chat_last_session', sessionKey);
     this.chatState = createChatState(sessionKey, AGENT_ID);
+    const state = this.chatState;
     this.a2uiRenderer.clear();
     this.a2uiHydrated = false;
     this.chatState.onChange = () => {
@@ -94,7 +99,8 @@ export class ChatView extends LitElement {
       this.error = this.chatState?.lastError ?? '';
       this.requestUpdate();
     };
-    this.chatState.onA2ui = (jsonl: string) => {
+    state.onA2ui = (jsonl: string) => {
+      if (this.chatState !== state) return;
       this.a2uiRenderer.handleA2uiMessage(jsonl);
       this.requestUpdate();
     };
