@@ -11,6 +11,7 @@ use uuid::Uuid;
 use tinyiothub_agent::config::AgentRuntimeConfig;
 use tinyiothub_agent::port::runtime::AgentLoopHandle;
 use tinyiothub_core::heartbeat::HeartbeatTask;
+use tinyiothub_skills::LoadedSkill;
 use tinyiothub_storage::Db;
 use tinyiothub_storage::assistant_schedule::AssistantSchedule;
 use tinyiothub_storage::session::Session;
@@ -35,12 +36,19 @@ pub fn assistant_agent_id(workspace_id: &str) -> String {
     format!("{ASSISTANT_AGENT_PREFIX}{workspace_id}")
 }
 
-/// 自定义 prompt > 未暂停的 legacy heartbeat tasks > 默认职责。
+/// 自定义 prompt > inspection 技能正文 > 未暂停的 legacy heartbeat tasks > 默认职责。
 /// 存在任务但全部暂停时返回 `None`（本轮不唤醒）。
-pub fn build_wake_message(schedule: &AssistantSchedule, tasks: &[HeartbeatTask]) -> Option<String> {
+pub fn build_wake_message(
+    schedule: &AssistantSchedule,
+    inspection: Option<&LoadedSkill>,
+    tasks: &[HeartbeatTask],
+) -> Option<String> {
     let custom = schedule.prompt.trim();
     if !custom.is_empty() {
         return Some(custom.to_string());
+    }
+    if let Some(skill) = inspection {
+        return Some(format!("按「{}」技能执行本轮检查。\n\n{}", skill.title, skill.body));
     }
     let active: Vec<&HeartbeatTask> = tasks.iter().filter(|task| !task.paused).collect();
     if !tasks.is_empty() && active.is_empty() {
@@ -176,7 +184,10 @@ impl WakeRunner {
             .list_heartbeat_tasks(&schedule.workspace_id)
             .await
             .unwrap_or_default();
-        let Some(message) = build_wake_message(schedule, &tasks) else {
+        let ws_dir = crate::domains::agent::prompt::paths::workspace_dir(&schedule.workspace_id);
+        let skills = crate::domains::agent::pool::load_workspace_skills(&ws_dir);
+        let inspection = skills.iter().find(|skill| skill.name == "inspection");
+        let Some(message) = build_wake_message(schedule, inspection, &tasks) else {
             return WakeReport {
                 session_key: String::new(),
                 outcome: WakeOutcome::Skipped,
@@ -514,17 +525,40 @@ mod tests {
 
     #[test]
     fn wake_message_uses_custom_prompt_first() {
-        let message = build_wake_message(&schedule("检查 3 号楼"), &[task("离线事件", false)]);
+        let message = build_wake_message(&schedule("检查 3 号楼"), None, &[task("离线事件", false)]);
         assert_eq!(message.as_deref(), Some("检查 3 号楼"));
     }
 
     #[test]
     fn wake_message_lists_active_tasks_and_skips_all_paused() {
-        let message = build_wake_message(&schedule(""), &[task("离线事件", false), task("设备异常", true)]).unwrap();
+        let message =
+            build_wake_message(&schedule(""), None, &[task("离线事件", false), task("设备异常", true)]).unwrap();
         assert!(message.contains("- 离线事件"));
         assert!(!message.contains("设备异常"));
-        assert!(build_wake_message(&schedule(""), &[task("离线事件", true)]).is_none());
-        assert!(build_wake_message(&schedule(""), &[]).unwrap().contains("默认职责"));
+        assert!(build_wake_message(&schedule(""), None, &[task("离线事件", true)]).is_none());
+        assert!(
+            build_wake_message(&schedule(""), None, &[])
+                .unwrap()
+                .contains("默认职责")
+        );
+    }
+
+    #[test]
+    fn wake_message_prefers_inspection_skill_over_tasks() {
+        let skill = tinyiothub_skills::LoadedSkill {
+            name: "inspection".into(),
+            title: "巡检".into(),
+            description: String::new(),
+            version: "1".into(),
+            inject: tinyiothub_skills::InjectMode::Trigger,
+            trigger: Some("/inspection".into()),
+            body: "# 巡检\n## 执行步骤\n1. 检查离线设备".into(),
+        };
+        let message = build_wake_message(&schedule(""), Some(&skill), &[task("旧任务", false)]).unwrap();
+        assert!(message.contains("检查离线设备"));
+        assert!(!message.contains("旧任务"));
+        let custom = build_wake_message(&schedule("自定义"), Some(&skill), &[task("旧任务", false)]).unwrap();
+        assert_eq!(custom, "自定义");
     }
 
     #[test]

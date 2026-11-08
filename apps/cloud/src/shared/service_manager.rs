@@ -688,6 +688,10 @@ impl ServiceManager {
                     Ok(_) => {}
                     Err(e) => tracing::warn!(%ws_id, error = %e, "list heartbeat tasks failed"),
                 }
+                if let Err(error) = crate::domains::agent::session::ensure_inspection_skill(&app_state.db, ws_id).await
+                {
+                    tracing::warn!(%ws_id, %error, "seed inspection skill failed");
+                }
             }
 
             // Start unified agent loops for existing workspaces（heartbeat
