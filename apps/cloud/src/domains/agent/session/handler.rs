@@ -20,6 +20,7 @@ use tinyiothub_web::security::Claims;
 use crate::domains::agent::AgentState;
 use crate::domains::agent::session::QuestionAnswer;
 use crate::domains::agent::session::types::PermissionMode;
+use crate::domains::agent::session::{ApprovalDecision, ApprovalError};
 
 #[derive(Debug, Deserialize)]
 pub struct EventQuery {
@@ -182,6 +183,43 @@ pub async fn answer_question(
     }
 }
 
+pub(crate) fn parse_approval_decision(value: &str) -> Option<ApprovalDecision> {
+    match value.trim() {
+        "approved" => Some(ApprovalDecision::Approved),
+        "denied" => Some(ApprovalDecision::Denied),
+        _ => None,
+    }
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ApprovalAnswerRequest {
+    pub decision: String,
+}
+
+pub async fn answer_approval(
+    State(state): State<AgentState>,
+    claims: Claims,
+    Path((session_key, approval_id)): Path<(String, String)>,
+    Json(request): Json<ApprovalAnswerRequest>,
+) -> Response {
+    let Some(parsed) = verify_session_workspace(&session_key, &claims.workspace_id) else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+    let Some(decision) = parse_approval_decision(&request.decision) else {
+        return StatusCode::BAD_REQUEST.into_response();
+    };
+    match state
+        .session_runtime
+        .approvals
+        .answer(&parsed.session_key(), &approval_id, decision)
+    {
+        Ok(()) => StatusCode::NO_CONTENT.into_response(),
+        Err(ApprovalError::NotFound) => StatusCode::NOT_FOUND.into_response(),
+        Err(ApprovalError::SessionMismatch) => StatusCode::FORBIDDEN.into_response(),
+        Err(ApprovalError::Closed) => StatusCode::CONFLICT.into_response(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -204,5 +242,12 @@ mod tests {
         assert_eq!(parse_permission_mode("ask"), Some(PermissionMode::Ask));
         assert_eq!(parse_permission_mode("read_only"), Some(PermissionMode::ReadOnly));
         assert_eq!(parse_permission_mode("admin"), None);
+    }
+
+    #[test]
+    fn approval_decision_parses() {
+        assert_eq!(parse_approval_decision("approved"), Some(ApprovalDecision::Approved));
+        assert_eq!(parse_approval_decision("denied"), Some(ApprovalDecision::Denied));
+        assert_eq!(parse_approval_decision("maybe"), None);
     }
 }

@@ -4,6 +4,7 @@ pub const ASK_USER_TIMEOUT: Duration = Duration::from_secs(10 * 60);
 pub const SESSION_TURN_TIMEOUT: Duration = Duration::from_secs(15 * 60);
 pub const SUBAGENT_TURN_TIMEOUT: Duration = Duration::from_secs(10 * 60);
 
+pub mod approvals;
 pub mod context;
 pub mod events;
 pub mod handler;
@@ -18,6 +19,7 @@ pub mod types;
 pub mod wake;
 pub mod workspace_api;
 
+pub use approvals::{ApprovalBroker, ApprovalDecision, ApprovalError, ApprovalSummary};
 pub use context::*;
 pub use events::*;
 pub use questions::QuestionBroker;
@@ -38,6 +40,7 @@ pub struct SessionRuntime {
     pub contexts: Arc<TurnContextRegistry>,
     pub todos: Arc<TodoStore>,
     pub questions: Arc<QuestionBroker>,
+    pub approvals: Arc<ApprovalBroker>,
     pub subagents: Arc<SubagentSlot>,
     pub runner: Arc<SessionRunner>,
 }
@@ -48,6 +51,7 @@ impl SessionRuntime {
         let contexts = Arc::new(TurnContextRegistry::default());
         let todos = Arc::new(TodoStore::default());
         let questions = Arc::new(QuestionBroker::default());
+        let approvals = Arc::new(ApprovalBroker::default());
         let subagents = Arc::new(SubagentSlot::default());
         let runner = Arc::new(SessionRunner::new(events.clone(), contexts.clone()));
         Self {
@@ -55,6 +59,7 @@ impl SessionRuntime {
             contexts,
             todos,
             questions,
+            approvals,
             subagents,
             runner,
         }

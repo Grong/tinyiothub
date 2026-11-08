@@ -38,5 +38,9 @@ where
             "/sessions/{session_key}/questions/{question_id}/answer",
             post(crate::domains::agent::session::handler::answer_question),
         )
+        .route(
+            "/sessions/{session_key}/approvals/{approval_id}/answer",
+            post(crate::domains::agent::session::handler::answer_approval),
+        )
         .route("/sessions/{session_key}", axum::routing::delete(proxy::delete_session))
 }
