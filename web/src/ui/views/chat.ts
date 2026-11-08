@@ -235,12 +235,15 @@ export class ChatView extends LitElement {
   }
 
   private async handlePermissionChange(mode: PermissionMode): Promise<void> {
+    const key = this.sessionKey;
     const previous = this.permissionMode;
     this.permissionMode = mode;
     try {
-      await updateSessionPermission(this.sessionKey, mode);
+      await updateSessionPermission(key, mode);
+      if (this.sessionKey !== key) return;
       this.refreshDrawer();
     } catch (error) {
+      if (this.sessionKey !== key) return;
       this.permissionMode = previous;
       this.error = (error as Error).message || '保存权限模式失败';
     }
@@ -318,6 +321,7 @@ export class ChatView extends LitElement {
               <select
                 class="permission-mode"
                 .value=${this.permissionMode}
+                aria-label="会话权限模式"
                 title="会话权限模式"
                 @change=${(event: Event) =>
                   this.handlePermissionChange(
