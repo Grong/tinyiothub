@@ -108,8 +108,7 @@ impl Tool for PermissionGuardTool {
 
                 let decision = match timeout(self.timeout, receiver).await {
                     Ok(Ok(decision)) => decision,
-                    Ok(Err(_)) => ApprovalDecision::Denied,
-                    Err(_) => {
+                    Ok(Err(_)) | Err(_) => {
                         self.approvals.cancel(&approval_id);
                         ApprovalDecision::Denied
                     }
@@ -209,6 +208,17 @@ mod tests {
         .with_permission_mode(mode)
     }
 
+    /// 有界轮询：等工具把自己的 approval 注册进 broker，避免固定 sleep 的抖动。
+    async fn wait_for_approval(broker: &ApprovalBroker, session_key: &str) -> String {
+        for _ in 0..100 {
+            tokio::time::sleep(Duration::from_millis(5)).await;
+            if let Some(pending) = broker.list_for_session(session_key).into_iter().next() {
+                return pending.approval_id;
+            }
+        }
+        panic!("approval was never registered");
+    }
+
     #[tokio::test]
     async fn read_only_blocks_write_without_calling_inner() {
         let (inner, calls) = echo();
@@ -249,15 +259,9 @@ mod tests {
             let tool = tool.clone();
             async move { tool.execute(serde_json::json!({})).await }
         });
-        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
-        let pending = broker.list_for_session("agent:ws:agent_main/s1");
-        assert_eq!(pending.len(), 1);
+        let approval_id = wait_for_approval(&broker, "agent:ws:agent_main/s1").await;
         broker
-            .answer(
-                "agent:ws:agent_main/s1",
-                &pending[0].approval_id,
-                ApprovalDecision::Approved,
-            )
+            .answer("agent:ws:agent_main/s1", &approval_id, ApprovalDecision::Approved)
             .unwrap();
         let result = handle.await.unwrap().unwrap();
         assert!(result.success);
@@ -266,6 +270,63 @@ mod tests {
         let types: Vec<&str> = events.iter().map(|event| event.event_type.as_str()).collect();
         assert_eq!(types, vec!["approval.requested", "approval.resolved"]);
         assert_eq!(events[1].payload_json["resolution"], "approved");
+    }
+
+    #[tokio::test]
+    async fn ask_denied_does_not_execute_inner() {
+        let (inner, calls) = echo();
+        let contexts = Arc::new(TurnContextRegistry::default());
+        let _guard = contexts.set(context(PermissionMode::Ask));
+        let broker = Arc::new(ApprovalBroker::default());
+        let sink = Arc::new(RecordingSink::default());
+        let tool = Arc::new(PermissionGuardTool::new(
+            inner,
+            "agent_main".into(),
+            contexts,
+            broker.clone(),
+            sink.clone(),
+            ToolSafety::Write,
+            std::time::Duration::from_secs(5),
+        ));
+        let handle = tokio::spawn({
+            let tool = tool.clone();
+            async move { tool.execute(serde_json::json!({})).await }
+        });
+        let approval_id = wait_for_approval(&broker, "agent:ws:agent_main/s1").await;
+        broker
+            .answer("agent:ws:agent_main/s1", &approval_id, ApprovalDecision::Denied)
+            .unwrap();
+        let result = handle.await.unwrap().unwrap();
+        assert!(!result.success);
+        assert_eq!(calls.load(Ordering::SeqCst), 0);
+        let events = sink.events.lock().await;
+        let types: Vec<&str> = events.iter().map(|event| event.event_type.as_str()).collect();
+        assert_eq!(types, vec!["approval.requested", "approval.resolved"]);
+        assert_eq!(events[1].payload_json["resolution"], "denied");
+    }
+
+    #[tokio::test]
+    async fn ask_timeout_does_not_execute_inner() {
+        let (inner, calls) = echo();
+        let contexts = Arc::new(TurnContextRegistry::default());
+        let _guard = contexts.set(context(PermissionMode::Ask));
+        let sink = Arc::new(RecordingSink::default());
+        let tool = PermissionGuardTool::new(
+            inner,
+            "agent_main".into(),
+            contexts,
+            Arc::new(ApprovalBroker::default()),
+            sink.clone(),
+            ToolSafety::Write,
+            Duration::from_millis(20),
+        );
+        let result = tool.execute(serde_json::json!({})).await.unwrap();
+        assert!(!result.success);
+        assert_eq!(calls.load(Ordering::SeqCst), 0);
+        let events = sink.events.lock().await;
+        let last = events.last().expect("approval.resolved emitted");
+        assert_eq!(last.event_type, "approval.resolved");
+        assert_eq!(last.payload_json["resolution"], "denied");
     }
 
     #[tokio::test]

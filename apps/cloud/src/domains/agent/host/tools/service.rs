@@ -125,8 +125,8 @@ pub fn chat_builtin_tools_provider(
             .collect();
 
         // PermissionGuard：聊天/子代理 Turn 内按 Session 权限模式拦截写操作。
-        if runtime.session_tools_enabled && runtime.agent_id.is_some() {
-            let assistant_id = runtime.agent_id.clone().unwrap_or_default();
+        // 复用 session_primitive_agent 作为唯一的会话 Turn 判定，避免条件漂移。
+        if let Some(assistant_id) = session_primitive_agent(runtime) {
             tools = tools
                 .into_iter()
                 .map(|(tool, safety)| {
@@ -186,6 +186,19 @@ mod tests {
 
     #[test]
     fn session_primitives_require_flag_and_agent() {
+        let mut runtime = crate::domains::agent::tools::context::ToolRuntimeContext::default();
+        assert_eq!(session_primitive_agent(&runtime), None);
+
+        runtime.agent_id = Some("agent_main".to_string());
+        assert_eq!(session_primitive_agent(&runtime), None);
+
+        runtime.session_tools_enabled = true;
+        assert_eq!(session_primitive_agent(&runtime), Some("agent_main".to_string()));
+    }
+
+    /// PermissionGuard 的接线条件与 Session 原语共用同一判定，这里锁定三分支。
+    #[test]
+    fn session_primitives_gate_also_gates_permission_guard() {
         let mut runtime = crate::domains::agent::tools::context::ToolRuntimeContext::default();
         assert_eq!(session_primitive_agent(&runtime), None);
 
