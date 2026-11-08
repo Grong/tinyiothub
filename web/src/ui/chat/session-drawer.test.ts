@@ -48,6 +48,10 @@ describe('session-drawer', () => {
     expect(el.shadowRoot!.textContent).toContain('巡检');
     const items = el.shadowRoot!.querySelectorAll('.drawer-item');
     expect(items).toHaveLength(2);
+    const actionLabels = Array.from(el.shadowRoot!.querySelectorAll('.drawer-action')).map(
+      (button) => button.getAttribute('aria-label'),
+    );
+    expect(actionLabels).toContain('改名 新会话');
     (items[1] as HTMLButtonElement).click();
     expect(selected).toEqual(['agent:ws:a/s1']);
   });

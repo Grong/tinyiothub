@@ -119,6 +119,7 @@ export class SessionDrawer extends LitElement {
 
   @state() private sessions: SessionSummary[] = [];
   @state() private error = '';
+  private refreshSeq = 0;
 
   connectedCallback(): void {
     super.connectedCallback();
@@ -126,12 +127,20 @@ export class SessionDrawer extends LitElement {
   }
 
   async refresh(): Promise<void> {
+    const seq = ++this.refreshSeq;
     try {
-      this.sessions = await listChatSessions(this.agentId);
+      const sessions = await listChatSessions(this.agentId);
+      if (seq !== this.refreshSeq) return;
+      this.sessions = sessions;
       this.error = '';
     } catch (error) {
+      if (seq !== this.refreshSeq) return;
       this.error = (error as Error).message || '加载会话失败';
     }
+  }
+
+  private sessionTitle(session: SessionSummary): string {
+    return session.label || session.sessionKey.split('/').pop() || session.sessionKey;
   }
 
   private select(sessionKey: string): void {
@@ -202,7 +211,7 @@ export class SessionDrawer extends LitElement {
                     class="drawer-row ${session.sessionKey === this.current ? 'drawer-row--current' : ''}"
                   >
                     <button class="drawer-item" @click=${() => this.select(session.sessionKey)}>
-                      ${session.label || session.sessionKey.split('/').pop() || session.sessionKey}
+                      ${this.sessionTitle(session)}
                       <span class="drawer-item__meta">
                         ${session.status === 'ended' ? '已结束' : '进行中'} · ${session.kind}
                       </span>
@@ -210,12 +219,14 @@ export class SessionDrawer extends LitElement {
                     <span class="drawer-actions">
                       <button
                         class="drawer-action"
+                        aria-label=${`改名 ${this.sessionTitle(session)}`}
                         @click=${(event: Event) => this.rename(session.sessionKey, event)}
                       >
                         改名
                       </button>
                       <button
                         class="drawer-action"
+                        aria-label=${`删除 ${this.sessionTitle(session)}`}
                         @click=${(event: Event) => this.removeSession(session.sessionKey, event)}
                       >
                         删除
