@@ -438,7 +438,7 @@ impl Db {
              cause_id, schema_v, payload_digest, payload_json \
              FROM session_events WHERE execution_mode = ? \
                AND (occurred_at < ? OR (occurred_at = ? AND ('session:' || event_id) < ?)) \
-             ORDER BY occurred_at DESC, seq DESC LIMIT ?",
+             ORDER BY occurred_at DESC, ('session:' || event_id) DESC LIMIT ?",
         )
         .bind(ExecutionMode::Production.as_str())
         .bind(cursor_created_at)
@@ -459,7 +459,7 @@ impl Db {
             "SELECT seq, event_id, session_id, execution_mode, run_id, task_id, type, occurred_at, \
              cause_id, schema_v, payload_digest, payload_json \
              FROM session_events WHERE execution_mode = ? \
-             ORDER BY occurred_at DESC, seq DESC LIMIT ?",
+             ORDER BY occurred_at DESC, ('session:' || event_id) DESC LIMIT ?",
         )
         .bind(ExecutionMode::Production.as_str())
         .bind(limit)

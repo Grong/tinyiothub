@@ -1,7 +1,7 @@
 import AxeBuilder from '@axe-core/playwright';
 import { expect, test, type APIRequestContext, type Page } from '@playwright/test';
 
-const FIXTURE = 'http://127.0.0.1:3002';
+const FIXTURE = `http://127.0.0.1:${process.env.E2E_FIXTURE_PORT ?? '3002'}`;
 
 interface FixtureCounts {
   mediaRequests: number;
@@ -70,7 +70,7 @@ test('task switch destroys playback and blocks stale media', async ({ page, requ
   await page.getByRole('button', { name: 'Switch task' }).click();
   await page.getByRole('option', { name: 'task_without_video' }).click();
   await expect(page.locator('video')).toHaveCount(0);
-  await expect(page).toHaveURL(/#\/runtime\/tasks\/task_without_video/);
+  await expect(page).toHaveURL(/#\/harness\/tasks\/task_without_video/);
 
   const oldOriginRequests = await mediaRequests(request);
   await page.waitForTimeout(1500);
@@ -197,7 +197,7 @@ test('cold history links fail closed to live activity with a one-time notice', a
 
   await expect(page.getByText('History is no longer available from this link')).toBeVisible();
   await expect(page.getByText('History · read-only')).toHaveCount(0);
-  await expect(page).toHaveURL(/#\/runtime\/tasks\/task_timeline$/);
+  await expect(page).toHaveURL(/#\/harness\/tasks\/task_timeline$/);
   await expect(page.locator('runtime-loop [data-event-id="event_1"]')).toHaveCount(1);
   await expect.poll(() => streamUrls.length).toBeGreaterThan(0);
 });
@@ -296,10 +296,10 @@ test('persisted collapsed rail expands at tablet width', async ({ page }) => {
   await openRuntimeTask(page, 'task_timeline');
   const rail = page.getByRole('button', { name: 'Expand devices' });
   await expect(rail).toBeVisible();
-  await expect(page.getByRole('heading', { name: 'Associated devices' })).not.toBeVisible();
+  await expect(page.getByRole('region', { name: 'Associated devices' })).not.toBeVisible();
 
   await rail.click();
-  await expect(page.getByRole('heading', { name: 'Associated devices' })).toBeVisible();
+  await expect(page.getByRole('region', { name: 'Associated devices' })).toBeVisible();
   await expect(page.getByRole('button', { name: 'Expand devices' })).toHaveCount(0);
 });
 
@@ -359,7 +359,7 @@ test('responsive tabs, keyboard history, reduced motion, and AA remain usable', 
   await page.emulateMedia({ reducedMotion: 'reduce' });
   await openRuntimeTask(page, 'task_history');
   await page.getByRole('tab', { name: 'Devices' }).click();
-  await expect(page.getByRole('heading', { name: 'Associated devices' })).toBeVisible();
+  await expect(page.getByRole('region', { name: 'Associated devices' })).toBeVisible();
   await page.getByRole('tab', { name: 'Flow' }).click();
   await page.getByRole('button', { name: 'Historical event event_2' }).click();
   await expect(page.getByText('History · read-only')).toBeVisible();
@@ -390,7 +390,7 @@ test('approval stays single-flight and stale decisions cannot cross Tasks', asyn
   expect(await decisionRequests(request, 'task_approval_delayed')).toBe(1);
   await releaseDelayedDecision(request);
   await expect(page.getByRole('button', { name: 'Approve once' })).toHaveCount(0);
-  await expect(page).toHaveURL(/#\/runtime\/tasks\/task_without_video/);
+  await expect(page).toHaveURL(/#\/harness\/tasks\/task_without_video/);
 
   await openRuntimeTask(page, 'task_approval_history');
   await expect(page.getByText('History · read-only')).toBeVisible();
@@ -508,7 +508,7 @@ test('768px keeps tabs and the devices rail without horizontal overflow', async 
   await expect(page.getByRole('tab', { name: 'Agent Loop' })).toBeVisible();
   await expect(page.getByRole('tab', { name: 'Flow' })).toBeVisible();
   await expect(page.getByRole('tab', { name: 'Devices' })).toHaveCount(0);
-  await expect(page.getByRole('heading', { name: 'Associated devices' })).toBeVisible();
+  await expect(page.getByRole('region', { name: 'Associated devices' })).toBeVisible();
   await expect(page.getByRole('button', { name: 'Devices', exact: true })).toBeVisible();
   const overflow = await page.evaluate(
     () => document.documentElement.scrollWidth - window.innerWidth,

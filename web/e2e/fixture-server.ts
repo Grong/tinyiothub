@@ -13,7 +13,7 @@ import { fileURLToPath } from 'node:url';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const mediaDir = join(here, 'fixtures', 'media');
-const port = Number(process.env.FIXTURE_PORT ?? 3002);
+const port = Number(process.env.FIXTURE_PORT ?? process.env.E2E_FIXTURE_PORT ?? 3002);
 const workspaceId = 'ws_e2e';
 const assistantWorkspaceId = 'ws-e2e';
 const assistantSessionKey = 'agent:ws-e2e:default/e2e';
@@ -87,24 +87,22 @@ function approval(id: string, taskId: string, state = 'pending'): Json {
   };
 }
 
-function runtimeEvent(taskId: string, cursor: number, eventType: string, extra: Json = {}): Json {
+/** HarnessEvent/SessionEvent wire row (camelCase, `seq` / `eventType` / `payloadJson`). */
+function runtimeEvent(taskId: string, seq: number, eventType: string, payloadJson: Json = {}): Json {
   return {
-    cursor,
-    eventId: `event_${cursor}`,
+    seq,
+    eventId: `event_${seq}`,
+    workspaceId,
+    sessionId: `task:${taskId}`,
+    executionMode: 'production',
+    runId: `run_${taskId}`,
+    taskId,
     eventType,
     occurredAt: '2026-10-27T10:01:00Z',
-    workspaceId,
-    taskId,
-    runId: `run_${taskId}`,
-    toolCallId: null,
-    jobId: null,
-    approvalId: null,
-    deviceId: null,
-    sourceId: null,
-    sourceSeq: null,
-    evidenceId: null,
-    data: {},
-    ...extra,
+    causeId: null,
+    schemaV: 1,
+    payloadDigest: `digest_${seq}`,
+    payloadJson,
   };
 }
 
@@ -504,14 +502,14 @@ function handleEventStream(
   if (taskId === 'task_sse_resync') {
     // Exercise duplicate suppression with an event newer than the seeded page,
     // then an authoritative cursor reset.
-    const next = Math.max(after, Number(fixture.events[0]?.cursor ?? 0)) + 1;
-    const event = { ...fixture.events[0], cursor: next, eventId: `event_${next}` };
-    send('event', { event });
-    send('event', { event });
+    const next = Math.max(after, Number(fixture.events[0]?.seq ?? 0)) + 1;
+    const event = { ...fixture.events[0], seq: next, eventId: `event_${next}` };
+    send('event', { event, highWatermark: next });
+    send('event', { event, highWatermark: next });
     send('resync', { snapshot, cursor: 0 });
   } else {
     for (const event of fixture.events) {
-      if ((event.cursor as number) > after) send('event', { event });
+      if ((event.seq as number) > after) send('event', { event, highWatermark: event.seq });
     }
   }
 
@@ -720,12 +718,12 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
     const before = beforeParam === null ? null : Number(beforeParam);
     const eligible =
       before !== null && Number.isFinite(before)
-        ? fixture.events.filter((event) => (event.cursor as number) < before)
+        ? fixture.events.filter((event) => (event.seq as number) < before)
         : fixture.events;
     const page = eligible.slice(-limit);
     ok(res, {
       events: page,
-      oldestCursor: page.length ? page[0].cursor : null,
+      oldestCursor: page.length ? page[0].seq : null,
       hasMore: eligible.length > page.length,
     });
     return;

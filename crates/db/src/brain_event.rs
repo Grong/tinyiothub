@@ -181,7 +181,12 @@ fn row_to_brain_event(row: sqlx::sqlite::SqliteRow) -> Result<BrainEvent> {
 }
 
 /// feed 页查询：workspace 隔离 + tab 筛选 + 48h 窗口（RFC3339 字符串比较；needs_you tab 除外）。
-/// - 首页（before=None）：alarm 源同 thing+rule 折叠最新（window function）+ 需要你置顶
+/// - 首页（before=None）：alarm 源同 thing+rule 折叠最新（window function）
+/// - 非合并 tab（needs_you/alarm）：需要你置顶（X6：escalated 先于
+///   awaiting_approval）
+/// - 合并 tab（all/session/legacy patrol/directive）：严格按 `(created_at, id)`
+///   倒序，与 [`Db::list_brain_events`] 的 session 合并顺序一致——否则分页
+///   游标会跨过被置顶挤出首页的行
 /// - 后续页（before=Some）：纯时间流（折叠/置顶不参与，同 judgment feed 语义）
 /// - 游标：(created_at, id) 元组由 [`Db::list_brain_events`] 在 workspace 作用域
 ///   内解析后传入，同秒多行不丢；session 游标同样适用
@@ -194,6 +199,7 @@ pub(crate) async fn list_brain_events(
 ) -> Result<Vec<BrainEvent>> {
     let since = (chrono::Utc::now() - chrono::Duration::hours(48)).to_rfc3339();
     let filter = tab_filter(tab);
+    let merged = tab.includes_session();
     // needs_you 无时间窗——陈旧未认领恰恰最该被看见；其余 tab 保持 48h 窗防膨胀。
     let window = if tab == BrainEventTab::NeedsYou {
         ""
@@ -203,8 +209,13 @@ pub(crate) async fn list_brain_events(
 
     let sql = if before.is_none() {
         // 折叠：仅 alarm 源按 thing+rule 分组取最新；非 alarm 行按 id 各自成组（rn 恒 1）。
-        // 置顶：需要你（pin=0）在前；需要你内部 escalated（要人动手）排在
-        // awaiting_approval（等点头）前（X6，v3 既定排序）；其余按 created_at DESC, id DESC。
+        // 非合并 tab 保留置顶顺序（需要你 pin=0 在前，escalated 再先于
+        // awaiting_approval）；合并 tab 必须与 merge 顺序一致，只按时间倒序。
+        let order = if merged {
+            "created_at DESC, id DESC"
+        } else {
+            "pin, CASE WHEN pin = 0 AND status = 'escalated' THEN 0 ELSE 1 END, created_at DESC, id DESC"
+        };
         format!(
             "SELECT * FROM (
                SELECT {LIST_COLS},
@@ -219,9 +230,7 @@ pub(crate) async fn list_brain_events(
                FROM brain_events
                WHERE workspace_id = ?{window}{filter}
              ) WHERE rn = 1
-             ORDER BY pin,
-               CASE WHEN pin = 0 AND status = 'escalated' THEN 0 ELSE 1 END,
-               created_at DESC, id DESC
+             ORDER BY {order}
              LIMIT ?"
         )
     } else {
@@ -384,8 +393,11 @@ impl Db {
     /// Harness/Session events are merged, sorted deterministically by
     /// `(created_at, id)` descending and sliced to `limit`.
     ///
-    /// Fetching at most `limit` rows per source is sufficient: the top-`limit`
-    /// of a merged ordering is always a subset of each source's top `limit`.
+    /// The invariant that makes per-source `limit` fetches lossless is that
+    /// both sources use the *same* `(created_at, id)` descending order; there
+    /// is no pin/priority reordering on a merged tab. A page cursor is the
+    /// same tuple, so each source's next page continues exactly where the
+    /// merged page ended.
     pub async fn list_brain_events(
         &self,
         workspace_id: &str,
@@ -1180,6 +1192,140 @@ mod tests {
 
         let all = db.list_brain_events("ws1", BrainEventTab::All, None, 10).await.unwrap();
         assert!(all.is_empty(), "all tab 保持 48h 窗——72h 前事件不出现");
+    }
+
+    /// Batch 4 review regression: a merged tab must fetch judgments in the same
+    /// `(created_at, id)` order it merges with. A pinned (awaiting_approval)
+    /// oldest row must not displace the 20th-newest row from page 1, or the
+    /// cursor skips a reachable row forever.
+    #[tokio::test]
+    async fn merged_feed_preserves_every_row_when_oldest_is_pinned() {
+        let db = test_db().await;
+        let base = Utc::now() - chrono::Duration::minutes(60);
+
+        // Oldest row is the only pinned one (awaiting_approval).
+        let pinned = db
+            .insert_judgment("ws1", None, None, Some("oldest"), "annotate")
+            .await
+            .unwrap();
+        db.judge_judgment(
+            &pinned,
+            JudgmentVerdict::SelfHealable,
+            "r",
+            "{}",
+            Some("a"),
+            Some("other"),
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+        sqlx::query("UPDATE judgments SET created_at = ? WHERE id = ?")
+            .bind(base.to_rfc3339())
+            .bind(&pinned)
+            .execute(db.pool())
+            .await
+            .unwrap();
+
+        // 20 newer, resolved rows, each with its own thing so folding keeps them.
+        let mut newer = Vec::new();
+        for index in 0..20 {
+            let id = db
+                .insert_judgment("ws1", None, None, Some(&format!("t{index}")), "annotate")
+                .await
+                .unwrap();
+            db.judge_judgment(&id, JudgmentVerdict::Noise, "r", "{}", None, None, None, None)
+                .await
+                .unwrap();
+            let created_at = (base + chrono::Duration::minutes(index + 1)).to_rfc3339();
+            sqlx::query("UPDATE judgments SET created_at = ? WHERE id = ?")
+                .bind(&created_at)
+                .bind(&id)
+                .execute(db.pool())
+                .await
+                .unwrap();
+            newer.push(format!("alarm:{id}"));
+        }
+
+        let page1 = db.list_brain_events("ws1", BrainEventTab::All, None, 20).await.unwrap();
+        let expected: Vec<String> = newer.iter().rev().cloned().collect();
+        assert_eq!(
+            page1.iter().map(|event| event.id.clone()).collect::<Vec<_>>(),
+            expected,
+            "merged page 1 is strictly the 20 newest, regardless of pin"
+        );
+
+        let page2 = db
+            .list_brain_events("ws1", BrainEventTab::All, Some(&page1[19].id), 20)
+            .await
+            .unwrap();
+        assert_eq!(
+            page2.iter().map(|event| event.id.clone()).collect::<Vec<_>>(),
+            vec![format!("alarm:{pinned}")],
+            "the pinned oldest row is reachable on page 2"
+        );
+        assert!(
+            page1.iter().all(|left| page2.iter().all(|right| left.id != right.id)),
+            "pages must not overlap"
+        );
+
+        // Non-merging tab keeps the pin-first experience.
+        let alarm = db
+            .list_brain_events("ws1", BrainEventTab::Alarm, None, 20)
+            .await
+            .unwrap();
+        assert_eq!(
+            alarm[0].id,
+            format!("alarm:{pinned}"),
+            "alarm tab pins awaiting_approval"
+        );
+    }
+
+    /// The session source must use the merged id order (`'session:' || event_id`)
+    /// as its tiebreak, not insertion `seq`. Inserting ids in reverse lexical
+    /// order makes the difference observable.
+    #[tokio::test]
+    async fn session_same_timestamp_tiebreak_matches_merged_id_order() {
+        let fixture = SessionFeedFixture::new().await;
+        let ts = Utc::now();
+        for event_id in ["event-e", "event-d", "event-c", "event-b", "event-a"] {
+            fixture
+                .db
+                .append_session_event(&session_input(event_id, ts))
+                .await
+                .unwrap();
+        }
+
+        let page1 = fixture
+            .db
+            .list_brain_events("ws-session", BrainEventTab::Session, None, 2)
+            .await
+            .unwrap();
+        assert_eq!(
+            page1.iter().map(|event| event.id.as_str()).collect::<Vec<_>>(),
+            vec!["session:event-e", "session:event-d"],
+            "same timestamp sorts by merged id, not seq"
+        );
+        let page2 = fixture
+            .db
+            .list_brain_events("ws-session", BrainEventTab::Session, Some(&page1[1].id), 2)
+            .await
+            .unwrap();
+        assert_eq!(
+            page2.iter().map(|event| event.id.as_str()).collect::<Vec<_>>(),
+            vec!["session:event-c", "session:event-b"]
+        );
+        let page3 = fixture
+            .db
+            .list_brain_events("ws-session", BrainEventTab::Session, Some(&page2[1].id), 2)
+            .await
+            .unwrap();
+        assert_eq!(
+            page3.iter().map(|event| event.id.as_str()).collect::<Vec<_>>(),
+            vec!["session:event-a"]
+        );
+
+        fixture.close().await;
     }
 
     /// Batch 4 merge contract: judgments (alarm) + recent session events are

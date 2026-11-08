@@ -1,7 +1,11 @@
 import { defineConfig, devices } from '@playwright/test';
 
-const baseURL = 'http://127.0.0.1:5173';
-const fixtureURL = 'http://127.0.0.1:3002';
+// Port overrides let the browser suite run beside an existing dev server:
+//   E2E_UI_PORT=5273 E2E_FIXTURE_PORT=3102 npm run test:browser
+const uiPort = Number(process.env.E2E_UI_PORT ?? 5173);
+const fixturePort = Number(process.env.E2E_FIXTURE_PORT ?? 3002);
+const baseURL = `http://127.0.0.1:${uiPort}`;
+const fixtureURL = `http://127.0.0.1:${fixturePort}`;
 
 export default defineConfig({
   testDir: './e2e',
@@ -30,11 +34,11 @@ export default defineConfig({
       timeout: 30_000,
     },
     {
-      command: 'npx vite --port 5173 --strictPort',
+      command: `npx vite --port ${uiPort} --strictPort`,
       url: baseURL,
       reuseExistingServer: false,
       timeout: 60_000,
-      env: { VITE_RUNTIME_TEST: '1' },
+      env: { VITE_RUNTIME_TEST: '1', E2E_FIXTURE_PORT: String(fixturePort) },
     },
   ],
 });
