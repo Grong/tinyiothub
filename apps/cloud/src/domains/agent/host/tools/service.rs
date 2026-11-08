@@ -116,13 +116,41 @@ pub fn chat_builtin_tools_provider(
         ));
 
         // E2 ToolExec 接缝：所有内建工具经统一执行外壳（默认直通）。
-        tools
+        let mut tools: Vec<(Box<dyn Tool>, ToolSafety)> = tools
             .into_iter()
             .map(|(tool, safety)| {
                 let wrapped: Box<dyn Tool> = Box::new(SeamTool::new(tool, Arc::clone(&tool_exec), workspace_id));
                 (wrapped, safety)
             })
-            .collect()
+            .collect();
+
+        // PermissionGuard：聊天/子代理 Turn 内按 Session 权限模式拦截写操作。
+        if runtime.session_tools_enabled && runtime.agent_id.is_some() {
+            let assistant_id = runtime.agent_id.clone().unwrap_or_default();
+            tools = tools
+                .into_iter()
+                .map(|(tool, safety)| {
+                    if safety == ToolSafety::ReadOnly {
+                        (tool, safety)
+                    } else {
+                        (
+                            Box::new(crate::domains::agent::session::PermissionGuardTool::new(
+                                tool,
+                                assistant_id.clone(),
+                                session.contexts.clone(),
+                                session.approvals.clone(),
+                                session.events.clone(),
+                                safety,
+                                crate::domains::agent::session::APPROVAL_TIMEOUT,
+                            )) as Box<dyn Tool>,
+                            safety,
+                        )
+                    }
+                })
+                .collect();
+        }
+
+        tools
     })
 }
 
