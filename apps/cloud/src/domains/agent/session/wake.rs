@@ -15,6 +15,7 @@ use tinyiothub_storage::Db;
 use tinyiothub_storage::assistant_schedule::AssistantSchedule;
 use tinyiothub_storage::session::Session;
 
+use super::trigger::EventWake;
 use crate::domains::agent::host::chat::service::ensure_agent;
 use crate::domains::agent::pool::AgentPool;
 use crate::domains::agent::session::SESSION_TURN_TIMEOUT;
@@ -88,6 +89,14 @@ pub struct WakeReport {
 #[async_trait::async_trait]
 pub trait WakeExecutor: Send + Sync {
     async fn execute(&self, schedule: AssistantSchedule, cancel: CancellationToken) -> WakeReport;
+
+    /// 事件 wake 入口。默认跳过——既有实现者无需改动即可继续编译。
+    async fn execute_event(&self, _wake: EventWake, _cancel: CancellationToken) -> WakeReport {
+        WakeReport {
+            session_key: String::new(),
+            outcome: WakeOutcome::Skipped,
+        }
+    }
 }
 
 pub struct WakeRunner {
@@ -96,6 +105,15 @@ pub struct WakeRunner {
     events: Arc<dyn SessionEventSink>,
     todos: Arc<TodoStore>,
     runner: Arc<SessionRunner>,
+}
+
+/// 一次 wake session 的来源（scheduled / event 共用同一套生命周期写入）。
+struct SessionOrigin<'a> {
+    workspace_id: &'a str,
+    assistant_id: &'a str,
+    kind: &'a str,
+    trigger: &'a str,
+    source_id: &'a str,
 }
 
 impl WakeRunner {
@@ -190,18 +208,93 @@ impl WakeRunner {
         message: &str,
         cancel: CancellationToken,
     ) -> WakeReport {
+        let source_id = Uuid::new_v4().to_string();
+        self.run_session_with_agent(
+            SessionOrigin {
+                workspace_id: &schedule.workspace_id,
+                assistant_id: &schedule.assistant_id,
+                kind: "scheduled",
+                trigger: "schedule",
+                source_id: &source_id,
+            },
+            agent,
+            message,
+            cancel,
+        )
+        .await
+    }
+
+    /// 告警等外部事件 wake：与定时 wake 共用生命周期事件，kind 为 `event`。
+    pub async fn run_event(&self, wake: &EventWake, cancel: CancellationToken) -> WakeReport {
+        let message = format!(
+            "收到告警：{}\n请按「应急预案」技能（如未加载则按默认职责）评估影响、给出处置建议；涉及写设备必须走审批。",
+            wake.summary
+        );
+        let assistant_id = assistant_agent_id(&wake.workspace_id);
+        let agent = match ensure_agent(
+            &self.pool,
+            &assistant_id,
+            &wake.workspace_id,
+            &AgentRuntimeConfig::default(),
+            true,
+        )
+        .await
+        {
+            Ok(agent) => agent,
+            Err(error) => {
+                return WakeReport {
+                    session_key: String::new(),
+                    outcome: WakeOutcome::Failed {
+                        error: error.to_string(),
+                    },
+                };
+            }
+        };
+        self.run_event_with_agent(wake.clone(), agent, &message, cancel).await
+    }
+
+    pub(crate) async fn run_event_with_agent(
+        &self,
+        wake: EventWake,
+        agent: AgentLoopHandle,
+        message: &str,
+        cancel: CancellationToken,
+    ) -> WakeReport {
+        let assistant_id = assistant_agent_id(&wake.workspace_id);
+        self.run_session_with_agent(
+            SessionOrigin {
+                workspace_id: &wake.workspace_id,
+                assistant_id: &assistant_id,
+                kind: "event",
+                trigger: &wake.trigger,
+                source_id: &wake.source_id,
+            },
+            agent,
+            message,
+            cancel,
+        )
+        .await
+    }
+
+    async fn run_session_with_agent(
+        &self,
+        origin: SessionOrigin<'_>,
+        agent: AgentLoopHandle,
+        message: &str,
+        cancel: CancellationToken,
+    ) -> WakeReport {
         let session_key = format!(
             "agent:{}:{}/{}",
-            schedule.workspace_id,
-            schedule.assistant_id,
+            origin.workspace_id,
+            origin.assistant_id,
             Uuid::new_v4()
         );
         let session = Session::new(
             session_key.clone(),
-            schedule.workspace_id.clone(),
-            schedule.assistant_id.clone(),
+            origin.workspace_id.to_string(),
+            origin.assistant_id.to_string(),
         )
-        .with_kind("scheduled");
+        .with_kind(origin.kind);
         if let Err(error) = self.db.create_session(&session).await {
             return WakeReport {
                 session_key,
@@ -211,8 +304,8 @@ impl WakeRunner {
             };
         }
         let context = TurnContext::new(
-            schedule.workspace_id.clone(),
-            schedule.assistant_id.clone(),
+            origin.workspace_id.to_string(),
+            origin.assistant_id.to_string(),
             session_key.clone(),
             Uuid::new_v4().to_string(),
             0,
@@ -221,7 +314,7 @@ impl WakeRunner {
         self.emit(
             &context,
             "trigger.received",
-            json!({ "trigger": "schedule", "sourceId": &wake_event_id }),
+            json!({ "trigger": origin.trigger, "sourceId": origin.source_id }),
         )
         .await;
         self.emit(&context, "wake.dispatched", json!({ "wakeEventId": &wake_event_id }))
@@ -229,7 +322,7 @@ impl WakeRunner {
         self.emit(
             &context,
             "session.started",
-            session_started_payload(&session_key, "scheduled"),
+            session_started_payload(&session_key, origin.kind),
         )
         .await;
 
@@ -277,6 +370,10 @@ impl WakeRunner {
 impl WakeExecutor for WakeRunner {
     async fn execute(&self, schedule: AssistantSchedule, cancel: CancellationToken) -> WakeReport {
         self.run(&schedule, cancel).await
+    }
+
+    async fn execute_event(&self, wake: EventWake, cancel: CancellationToken) -> WakeReport {
+        self.run_event(&wake, cancel).await
     }
 }
 
@@ -574,5 +671,48 @@ mod tests {
 
         let session = wake.db.get_session(&report.session_key).await.unwrap().unwrap();
         assert_eq!(session.status, "ended");
+    }
+
+    #[tokio::test]
+    async fn event_wake_writes_event_session_lifecycle() {
+        let (wake, agent_pool, sink) = fixture().await;
+        let agent = agent_pool
+            .create(
+                &assistant_agent_id("ws"),
+                "ws",
+                &AgentRuntimeConfig::default(),
+                vec![],
+                true,
+            )
+            .unwrap();
+        let report = wake
+            .run_event_with_agent(
+                EventWake {
+                    workspace_id: "ws".into(),
+                    trigger: "alarm".into(),
+                    source_id: "alarm-1".into(),
+                    summary: "温度过高".into(),
+                },
+                agent,
+                "收到告警：温度过高",
+                tokio_util::sync::CancellationToken::new(),
+            )
+            .await;
+        assert_eq!(report.outcome, WakeOutcome::Completed);
+        let events = sink.events.lock().await;
+        let types: Vec<&str> = events.iter().map(|event| event.event_type.as_str()).collect();
+        assert_eq!(
+            types,
+            vec![
+                "trigger.received",
+                "wake.dispatched",
+                "session.started",
+                "turn.started",
+                "message.created",
+                "turn.completed",
+                "session.ended"
+            ]
+        );
+        assert_eq!(events[2].payload_json["kind"], "event");
     }
 }

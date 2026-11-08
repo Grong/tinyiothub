@@ -92,6 +92,12 @@ impl Orchestrator {
     pub fn mark_problem_acked(&self, workspace_id: &str, problem_key: &str, run_id: &str) {
         self.handler.mark_problem_acked(workspace_id, problem_key, run_id);
     }
+
+    /// Plan 4A Task 7：TriggerRouter 接管报警后关闭 legacy 心跳桥的告警派发；
+    /// 无桥时为 no-op。
+    pub fn set_alarm_dispatch(&self, enabled: bool) {
+        self.handler.set_alarm_dispatch(enabled);
+    }
 }
 
 #[cfg(test)]
