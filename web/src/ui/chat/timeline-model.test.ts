@@ -63,6 +63,14 @@ describe('TimelineModel', () => {
     expect(block).toMatchObject({ tone: 'answered' });
   });
 
+  it('tracks approval lifecycle', () => {
+    const model = new TimelineModel();
+    model.ingestEvent(event(1, 'approval.requested', { approvalId: 'a1', action: 'set_device', summary: '设 24℃' }));
+    expect(model.pendingApproval?.approvalId).toBe('a1');
+    model.ingestEvent(event(2, 'approval.resolved', { approvalId: 'a1', resolution: 'approved' }));
+    expect(model.pendingApproval).toBeNull();
+  });
+
   it('updates subagent lifecycle and turn status', () => {
     const model = new TimelineModel();
     model.ingestEvent(event(1, 'subagent.started', { subagentId: 's1', description: '分析离线', subagentType: 'general-purpose' }));

@@ -197,10 +197,15 @@ pub async fn get_hud(
         Ok(value) => value as i64,
         Err(error) => return internal(error),
     };
-    let approvals = match state.db.count_pending_tool_approvals(&workspace_id).await {
+    let harness_approvals = match state.db.count_pending_tool_approvals(&workspace_id).await {
         Ok(value) => value,
         Err(error) => return internal(error),
     };
+    let broker_approvals = state
+        .session_runtime
+        .approvals
+        .count_pending_for_workspace(&workspace_id) as i64;
+    let approvals = harness_approvals + broker_approvals;
     let questions = state
         .session_runtime
         .questions

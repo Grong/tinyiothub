@@ -23,6 +23,7 @@ import { renderTimeline, renderTodoPanel } from '../chat/timeline-render.js';
 import { A2uiRendererEngine } from '../chat/a2ui/a2ui-renderer.js';
 import '../chat/session-drawer.js';
 import '../chat/question-card.js';
+import '../chat/approval-card.js';
 import '../components/global-hud.js';
 
 const AGENT_ID = 'default';
@@ -195,6 +196,11 @@ export class ChatView extends LitElement {
     void this.loadTimeline(this.sessionKey);
   }
 
+  private onApprovalAnswered(): void {
+    this.timeline.pendingApproval = null;
+    void this.loadTimeline(this.sessionKey);
+  }
+
   private handleA2uiAction(functionId: string, data: Record<string, unknown>): void {
     const thingId = (data.thingId ?? data.deviceId) as string | undefined;
     if ((functionId === 'viewDevice' || functionId === 'controlDevice') && thingId) {
@@ -252,6 +258,13 @@ export class ChatView extends LitElement {
                   .pending=${pending}
                   @answered=${() => this.answerPending()}
                 ></question-card>`
+              : ''}
+            ${this.timeline.pendingApproval
+              ? html`<approval-card
+                  .sessionKey=${this.sessionKey}
+                  .pending=${this.timeline.pendingApproval}
+                  @answered=${() => this.onApprovalAnswered()}
+                ></approval-card>`
               : ''}
             ${renderTimeline(this.timeline.blocks, { liveText: this.liveText, sending: this.sending })}
             ${this.a2uiRenderer.renderSurfacesByKind('inline')}

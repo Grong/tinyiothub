@@ -164,6 +164,27 @@ export async function answerQuestion(
   throw httpError(response.status, '提交回答失败');
 }
 
+export async function answerApproval(
+  sessionKey: string,
+  approvalId: string,
+  decision: 'approved' | 'denied',
+): Promise<void> {
+  const response = await fetch(
+    buildUrl(sessionPath(sessionKey, `/approvals/${encodeURIComponent(approvalId)}/answer`)),
+    {
+      method: 'POST',
+      headers: authHeaders({ 'Content-Type': 'application/json' }),
+      credentials: 'include',
+      body: JSON.stringify({ decision }),
+    },
+  );
+  if (response.status === 204) return;
+  if (response.status === 404) throw httpError(404, '审批不存在或已处理');
+  if (response.status === 403) throw httpError(403, '审批属于其他会话');
+  if (response.status === 409) throw httpError(409, '审批已关闭');
+  throw httpError(response.status, '提交审批失败');
+}
+
 export async function fetchAssistantHud(workspaceId: string): Promise<HudSnapshot> {
   const response = await fetch(buildUrl(`/workspaces/${encodeURIComponent(workspaceId)}/agent/hud`), {
     headers: authHeaders(),
