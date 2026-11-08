@@ -1,8 +1,9 @@
 /**
- * Legacy Runtime hash state. Canonical navigation now lives in
- * harness-url-state.ts; these parsers/builders keep old deep links working and
- * are shared by the canonical Harness parser so both accept encoded IDs the
- * same way.
+ * Legacy Runtime hash state (kept for one version).
+ *
+ * The Runtime workbench is gone. These parsers only recognise old deep links so
+ * the app router can redirect them to `#/assistant` (see
+ * assistant-url-state.ts); the builders stay for URL-state regression tests.
  */
 
 export type RuntimeView = 'loop' | 'flow';

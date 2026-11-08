@@ -147,6 +147,21 @@ describe('view-chat codex layout', () => {
     expect(el.textContent).toContain('A2UI 你好');
   });
 
+  it('opens the session named by a deep link instead of the stored session', async () => {
+    localStorage.setItem('tinyiothub_chat_last_session', 'agent:ws-1:default/stored');
+    hoisted.fetchSessionEvents.mockResolvedValue({ events: [], highWatermark: 0 });
+    const el = document.createElement('view-chat') as ChatView;
+    el.initialSessionKey = 'agent:ws-1:default/linked';
+    document.body.appendChild(el);
+    await vi.waitFor(() => expect(hoisted.connectSessionEvents).toHaveBeenCalled());
+    expect(hoisted.connectSessionEvents.mock.calls[0][0].sessionKey).toBe(
+      'agent:ws-1:default/linked',
+    );
+    expect(localStorage.getItem('tinyiothub_chat_last_session')).toBe(
+      'agent:ws-1:default/linked',
+    );
+  });
+
   it('changes the session permission mode', async () => {
     localStorage.setItem('tinyiothub_chat_last_session', 'agent:ws-1:default/s1');
     hoisted.listChatSessions.mockResolvedValue([

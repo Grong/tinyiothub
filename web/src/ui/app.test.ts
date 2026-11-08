@@ -1,11 +1,7 @@
 import { render } from "lit";
 import { afterEach, describe, expect, it } from "vitest";
 import "./app.js";
-import "./views/ai-ops.js";
-import "./views/harness-overview.js";
-import "./views/runtime-list.js";
-import "./views/runtime-new.js";
-import "./views/runtime-task.js";
+import "./views/chat.js";
 
 function makeApp(authenticated: boolean) {
   // Not connected to the DOM: connectedCallback (auth check, user info fetch)
@@ -39,29 +35,77 @@ describe("app router root path", () => {
   });
 });
 
-describe("app router · Runtime hash routes", () => {
+describe("app router · assistant hash routes", () => {
   afterEach(() => {
     window.history.pushState({}, "", "/");
   });
 
-  it("routes list/new/detail explicitly", () => {
-    const el = makeApp(true);
-
+  it("maps #/assistant onto the existing chat view", () => {
     window.history.pushState({}, "", "/dashboard");
-    window.location.hash = "#/runtime";
+    window.location.hash = "#/assistant";
+    const el = makeApp(true);
     el.handleRoute();
-    expect(el.currentRoute).toBe("runtime");
+    expect(el.currentRoute).toBe("chat");
+    expect(el.assistantRoute).toEqual({ view: "assistant" });
+    expect(window.location.pathname).toBe("/dashboard");
+  });
 
-    window.location.hash = "#/runtime/new";
+  it("maps a session deep link and its focus state onto the chat view", () => {
+    window.history.pushState({}, "", "/dashboard");
+    window.location.hash =
+      "#/assistant/sessions/agent%3Aws%3Adefault%2Fs1?view=flow&device=dev%2F1&at=2026-10-27T10%3A00%3A00Z&event=event%3A2";
+    const el = makeApp(true);
     el.handleRoute();
-    expect(el.currentRoute).toBe("runtime-new");
-
-    window.location.hash = "#/runtime/tasks/task%3A1?view=flow&device=dev%2F1&event=event_2";
-    el.handleRoute();
-    expect(el.currentRoute).toBe("runtime-task");
-    expect(el.runtimeRoute).toMatchObject({
-      name: "task", taskId: "task:1", view: "flow", device: "dev/1", history: { event: "event_2" },
+    expect(el.currentRoute).toBe("chat");
+    expect(el.assistantRoute).toEqual({
+      view: "assistant",
+      sessionKey: "agent:ws:default/s1",
+      focus: {
+        view: "flow",
+        device: "dev/1",
+        at: "2026-10-27T10:00:00Z",
+        event: "event:2",
+      },
     });
+  });
+
+  it("still requires authentication", () => {
+    window.history.pushState({}, "", "/dashboard");
+    window.location.hash = "#/assistant";
+    const el = makeApp(false);
+    el.handleRoute();
+    expect(el.currentRoute).toBe("login");
+  });
+});
+
+describe("app router · legacy workbench redirects", () => {
+  afterEach(() => {
+    window.history.pushState({}, "", "/");
+  });
+
+  it("redirects every legacy Runtime and Harness deep link to #/assistant", () => {
+    for (const hash of [
+      "#/runtime",
+      "#/runtime/new",
+      "#/runtime/tasks/task%3A1?view=flow&device=dev%2F1&event=event%3A2",
+      "#/harness",
+      "#/harness#main-main%3A1",
+      "#/harness/tasks",
+      "#/harness/tasks/new",
+      "#/harness/tasks/task%3A1?from=%23%2Fharness%23main-main%3A1",
+      "#/harness/workflows/wf%3A1",
+      "#/harness/supervisor",
+    ]) {
+      window.history.pushState({}, "", "/dashboard");
+      window.location.hash = hash;
+      const el = makeApp(true);
+      el.handleRoute();
+      expect(window.location.hash, hash).toBe("#/assistant");
+      expect(el.currentRoute, hash).toBe("chat");
+      // The legacy Task id is deliberately not reused as a session key.
+      expect(el.assistantRoute, hash).toEqual({ view: "assistant" });
+      expect(window.location.pathname, hash).toBe("/dashboard");
+    }
   });
 
   it("still requires authentication", () => {
@@ -71,9 +115,18 @@ describe("app router · Runtime hash routes", () => {
     el.handleRoute();
     expect(el.currentRoute).toBe("login");
   });
+
+  it("leaves unknown legacy hashes on the pathname router", () => {
+    window.history.pushState({}, "", "/dashboard");
+    window.location.hash = "#/harness/unknown";
+    const el = makeApp(true);
+    el.handleRoute();
+    expect(el.currentRoute).toBe("dashboard");
+    expect(window.location.hash).toBe("#/harness/unknown");
+  });
 });
 
-describe("app navigation · Harness entry", () => {
+describe("app navigation · assistant entry", () => {
   afterEach(() => {
     window.history.pushState({}, "", "/");
   });
@@ -84,161 +137,21 @@ describe("app navigation · Harness entry", () => {
     return host;
   }
 
-  it("shows the Harness nav item and opens the canonical hash route", () => {
+  it("keeps the assistant item and removes the Harness/Runtime entries", () => {
     const el = makeApp(true);
-    const link = renderNav(el).querySelector(
-      'a[href="#/harness"]',
-    ) as HTMLAnchorElement;
-    expect(link).not.toBeNull();
-    expect(link.textContent).toContain("Harness");
-    link.click();
-    expect(window.location.hash).toBe("#/harness");
-    expect(el.currentRoute).toBe("harness");
-    expect(el.harnessRoute).toEqual({ name: "overview" });
-    expect(renderNav(el).querySelector('a[href="#/runtime"]')).toBeNull();
+    const nav = renderNav(el);
+    const assistant = nav.querySelector('a[href="/chat"]') as HTMLAnchorElement;
+    expect(assistant).not.toBeNull();
+    expect(assistant.textContent).toContain("AI 助手");
+    expect(nav.querySelector('a[href="#/harness"]')).toBeNull();
+    expect(nav.querySelector('a[href="#/runtime"]')).toBeNull();
   });
 
-  it("marks the Harness entry active on overview, Task list, new, and Task routes", () => {
+  it("marks the assistant item active on the chat route", () => {
     const el = makeApp(true);
-    for (const route of ["harness", "runtime", "runtime-new", "runtime-task"]) {
-      el.currentRoute = route;
-      const link = renderNav(el).querySelector('a[href="#/harness"]');
-      expect(link?.classList.contains("active")).toBe(true);
-    }
-  });
-});
-
-describe("app router · canonical Harness hash routes", () => {
-  afterEach(() => {
-    window.history.pushState({}, "", "/");
-  });
-
-  it("routes the overview, Task list, new Task and Task detail explicitly", () => {
-    window.history.pushState({}, "", "/dashboard");
-    const el = makeApp(true);
-
-    window.location.hash = "#/harness";
-    el.handleRoute();
-    expect(el.currentRoute).toBe("harness");
-    expect(el.harnessRoute).toEqual({ name: "overview" });
-
-    // Retired Workflow links land on the overview instead of breaking.
-    window.location.hash = "#/harness/workflows/wf%3A1";
-    el.handleRoute();
-    expect(el.currentRoute).toBe("harness");
-    expect(el.harnessRoute).toEqual({ name: "overview" });
-
-    window.location.hash = "#/harness/tasks";
-    el.handleRoute();
-    expect(el.currentRoute).toBe("runtime");
-    expect(el.runtimeRoute).toEqual({ name: "list" });
-
-    window.location.hash = "#/harness/tasks/new";
-    el.handleRoute();
-    expect(el.currentRoute).toBe("runtime-new");
-    expect(el.runtimeRoute).toEqual({ name: "new" });
-
-    window.location.hash =
-      "#/harness/tasks/task%3A1?view=flow&device=dev%2F1&at=2026-10-27T10%3A00%3A00Z&event=event%3A2";
-    el.handleRoute();
-    expect(el.currentRoute).toBe("runtime-task");
-    expect(el.runtimeRoute).toMatchObject({
-      name: "task",
-      taskId: "task:1",
-      view: "flow",
-      device: "dev/1",
-      history: { at: "2026-10-27T10:00:00Z", event: "event:2" },
-    });
-  });
-
-  it("redirects legacy Runtime links to canonical Harness URLs without losing state", () => {
-    window.history.pushState({}, "", "/dashboard");
-    const el = makeApp(true);
-
-    window.location.hash = "#/runtime";
-    el.handleRoute();
-    expect(window.location.hash).toBe("#/harness/tasks");
-    expect(el.currentRoute).toBe("runtime");
-
-    window.location.hash = "#/runtime/new";
-    el.handleRoute();
-    expect(window.location.hash).toBe("#/harness/tasks/new");
-    expect(el.currentRoute).toBe("runtime-new");
-
-    window.location.hash =
-      "#/runtime/tasks/task%3A1?view=flow&device=dev%2F1&at=2026-10-27T10%3A00%3A00Z&event=event%3A2";
-    el.handleRoute();
-    expect(window.location.hash).toBe(
-      "#/harness/tasks/task%3A1?view=flow&device=dev%2F1&at=2026-10-27T10%3A00%3A00Z&event=event%3A2",
-    );
-    expect(el.currentRoute).toBe("runtime-task");
-    expect(el.runtimeRoute).toMatchObject({
-      taskId: "task:1",
-      view: "flow",
-      device: "dev/1",
-      history: { at: "2026-10-27T10:00:00Z", event: "event:2" },
-    });
-  });
-
-  it("uses the shared Runtime Task component and restores the parent return path", () => {
-    window.history.pushState({}, "", "/dashboard");
-    window.location.hash =
-      "#/harness/tasks/child%3A1?from=%23%2Fharness%23main-main%3A1";
-    const el = makeApp(true);
-    el.handleRoute();
-
-    const host = document.createElement("div");
-    render(el.renderPage(), host);
-    expect(host.querySelector("view-runtime-task")).not.toBeNull();
-    expect(host.querySelector(".harness-task-return a")?.getAttribute("href")).toBe(
-      "#/harness#main-main:1",
-    );
-  });
-
-  it("keeps the parent return path when the shared Task view emits a legacy URL", () => {
-    window.history.pushState({}, "", "/dashboard");
-    window.location.hash =
-      "#/harness/tasks/child%3A1?from=%23%2Fharness%23main-main%3A1";
-    const el = makeApp(true);
-    el.handleRoute();
-
-    window.location.hash = "#/runtime/tasks/child%3A1?view=flow";
-    el.handleRoute();
-
-    expect(window.location.hash).toBe(
-      "#/harness/tasks/child%3A1?view=flow&from=%23%2Fharness%23main-main%3A1",
-    );
-    expect(el.harnessRoute).toMatchObject({
-      name: "task",
-      taskId: "child:1",
-      view: "flow",
-      from: "#/harness#main-main:1",
-    });
-  });
-
-  it("restores the overview from a parent-return anchor link", () => {
-    window.history.pushState({}, "", "/dashboard");
-    window.location.hash = "#/harness#main-main%3A1";
-    const el = makeApp(true);
-    el.handleRoute();
-
-    expect(el.currentRoute).toBe("harness");
-    expect(el.harnessRoute).toEqual({ name: "overview", anchor: "main-main:1" });
-
-    const host = document.createElement("div");
-    render(el.renderPage(), host);
-    expect((host.querySelector("view-harness-overview") as any)?.anchor).toBe(
-      "main-main:1",
-    );
-  });
-
-  it("falls through invalid Harness routes instead of rendering the overview", () => {
-    window.history.pushState({}, "", "/dashboard");
-    window.location.hash = "#/harness/unknown";
-    const el = makeApp(true);
-    el.handleRoute();
-    expect(el.currentRoute).toBe("dashboard");
-    expect(el.harnessRoute).toBeNull();
+    el.currentRoute = "chat";
+    const link = renderNav(el).querySelector('a[href="/chat"]');
+    expect(link?.classList.contains("active")).toBe(true);
   });
 });
 

@@ -2,17 +2,15 @@ import { LitElement, html, nothing } from "lit";
 import { customElement, state } from "lit/decorators.js";
 import type { AgentsState, AgentsPanel } from "../controllers/agents.js";
 import type { AgentItem } from "../types.js";
-import { createAgentsState, loadAgents, loadAgentConfig, loadToolsCatalog, toggleTool, loadSkills, loadHeartbeatConfig, loadHeartbeatLogs, loadApprovals, approveProposal, rejectProposal, updateHeartbeatConfig, updateHeartbeatTasks, saveAgentConfig } from "../controllers/agents.js";
+import { createAgentsState, loadAgents, loadAgentConfig, loadToolsCatalog, toggleTool, loadSkills, saveAgentConfig } from "../controllers/agents.js";
 import { renderWorkspaceTab } from "./agents-workspace-tab.js";
 import { renderToolsTab } from "./agents-tools-tab.js";
 import { renderSkillsTab } from "./agents-skills-tab.js";
-import { renderHeartbeatTab, type HeartbeatTask } from "./agents-heartbeat-tab.js";
 
 const panelLabels: Record<AgentsPanel, string> = {
   overview: "工作区设定",
   tools: "工具权限",
   skills: "技能",
-  heartbeat: "心跳",
 };
 
 @customElement("view-agents")
@@ -36,22 +34,12 @@ export class ViewAgents extends LitElement {
     });
   }
 
-  private findWorkspaceId(agentId: string): string {
-    const agents = this.state.agentsList?.agents || [];
-    const agent = agents.find(a => a.id === agentId);
-    return agent?.workspaceId || agentId;
-  }
-
   private onAgentSelected(agentId: string): void {
     this.state = { ...this.state, selectedAgentId: agentId, activePanel: "overview" };
-    const wsId = this.findWorkspaceId(agentId);
     Promise.all([
       loadAgentConfig(this.state, agentId),
       loadToolsCatalog(this.state, agentId),
       loadSkills(this.state),
-      loadHeartbeatConfig(this.state, wsId),
-      loadHeartbeatLogs(this.state, wsId),
-      loadApprovals(this.state, wsId),
     ]).then(() => this.requestUpdate());
   }
 
@@ -59,93 +47,6 @@ export class ViewAgents extends LitElement {
     if (!this.state.selectedAgentId) return;
     await toggleTool(this.state.selectedAgentId, toolName, enabled);
     await loadToolsCatalog(this.state, this.state.selectedAgentId);
-    this.requestUpdate();
-  }
-
-  private getHeartbeatWorkspaceId(): string {
-    // Use the heartbeat config's workspaceId if available
-    if (this.state.heartbeatConfig?.workspaceId) return this.state.heartbeatConfig.workspaceId;
-    // Fall back to looking up from the agents list
-    if (this.state.selectedAgentId) return this.findWorkspaceId(this.state.selectedAgentId);
-    return "";
-  }
-
-  private async onToggleHeartbeat(enabled: boolean): Promise<void> {
-    const wsId = this.getHeartbeatWorkspaceId();
-    if (!wsId) return;
-    await updateHeartbeatConfig(this.state, wsId, enabled, undefined);
-    await loadHeartbeatLogs(this.state, wsId);
-    await loadApprovals(this.state, wsId);
-    this.requestUpdate();
-  }
-
-  private async onChangeHeartbeatInterval(intervalMinutes: number): Promise<void> {
-    const wsId = this.getHeartbeatWorkspaceId();
-    if (!wsId) return;
-    await updateHeartbeatConfig(this.state, wsId, undefined, intervalMinutes);
-    await loadHeartbeatLogs(this.state, wsId);
-    await loadApprovals(this.state, wsId);
-    this.requestUpdate();
-  }
-
-  private async onToggleHeartbeatTask(index: number, paused: boolean): Promise<void> {
-    const wsId = this.getHeartbeatWorkspaceId();
-    if (!wsId || !this.state.heartbeatConfig) return;
-    const tasks = [...(this.state.heartbeatConfig.tasks || [])];
-    tasks[index] = { ...tasks[index], paused };
-    await updateHeartbeatTasks(this.state, wsId, tasks);
-    await loadHeartbeatLogs(this.state, wsId);
-    await loadApprovals(this.state, wsId);
-    this.requestUpdate();
-  }
-
-  private async onAddHeartbeatTask(task: { priority: string; text: string; paused: boolean }): Promise<void> {
-    const wsId = this.getHeartbeatWorkspaceId();
-    if (!wsId || !this.state.heartbeatConfig) return;
-    const tasks = [...(this.state.heartbeatConfig.tasks || []), task];
-    await updateHeartbeatTasks(this.state, wsId, tasks);
-    await loadHeartbeatLogs(this.state, wsId);
-    await loadApprovals(this.state, wsId);
-    this.requestUpdate();
-  }
-
-  private async onRemoveHeartbeatTask(index: number): Promise<void> {
-    const wsId = this.getHeartbeatWorkspaceId();
-    if (!wsId || !this.state.heartbeatConfig) return;
-    const task = this.state.heartbeatConfig.tasks?.[index];
-    if (!confirm(`确定要删除任务"${task?.text || ''}"吗？`)) return;
-    const tasks = (this.state.heartbeatConfig.tasks || []).filter((_, i) => i !== index);
-    await updateHeartbeatTasks(this.state, wsId, tasks);
-    await loadHeartbeatLogs(this.state, wsId);
-    await loadApprovals(this.state, wsId);
-    this.requestUpdate();
-  }
-
-  private async onUpdateHeartbeatTask(index: number, patch: Partial<HeartbeatTask>): Promise<void> {
-    const wsId = this.getHeartbeatWorkspaceId();
-    if (!wsId || !this.state.heartbeatConfig) return;
-    const tasks = [...(this.state.heartbeatConfig.tasks || [])];
-    tasks[index] = { ...tasks[index], ...patch };
-    await updateHeartbeatTasks(this.state, wsId, tasks);
-    await loadHeartbeatLogs(this.state, wsId);
-    await loadApprovals(this.state, wsId);
-    this.requestUpdate();
-  }
-
-  private async onApproveProposal(proposalId: string): Promise<void> {
-    const wsId = this.getHeartbeatWorkspaceId();
-    if (!wsId) return;
-    await approveProposal(this.state, wsId, proposalId);
-    await loadHeartbeatLogs(this.state, wsId);
-    await loadApprovals(this.state, wsId);
-    this.requestUpdate();
-  }
-
-  private async onRejectProposal(proposalId: string): Promise<void> {
-    const wsId = this.getHeartbeatWorkspaceId();
-    if (!wsId) return;
-    await rejectProposal(this.state, wsId, proposalId);
-    await loadApprovals(this.state, wsId);
     this.requestUpdate();
   }
 
@@ -175,7 +76,7 @@ export class ViewAgents extends LitElement {
       return html`<div class="agents-layout"><div class="agent-panel-error">${this.state.agentsError}</div></div>`;
     }
 
-    const allPanels: AgentsPanel[] = ["overview", "tools", "skills", "heartbeat"];
+    const allPanels: AgentsPanel[] = ["overview", "tools", "skills"];
 
     // Tools tab search — local state to avoid re-render on other panels
     const searchFilter = (this as any)._searchFilter || "";
@@ -224,17 +125,6 @@ export class ViewAgents extends LitElement {
             this.state,
             this._patchState.bind(this),
             () => { if (this.state.selectedAgentId) loadSkills(this.state).then(() => this.requestUpdate()); }
-          ) : nothing}
-          ${this.state.activePanel === "heartbeat" ? renderHeartbeatTab(
-            this.state,
-            this.onToggleHeartbeat.bind(this),
-            this.onChangeHeartbeatInterval.bind(this),
-            this.onToggleHeartbeatTask.bind(this),
-            this.onAddHeartbeatTask.bind(this),
-            this.onRemoveHeartbeatTask.bind(this),
-            this.onUpdateHeartbeatTask.bind(this),
-            this.onApproveProposal.bind(this),
-            this.onRejectProposal.bind(this),
           ) : nothing}
         </div>
       </div>

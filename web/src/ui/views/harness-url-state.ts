@@ -1,18 +1,12 @@
 /**
- * Canonical Harness hash routes plus the one-way legacy Runtime mapping.
+ * Legacy Harness hash routes plus the one-way legacy Runtime mapping
+ * (kept for one version).
  *
- * Canonical:
- *   #/harness
- *   #/harness/supervisor
- *   #/harness/compaction
- *   #/harness/tasks
- *   #/harness/tasks/new
- *   #/harness/tasks/{task_id}?view=flow&device=…&at=…&event=…&from=…
- *
- * Old #/runtime list/new/task links are redirected once by the app router and
- * keep the encoded Task ID and replay/device query unchanged. Retired
- * #/harness/workflows… links fall back to the overview instead of breaking a
- * stale bookmark.
+ * The Harness workbench is gone. These parsers only recognise old deep links
+ * so the app router can redirect them to `#/assistant` (see
+ * assistant-url-state.ts). The URL builders stay for URL-state regression
+ * tests. Retired #/harness/workflows… links still parse as the old overview
+ * route instead of failing.
  */
 
 import {

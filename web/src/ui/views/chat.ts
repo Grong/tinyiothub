@@ -1,5 +1,5 @@
 import { LitElement, html, type PropertyValues } from 'lit';
-import { customElement, state } from 'lit/decorators.js';
+import { customElement, property, state } from 'lit/decorators.js';
 import { getWorkspaceId } from '../../api/client.js';
 import {
   connectSessionEvents,
@@ -38,6 +38,8 @@ export class ChatView extends LitElement {
     return this;
   }
 
+  /** Session selected by a canonical `#/assistant/sessions/{key}` deep link. */
+  @property({ type: String }) initialSessionKey = '';
   @state() private sessionKey = '';
   @state() private draft = '';
   @state() private liveText = '';
@@ -72,9 +74,10 @@ export class ChatView extends LitElement {
     const workspaceId = this.workspaceId;
     const stored = localStorage.getItem('tinyiothub_chat_last_session');
     const sessionKey =
-      stored && stored.startsWith(`agent:${workspaceId}:`)
+      this.initialSessionKey ||
+      (stored && stored.startsWith(`agent:${workspaceId}:`)
         ? stored
-        : await resolveSessionKey(AGENT_ID);
+        : await resolveSessionKey(AGENT_ID));
     localStorage.setItem('tinyiothub_chat_last_session', sessionKey);
     this.selectSession(sessionKey);
   }
@@ -264,6 +267,12 @@ export class ChatView extends LitElement {
 
   private newSession(): void {
     this.selectSession(this.newSessionKey());
+  }
+
+  protected willUpdate(changed: PropertyValues): void {
+    if (!changed.has('initialSessionKey')) return;
+    const next = this.initialSessionKey;
+    if (next && next !== this.sessionKey) this.selectSession(next);
   }
 
   protected updated(_changed: PropertyValues): void {
