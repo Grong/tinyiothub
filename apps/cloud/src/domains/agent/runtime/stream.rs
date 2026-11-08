@@ -4,46 +4,13 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use dashmap::DashMap;
 use serde::Serialize;
 use tinyiothub_storage::Db;
-use tinyiothub_storage::runtime_event::{RuntimeEvent, RuntimeEventInput, TaskProjection};
+use tinyiothub_storage::runtime_event::{RuntimeEvent, RuntimeEventInput};
 use tokio::sync::broadcast::Sender;
 
 // The legacy platform-backed Task SSE (`connect`/`stream_task`) was retired in
-// Task 19C4 together with the platform Task fact plane. The routed stream is
-// `session_stream::SessionStreamHub`; this hub remains the recorder fan-out
-// used by device, watch, and media-evidence telemetry.
-
-#[derive(Clone, Serialize)]
-#[serde(tag = "type", rename_all = "snake_case")]
-pub enum RuntimeFrame {
-    Snapshot {
-        snapshot: Box<TaskProjection>,
-        cursor: i64,
-        #[serde(rename = "highWatermark")]
-        high_watermark: i64,
-    },
-    Event {
-        event: Box<RuntimeEvent>,
-        #[serde(rename = "highWatermark")]
-        high_watermark: i64,
-    },
-    Resync {
-        snapshot: Box<TaskProjection>,
-        cursor: i64,
-        #[serde(rename = "highWatermark")]
-        high_watermark: i64,
-        reason: String,
-    },
-}
-
-impl RuntimeFrame {
-    pub(crate) fn name(&self) -> &'static str {
-        match self {
-            Self::Snapshot { .. } => "snapshot",
-            Self::Event { .. } => "event",
-            Self::Resync { .. } => "resync",
-        }
-    }
-}
+// Task 19C4 together with the platform Task fact plane. The routed Task stream
+// is `session_stream::SessionStreamHub` (Harness events); this hub remains the
+// recorder fan-out used by device, watch, and media-evidence telemetry.
 
 #[derive(Debug)]
 pub struct RuntimeStreamError(String);

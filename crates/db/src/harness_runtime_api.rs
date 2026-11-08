@@ -3,8 +3,8 @@
 //!
 //! Everything here reads or writes the owning workspace's Harness SQLite
 //! generation. No platform `runtime_events`/`task_approvals` row is touched.
-//! The returned values are the existing Runtime DTOs so the web contract does
-//! not change in the cutover.
+//! Task timelines are returned as `HarnessEvent` rows (the Session event
+//! contract); only the device/watch/media recorder still uses `RuntimeEvent`.
 
 use chrono::{DateTime, Utc};
 use serde_json::{Value, json};
@@ -19,7 +19,7 @@ use tinyiothub_core::task_approval::{ApprovalDecision, ApprovalState, TaskApprov
 
 use crate::error::DbError;
 use crate::runtime_event::{
-    RuntimeEvent, TaskEvidenceProjection, TaskJobProjection, TaskProjection, TaskRunProjection, TaskWatchProjection,
+    TaskEvidenceProjection, TaskJobProjection, TaskProjection, TaskRunProjection, TaskWatchProjection,
 };
 
 const TASK_SELECT: &str = "SELECT id, run_id, state, state_version,
@@ -265,30 +265,6 @@ fn approval_from_decision(
             .unwrap_or_else(|| decision.decision_id.clone()),
         updated_at: decision.updated_at,
     })
-}
-
-pub(crate) fn harness_event_to_runtime(event: &HarnessEvent) -> RuntimeEvent {
-    let payload = &event.payload_json;
-    RuntimeEvent {
-        cursor: event.seq,
-        event_id: event.event_id.clone(),
-        event_type: event.event_type.clone(),
-        occurred_at: event.occurred_at,
-        workspace_id: event.workspace_id.clone(),
-        task_id: event.task_id.clone(),
-        run_id: event.run_id.clone(),
-        tool_call_id: payload_str(payload, &["toolCallId", "tool_call_id"]),
-        job_id: payload_str(payload, &["jobId", "job_id"]),
-        approval_id: payload_str(payload, &["approvalId", "approval_id", "decisionId"]),
-        device_id: payload_str(payload, &["deviceId", "device_id"]),
-        source_id: payload_str(payload, &["sourceId", "source_id"]),
-        source_seq: payload
-            .get("sourceSeq")
-            .or_else(|| payload.get("source_seq"))
-            .and_then(Value::as_i64),
-        evidence_id: payload_str(payload, &["evidenceId", "evidence_id"]),
-        data: payload.clone(),
-    }
 }
 
 #[derive(Debug, sqlx::FromRow)]
@@ -548,7 +524,7 @@ impl crate::Db {
         task_id: &str,
         after: i64,
         limit: i64,
-    ) -> Result<Vec<RuntimeEvent>, DbError> {
+    ) -> Result<Vec<HarnessEvent>, DbError> {
         let page = self
             .session_event_page(
                 workspace_id,
@@ -562,7 +538,7 @@ impl crate::Db {
                 limit,
             )
             .await?;
-        Ok(page.events.iter().map(harness_event_to_runtime).collect())
+        Ok(page.events)
     }
 
     /// Workspace high-watermark used by the SSE cursor contract. Simulation
@@ -600,7 +576,7 @@ impl crate::Db {
         task_id: &str,
         before: Option<i64>,
         limit: i64,
-    ) -> Result<(Vec<RuntimeEvent>, bool), DbError> {
+    ) -> Result<(Vec<HarnessEvent>, bool), DbError> {
         let limit = limit.clamp(1, 200);
         let pool = self.workspace_pool(workspace_id).await?;
         let rows = sqlx::query_as::<_, SessionEventRow>(sqlx::AssertSqlSafe(format!(
@@ -623,7 +599,7 @@ impl crate::Db {
             .map(|row| row.into_event(workspace_id))
             .collect::<Result<Vec<_>, _>>()?;
         events.reverse();
-        Ok((events.iter().map(harness_event_to_runtime).collect(), has_more))
+        Ok((events, has_more))
     }
 
     /// 当前 workspace 中等待回答的 tool_approval 数量（HUD 用）。

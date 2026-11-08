@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { connectRuntimeStream, type RuntimeStreamCallbacks } from './runtime-stream.js';
-import type { RuntimeEvent, RuntimeTask, TaskProjection } from '../types/runtime.js';
+import type { RuntimeTask, TaskProjection } from '../types/runtime.js';
 
 function task(over: Partial<RuntimeTask> = {}): RuntimeTask {
   return {
@@ -36,28 +36,27 @@ function snapshotWithNoDevices(over: Partial<TaskProjection> = {}): TaskProjecti
   };
 }
 
+/** Harness/SessionEvent wire shape: seq / eventType / payloadJson. */
 function runtimeEvent(
   eventId: string,
   eventType: string,
-  data: Record<string, unknown> = {},
-  over: Partial<RuntimeEvent> = {},
-): RuntimeEvent {
+  payloadJson: Record<string, unknown> = {},
+  over: Record<string, unknown> = {},
+): Record<string, unknown> {
   return {
-    cursor: Number(eventId.replace(/\D/g, '')) || 1,
+    seq: Number(eventId.replace(/\D/g, '')) || 1,
     eventId,
     eventType,
     occurredAt: '2026-10-27T10:01:00Z',
     workspaceId: 'ws_1',
+    sessionId: 'task_1',
+    executionMode: 'production',
     taskId: 'task_1',
     runId: null,
-    toolCallId: null,
-    jobId: null,
-    approvalId: null,
-    deviceId: null,
-    sourceId: null,
-    sourceSeq: null,
-    evidenceId: null,
-    data,
+    causeId: null,
+    schemaV: 1,
+    payloadDigest: 'digest',
+    payloadJson,
     ...over,
   };
 }
@@ -173,7 +172,7 @@ describe('Runtime SSE cursor client', () => {
     // Send a complete frame instead: the partial frame above intentionally remains buffered.
     const remainder = JSON.stringify({ snapshot, cursor: 4 }).slice(40);
     streams[0].push(`${remainder}\n\n`);
-    const first = runtimeEvent('event_5', 'read_device', {}, { cursor: 5, taskId: 'task:1' });
+    const first = runtimeEvent('event_5', 'read_device', {}, { seq: 5, taskId: 'task:1' });
     streams[0].push(frame('event', { event: first }) + frame('event', { event: first }));
     streams[0].push(
       frame('resync', {
@@ -216,7 +215,7 @@ describe('Runtime SSE cursor client', () => {
     });
     await vi.advanceTimersByTimeAsync(0);
     first.push(
-      frame('event', { event: runtimeEvent('event_7', 'task.paused', {}, { cursor: 7 }) }),
+      frame('event', { event: runtimeEvent('event_7', 'task.paused', {}, { seq: 7 }) }),
     );
     await vi.advanceTimersByTimeAsync(0);
     first.error();
@@ -300,10 +299,10 @@ describe('Runtime SSE cursor client', () => {
       }),
     );
     streams[0].push(
-      frame('event', { event: runtimeEvent('event_11', 'read_device', {}, { cursor: 11 }) }),
+      frame('event', { event: runtimeEvent('event_11', 'read_device', {}, { seq: 11 }) }),
     );
     streams[0].push(
-      frame('event', { event: runtimeEvent('event_12', 'read_device', {}, { cursor: 12 }) }),
+      frame('event', { event: runtimeEvent('event_12', 'read_device', {}, { seq: 12 }) }),
     );
     await flush();
 
@@ -343,7 +342,7 @@ describe('Runtime SSE cursor client', () => {
       }),
     );
     first.push(
-      frame('event', { event: runtimeEvent('event_11', 'read_device', {}, { cursor: 11 }) }),
+      frame('event', { event: runtimeEvent('event_11', 'read_device', {}, { seq: 11 }) }),
     );
     await vi.advanceTimersByTimeAsync(0);
     first.error();
@@ -397,8 +396,8 @@ describe('Runtime SSE cursor client', () => {
         high_watermark: 20,
       }),
     );
-    const first = runtimeEvent('event_11', 'read_device', {}, { cursor: 11 });
-    const sameCursor = runtimeEvent('event_11_retry', 'read_device', {}, { cursor: 11 });
+    const first = runtimeEvent('event_11', 'read_device', {}, { seq: 11 });
+    const sameCursor = runtimeEvent('event_11_retry', 'read_device', {}, { seq: 11 });
     streams[0].push(frame('event', { event: first, highWatermark: 20 }));
     streams[0].push(frame('event', { event: first, highWatermark: 20 }));
     streams[0].push(frame('event', { event: sameCursor, highWatermark: 20 }));

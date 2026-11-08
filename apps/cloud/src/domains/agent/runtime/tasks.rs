@@ -195,7 +195,7 @@ pub async fn list_events(
         .await
     {
         Ok((events, has_more)) => {
-            let oldest_cursor = events.first().map(|event| event.cursor);
+            let oldest_cursor = events.first().map(|event| event.seq);
             ApiResponseBuilder::success(json!({
                 "events": events,
                 "oldestCursor": oldest_cursor,
@@ -352,10 +352,7 @@ mod tests {
         let result = &body["result"];
         let events = result["events"].as_array().expect("events");
         assert_eq!(events.len(), 50);
-        let cursors: Vec<i64> = events
-            .iter()
-            .map(|event| event["cursor"].as_i64().expect("cursor"))
-            .collect();
+        let cursors: Vec<i64> = events.iter().map(|event| event["seq"].as_i64().expect("seq")).collect();
         assert!(
             cursors.windows(2).all(|pair| pair[0] < pair[1]),
             "cursors must ascend: {cursors:?}"

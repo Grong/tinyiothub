@@ -118,7 +118,8 @@ export class RunDetailView extends LitElement {
       if (t.live) this.startPolling(gen);
     } catch {
       if (gen !== this.gen) return;
-      // 404（或 trace 端点其它失败）→ 退 brain-event detail（已结束 judgment / patrol 提案）
+      // 404（或 trace 端点其它失败）→ 退 brain-event detail
+      //（已结束 judgment / session 事件 / legacy patrol 提案）
       try {
         const d = await brainEventApi.detail(this.runId);
         if (gen !== this.gen) return;

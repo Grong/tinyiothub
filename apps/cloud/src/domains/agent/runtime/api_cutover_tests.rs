@@ -208,9 +208,9 @@ async fn runtime_api_uses_harness_facts_and_never_writes_legacy_tables() {
         .expect("events")
         .iter()
         .find(|event| event["eventId"] == format!("task:{task_id}:created"))
-        .expect("created event")["cursor"]
+        .expect("created event")["seq"]
         .as_i64()
-        .expect("cursor");
+        .expect("seq");
 
     // Unknown cursors resync instead of sending partial deltas.
     let frames = sse_frames(stream(&fixture, task_id, 9_999).await, 1).await;
@@ -309,7 +309,7 @@ async fn runtime_api_uses_harness_facts_and_never_writes_legacy_tables() {
     assert_eq!(frames[0]["type"], "snapshot");
     assert_eq!(frames[1]["type"], "event");
     assert_eq!(frames[1]["event"]["eventId"], "live-cutover");
-    let live_cursor = frames[1]["event"]["cursor"].as_i64().expect("live cursor");
+    let live_cursor = frames[1]["event"]["seq"].as_i64().expect("live seq");
     let persisted_cursor: i64 = sqlx::query_scalar("SELECT seq FROM session_events WHERE event_id = 'live-cutover'")
         .fetch_one(&workspace_pool(&fixture).await)
         .await

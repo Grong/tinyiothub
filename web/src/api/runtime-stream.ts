@@ -38,18 +38,57 @@ function record(value: unknown): Record<string, unknown> | null {
     : null;
 }
 
+function str(value: unknown): string | null {
+  return typeof value === 'string' ? value : null;
+}
+
+function int(value: unknown): number | null {
+  return typeof value === 'number' ? value : null;
+}
+
+/**
+ * Harness (`SessionEvent`) wire shape → the RuntimeEvent shape the Batch-5
+ * runtime views still consume. The server now sends `seq` / `eventType` /
+ * `payloadJson`; the payload fields are lifted into the transitional
+ * projection so those views keep type-checking until they are deleted.
+ */
+function runtimeEventFromHarness(wire: Record<string, unknown>): RuntimeEvent | null {
+  const seq = int(wire.seq);
+  const eventId = str(wire.eventId);
+  const eventType = str(wire.eventType);
+  if (seq === null || eventId === null || eventType === null) return null;
+  const payload = record(wire.payloadJson) ?? {};
+  return {
+    cursor: seq,
+    eventId,
+    eventType,
+    occurredAt: str(wire.occurredAt) ?? '',
+    workspaceId: str(wire.workspaceId) ?? '',
+    taskId: str(wire.taskId),
+    runId: str(wire.runId),
+    toolCallId: str(payload.toolCallId) ?? str(payload.tool_call_id),
+    jobId: str(payload.jobId) ?? str(payload.job_id),
+    approvalId: str(payload.approvalId) ?? str(payload.approval_id) ?? str(payload.decisionId),
+    deviceId: str(payload.deviceId) ?? str(payload.device_id),
+    sourceId: str(payload.sourceId) ?? str(payload.source_id),
+    sourceSeq: int(payload.sourceSeq) ?? int(payload.source_seq),
+    evidenceId: str(payload.evidenceId) ?? str(payload.evidence_id),
+    data: payload,
+  };
+}
+
 export function parseRuntimeStreamFrame(frame: SseEvent): RuntimeFrame | null {
   if (!['snapshot', 'event', 'resync'].includes(frame.event)) return null;
   try {
     const data = record(keysToCamelCase(JSON.parse(frame.data)));
     if (!data) return null;
     if (frame.event === 'event') {
-      const event = record(data.event);
-      if (!event || typeof event.eventId !== 'string' || typeof event.cursor !== 'number')
-        return null;
+      const wire = record(data.event);
+      const event = wire ? runtimeEventFromHarness(wire) : null;
+      if (!event) return null;
       const highWatermark =
         typeof data.highWatermark === 'number' ? data.highWatermark : event.cursor;
-      return { type: 'event', event: event as unknown as RuntimeEvent, highWatermark };
+      return { type: 'event', event, highWatermark };
     }
     const projection = record(data.snapshot);
     if (!projection || typeof data.cursor !== 'number') return null;

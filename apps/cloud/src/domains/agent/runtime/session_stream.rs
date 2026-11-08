@@ -19,16 +19,53 @@ use axum::response::sse::{Event, KeepAlive, Sse};
 use axum::response::{IntoResponse, Response};
 use dashmap::DashMap;
 use serde::Deserialize;
+use serde::Serialize;
+use tinyiothub_core::harness::HarnessEvent;
 use tinyiothub_storage::Db;
-use tinyiothub_storage::runtime_event::RuntimeEvent;
+use tinyiothub_storage::runtime_event::TaskProjection;
 use tinyiothub_web::security::Claims;
 use tokio::sync::Notify;
-
-use super::stream::RuntimeFrame;
 
 const SEEN_EVENT_LIMIT: usize = 1024;
 const TAIL_PAGE: i64 = 256;
 const TAIL_INTERVAL: Duration = Duration::from_millis(500);
+
+/// SSE envelope for the Workspace-Harness Task tail.
+///
+/// The `event` frame carries a [`HarnessEvent`] directly, so the wire fields
+/// are `seq`, `eventType`, `payloadJson`, … (no `HarnessEvent` translation).
+#[derive(Clone, Serialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum SessionFrame {
+    Snapshot {
+        snapshot: Box<TaskProjection>,
+        cursor: i64,
+        #[serde(rename = "highWatermark")]
+        high_watermark: i64,
+    },
+    Event {
+        event: Box<HarnessEvent>,
+        #[serde(rename = "highWatermark")]
+        high_watermark: i64,
+    },
+    Resync {
+        snapshot: Box<TaskProjection>,
+        cursor: i64,
+        #[serde(rename = "highWatermark")]
+        high_watermark: i64,
+        reason: String,
+    },
+}
+
+impl SessionFrame {
+    fn name(&self) -> &'static str {
+        match self {
+            Self::Snapshot { .. } => "snapshot",
+            Self::Event { .. } => "event",
+            Self::Resync { .. } => "resync",
+        }
+    }
+}
 
 #[derive(Default)]
 struct SeenEvents {
@@ -153,14 +190,14 @@ impl SessionStreamHub {
         let resume_cursor = Self::resume_cursor(cursor, after, unknown);
         let mut pending = VecDeque::new();
         if unknown {
-            pending.push_back(RuntimeFrame::Resync {
+            pending.push_back(SessionFrame::Resync {
                 snapshot: Box::new(projection),
                 cursor,
                 high_watermark: resume_cursor,
                 reason: "unknown_cursor".into(),
             });
         } else {
-            pending.push_back(RuntimeFrame::Snapshot {
+            pending.push_back(SessionFrame::Snapshot {
                 snapshot: Box::new(projection),
                 cursor,
                 high_watermark: resume_cursor,
@@ -230,9 +267,9 @@ pub struct HarnessConnection {
     db: Arc<Db>,
     workspace_id: String,
     task_id: String,
-    pending: VecDeque<RuntimeFrame>,
+    pending: VecDeque<SessionFrame>,
     replay_after: Option<i64>,
-    replay_page: VecDeque<RuntimeEvent>,
+    replay_page: VecDeque<HarnessEvent>,
     last_cursor: i64,
     high_watermark: i64,
     seen: SeenEvents,
@@ -253,25 +290,29 @@ impl HarnessConnection {
         }
     }
 
-    fn record_event(&mut self, event: RuntimeEvent) -> RuntimeFrame {
-        self.last_cursor = self.last_cursor.max(event.cursor);
-        self.high_watermark = self.high_watermark.max(event.cursor);
+    fn record_event(&mut self, event: HarnessEvent) -> SessionFrame {
+        self.last_cursor = self.last_cursor.max(event.seq);
+        self.high_watermark = self.high_watermark.max(event.seq);
         self.seen.insert(event.event_id.clone());
-        RuntimeFrame::Event {
+        SessionFrame::Event {
             event: Box::new(event),
             high_watermark: self.high_watermark,
         }
     }
 
-    async fn page(&self, after: i64) -> Result<Vec<RuntimeEvent>, String> {
+    async fn page(&self, after: i64) -> Result<Vec<HarnessEvent>, String> {
         self.db
             .harness_task_events_after(&self.workspace_id, &self.task_id, after, TAIL_PAGE)
             .await
             .map_err(|error| error.to_string())
     }
 
-    async fn projection_mismatch(&self, event: &RuntimeEvent) -> Result<bool, String> {
-        let Some(expected) = event.data.get("stateVersion").and_then(serde_json::Value::as_i64) else {
+    async fn projection_mismatch(&self, event: &HarnessEvent) -> Result<bool, String> {
+        let Some(expected) = event
+            .payload_json
+            .get("stateVersion")
+            .and_then(serde_json::Value::as_i64)
+        else {
             return Ok(false);
         };
         let projection = self
@@ -283,7 +324,7 @@ impl HarnessConnection {
         Ok(projection.task.state_version != expected)
     }
 
-    async fn resync(&mut self, reason: &str) -> Option<RuntimeFrame> {
+    async fn resync(&mut self, reason: &str) -> Option<SessionFrame> {
         self.hub.resyncs.fetch_add(1, Ordering::Relaxed);
         tracing::warn!(metric = "runtime_sse_resync", reason, "harness runtime stream resync");
         let projection = self
@@ -297,7 +338,7 @@ impl HarnessConnection {
         self.replay_after = None;
         self.replay_page.clear();
         self.seen.clear();
-        Some(RuntimeFrame::Resync {
+        Some(SessionFrame::Resync {
             cursor: projection.cursor,
             high_watermark: projection.cursor,
             snapshot: Box::new(projection),
@@ -305,7 +346,7 @@ impl HarnessConnection {
         })
     }
 
-    pub async fn next_frame(&mut self) -> Option<RuntimeFrame> {
+    pub async fn next_frame(&mut self) -> Option<SessionFrame> {
         loop {
             if let Some(frame) = self.pending.pop_front() {
                 self.record_first_frame();
@@ -326,7 +367,7 @@ impl HarnessConnection {
                 match self.page(after).await {
                     Ok(rows) if rows.is_empty() => self.replay_after = None,
                     Ok(rows) => {
-                        self.replay_after = rows.last().map(|event| event.cursor);
+                        self.replay_after = rows.last().map(|event| event.seq);
                         self.replay_page.extend(rows);
                     }
                     Err(error) => {
@@ -372,7 +413,7 @@ impl HarnessConnection {
             if let Ok(rows) = self.page(self.last_cursor).await
                 && let Some(event) = rows.iter().rev().find(|event| {
                     event
-                        .data
+                        .payload_json
                         .get("stateVersion")
                         .and_then(serde_json::Value::as_i64)
                         .is_some()
@@ -512,9 +553,9 @@ mod tests {
             .expect("connect");
         assert!(matches!(
             connection.next_frame().await,
-            Some(super::RuntimeFrame::Snapshot { .. })
+            Some(super::SessionFrame::Snapshot { .. })
         ));
-        let Some(super::RuntimeFrame::Event { event, .. }) = connection.next_frame().await else {
+        let Some(super::SessionFrame::Event { event, .. }) = connection.next_frame().await else {
             panic!("expected replay event");
         };
         assert_eq!(event.event_id, "event-2");
@@ -523,7 +564,7 @@ mod tests {
             .connect(Arc::new(fixture.db.clone()), "ws-harness-stream", "task-1", Some(9_999))
             .await
             .expect("connect");
-        let Some(super::RuntimeFrame::Resync { reason, .. }) = connection.next_frame().await else {
+        let Some(super::SessionFrame::Resync { reason, .. }) = connection.next_frame().await else {
             panic!("unknown cursor must resync");
         };
         assert_eq!(reason, "unknown_cursor");
@@ -550,11 +591,11 @@ mod tests {
             .expect("connect");
         assert!(matches!(
             connection.next_frame().await,
-            Some(super::RuntimeFrame::Snapshot { .. })
+            Some(super::SessionFrame::Snapshot { .. })
         ));
         append(&fixture.db, "ws-harness-stream-live", "task-1", "live-1").await;
         hub.notify("ws-harness-stream-live");
-        let Some(super::RuntimeFrame::Event { event, .. }) = connection.next_frame().await else {
+        let Some(super::SessionFrame::Event { event, .. }) = connection.next_frame().await else {
             panic!("expected live event");
         };
         assert_eq!(event.event_id, "live-1");
@@ -621,7 +662,7 @@ mod tests {
             .connect(Arc::new(fixture.db.clone()), ws, "task-1", None)
             .await
             .expect("connect");
-        let Some(super::RuntimeFrame::Snapshot {
+        let Some(super::SessionFrame::Snapshot {
             cursor, high_watermark, ..
         }) = connection.next_frame().await
         else {
@@ -648,7 +689,7 @@ mod tests {
             .expect("connect");
         assert!(matches!(
             connection.next_frame().await,
-            Some(super::RuntimeFrame::Snapshot { .. })
+            Some(super::SessionFrame::Snapshot { .. })
         ));
         // Commit only once the tail is parked in its wait: the drift check
         // under test runs in the post-wait path, not in the pre-wait tail read.
@@ -668,7 +709,7 @@ mod tests {
             })
         };
         for expected in ["event-v1", "event-v2"] {
-            let Some(super::RuntimeFrame::Event { event, .. }) = connection.next_frame().await else {
+            let Some(super::SessionFrame::Event { event, .. }) = connection.next_frame().await else {
                 panic!("expected the {expected} Event, not a resync");
             };
             assert_eq!(event.event_id, expected);
