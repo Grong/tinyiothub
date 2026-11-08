@@ -335,10 +335,7 @@ pub async fn send_message(
                 .emit(crate::domains::agent::session::session_event(
                     &context,
                     "session.started",
-                    serde_json::json!({
-                        "sessionKey": context.session_key.as_str(),
-                        "assistantId": context.assistant_id.as_str()
-                    }),
+                    crate::domains::agent::session::session_started_payload(&session_key, "chat"),
                 ))
                 .await
         {

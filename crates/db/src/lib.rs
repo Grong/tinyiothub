@@ -18,6 +18,8 @@ pub mod agent_runs;
 pub mod alarm;
 /// Alarm rule persistence and row types (Task 11 split from alarm.rs).
 pub mod alarm_rule;
+/// Assistant schedule persistence (per-workspace wake timing).
+pub mod assistant_schedule;
 /// Event audit log persistence (audit_logs, lazily created table).
 pub mod audit_log;
 /// Auth-owned tables (token blacklist, sms codes, social bindings/configs).

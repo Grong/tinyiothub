@@ -402,6 +402,24 @@ impl Db {
         Ok(events)
     }
 
+    /// 最近事件（跨会话，Production），按发生时间倒序。
+    /// 只用于 HUD/概览；会话回放仍走 `session_event_page`。
+    pub async fn recent_session_events(&self, workspace_id: &str, limit: i64) -> Result<Vec<HarnessEvent>> {
+        let limit = if limit <= 0 { 20 } else { limit.min(200) };
+        let pool = self.workspace_pool(workspace_id).await?;
+        let rows = sqlx::query_as::<_, SessionEventRow>(
+            "SELECT seq, event_id, session_id, execution_mode, run_id, task_id, type, occurred_at, \
+             cause_id, schema_v, payload_digest, payload_json \
+             FROM session_events WHERE execution_mode = ? \
+             ORDER BY occurred_at DESC, seq DESC LIMIT ?",
+        )
+        .bind(ExecutionMode::Production.as_str())
+        .bind(limit)
+        .fetch_all(&pool)
+        .await?;
+        rows.into_iter().map(|row| row.into_event(workspace_id)).collect()
+    }
+
     pub async fn projection_tail(
         &self,
         subject: &crate::harness_snapshot::ProjectionSubject,
@@ -879,6 +897,43 @@ mod tests {
         assert_eq!(second.high_watermark, 257);
 
         fixture.close().await;
+    }
+
+    #[tokio::test]
+    async fn recent_session_events_returns_newest_first() {
+        use crate::test_helpers::fixture_workspace;
+        use chrono::TimeZone;
+        use serde_json::json;
+        use tinyiothub_core::harness::{ExecutionMode, HarnessEventInput};
+
+        let fixture = fixture_workspace("ws-recent").await;
+        for (index, text) in ["first", "second", "third"].iter().enumerate() {
+            let occurred_at = Utc.timestamp_opt(1_800_000_000 + index as i64, 0).single().unwrap();
+            fixture
+                .db
+                .append_session_event(&HarnessEventInput {
+                    event_id: format!("recent-{index}"),
+                    workspace_id: "ws-recent".to_string(),
+                    session_id: "agent:ws-recent:a/s1".to_string(),
+                    execution_mode: ExecutionMode::Production,
+                    run_id: None,
+                    task_id: None,
+                    event_type: "message.created".to_string(),
+                    occurred_at,
+                    cause_id: None,
+                    schema_v: 1,
+                    payload_digest: format!("digest-{index}"),
+                    payload_json: json!({ "text": text }),
+                })
+                .await
+                .unwrap();
+        }
+        let events = fixture.db.recent_session_events("ws-recent", 2).await.unwrap();
+        let payloads: Vec<&str> = events
+            .iter()
+            .map(|event| event.payload_json["text"].as_str().unwrap())
+            .collect();
+        assert_eq!(payloads, vec!["third", "second"]);
     }
 
     #[test]

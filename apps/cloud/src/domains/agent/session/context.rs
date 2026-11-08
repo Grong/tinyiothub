@@ -63,6 +63,14 @@ impl TurnContextRegistry {
         self.inner.get(assistant_id).map(|entry| entry.value().clone())
     }
 
+    /// HUD 用：当前 workspace 正在执行的 Turn 数。
+    pub fn count_for_workspace(&self, workspace_id: &str) -> usize {
+        self.inner
+            .iter()
+            .filter(|entry| entry.value().workspace_id == workspace_id)
+            .count()
+    }
+
     fn clear_if_current(&self, assistant_id: &str, turn_id: &str) {
         self.inner
             .remove_if(assistant_id, |_, context| context.turn_id == turn_id);
@@ -129,5 +137,18 @@ mod tests {
         let _b = registry.set(other);
         assert_eq!(registry.get("agent_main").unwrap().run_id, "run_a");
         assert_eq!(registry.get("agent_other").unwrap().run_id, "run_b");
+    }
+
+    #[test]
+    fn counts_active_turns_by_workspace() {
+        let registry = TurnContextRegistry::default();
+        let _a = registry.set(ctx("run1"));
+        let mut other_ws = ctx("run2");
+        other_ws.workspace_id = "ws-other".to_string();
+        other_ws.assistant_id = "agent_other".to_string();
+        let _b = registry.set(other_ws);
+        assert_eq!(registry.count_for_workspace("ws"), 1);
+        assert_eq!(registry.count_for_workspace("ws-other"), 1);
+        assert_eq!(registry.count_for_workspace("ws-missing"), 0);
     }
 }

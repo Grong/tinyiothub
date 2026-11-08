@@ -7,12 +7,16 @@ pub const SUBAGENT_TURN_TIMEOUT: Duration = Duration::from_secs(10 * 60);
 pub mod context;
 pub mod events;
 pub mod handler;
+pub mod hud;
 pub mod questions;
 pub mod runner;
 pub mod subagent;
 pub mod todos;
 pub mod tools;
+pub mod trigger;
 pub mod types;
+pub mod wake;
+pub mod workspace_api;
 
 pub use context::*;
 pub use events::*;
@@ -20,7 +24,9 @@ pub use questions::QuestionBroker;
 pub use runner::{SessionRunner, TurnObserver, TurnOutcome};
 pub use subagent::{SubagentReport, SubagentRequest, SubagentRunner, SubagentSlot, SubagentStatus};
 pub use todos::TodoStore;
+pub use trigger::{TRIGGER_TICK_INTERVAL, TriggerRouter};
 pub use types::*;
+pub use wake::{WakeExecutor, WakeOutcome, WakeReport, WakeRunner, assistant_agent_id, build_wake_message};
 
 use std::sync::Arc;
 

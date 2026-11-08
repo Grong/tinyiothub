@@ -626,6 +626,16 @@ impl crate::Db {
         Ok((events.iter().map(harness_event_to_runtime).collect(), has_more))
     }
 
+    /// 当前 workspace 中等待回答的 tool_approval 数量（HUD 用）。
+    pub async fn count_pending_tool_approvals(&self, workspace_id: &str) -> Result<i64, DbError> {
+        let pool = self.workspace_pool(workspace_id).await?;
+        Ok(sqlx::query_scalar::<_, i64>(
+            "SELECT COUNT(*) FROM decisions WHERE kind = 'tool_approval' AND state = 'requested'",
+        )
+        .fetch_one(&pool)
+        .await?)
+    }
+
     /// Answer a tool-approval decision in the workspace. Returns the current
     /// decision even when the answer was already recorded, matching the legacy
     /// idempotent HTTP contract.
@@ -865,5 +875,32 @@ impl crate::Db {
             None => None,
         };
         Ok(Some(JobEffect { job, effect }))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #[tokio::test]
+    async fn counts_pending_tool_approvals() {
+        use crate::test_helpers::fixture_workspace;
+
+        let fixture = fixture_workspace("ws-approvals").await;
+        assert_eq!(
+            fixture.db.count_pending_tool_approvals("ws-approvals").await.unwrap(),
+            0
+        );
+        let pool = fixture.db.workspace_pool_for_testing("ws-approvals").await.unwrap();
+        sqlx::query(
+            "INSERT INTO decisions \
+             (decision_id, kind, state, session_id, run_id, task_id, subject_json, options_json, created_at, updated_at) \
+             VALUES ('d1', 'tool_approval', 'requested', 's1', 'r1', 't1', '{}', '[]', '2026-11-07T00:00:00Z', '2026-11-07T00:00:00Z')",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        assert_eq!(
+            fixture.db.count_pending_tool_approvals("ws-approvals").await.unwrap(),
+            1
+        );
     }
 }

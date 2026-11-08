@@ -66,14 +66,14 @@ pub async fn fixture_pool_seeded() -> (sqlx::SqlitePool, crate::Db) {
     (pool, db)
 }
 
-#[cfg(feature = "testing")]
+#[cfg(any(test, feature = "testing"))]
 pub struct WorkspaceFixture {
     pub db: crate::Db,
     pub root: std::path::PathBuf,
     pub workspace_id: String,
 }
 
-#[cfg(feature = "testing")]
+#[cfg(any(test, feature = "testing"))]
 impl WorkspaceFixture {
     pub fn database_path(&self) -> std::path::PathBuf {
         self.root
@@ -99,7 +99,7 @@ impl WorkspaceFixture {
     }
 }
 
-#[cfg(feature = "testing")]
+#[cfg(any(test, feature = "testing"))]
 pub async fn fixture_workspace(workspace_id: &str) -> WorkspaceFixture {
     let root = std::env::temp_dir().join(format!("tinyiothub-workspace-test-{}", uuid::Uuid::new_v4()));
     let pool = test_pool().await;

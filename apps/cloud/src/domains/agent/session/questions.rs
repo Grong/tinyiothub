@@ -65,6 +65,15 @@ impl QuestionBroker {
     pub fn cancel(&self, question_id: &str) {
         self.pending.remove(question_id);
     }
+
+    /// HUD 用：当前 workspace 下等待回答的问题数。
+    pub fn count_pending_for_workspace(&self, workspace_id: &str) -> usize {
+        let prefix = format!("agent:{workspace_id}:");
+        self.pending
+            .iter()
+            .filter(|entry| entry.value().session_key.starts_with(&prefix))
+            .count()
+    }
 }
 
 pub type SharedQuestionBroker = Arc<QuestionBroker>;
@@ -143,5 +152,16 @@ mod tests {
             .answer("agent:ws:a/s1", "missing", QuestionAnswer { answers: vec![] })
             .unwrap_err();
         assert!(matches!(error, QuestionError::NotFound));
+    }
+
+    #[test]
+    fn counts_pending_questions_by_workspace() {
+        let broker = QuestionBroker::default();
+        let (_a, _ra) = broker.register("agent:ws-a:a/s1");
+        let (_b, _rb) = broker.register("agent:ws-a:a/s2");
+        let (_c, _rc) = broker.register("agent:ws-b:a/s1");
+        assert_eq!(broker.count_pending_for_workspace("ws-a"), 2);
+        assert_eq!(broker.count_pending_for_workspace("ws-b"), 1);
+        assert_eq!(broker.count_pending_for_workspace("ws-c"), 0);
     }
 }
