@@ -107,10 +107,6 @@ pub fn chat_builtin_tools_provider(
             ));
         }
 
-        // 用户指令派发工具（T14）已随 legacy workspace loop 退役：唯一的
-        // DirectiveSink（ThingAgentManager）不再提供入队路径，注册它只会让
-        // 每次调用失败。工具文件保留给 Task 3 删除。
-
         // E2 ToolExec 接缝：所有内建工具经统一执行外壳（默认直通）。
         let tools: Vec<(Box<dyn Tool>, ToolSafety)> = tools
             .into_iter()
@@ -343,7 +339,6 @@ mod tests {
             "stop_device",
             "write_properties",
             "send_command",
-            "dispatch_thing_task",
         ] {
             assert_ne!(
                 classify_tool_safety(name),

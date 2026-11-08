@@ -671,11 +671,10 @@ pub async fn approve_proposal(
     }
 }
 
-/// 批准通道不可执行的工具——编排工具（dispatch_thing_task，宪法禁止提案
-/// 使用）与会话上下文工具（canvas 会把 LLM 写的 UI JSON 推进工作区画布；
-/// get_skill 只在会话里有意义）。即使 agent 会话里注册了也不经批准通道
-/// 执行，走「未注册」自动拒绝路径。
-const APPROVAL_TOOL_DENYLIST: &[&str] = &["dispatch_thing_task", "canvas", "get_skill"];
+/// 批准通道不可执行的工具——会话上下文工具（canvas 会把 LLM 写的 UI JSON
+/// 推进工作区画布；get_skill 只在会话里有意义）。即使 agent 会话里注册了也
+/// 不经批准通道执行，走「未注册」自动拒绝路径。
+const APPROVAL_TOOL_DENYLIST: &[&str] = &["canvas", "get_skill"];
 
 /// Approve a pending proposal and execute its tool with the stored parameters.
 /// The human approval IS the authorization, so execution bypasses the trust
@@ -737,9 +736,9 @@ async fn approve_and_execute(
             .find(|t| t.name() == tool_name)
     };
     let Some(tool) = tool else {
-        // 提案引用了不可执行的工具（LLM 幻觉工具名，如 dispatch_thing_task——
-        // 2026-09-20 实测）：自动拒绝并留痕，不让它永远挂在待审批队列里
-        // 报同一个错。条件翻转（F4）：并发下已被处理的提案不被覆盖。
+        // 提案引用了不可执行的工具（LLM 幻觉工具名）：自动拒绝并留痕，
+        // 不让它永远挂在待审批队列里报同一个错。条件翻转（F4）：并发下已被
+        // 处理的提案不被覆盖。
         let reason = format!("工具 {tool_name} 不在可执行注册表中");
         // E2：不可执行 = unavailable（"没人/没办法执行"），不是用户否决。
         match db
@@ -1473,21 +1472,21 @@ mod tests {
         assert_eq!(proposal_status(&pool, "p-profile").await, "approved");
     }
 
-    /// 编排工具（dispatch_thing_task）即使在 agent 会话里注册了，也不得经
-    /// 批准通道执行——宪法禁止提案使用它们，走「未注册」自动拒绝路径。
+    /// 会话上下文工具（canvas 只在会话里有意义）即使在 agent 会话里注册了，
+    /// 也不得经批准通道执行，走「未注册」自动拒绝路径。
     #[tokio::test]
-    async fn approve_orchestration_tool_marks_unavailable() {
+    async fn approve_denylisted_tool_marks_unavailable() {
         let pool = test_pool().await;
-        seed_proposal_with_tool(&pool, "p-orch", "pending", "dispatch_thing_task").await;
+        seed_proposal_with_tool(&pool, "p-orch", "pending", "canvas").await;
 
-        let tool = recording_tool("dispatch_thing_task", false);
+        let tool = recording_tool("canvas", false);
         let calls = tool.calls.clone();
         let (registry, runtime, pending) = fixture(tool);
 
         let result = approve_and_execute(&pool, "ws_1", "p-orch", &registry, &runtime, &pending, None, None).await;
-        let err = result.expect_err("orchestration tool must be denied");
+        let err = result.expect_err("denylisted tool must be denied");
         assert!(err.contains("unavailable"), "错误应说明不可执行: {err}");
-        assert!(calls.lock().unwrap().is_empty(), "编排工具不得经批准通道执行");
+        assert!(calls.lock().unwrap().is_empty(), "denylisted 工具不得经批准通道执行");
         // E2：不可执行 ≠ 用户拒绝。
         assert_eq!(proposal_status(&pool, "p-orch").await, "unavailable");
     }

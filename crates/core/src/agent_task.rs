@@ -108,6 +108,9 @@ pub struct AgentTask {
     pub ended_at: Option<DateTime<Utc>>,
 }
 
+/// 兼容别名（一个版本）：领域内新代码使用 `Task`。
+pub type Task = AgentTask;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum WakeDispatchState {

@@ -1001,6 +1001,9 @@ pub struct AgentRunRow {
     pub created_at: String,
 }
 
+/// 兼容别名（一个版本）：领域内新代码使用 `RunRow`。
+pub type RunRow = AgentRunRow;
+
 /// 心跳 run 行（get_logs 读侧新源，Task 10/C6）：workspace 内 trigger 前缀
 /// `heartbeat:` 的 run，最新在前，limit 截断。列元组 = (id, trigger,
 /// outcome, summary, report_json, created_at)——适配器

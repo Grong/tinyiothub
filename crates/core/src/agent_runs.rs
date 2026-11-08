@@ -150,6 +150,9 @@ pub struct RunReport {
     pub wake_event_id: Option<String>,
 }
 
+/// 兼容别名（一个版本）：领域内新代码使用 `Run`。
+pub type Run = RunReport;
+
 /// E2 turn 开头快照的实测指标（T5：中文预算基线进 run trace）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
 pub struct SnapshotMetrics {

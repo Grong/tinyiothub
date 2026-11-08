@@ -328,7 +328,7 @@ impl ServiceManager {
             //    期间及之后的事件不丢。
             // ── Task 14 工具注册点（composition root）──────────────────
             // chat agent 的内建数据工具实现（thing 9 工具 / canvas /
-            // get_skill / dispatch_thing_task）留 cloud（D2），在此显式
+            // get_skill）留 cloud（D2），在此显式
             // 注册进 agent crate 的 ToolRegistry；数据句柄由 provider 闭包
             // 捕获。外部（MCP）工具工厂按需从 MCP_REGISTRY 派生（G3 —
             // 单一事实源，无第二注册静态）。

@@ -47,7 +47,6 @@ mod tests {
             "get_thing_tree",
             "list_devices",
             "query_events",
-            "dispatch_thing_task",
         ] {
             assert!(
                 !super::CONSTITUTION.contains(tool),

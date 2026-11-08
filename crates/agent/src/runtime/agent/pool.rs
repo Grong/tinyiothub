@@ -30,6 +30,9 @@ pub struct AgentRunOutput {
     pub trace: Vec<tinyiothub_core::agent_runs::ToolTraceEntry>,
 }
 
+/// 兼容别名（一个版本）：领域内新代码使用 `RunOutput`。
+pub type RunOutput = AgentRunOutput;
+
 /// Interface for the agent pool — allows PatrolManager to accept either
 /// the real AgentPool or a mock in tests.
 #[async_trait]
