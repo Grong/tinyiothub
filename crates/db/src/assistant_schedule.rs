@@ -132,33 +132,6 @@ pub(crate) async fn ensure(
     })
 }
 
-/// Boot-time reconciliation of pre-existing schedule rows with the legacy
-/// `workspace_autonomy_policy.mode` values.
-///
-/// The migration already backfills once; this re-runs the same two UPDATEs
-/// idempotently so a deployment that took the first migration before its
-/// policy rows were written still converges. Returns the number of rows the
-/// two statements reported as affected.
-pub async fn reconcile_schedule_permissions(db: &Db) -> std::result::Result<u64, DbError> {
-    let mut affected = sqlx::query(
-        "UPDATE assistant_schedules SET enabled = 0 \
-         WHERE workspace_id IN (SELECT workspace_id FROM workspace_autonomy_policy WHERE mode = 'off')",
-    )
-    .execute(db.pool())
-    .await?
-    .rows_affected();
-
-    affected += sqlx::query(
-        "UPDATE assistant_schedules SET permission_mode = 'read_only' \
-         WHERE workspace_id IN (SELECT workspace_id FROM workspace_autonomy_policy WHERE mode = 'diagnose')",
-    )
-    .execute(db.pool())
-    .await?
-    .rows_affected();
-
-    Ok(affected)
-}
-
 pub(crate) async fn due(pool: &sqlx::SqlitePool, now: DateTime<Utc>, limit: i64) -> Result<Vec<AssistantSchedule>> {
     let limit = if limit <= 0 { 100 } else { limit.min(500) };
     let rows = sqlx::query(
@@ -504,8 +477,10 @@ mod tests {
         .unwrap();
     }
 
+    /// Proves the real backfill migration SQL works on pre-existing rows and
+    /// is idempotent (no duplicated copy in the test).
     #[tokio::test]
-    async fn reconcile_backfills_pre_existing_schedule_rows() {
+    async fn backfill_migration_maps_pre_existing_schedule_rows_once() {
         let db = test_db().await;
 
         seed_existing_schedule(&db, "ws-off", true, "ask").await;
@@ -515,23 +490,31 @@ mod tests {
         seed_legacy_mode(&db, "ws-diagnose", "diagnose").await;
         seed_legacy_mode(&db, "ws-act", "act").await;
 
-        let affected = reconcile_schedule_permissions(&db).await.unwrap();
-        assert_eq!(affected, 2, "one off row + one diagnose row");
+        // Migrations already ran in `test_db`; replay the real backfill SQL
+        // exactly as the migration runner would have.
+        let backfill = include_str!("../migrations/20261108000003_assistant_schedule_backfill.sql");
+        sqlx::raw_sql(backfill).execute(db.pool()).await.unwrap();
 
         let off = db.get_assistant_schedule("ws-off").await.unwrap().unwrap();
         assert!(!off.enabled, "legacy off must pause pre-existing schedules");
+        assert_eq!(off.permission_mode, PermissionMode::Ask);
         let diagnose = db.get_assistant_schedule("ws-diagnose").await.unwrap().unwrap();
+        assert!(diagnose.enabled, "diagnose keeps the Assistant enabled");
         assert_eq!(diagnose.permission_mode, PermissionMode::ReadOnly);
         let act = db.get_assistant_schedule("ws-act").await.unwrap().unwrap();
         assert!(act.enabled, "legacy act must stay enabled");
         assert_eq!(act.permission_mode, PermissionMode::Ask);
 
-        // Idempotent in effect: a second run leaves the same values.
-        let _ = reconcile_schedule_permissions(&db).await.unwrap();
+        // Idempotent: a second replay changes nothing.
+        sqlx::raw_sql(backfill).execute(db.pool()).await.unwrap();
         let off = db.get_assistant_schedule("ws-off").await.unwrap().unwrap();
         assert!(!off.enabled);
         let diagnose = db.get_assistant_schedule("ws-diagnose").await.unwrap().unwrap();
+        assert!(diagnose.enabled);
         assert_eq!(diagnose.permission_mode, PermissionMode::ReadOnly);
+        let act = db.get_assistant_schedule("ws-act").await.unwrap().unwrap();
+        assert!(act.enabled);
+        assert_eq!(act.permission_mode, PermissionMode::Ask);
     }
 
     #[tokio::test]
