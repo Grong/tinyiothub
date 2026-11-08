@@ -248,6 +248,8 @@ pub async fn ack_run(
 #[serde(rename_all = "camelCase")]
 pub struct PolicyView {
     /// `read_only` | `ask`（`full_access` 仅会话级，工作区策略拒绝）。
+    /// 一版兼容：旧 body 的 `mode` 字段仍被接受（alias）。
+    #[serde(alias = "mode")]
     pub permission_mode: String,
     #[serde(default = "default_allowed_actions")]
     pub allowed_actions: Vec<String>,
@@ -322,8 +324,20 @@ pub async fn update_policy(
 ) -> Json<ApiResponse<PolicyView>> {
     verify_agent_admin!(state, claims, workspace_id);
 
-    let Some(permission_mode) = PermissionMode::parse(req.permission_mode.trim()) else {
-        return ApiResponseBuilder::error_with_code(400, "无效的 permissionMode，可选: read_only / ask");
+    // 一版兼容：旧 body 的字段名是 `mode`（serde alias），值域是
+    // off/diagnose/act。off/diagnose → ReadOnly，act → Ask；`off` 的暂停语义
+    // 属于 schedule API，不在这里表达。
+    let requested = req.permission_mode.trim().to_ascii_lowercase();
+    let normalized = match requested.as_str() {
+        "off" | "diagnose" => "read_only",
+        "act" => "ask",
+        other => other,
+    };
+    let Some(permission_mode) = PermissionMode::parse(normalized) else {
+        return ApiResponseBuilder::error_with_code(
+            400,
+            "无效的 permissionMode，可选: read_only / ask（兼容旧 act/diagnose/off）",
+        );
     };
     // `full_access` is session-explicit only; a workspace policy must never
     // grant it.
@@ -347,8 +361,32 @@ pub async fn update_policy(
         return ApiResponseBuilder::error("保存策略失败");
     }
 
-    // 旧 O26 `off` kill switch 随 AutonomyMode 退役：暂停 Assistant 请使用
-    // `/workspaces/{id}/agent/schedule`（enabled=false），不再 drain 队列。
+    // One-version compatibility: reflect the policy write on the Assistant
+    // schedule so wake turns use the same permission mode. `enabled` (pause
+    // state) is owned by the schedule API and is never touched here.
+    let assistant_id = crate::domains::agent::session::wake::assistant_agent_id(&workspace_id);
+    match state
+        .db
+        .ensure_assistant_schedule(&workspace_id, &assistant_id, chrono::Utc::now())
+        .await
+    {
+        Ok(_) => {
+            if let Err(e) = state
+                .db
+                .update_assistant_schedule(&workspace_id, None, None, None, None, Some(permission_mode))
+                .await
+            {
+                tracing::warn!(%workspace_id, "Failed to sync permission mode to assistant schedule: {}", e);
+            }
+        }
+        Err(e) => {
+            tracing::warn!(%workspace_id, "Failed to ensure assistant schedule for policy sync: {}", e);
+        }
+    }
+
+    // 旧 O26 `off` kill switch 随 AutonomyMode 退役：没有需要 drain 的 legacy
+    // 队列。暂停 Assistant 请使用 `/workspaces/{id}/agent/schedule`
+    // （enabled=false），不在这里触碰队列。
 
     ApiResponseBuilder::success(PolicyView::from(policy))
 }

@@ -228,24 +228,32 @@ impl WakeRunner {
     /// 告警等外部事件 wake：与定时 wake 共用生命周期事件，kind 为 `event`。
     ///
     /// 暂停态（`schedule.enabled == false`）的工作区不跑自主 Turn——告警仍
-    /// 进入 Session Loop 的准入层，但在暂停态下被跳过。无 schedule 行时按
-    /// enabled=true + Ask 的默认行为继续（事件唤醒不因缺行失效）。
+    /// 进入 Session Loop 的准入层，但在暂停态下被跳过。无 schedule 行时先
+    /// ensure（继承 legacy autonomy mapping），确保 legacy `off` 工作区不会
+    /// 在一次事件唤醒中恢复；ensure 失败按 fail-closed 跳过。
     pub async fn run_event(&self, wake: &EventWake, cancel: CancellationToken) -> WakeReport {
         let workspace_id = &wake.workspace_id;
-        let (enabled, permission_mode) = match self.db.get_assistant_schedule(workspace_id).await {
-            Ok(Some(schedule)) => (schedule.enabled, schedule.permission_mode),
-            Ok(None) => (true, PermissionMode::Ask),
+        let schedule = match self
+            .db
+            .ensure_assistant_schedule(workspace_id, &assistant_agent_id(workspace_id), chrono::Utc::now())
+            .await
+        {
+            Ok(schedule) => schedule,
             Err(error) => {
-                tracing::warn!(%error, %workspace_id, "event wake: load assistant schedule failed");
-                (true, PermissionMode::Ask)
+                tracing::warn!(%error, %workspace_id, "event wake: ensure schedule failed");
+                return WakeReport {
+                    session_key: String::new(),
+                    outcome: WakeOutcome::Skipped,
+                };
             }
         };
-        if !enabled {
+        if !schedule.enabled {
             return WakeReport {
                 session_key: String::new(),
                 outcome: WakeOutcome::Skipped,
             };
         }
+        let permission_mode = schedule.permission_mode;
         let message = match wake.trigger.as_str() {
             "watch" => format!("收到设备值守命中：{}\n请评估影响；涉及写设备必须走审批。", wake.summary),
             "thing_event" => format!(
@@ -334,14 +342,7 @@ impl WakeRunner {
                 },
             };
         }
-        let context = TurnContext::new(
-            origin.workspace_id.to_string(),
-            origin.assistant_id.to_string(),
-            session_key.clone(),
-            Uuid::new_v4().to_string(),
-            0,
-        )
-        .with_permission_mode(permission_mode);
+        let context = wake_context(&origin, session_key.clone(), permission_mode);
         let wake_event_id = Uuid::new_v4().to_string();
         // scheduled 无显式 source：与本轮 wake.dispatched.wakeEventId 保持同一
         // UUID（历史行为）；event 使用告警 id。
@@ -410,6 +411,20 @@ impl WakeExecutor for WakeRunner {
     async fn execute_event(&self, wake: EventWake, cancel: CancellationToken) -> WakeReport {
         self.run_event(&wake, cancel).await
     }
+}
+
+/// 构造 wake Turn 的上下文。scheduled / event 两个入口共用，确保 schedule
+/// 的 `permission_mode` 一定进入 `TurnContext`（`PermissionGuardTool` 读它做
+/// 工具层写拒绝）。
+fn wake_context(origin: &SessionOrigin<'_>, session_key: String, permission_mode: PermissionMode) -> TurnContext {
+    TurnContext::new(
+        origin.workspace_id.to_string(),
+        origin.assistant_id.to_string(),
+        session_key,
+        Uuid::new_v4().to_string(),
+        0,
+    )
+    .with_permission_mode(permission_mode)
 }
 
 fn outcome_with_todos(outcome: TurnOutcome, todos: &[Todo]) -> WakeOutcome {
@@ -704,6 +719,69 @@ mod tests {
             .await;
         assert_eq!(report.outcome, WakeOutcome::Completed);
         assert!(!sink.events.lock().await.is_empty());
+        let row = wake
+            .db
+            .get_assistant_schedule("ws")
+            .await
+            .unwrap()
+            .expect("schedule ensured");
+        assert!(row.enabled);
+        assert_eq!(row.permission_mode, PermissionMode::Ask);
+    }
+
+    #[tokio::test]
+    async fn legacy_off_event_wake_is_skipped_and_persisted_as_paused() {
+        // No schedule row yet, but the workspace still has the legacy `off`
+        // policy: ensure must create a paused row and the event wake must skip.
+        let (wake, agent_pool, sink) = fixture().await;
+        sqlx::query("INSERT INTO workspace_autonomy_policy (workspace_id, mode) VALUES ('ws', 'off')")
+            .execute(wake.db.pool())
+            .await
+            .unwrap();
+
+        let report = wake
+            .run_event(
+                &EventWake {
+                    workspace_id: "ws".into(),
+                    trigger: "alarm".into(),
+                    source_id: "alarm-1".into(),
+                    summary: "温度过高".into(),
+                    dedup_key: None,
+                },
+                tokio_util::sync::CancellationToken::new(),
+            )
+            .await;
+        assert_eq!(report.outcome, WakeOutcome::Skipped);
+        assert!(report.session_key.is_empty());
+        assert!(sink.events.lock().await.is_empty());
+        assert_eq!(agent_pool.pool_size(), 0, "no agent for a paused event wake");
+
+        let row = wake
+            .db
+            .get_assistant_schedule("ws")
+            .await
+            .unwrap()
+            .expect("schedule ensured");
+        assert!(!row.enabled, "legacy off must persist as paused");
+    }
+
+    #[test]
+    fn wake_context_carries_schedule_permission_mode() {
+        let origin = SessionOrigin {
+            workspace_id: "ws",
+            assistant_id: "__assistant__ws",
+            kind: "scheduled",
+            trigger: "schedule",
+            source_id: None,
+        };
+        let context = wake_context(&origin, "agent:ws:a/s".into(), PermissionMode::ReadOnly);
+        assert_eq!(context.workspace_id, "ws");
+        assert_eq!(context.assistant_id, "__assistant__ws");
+        assert_eq!(context.session_key, "agent:ws:a/s");
+        assert_eq!(context.permission_mode, PermissionMode::ReadOnly);
+
+        let ask = wake_context(&origin, "s".into(), PermissionMode::Ask);
+        assert_eq!(ask.permission_mode, PermissionMode::Ask);
     }
 
     struct SleepingProvider;

@@ -604,6 +604,15 @@ impl ServiceManager {
             // manager 内 PipelineDeps 同一实例（克隆共享 DashMap）。
             app_state.set_active_runs(thing_agent_manager.active_run_registry());
 
+            // 启动对账：pre-existing assistant_schedules 行按 legacy autonomy
+            // mode 回填（migration 已做过一次；此处幂等重跑，覆盖迁移后
+            // 才写入 policy 行的部署）。
+            match tinyiothub_storage::assistant_schedule::reconcile_schedule_permissions(&app_state.db).await {
+                Ok(0) => {}
+                Ok(affected) => info!(affected, "reconciled assistant schedule permissions from legacy policy"),
+                Err(error) => tracing::warn!(%error, "reconcile assistant schedule permissions failed"),
+            }
+
             // 启动补种：legacy heartbeat tasks 已退役（唤醒步骤由 inspection
             // 技能承接）；只为已有工作区补齐缺失的 inspection 技能。
             for ws_id in &ws_ids {

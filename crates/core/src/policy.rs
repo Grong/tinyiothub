@@ -53,8 +53,9 @@ impl AutonomyPolicy {
     /// Parse a persisted policy JSON blob.
     ///
     /// Accepts both the new `permission_mode` key and the legacy three-state
-    /// `mode` key (`off`/`diagnose` → `ReadOnly`, `act` → `Ask`). Missing
-    /// limits and lists default to fail-closed zeros/empty vectors.
+    /// `mode` key (`off`/`diagnose` → `ReadOnly`, `act` → `Ask`). Missing or
+    /// unknown values — like `load_autonomy` — fail closed to `ReadOnly`;
+    /// missing limits and lists default to zeros/empty vectors.
     pub fn from_db_json(json: &str) -> Option<Self> {
         let raw: serde_json::Value = serde_json::from_str(json).ok()?;
         let permission_mode = match raw.get("permission_mode").and_then(|v| v.as_str()) {
@@ -63,9 +64,9 @@ impl AutonomyPolicy {
             Some("full_access") => PermissionMode::Ask,
             Some("ask") => PermissionMode::Ask,
             _ => match raw.get("mode").and_then(|v| v.as_str()) {
-                Some("diagnose") => PermissionMode::ReadOnly,
-                Some("off") => PermissionMode::ReadOnly,
-                _ => PermissionMode::Ask,
+                Some("act") => PermissionMode::Ask,
+                // diagnose/off/unknown/missing: no autonomous writes.
+                _ => PermissionMode::ReadOnly,
             },
         };
         Some(Self {
@@ -170,8 +171,9 @@ mod tests {
             (r#"{"mode":"diagnose"}"#, PermissionMode::ReadOnly),
             (r#"{"mode":"off"}"#, PermissionMode::ReadOnly),
             (r#"{"mode":"act"}"#, PermissionMode::Ask),
-            (r#"{"mode":"bogus"}"#, PermissionMode::Ask),
-            ("{}", PermissionMode::Ask),
+            // Unknown/missing mode fails closed, matching `load_autonomy`.
+            (r#"{"mode":"bogus"}"#, PermissionMode::ReadOnly),
+            ("{}", PermissionMode::ReadOnly),
         ];
         for (json, expected) in cases {
             assert_eq!(
@@ -191,6 +193,7 @@ mod tests {
     #[test]
     fn from_db_json_defaults_limits_fail_closed() {
         let policy = AutonomyPolicy::from_db_json("{}").expect("parse");
+        assert_eq!(policy.permission_mode, PermissionMode::ReadOnly);
         assert!(policy.allowed_actions.is_empty());
         assert!(policy.denied_actions.is_empty());
         assert_eq!(policy.max_actions_per_run, 0);

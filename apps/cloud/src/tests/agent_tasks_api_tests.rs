@@ -487,6 +487,62 @@ async fn policy_round_trip_with_updated_by() {
     assert_eq!(json["code"], 400, "workspace full_access must be 400: {json}");
 }
 
+/// One-version compatibility: the old `mode` body key (and its three-state
+/// values) is accepted, and a policy PUT mirrors `permission_mode` onto the
+/// Assistant schedule without touching its pause state.
+#[tokio::test]
+async fn policy_put_accepts_legacy_mode_and_syncs_schedule_without_unpausing() {
+    let (app, _pool, db) = app_with_sink(Arc::new(StubDirectiveSink::default())).await;
+    let token = create_test_token("user-1", "tenant-1");
+    let assistant_id = crate::domains::agent::session::wake::assistant_agent_id(WS);
+    db.ensure_assistant_schedule(WS, &assistant_id, chrono::Utc::now())
+        .await
+        .expect("ensure schedule");
+    db.update_assistant_schedule(WS, Some(false), None, None, None, None)
+        .await
+        .expect("pause schedule");
+
+    // Legacy body: field `mode: act` → permissionMode ask.
+    let (_status, json) = response_parts(
+        app.clone()
+            .oneshot(auth_request(
+                "PUT",
+                &format!("/api/v1/workspaces/{WS}/agent/policy"),
+                &token,
+                Some(json!({"mode": "act", "allowedActions": ["*"]})),
+            ))
+            .await
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(json["code"], 0, "legacy mode body must be accepted: {json}");
+    assert_eq!(json["result"]["permissionMode"], "ask");
+    let row = db.get_assistant_schedule(WS).await.unwrap().unwrap();
+    assert_eq!(
+        row.permission_mode,
+        tinyiothub_core::policy::PermissionMode::Ask,
+        "policy PUT must sync the schedule permission mode"
+    );
+    assert!(!row.enabled, "policy PUT must not change the pause state");
+
+    // New body read_only syncs to the schedule and stays paused.
+    let (_status, json) = response_parts(
+        app.oneshot(auth_request(
+            "PUT",
+            &format!("/api/v1/workspaces/{WS}/agent/policy"),
+            &token,
+            Some(json!({"permissionMode": "read_only"})),
+        ))
+        .await
+        .unwrap(),
+    )
+    .await;
+    assert_eq!(json["code"], 0, "PUT read_only: {json}");
+    let row = db.get_assistant_schedule(WS).await.unwrap().unwrap();
+    assert_eq!(row.permission_mode, tinyiothub_core::policy::PermissionMode::ReadOnly);
+    assert!(!row.enabled, "still paused");
+}
+
 /// F9 覆盖补钉：find_agent_run_owner 数据库故障 → 500 + 错误日志，
 /// 不得塌缩为 404（事故响应时"运行记录不存在"会主动误导）。
 #[tokio::test]

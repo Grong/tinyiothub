@@ -38,18 +38,28 @@ fn parse_ts(value: &str) -> Option<DateTime<Utc>> {
         .map(|parsed| parsed.with_timezone(&Utc))
 }
 
+/// Workspace-level schedules are never allowed to carry `FullAccess` (that is
+/// session-explicit only); normalize it to `Ask` on read and write.
+fn workspace_scoped(mode: PermissionMode) -> PermissionMode {
+    match mode {
+        PermissionMode::FullAccess => PermissionMode::Ask,
+        other => other,
+    }
+}
+
 fn map_row(row: &SqliteRow) -> Result<AssistantSchedule> {
     Ok(AssistantSchedule {
         workspace_id: row.try_get("workspace_id")?,
         assistant_id: row.try_get("assistant_id")?,
         interval_seconds: row.try_get::<i64, _>("interval_seconds")?.max(0) as u32,
         enabled: row.try_get::<i64, _>("enabled")? != 0,
-        permission_mode: row
-            .try_get::<String, _>("permission_mode")
-            .ok()
-            .and_then(|value| PermissionMode::parse(&value))
-            // Unknown/corrupt values fall back to Ask (the column default).
-            .unwrap_or(PermissionMode::Ask),
+        permission_mode: workspace_scoped(
+            row.try_get::<String, _>("permission_mode")
+                .ok()
+                .and_then(|value| PermissionMode::parse(&value))
+                // Unknown/corrupt values fall back to the column default.
+                .unwrap_or(PermissionMode::Ask),
+        ),
         prompt: row.try_get("prompt")?,
         next_wake_at: row
             .try_get::<Option<String>, _>("next_wake_at")?
@@ -122,6 +132,33 @@ pub(crate) async fn ensure(
     })
 }
 
+/// Boot-time reconciliation of pre-existing schedule rows with the legacy
+/// `workspace_autonomy_policy.mode` values.
+///
+/// The migration already backfills once; this re-runs the same two UPDATEs
+/// idempotently so a deployment that took the first migration before its
+/// policy rows were written still converges. Returns the number of rows the
+/// two statements reported as affected.
+pub async fn reconcile_schedule_permissions(db: &Db) -> std::result::Result<u64, DbError> {
+    let mut affected = sqlx::query(
+        "UPDATE assistant_schedules SET enabled = 0 \
+         WHERE workspace_id IN (SELECT workspace_id FROM workspace_autonomy_policy WHERE mode = 'off')",
+    )
+    .execute(db.pool())
+    .await?
+    .rows_affected();
+
+    affected += sqlx::query(
+        "UPDATE assistant_schedules SET permission_mode = 'read_only' \
+         WHERE workspace_id IN (SELECT workspace_id FROM workspace_autonomy_policy WHERE mode = 'diagnose')",
+    )
+    .execute(db.pool())
+    .await?
+    .rows_affected();
+
+    Ok(affected)
+}
+
 pub(crate) async fn due(pool: &sqlx::SqlitePool, now: DateTime<Utc>, limit: i64) -> Result<Vec<AssistantSchedule>> {
     let limit = if limit <= 0 { 100 } else { limit.min(500) };
     let rows = sqlx::query(
@@ -169,7 +206,7 @@ pub(crate) async fn update(
     .bind(interval_seconds.map(i64::from))
     .bind(prompt)
     .bind(next_wake_at.map(format_ts))
-    .bind(permission_mode.map(|mode| mode.as_str()))
+    .bind(permission_mode.map(|mode| workspace_scoped(mode).as_str()))
     .bind(format_ts(Utc::now()))
     .bind(workspace_id)
     .execute(pool)
@@ -448,5 +485,78 @@ mod tests {
         let due = db.list_due_assistant_schedules(now, 10).await.unwrap();
         assert_eq!(due.len(), 1);
         assert_eq!(due[0].permission_mode, PermissionMode::ReadOnly);
+    }
+
+    /// Simulate rows that predate the permission migration: insert directly so
+    /// `ensure`'s legacy mapping is not involved.
+    async fn seed_existing_schedule(db: &Db, workspace_id: &str, enabled: bool, permission_mode: &str) {
+        sqlx::query(
+            "INSERT INTO assistant_schedules \
+             (workspace_id, assistant_id, interval_seconds, enabled, permission_mode) \
+             VALUES (?, ?, 300, ?, ?)",
+        )
+        .bind(workspace_id)
+        .bind(format!("__assistant__{workspace_id}"))
+        .bind(if enabled { 1i64 } else { 0i64 })
+        .bind(permission_mode)
+        .execute(db.pool())
+        .await
+        .unwrap();
+    }
+
+    #[tokio::test]
+    async fn reconcile_backfills_pre_existing_schedule_rows() {
+        let db = test_db().await;
+
+        seed_existing_schedule(&db, "ws-off", true, "ask").await;
+        seed_existing_schedule(&db, "ws-diagnose", true, "ask").await;
+        seed_existing_schedule(&db, "ws-act", true, "ask").await;
+        seed_legacy_mode(&db, "ws-off", "off").await;
+        seed_legacy_mode(&db, "ws-diagnose", "diagnose").await;
+        seed_legacy_mode(&db, "ws-act", "act").await;
+
+        let affected = reconcile_schedule_permissions(&db).await.unwrap();
+        assert_eq!(affected, 2, "one off row + one diagnose row");
+
+        let off = db.get_assistant_schedule("ws-off").await.unwrap().unwrap();
+        assert!(!off.enabled, "legacy off must pause pre-existing schedules");
+        let diagnose = db.get_assistant_schedule("ws-diagnose").await.unwrap().unwrap();
+        assert_eq!(diagnose.permission_mode, PermissionMode::ReadOnly);
+        let act = db.get_assistant_schedule("ws-act").await.unwrap().unwrap();
+        assert!(act.enabled, "legacy act must stay enabled");
+        assert_eq!(act.permission_mode, PermissionMode::Ask);
+
+        // Idempotent in effect: a second run leaves the same values.
+        let _ = reconcile_schedule_permissions(&db).await.unwrap();
+        let off = db.get_assistant_schedule("ws-off").await.unwrap().unwrap();
+        assert!(!off.enabled);
+        let diagnose = db.get_assistant_schedule("ws-diagnose").await.unwrap().unwrap();
+        assert_eq!(diagnose.permission_mode, PermissionMode::ReadOnly);
+    }
+
+    #[tokio::test]
+    async fn full_access_is_normalized_for_workspace_schedules() {
+        let db = test_db().await;
+        let now = ts(1_800_000_000);
+        seed_existing_schedule(&db, "ws-full", true, "full_access").await;
+        let row = db.get_assistant_schedule("ws-full").await.unwrap().unwrap();
+        assert_eq!(
+            row.permission_mode,
+            PermissionMode::Ask,
+            "read must not expose workspace full_access"
+        );
+
+        db.ensure_assistant_schedule("ws-update", "__assistant__ws-update", now)
+            .await
+            .unwrap();
+        db.update_assistant_schedule("ws-update", None, None, None, None, Some(PermissionMode::FullAccess))
+            .await
+            .unwrap();
+        let row = db.get_assistant_schedule("ws-update").await.unwrap().unwrap();
+        assert_eq!(
+            row.permission_mode,
+            PermissionMode::Ask,
+            "write must not persist full_access"
+        );
     }
 }
