@@ -53,4 +53,9 @@ describe('question-card', () => {
     const submit = el.shadowRoot!.querySelector('.question-submit') as HTMLButtonElement;
     expect(submit.disabled).toBe(true);
   });
+
+  it('renders the question header', async () => {
+    const el = await mount();
+    expect(el.shadowRoot!.textContent).toContain('范围');
+  });
 });

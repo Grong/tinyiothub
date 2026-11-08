@@ -26,6 +26,12 @@ export class QuestionCard extends LitElement {
     .question {
       margin-bottom: 12px;
     }
+    .question__header {
+      font-size: 11px;
+      color: var(--muted);
+      margin-bottom: 2px;
+      letter-spacing: 0.02em;
+    }
     .question__title {
       font-size: 13.5px;
       margin-bottom: 6px;
@@ -138,6 +144,7 @@ export class QuestionCard extends LitElement {
         ${this.pending.questions.map(
           (question, index) => html`
             <div class="question">
+              <div class="question__header">${question.header}</div>
               <div class="question__title">${question.question}</div>
               <div class="options">
                 ${question.options.map(
