@@ -277,20 +277,7 @@ pub(crate) fn event_wake_from_ai(ai: &AiEvent) -> Option<EventWake> {
     })
 }
 
-/// 设备事件（如离线）→ event wake。纯映射，便于无 fixture 测试。
-#[allow(dead_code)] // 订阅点由 Task 2 接线；此处先提供纯映射与测试
-pub(crate) fn thing_event_wake(workspace_id: &str, thing_id: &str, event_name: &str, event_id: &str) -> EventWake {
-    EventWake {
-        workspace_id: workspace_id.to_string(),
-        trigger: "thing_event".to_string(),
-        source_id: event_id.to_string(),
-        summary: format!("设备事件 {event_name}（{thing_id}）"),
-        dedup_key: Some(format!("thing:{thing_id}:event:{event_name}")),
-    }
-}
-
 /// Watch 命中 → event wake。Task 所有的 watch 由 Task wake router 消费，此处跳过。
-#[allow(dead_code)] // 订阅点由 Task 2 接线；此处先提供纯映射与测试
 pub(crate) fn watch_wake(
     workspace_id: &str,
     rule_id: &str,
@@ -657,17 +644,12 @@ mod tests {
     }
 
     #[test]
-    fn watch_and_thing_mappings_produce_scoped_wakes() {
+    fn watch_mapping_produces_scoped_wakes() {
         let watch = watch_wake("ws", "rule-1", None, &serde_json::json!(42), "Healthy", "A").unwrap();
         assert_eq!(watch.trigger, "watch");
         assert_eq!(watch.source_id, "rule-1");
         assert_eq!(watch.dedup_key.as_deref(), Some("watch:rule-1"));
         assert!(watch_wake("ws", "rule-1", Some("task-1"), &serde_json::json!(42), "Healthy", "A").is_none());
-
-        let thing = thing_event_wake("ws", "thing-1", "offline", "evt-1");
-        assert_eq!(thing.trigger, "thing_event");
-        assert_eq!(thing.source_id, "evt-1");
-        assert_eq!(thing.dedup_key.as_deref(), Some("thing:thing-1:event:offline"));
     }
 
     #[tokio::test]

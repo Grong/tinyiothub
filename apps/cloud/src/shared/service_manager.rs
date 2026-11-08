@@ -288,11 +288,6 @@ impl ServiceManager {
         {
             let heartbeat_task_db = app_state.db.clone();
 
-            // 统一循环心跳默认间隔（HeartbeatConfig::default 同源）；每工作区
-            // 覆盖走统一循环 intervals 共享表。
-            let heartbeat_default_interval = std::time::Duration::from_secs(
-                u64::from(crate::domains::agent::heartbeat::types::HeartbeatConfig::default().interval_minutes) * 60,
-            );
             let event_publisher = Arc::new(
                 crate::domains::agent::event::bus::AiEventPublisher::new(app_state.event_bus.clone())
                     .with_drop_notifier(Arc::new(crate::domains::agent::event::bus::LoggingDropNotifier)),
@@ -440,15 +435,6 @@ impl ServiceManager {
             let runtime = Arc::new(crate::domains::agent::agent_runtime::AgentRuntime::restore(
                 snapshot,
                 crate::domains::agent::agent_runtime::RuntimeDeps {
-                    thing_agent_host: Arc::new(
-                        crate::domains::agent::host::thing_agent_host::CloudThingAgentHost::new(
-                            pool.clone(),
-                            app_state.thing_event_bus.clone(),
-                        ),
-                    ),
-                    policy_repo: Arc::new(crate::domains::agent::host::ports::StorageAutonomyPolicyReader::new(
-                        policy_repo.clone(),
-                    )),
                     agent_provider: Arc::new(
                         crate::domains::agent::host::autonomous_factory::AutonomousAgentFactory::new(
                             pool.clone(),
@@ -497,16 +483,9 @@ impl ServiceManager {
                             Vec::<tinyiothub_skills::registry::Capability>::new(),
                         )),
                     ),
-                    thing_agent_config: crate::domains::agent::thing_agent::ThingAgentManagerConfig {
-                        heartbeat_default_interval,
-                        ..Default::default()
-                    },
                     event_bus: app_state.event_bus.clone(),
                     drop_notifier: Some(Arc::new(crate::domains::agent::event::bus::LoggingDropNotifier)),
                     agent_events,
-                    ticket_resolutions: Arc::new(crate::domains::agent::host::ports::DbTicketResolutionProvider::new(
-                        app_state.db.clone(),
-                    )),
                 },
             ));
             // 3. 僵尸 reconcile：DB 里 status='running' 但 registry 无主的
@@ -594,10 +573,6 @@ impl ServiceManager {
             }
 
             let thing_agent_manager = runtime.thing_agents().clone();
-            // E4b §3.2：turn 开头工作区快照的声明属性读取也计入需求。
-            thing_agent_manager.set_snapshot_demand_sink(Arc::new(
-                crate::shared::access_ports::AccessSnapshotDemandSink(access.clone()),
-            ));
             // E1 Task 10：manager 就绪，LiveState 读面槽封口——此后工具查询
             // 经 watch 命令通道生效（此前 live=null）。
             live_summary_slot.set(thing_agent_manager.clone());
@@ -694,14 +669,11 @@ impl ServiceManager {
                 }
             }
 
-            // Start unified agent loops for existing workspaces（heartbeat
-            // 共享表已由 restore 预热：tasks 非空，trigger 不抑制）。
-            //
-            // E1 Task 8 bootstrap 硬顺序：set_wake_ledger / set_watch_deps /
-            // 限速预热全部先于 start——三者都只影响其后 start 的工作区。
+            // Start the watch engine for existing workspaces（heartbeat 共享表
+            // 已由 restore 预热）。E1 Task 8 bootstrap 硬顺序：set_watch_deps
+            // 先于 start——只影响其后 start 的工作区。
             // E4d：maps/places/position 读面（runtime 经 MapStore 端口，零 db）；
             // 与 DataServer 共用启动时建立的 ZoneService/坐标缓存。
-            thing_agent_manager.set_wake_ledger(hub_ledger.clone());
             thing_agent_manager.set_watch_deps(crate::domains::agent::thing_agent::WatchDeps {
                 cache: Arc::new(crate::shared::runtime_ports::ThingCacheAdapter(
                     app_state.device_cache.clone(),
@@ -734,25 +706,8 @@ impl ServiceManager {
                 })
                 .await
                 .map_err(|error| Error::Internal(format!("Task runtime startup failed: {error}")))?;
-            // E1 同键限速预热：DB heartbeat_config JSON 的
-            // rate_limit_per_key_per_min → scheduler 共享表（spec §3 热改
-            // 生效；读失败只记日志，缺省 3/min 兜底）。
-            for ws_id in &ws_ids {
-                match app_state.db.load_heartbeat_config(ws_id).await {
-                    Ok(Some(cfg)) => {
-                        if let Some(per_min) = cfg.rate_limit_per_key_per_min {
-                            thing_agent_manager.set_wake_rate_limit_per_min(ws_id, per_min);
-                        }
-                    }
-                    Ok(None) => {}
-                    Err(e) => tracing::warn!(%ws_id, error = %e, "load heartbeat config for rate-limit prewarm failed"),
-                }
-            }
-            for ws_id in &ws_ids {
-                thing_agent_manager.start(ws_id);
-            }
-            // Plan 2：schedule 唤醒由 TriggerRouter 接管（legacy timer/heartbeat
-            // 默认不再挂载）；句柄进 service_handles 随关停排空。
+            // Plan 2/4A：schedule、报警与 watch 唤醒统一经 TriggerRouter 进入
+            // Session Loop；先建路由并注入 manager，再启动各工作区 watch。
             let wake_runner = Arc::new(crate::domains::agent::session::WakeRunner::from_runtime(
                 app_state.db.clone(),
                 app_state.agent_pool.clone(),
@@ -763,11 +718,16 @@ impl ServiceManager {
                 wake_runner,
                 Some(app_state.event_bus.clone()),
             ));
+            thing_agent_manager.set_session_router(trigger_router.clone());
             *self.trigger_router.write().await = Some(trigger_router.clone());
             let trigger_handle = trigger_router.clone().start();
             self.service_handles.write().await.push(trigger_handle);
+            for ws_id in &ws_ids {
+                thing_agent_manager.start_workspace_watch(ws_id);
+            }
             // Plan 4A Task 7：TriggerRouter 已同步订阅报警后再关闭 legacy 心跳
-            // 桥的告警派发（顺序保证窗口内不丢告警）。watch 触发保持旧路径。
+            // 桥的告警派发（顺序保证窗口内不丢告警）。开关已退化为 no-op，
+            // 保留一版以标记 rollout 状态。
             orchestrator.set_alarm_dispatch(false);
             info!("✅ AI Orchestrator started ({} workspaces)", ws_ids.len());
 

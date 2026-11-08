@@ -28,10 +28,9 @@ use super::heartbeat::types::HeartbeatConfig;
 use super::orchestrator::Orchestrator;
 use super::orchestrator::callbacks::HeartbeatBridge;
 use super::snapshot::{RestoreSnapshot, WorkspaceHeartbeatState};
-use super::thing_agent::manager::{AutonomousAgentProvider, HeartbeatDeps, ThingAgentManager, ThingAgentManagerConfig};
+use super::thing_agent::manager::{AutonomousAgentProvider, HeartbeatDeps, ThingAgentManager};
 use super::thing_agent::registry::RunRegistry;
 use super::thing_agent::runner::Runner;
-use super::thing_agent::traits::{AutonomyPolicyReader, ThingAgentHost};
 
 /// RuntimeDeps — 聚合组件现有构造所需依赖（收集自 service_manager.rs
 /// 现有接线；本任务只聚已有件，不造新依赖）。
@@ -42,10 +41,7 @@ use super::thing_agent::traits::{AutonomyPolicyReader, ThingAgentHost};
 /// （AgentState.memory_service）。
 pub struct RuntimeDeps {
     // ThingAgentManager 构造件
-    pub thing_agent_host: Arc<dyn ThingAgentHost>,
-    pub policy_repo: Arc<dyn AutonomyPolicyReader>,
     pub agent_provider: Arc<dyn AutonomousAgentProvider>,
-    pub thing_agent_config: ThingAgentManagerConfig,
     // Orchestrator 构造件
     pub event_bus: Arc<EventBus>,
     pub drop_notifier: Option<Arc<dyn DropNotifier>>,
@@ -53,8 +49,6 @@ pub struct RuntimeDeps {
     /// "先 subscribe 再 restore"的可实现形式）。lagged 订阅者经
     /// dump_state 对账恢复。
     pub agent_events: Arc<AgentEventBus>,
-    /// 工单人工解法注入源（T7：cloud 经 db 门面实现；测试用 Noop）。
-    pub ticket_resolutions: Arc<dyn super::thing_agent::traits::TicketResolutionProvider>,
 }
 
 /// Agent 子系统门面。命令入站（D3）；调用约定（D11-⑤）：cloud 先写 DB
@@ -99,28 +93,15 @@ impl AgentRuntime {
             // 重启后 trigger 仍不 tick。
             heartbeat_deps.enabled.insert(state.workspace_id.clone(), state.enabled);
         }
-        // Task 11：桥与统一循环共享同一 governor——告警信号 resume 的暂停态
-        // 必须作用于 trigger 读的那一份（克隆共享同一 DashMap 真源）。
-        let heartbeat_governor = heartbeat_deps.governor.clone();
         let thing_agents = Arc::new(ThingAgentManager::new(
-            deps.thing_agent_host,
-            deps.policy_repo,
             deps.agent_provider,
-            run_registry.clone(),
             events.clone(),
             Arc::new(Runner::new()),
-            deps.thing_agent_config,
-            deps.ticket_resolutions,
             heartbeat_deps.clone(),
         ));
-        // 告警桥（原 T18 X6 心跳桥）：AlarmCreated 转 Heartbeat 变体入统一
-        // 循环。X6 自动派发已退役（2026-10-16 裁定：提案走审批队列）；
-        // registry 仍共享同一实例（ack 回写链 + 回推窗口读）。
-        let bridge = Arc::new(HeartbeatBridge::new(
-            run_registry.clone(),
-            thing_agents.clone(),
-            heartbeat_governor,
-        ));
+        // 告警桥（原 T18 X6 心跳桥）：告警派发已迁至 TriggerRouter；
+        // registry 仍共享同一实例（ack 回写链）。
+        let bridge = Arc::new(HeartbeatBridge::new(run_registry.clone()));
         let orchestrator = Arc::new(Orchestrator::new(
             deps.event_bus,
             deps.drop_notifier,
@@ -292,28 +273,6 @@ mod stubs {
     use super::*;
 
     use super::super::thing_agent::runner::{AgentHandle, RunContextInner};
-    use super::super::thing_agent::traits::ThingEventSignal;
-
-    pub struct NoopThingAgentHost;
-
-    #[async_trait::async_trait]
-    impl ThingAgentHost for NoopThingAgentHost {
-        fn subscribe_events(&self) -> broadcast::Receiver<ThingEventSignal> {
-            broadcast::channel(1).1
-        }
-        async fn replay_events_since(&self, _cursor: i64, _min_level: i32) -> anyhow::Result<Vec<ThingEventSignal>> {
-            Ok(vec![])
-        }
-        async fn push_chat_message(&self, _session_key: &str, _content: &str, _run_id: &str) -> anyhow::Result<()> {
-            Ok(())
-        }
-        async fn notify_alert(&self, _workspace_id: &str, _payload: serde_json::Value) -> anyhow::Result<()> {
-            Ok(())
-        }
-        async fn recent_active_admin_session(&self, _workspace_id: &str) -> anyhow::Result<Option<String>> {
-            Ok(None)
-        }
-    }
 
     pub struct NoopAgentProvider;
 
@@ -340,14 +299,10 @@ impl RuntimeDeps {
     pub fn test_stub() -> Self {
         let event_bus = Arc::new(EventBus::new());
         Self {
-            thing_agent_host: Arc::new(stubs::NoopThingAgentHost),
-            policy_repo: Arc::new(super::thing_agent::traits::test_stubs::StubAutonomyPolicyReader::new()),
             agent_provider: Arc::new(stubs::NoopAgentProvider),
-            thing_agent_config: ThingAgentManagerConfig::default(),
             event_bus,
             drop_notifier: None,
             agent_events: Arc::new(AgentEventBus::new(16)),
-            ticket_resolutions: Arc::new(super::thing_agent::traits::NoopTicketResolutions),
         }
     }
 }
