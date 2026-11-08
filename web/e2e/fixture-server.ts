@@ -15,6 +15,8 @@ const here = dirname(fileURLToPath(import.meta.url));
 const mediaDir = join(here, 'fixtures', 'media');
 const port = Number(process.env.FIXTURE_PORT ?? 3002);
 const workspaceId = 'ws_e2e';
+const assistantWorkspaceId = 'ws-e2e';
+const assistantSessionKey = 'agent:ws-e2e:default/e2e';
 const origin = `http://127.0.0.1:${port}`;
 
 type Json = Record<string, unknown>;
@@ -570,6 +572,81 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
 
   if (path === '/api/v1/users/me') {
     ok(res, { id: 'user_e2e', name: 'E2E User', role: 'admin' });
+    return;
+  }
+
+  // App shell polls the disposition badge on every authenticated route.
+  if (path === '/api/v1/judgments/summary') {
+    ok(res, { needsYou: 0 });
+    return;
+  }
+
+  // Assistant workbench projections (envelope for ApiClient routes, raw JSON
+  // for the HUD/events/todos endpoints).
+  if (path === '/api/v1/chat/sessions') {
+    ok(res, {
+      sessions: [
+        {
+          session_key: assistantSessionKey,
+          workspace_id: assistantWorkspaceId,
+          agent_id: 'default',
+          label: '巡检',
+          kind: 'chat',
+          status: 'active',
+          created_at: 1,
+          updated_at: 1,
+        },
+      ],
+    });
+    return;
+  }
+  if (path === '/api/v1/chat/history') {
+    ok(res, { messages: [] });
+    return;
+  }
+  // Session keys contain both ':' and '/', so match the suffix greedily.
+  const assistantSession = path.match(
+    /^\/api\/v1\/chat\/sessions\/(.+)\/(events\/stream|events|todos)$/,
+  );
+  if (assistantSession) {
+    const suffix = assistantSession[2];
+    if (suffix === 'events') {
+      json(res, 200, { events: [], highWatermark: 0 });
+      return;
+    }
+    if (suffix === 'todos') {
+      json(res, 200, []);
+      return;
+    }
+    // Keep the session event stream open so the view does not churn retries.
+    res.writeHead(200, {
+      'Content-Type': 'text/event-stream',
+      'Cache-Control': 'no-store',
+      Connection: 'keep-alive',
+    });
+    res.write(': connected\n\n');
+    const keepalive = setInterval(() => res.write(': keepalive\n\n'), 15_000);
+    req.on('close', () => clearInterval(keepalive));
+    res.on('close', () => clearInterval(keepalive));
+    return;
+  }
+  if (path === `/api/v1/workspaces/${assistantWorkspaceId}/agent/hud`) {
+    json(res, 200, {
+      assistant: { status: 'idle', lastOutcome: null },
+      devices: { total: 3, online: 2, offline: 1 },
+      alarms: { highPriority: 0 },
+      pending: { questions: 0, approvals: 0 },
+      activity: { activeSessions: 0 },
+      schedule: {
+        enabled: true,
+        intervalSeconds: 300,
+        prompt: '',
+        nextWakeAt: null,
+        lastWakeAt: null,
+        lastOutcome: null,
+      },
+      recentEvents: [],
+    });
     return;
   }
 
