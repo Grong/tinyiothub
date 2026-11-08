@@ -18,12 +18,12 @@ describe('approval-card', () => {
     el.sessionKey = 'agent:ws:a/s1';
     el.pending = { approvalId: 'a1', tool: 'set_device', summary: '设 24℃' };
     const answered: string[] = [];
-    el.addEventListener('answered', () => answered.push('yes'));
+    el.addEventListener('answered', (event) => answered.push((event as CustomEvent<string>).detail));
     document.body.appendChild(el);
     await el.updateComplete;
     (el.shadowRoot!.querySelector('.approval-approve') as HTMLButtonElement).click();
     await el.updateComplete;
     expect(hoisted.answerApproval).toHaveBeenCalledWith('agent:ws:a/s1', 'a1', 'approved');
-    expect(answered).toHaveLength(1);
+    expect(answered).toEqual(['a1']);
   });
 });

@@ -203,8 +203,10 @@ export class ChatView extends LitElement {
     void this.loadTimeline(this.sessionKey);
   }
 
-  private onApprovalAnswered(): void {
-    this.timeline.pendingApproval = null;
+  private onApprovalAnswered(event: CustomEvent<string>): void {
+    this.timeline.pendingApprovals = this.timeline.pendingApprovals.filter(
+      (pending) => pending.approvalId !== event.detail,
+    );
     void this.loadTimeline(this.sessionKey);
   }
 
@@ -294,13 +296,13 @@ export class ChatView extends LitElement {
                   @answered=${() => this.answerPending()}
                 ></question-card>`
               : ''}
-            ${this.timeline.pendingApproval
-              ? html`<approval-card
-                  .sessionKey=${this.sessionKey}
-                  .pending=${this.timeline.pendingApproval}
-                  @answered=${() => this.onApprovalAnswered()}
-                ></approval-card>`
-              : ''}
+            ${this.timeline.pendingApprovals.map(
+              (pending) => html`<approval-card
+                .sessionKey=${this.sessionKey}
+                .pending=${pending}
+                @answered=${(event: CustomEvent<string>) => this.onApprovalAnswered(event)}
+              ></approval-card>`,
+            )}
             ${renderTimeline(this.timeline.blocks, { liveText: this.liveText, sending: this.sending })}
             ${this.a2uiRenderer.renderSurfacesByKind('inline')}
             ${this.a2uiRenderer.renderSurfacesByKind('overlay')}

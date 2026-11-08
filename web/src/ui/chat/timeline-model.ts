@@ -50,7 +50,7 @@ export class TimelineModel {
   blocks: TimelineBlock[] = [];
   todos: TodoItem[] = [];
   pendingQuestion: PendingQuestion | null = null;
-  pendingApproval: PendingApproval | null = null;
+  pendingApprovals: PendingApproval[] = [];
   cursor = 0;
   highWatermark = 0;
   firstUserText: string | null = null;
@@ -62,7 +62,7 @@ export class TimelineModel {
     this.blocks = [];
     this.todos = [];
     this.pendingQuestion = null;
-    this.pendingApproval = null;
+    this.pendingApprovals = [];
     this.cursor = 0;
     this.highWatermark = 0;
     this.firstUserText = null;
@@ -173,16 +173,22 @@ export class TimelineModel {
           at,
         }, event.seq);
         break;
-      case 'approval.requested':
-        this.pendingApproval = {
-          approvalId: asString(payload.approvalId),
-          tool: asString(payload.action),
-          summary: asString(payload.summary),
-        };
+      case 'approval.requested': {
+        const approvalId = asString(payload.approvalId);
+        if (!this.pendingApprovals.some((pending) => pending.approvalId === approvalId)) {
+          this.pendingApprovals.push({
+            approvalId,
+            tool: asString(payload.action),
+            summary: asString(payload.summary),
+          });
+        }
         break;
+      }
       case 'approval.resolved': {
         const approvalId = asString(payload.approvalId);
-        if (this.pendingApproval?.approvalId === approvalId) this.pendingApproval = null;
+        this.pendingApprovals = this.pendingApprovals.filter(
+          (pending) => pending.approvalId !== approvalId,
+        );
         this.pushBlock({
           kind: 'notice',
           id: approvalId || event.eventId,

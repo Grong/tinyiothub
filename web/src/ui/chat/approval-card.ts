@@ -41,7 +41,7 @@ export class ApprovalCard extends LitElement {
     try {
       await answerApproval(this.sessionKey, this.pending.approvalId, decision);
       this.done = true;
-      this.dispatchEvent(new CustomEvent('answered'));
+      this.dispatchEvent(new CustomEvent('answered', { detail: this.pending.approvalId }));
     } catch (error) {
       this.error = (error as Error).message || '提交审批失败';
     } finally {
