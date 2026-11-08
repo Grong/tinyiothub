@@ -40,7 +40,7 @@ in from memory.
 | Field | What to record |
 | --- | --- |
 | Binary | `tinyiothub-cloud` version, build profile, and full git commit SHA of the running binary |
-| Config version | Config file paths, SHA-256 of each, Workspace `heartbeat_config`, Workflow revision IDs, and provider/model configuration |
+| Config version | Config file paths, SHA-256 of each, Workspace `assistant_schedules` id/interval/permission mode/`next_wake_at`, Task and Session IDs, and provider/model configuration |
 | Provider | Controlled provider name, model ID, script/scenario file hash, recorded latency/error/connection-drop injection policy |
 | Device simulator | Simulator version, seed, device count per workspace, command/result script hash |
 | Scheduled start / end | UTC ISO-8601 with offset, e.g. `2026-11-10T00:00:00+00:00` |

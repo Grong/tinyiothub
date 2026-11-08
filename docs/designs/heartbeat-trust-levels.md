@@ -1,5 +1,8 @@
+> **HISTORICAL / SUPERSEDED (2026-11-08).** 当前设计见 `docs/superpowers/specs/2026-11-07-assistant-harness-design.md`。
+> 本文仅作历史记录，路径与流程可能已退役。
+
 ---
-status: ACTIVE
+status: HISTORICAL
 ---
 # CEO Plan: Heartbeat Trust Levels — AI Autonomous Execution
 

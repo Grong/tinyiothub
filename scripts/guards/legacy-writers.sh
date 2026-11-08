@@ -296,9 +296,10 @@ if [ "$FAIL" -ne 0 ]; then
 fi
 
 # ── Hand-maintained web tool / event / state lists ─────────
-# Status copy is single-sourced in web/src/ui/views/harness-status.ts and
-# exposed through runtime-status.ts. Tool/event allowlists are derived from
-# event facts, not a frontend Set.
+# Status copy is single-sourced in web/src/ui/components/global-hud.ts
+# (assistant status labels) and web/src/ui/chat/timeline-render.ts
+# (tool/todo states). Tool/event allowlists are derived from event facts,
+# not a frontend Set.
 WEB_HITS=$(rg -n --glob '*.ts' --glob '!**/*.test.ts' \
     '(const associatedTools|const toolEvents|const readOnlyTools|const eventTitles|const taskStatusLabels|const taskStatusTones|taskStatuses|jobStates|approvalStates|terminalTasks|pausableStatuses|cancellableStatuses|terminalStatuses)' \
     web/src 2>/dev/null || true)

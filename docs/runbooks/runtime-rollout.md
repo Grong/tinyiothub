@@ -1,14 +1,15 @@
 # Runtime rollout and drain runbook
 
 Scope: durable Runtime Tasks, device Jobs, approvals, media/evidence, and the
-Workbench for one workspace at a time.
+Assistant view for one workspace at a time.
 
 Runtime has no rollout flags. The 2026-10-30 decision removed the
 `runtime_tasks_enabled` / `runtime_media_enabled` / `runtime_workbench_enabled`
-keys from `workspaces.heartbeat_config`: Task creation is always persistent,
-`read_device` image capture is always available to Tasks, and the Workbench is
-always reachable. Old `runtime_*` keys left in a workspace row are inert and are
-dropped the next time the heartbeat config is saved.
+keys from the legacy `workspaces.heartbeat_config`: Task creation is always
+persistent, `read_device` image capture is always available to Tasks, and the
+Assistant view is always reachable. Old `runtime_*` keys left in a workspace row
+are inert. Assistant wake scheduling now lives in `assistant_schedules`; the
+legacy workspace `heartbeat_config` column is not the schedule source.
 
 There is therefore no per-workspace kill switch for durable rows. Draining is an
 operational procedure (section 6), not a flag transition, and it never deletes
@@ -55,7 +56,7 @@ provider keys into tickets or dashboards.
    cancel reaches the recorded terminal state.
 5. Restart the process. Confirm the Task, current Run, Job, watch, and outbox
    facts survive; recovery must not create a duplicate Run or Job.
-6. Confirm the Runtime SSE endpoint connects and a reconnect resumes from the
+6. Confirm the Task SSE endpoint connects and a reconnect resumes from the
    last cursor without duplicating events.
 7. Confirm the bounded timeline endpoint seeds the initial page before SSE:
    `GET /api/v1/workspaces/{workspace_id}/agent/tasks/{task_id}/events?limit={1..200}&before={cursor?}`.
@@ -125,13 +126,16 @@ environment (it does not unblock playback):
 Because step 4 can never pass in this round, the remaining player checks cannot
 be recorded as executed and playback stays blocked.
 
-## 5. Workbench — always on, player checks BLOCKED
+## 5. Assistant view — always on, player checks BLOCKED
 
-The Workbench hash routes (`#/runtime`, `#/runtime/new`,
-`#/runtime/tasks/{id}`) and the sidebar entry are always registered; there is no
-flag. Keyboard, responsive, approval-conflict, and Task-switch checks can be
-recorded against staging. Player-lifecycle and one-hour observation checks stay
-BLOCKED with section 4 because no real playback provider exists.
+The canonical route `#/assistant` (with
+`#/assistant/sessions/{encoded_session_key}` deep links) and its sidebar entry
+are always registered; there is no flag. Legacy Workbench hashes (`#/runtime`,
+`#/runtime/new`, `#/runtime/tasks/{id}`, and all `#/harness/*` routes) redirect
+once to `#/assistant`. Keyboard, responsive, approval-conflict, and Task-switch
+checks can be recorded against staging. Player-lifecycle and one-hour
+observation checks stay BLOCKED with section 4 because no real playback
+provider exists.
 
 1. Do not claim player-lifecycle or media observation evidence in production.
 2. Record the player gate as blocked with section 4.
@@ -382,8 +386,8 @@ The Harness cutover is greenfield for the Task projection. Two gaps are
    evidence are written to platform `runtime.v1` telemetry, not to the Task's
    workspace `session_events`, and the live SSE tail only reads the workspace
    ledger. Consequence: the Task detail "Devices" panel says "No referenced
-   devices", the Evidence panel is empty, and the Workbench cannot resolve a
-   playback target from a Task. Bridging device/watch/media telemetry into the
+   devices", the Evidence panel is empty, and the Assistant view cannot resolve
+   a playback target from a Task. Bridging device/watch/media telemetry into the
    workspace event stream (or having the projection read it) is a follow-up; the
    arrays stay empty until then.
 2. **Model-process replay is not persisted (M4).** No production writer emits

@@ -1,31 +1,43 @@
-# Harness Supervisor recovery runbook
+# Assistant / Harness Task recovery runbook
 
 Scope: one workspace Harness store (`data/agents/<workspace_id>/harness/harness.db`).
-This runbook covers scheduler health, stalled/recovered transitions, startup
-crash recovery, and per-row dead-wake retry.
+This runbook covers Assistant schedule health, Task/Run/Session recovery,
+startup crash recovery, unknown-Effect reconciliation, and per-row dead-wake
+retry.
 
 It does not cover provider/model outages, device-driver faults, e-stop handling,
-or the 24h soak procedure. `scheduled` is a plan time; it is never a promise of
-on-time execution. An AI heartbeat is **not** process liveness.
+or the 24h soak procedure. `next_wake_at` is a plan time; it is never a promise
+of on-time execution. A chat or Assistant wake is **not** process liveness.
 
 ## 1. Invariants
 
-- `supervisor_state` is a single mutable row:
-  `tick_seq`, `last_started_at`, `last_completed_at`, `last_error`,
-  `stalled_reason`. Normal ticks only advance this row.
-- Only a `stalled` or `recovered` transition appends a permanent
-  `session_events` fact (`supervisor.stalled` / `supervisor.recovered`).
-- In-process health math uses a monotonic anchor, so a wall-clock jump inside
-  the process does not fake a deadline. Persisted UTC is compared after restart
-  to detect a real rollback.
-- A successful tick clears the recovering state and writes one recovery event.
+- `assistant_schedules` is the single source for Assistant scheduling:
+  `enabled`, `interval_seconds`, `permission_mode`, `prompt`, `next_wake_at`,
+  `last_wake_at`, `last_outcome`.
+- `TriggerRouter` ticks every 30 seconds: it ensures a schedule row exists for
+  every workspace, scans due enabled rows, and dispatches at most one in-flight
+  wake per workspace. A skipped dispatch still advances `next_wake_at`.
+- Event wakes (device events, watch hits, alarms) enter the same router and are
+  deduplicated per `{workspace}:{trigger}:{dedup_key}` in a 60-second window
+  (at most 3 dispatches). A workspace with a wake in flight rejects new event
+  wakes until it settles.
+- A dispatch records `last_wake_at`, `last_outcome`, and the next
+  `next_wake_at`. Do not hand-edit these columns.
 - Dead-wake retry reuses the original `event_id`. It never creates a
   replacement outbox row and never retries a batch.
+- The retained Supervisor API (`/harness/supervisor`) still exposes
+  `supervisor_state` and Workflow cron-derived fields for pre-cutover stores.
+  The Workflow scheduler that advanced those fields is retired; current
+  deployments advance `assistant_schedules`, not `supervisor_state`.
 
 ## 2. Read the panel and API
 
-The Harness view is `#/harness/supervisor` (`view-harness-supervisor`).
-The API is:
+The operator view is the Assistant view `#/assistant`. Its HUD calls
+`GET /api/v1/workspaces/{workspace_id}/agent/hud`; its schedule panel calls
+`GET/PUT /api/v1/workspaces/{workspace_id}/agent/schedule`. Both return the
+schedule row above.
+
+The retained Supervisor API is:
 
 ```text
 GET  /api/v1/workspaces/{workspace_id}/harness/supervisor
@@ -59,6 +71,11 @@ The GET is workspace-member readable and returns:
 }
 ```
 
+`enabledWorkflows` and the Workflow cron-derived `nextWakeAt` source are
+retained legacy fields from the retired Workflow experiment. They are zero/null
+on current deployments. Read `assistant_schedules.next_wake_at` (or the
+`/agent/schedule` response) for the current Assistant schedule.
+
 `idle` with `noNewRuns=true` is a normal state, not a failure. Only `stalled`
 means a concrete scheduler problem. `nextWakeAt` is shown as a planned time,
 not an on-time guarantee.
@@ -67,53 +84,58 @@ not an on-time guarantee.
 
 | Observation | Meaning | Action |
 |---|---|---|
-| `status=idle`, no enabled Workflow | Normal idle scheduler, ticks still run | None |
-| `status=healthy`, next wake far in the future | Normal; no Run is due yet | None |
-| `stalledReason=tick_deadline_exceeded` | A tick started but did not finish inside the configured deadline (hang/crash), or the process died mid-tick | Section 4.1. A later **completed** tick (success or error) ends this stall |
-| `stalledReason=due_not_started` | An enabled cron Workflow's planned boundary passed the grace window and the scheduler never advanced it | Section 4.2 |
-| `stalledReason=clock_rollback` | Persisted `last_completed_at` is in the future relative to now (wall clock moved backwards across restart) | Section 4.3 |
-| `lastError` non-null but not stalled | Tick completed with a bounded error; next ticks continue | Inspect the error, no forced reset |
+| `assistant_schedules.enabled=false` (HUD `paused`) | Assistant deliberately paused; no scheduled wake is due | None |
+| `schedule.enabled=true`, `next_wake_at` within the interval | Normal; no wake is due yet | None |
+| `next_wake_at` overdue while the process is alive | `TriggerRouter` is not advancing the schedule | Section 4.1 |
+| `last_outcome` records a skipped/error wake | The turn was skipped or bounded by a provider error; the schedule advanced | Inspect the outcome/provider error, no forced reset |
+| `assistant schedule: due scan failed` or `ensure failed` in logs | Workspace store or workspace enumeration failed | Inspect the store error, then Section 4.1 |
+| `event wake dropped: workspace wake in flight` repeated for one workspace | An in-flight guard is stuck | Section 4.2 |
+| `stalledReason=*` from the retained Supervisor API | Legacy Workflow-derived signal (pre-cutover stores only; not produced by the Assistant scheduler) | Section 4.3 |
 
-Do **not** infer liveness from chat/heartbeat activity. A fresh AI heartbeat can
-coexist with a stalled scheduler; the health API deliberately ignores it.
+Do **not** infer liveness from chat or Assistant activity. A fresh Assistant
+turn can coexist with a stalled scheduler; the health API deliberately ignores
+it.
 
 ## 4. Stalled playbooks
 
-### 4.1 Tick deadline exceeded
+### 4.1 Overdue Assistant schedule
 
-1. Confirm `tickSeq` stopped advancing across two reads at least one tick apart.
-2. Check process/host liveness and logs for the workspace:
-   `workflow scheduler tick failed` or a hung host.
-3. If the process crashed, restart it. Startup recovery marks in-flight Harness
-   Runs `interrupted` and appends `run.interrupted` with
-   `incomplete_tail=true` and `last_persisted_seq` (Section 6).
-4. After restart, wait for a completed tick. `last_completed_at` advances and
-   exactly one `supervisor.recovered` event is written. A tick that completes
-   with an error also ends a tick-deadline stall and records `last_error`;
-   `last_error` is cleared only by a later successful tick.
-5. If the tick never completes, collect logs and the current `supervisor_state`
-   row as evidence. Do not edit the row to fake a recovery.
+1. Read the schedule from `/agent/schedule` or:
+   `SELECT enabled, next_wake_at, last_wake_at, last_outcome FROM assistant_schedules WHERE workspace_id = ?`.
+2. Confirm `next_wake_at` is in the past and `last_wake_at` is older than one
+   interval. A disabled row is paused, not stalled.
+3. Check process/host liveness and logs for: `assistant schedule: due scan
+   failed`, `assistant schedule: ensure failed`, `assistant schedule: mark wake
+   failed`, or a hung host.
+4. If the process crashed, restart it. Startup recovery marks in-flight Runs
+   `interrupted` and appends `run.interrupted` with `incomplete_tail=true` and
+   `last_persisted_seq` (Section 6).
+5. After restart, wait one 30-second `TriggerRouter` tick. A due enabled row is
+   dispatched, and `last_wake_at`/`last_outcome` update while `next_wake_at`
+   advances.
+6. If `next_wake_at` never advances, collect two `assistant_schedules` reads
+   and the matching logs as evidence. Do not edit the row to fake a wake.
 
-### 4.2 Due not started
+### 4.2 In-flight wake stuck
 
-1. Read enabled Workflows and their cron cursors:
-   `agent_workflows.enabled=1`, `workflow_cron_cursors.next_slot`.
-2. Compare `next_slot` with the current UTC time. A cursorless enabled Workflow
-   uses its `agent_workflows.updated_at` (enable time) as the planned boundary.
-3. If the scheduler process is down, restart it. The first tick initializes a
-   cursorless plan, advances overdue boundaries, and writes `trigger.missed`
-   for skipped slots (XD8: never backfill old slots).
-4. If the boundary stays overdue while ticks advance, treat the cron expression
-   or Workflow revision as invalid; fix the configuration by appending a new
-   revision. Do not delete history or rewrite the cursor manually.
-5. Recovery is automatic after the first successful tick that clears the
-   stalled reason.
+1. Repeated `event wake dropped: workspace wake in flight` for one workspace
+   means the in-memory per-workspace guard was not released (for example a hung
+   executor).
+2. Confirm no Run or Job for that workspace is actually active. A genuinely
+   running turn is expected to hold the guard; no action is needed.
+3. Restart the process to clear in-memory guards once the active turn is
+   settled. Startup recovery (Section 6) handles interrupted Runs.
+4. A retained `due_not_started` value from the Supervisor API is a pre-cutover
+   Workflow signal. Do not create Workflow revisions. Ensure the workspace has
+   an `assistant_schedules` row (the router ensures one on its next tick) and
+   verify that the router advances it.
 
-### 4.3 Persisted clock rollback
+### 4.3 Persisted clock rollback (retained Supervisor)
 
-1. Compare host UTC time with `last_completed_at` in `supervisor_state`.
+1. Compare host UTC time with `last_completed_at` in `supervisor_state`. This
+   retained field is not advanced by the Assistant scheduler.
 2. If the host clock is wrong, fix time synchronization and restart.
-3. Do not update `last_completed_at` by hand. A correct clock plus a successful
+3. Do not update `last_completed_at` by hand. A correct clock plus a completed
    tick is the recovery evidence.
 4. If a restored backup legitimately contains future timestamps, record the
    backup identity and the observed skew as evidence, then restart with the
@@ -146,21 +168,21 @@ Requirements:
   The outbox primary key is unchanged; no replacement event is inserted.
 - A repeated confirmation returns the same pending fact and does not duplicate
   the wake. There is no bulk retry entry point.
-- The UI disables only the selected row during the request, keeps the full
-  list, and shows a persistent inline result.
+- Retry is an admin API operation. The Assistant view `#/assistant` has no
+  dead-wake list in this cutover, so use the Supervisor API and inspect
+  `task_wake_outbox`.
 
 Procedure:
 
-1. Open `#/harness/supervisor` and verify the row's `eventId`, target Task, and
-   failure reason.
+1. Read `GET /api/v1/workspaces/{workspace_id}/harness/supervisor` and verify
+   the row's `eventId`, target Task, and failure reason.
 2. Confirm the failure reason is understood; a retry is not a blind replay of
    a device action. Effects still follow their own dispatch/approval gates.
-3. Click `按原事件重试`. The row remains visible with a persistent
-   `已按原事件 <event_id> 重新排队，状态：等待调度。` result.
+3. POST the retry endpoint above. The response keeps the original identity.
 4. Verify the row is now `pending` in `task_wake_outbox` and the row count did
    not increase.
 5. If the wake dies again, the same row returns to `dead` with the new failure
-   reason. Investigate the cause before confirming again.
+   reason. Investigate the cause before retrying again.
 
 If the API returns 403, the caller lacks Agent management permission; do not
 retry with a broader role or a different workspace token. If it returns 404,
@@ -235,18 +257,23 @@ the workspace store errors before restarting.
 
 Record, without secrets or raw provider payloads:
 
-- the GET response for the workspace (health + dead wakes);
-- two `supervisor_state` reads showing `tick_seq`/timestamps;
-- matching `session_events` rows: `supervisor.stalled`,
-  `supervisor.recovered`, `run.interrupted`, `trigger.missed`;
+- the `/agent/hud` and `/agent/schedule` responses (status, next/actual wake,
+  and last outcome);
+- two `assistant_schedules` reads showing
+  `next_wake_at`/`last_wake_at`/`last_outcome`;
+- matching `session_events` rows: `run.interrupted` and Task/Run lifecycle
+  events;
+- for pre-cutover stores only: the retained Supervisor GET response and
+  `supervisor_state` reads showing `tick_seq`/timestamps, plus
+  `supervisor.stalled` / `supervisor.recovered` events;
 - for retry: the original `eventId`, target Task, failure reason, and the
   post-retry `dispatch_state='pending'` row with `retried_by`/`retried_at`;
 - host time source/skew if a rollback was involved.
 
 ## 8. Non-goals and boundaries
 
-- Do not hand-edit `supervisor_state`, `task_wake_outbox`, or session events to
-  hide a failure.
+- Do not hand-edit `assistant_schedules`, `supervisor_state`, `task_wake_outbox`,
+  or session events to hide a failure.
 - Do not add a bulk retry or a per-tick permanent event stream.
-- Do not claim on-time scheduling from `nextWakeAt`; it is a plan.
+- Do not claim on-time scheduling from `next_wake_at`; it is a plan.
 - This runbook does not prove 24h reliability and does not execute the soak.

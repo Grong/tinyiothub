@@ -157,12 +157,12 @@ Each Harness fact has exactly one writer. New code must use these paths:
 |------|-------|
 | Session events | `Db::append_session_event` / `Db::apply_workspace_transition` |
 | Effects | Harness transitions in `crates/db/src/harness_effect.rs` |
-| Tasks / Runs / Wakes | The owning workspace generation: `crates/db/src/harness_task.rs` (TaskStore port), `harness_workflow.rs` (workflow control / subagents), `harness_effect.rs`, `harness_command.rs` |
+| Tasks / Runs / Wakes | The owning workspace generation: `crates/db/src/harness_task.rs` (TaskStore port) plus the Task runtime in `apps/cloud/src/domains/agent/thing_agent/task/coordinator.rs`; `harness_effect.rs` and `harness_command.rs` own Effect and decision-command transitions |
 | Device jobs | The owning workspace generation: `crates/db/src/harness_effect.rs` / `harness_job.rs` |
 | Approvals / decisions | `decisions` (workspace DB) |
 | Commands / wakes | Workspace `commands` and `task_wake_outbox` |
 
-Platform runtime tables are retired legacy (Task 19C4). `agent_tasks`,
+Platform runtime tables are retired legacy in the platform database (Task 19C4). `agent_tasks`,
 `task_wake_outbox`, `device_jobs`, and `task_approvals` have **no production
 reader or writer**; they remain only as schema for pre-Harness generations and
 test fixtures. `crates/db/src/device_job.rs` keeps its platform Job writer
@@ -194,7 +194,8 @@ SELECT against `agent_tasks`, `agent_runs`, `task_wake_outbox`,
 `task_approvals`, `task_finalize_intents` or `device_jobs` outside the exact
 Harness owner for that table fails, including quoted and multi-line SQL. It
 also rejects new frontend tool/event/status allowlists (status copy is
-single-sourced in `web/src/ui/views/harness-status.ts`).
+single-sourced in `web/src/ui/components/global-hud.ts` and
+`web/src/ui/chat/timeline-render.ts`).
 
 ### Thing Ontology Module
 

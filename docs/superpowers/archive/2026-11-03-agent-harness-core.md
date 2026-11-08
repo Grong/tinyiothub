@@ -1,7 +1,7 @@
 # TinyIoTHub Harness Core Implementation Plan
 
-> **FROZEN 2026-11-08 — implementation plan frozen；未实现的步骤作废.** 产品方向已被 `2026-11-07-assistant-harness-design.md` 取代；
-> 安全、Effect/Decision、恢复合同仍为规范。请勿继续在此文件追加设计。
+> **FROZEN / HISTORICAL (2026-11-08) — implementation plan frozen；未实现的步骤作废.** 产品方向已被 `2026-11-07-assistant-harness-design.md` 取代；
+> 安全、Effect/Decision、恢复合同仍为规范。本文已归档至 `docs/superpowers/archive/2026-11-03-agent-harness-core.md`，请勿继续在此文件追加设计。
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 

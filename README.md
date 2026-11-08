@@ -19,9 +19,9 @@ AI 时代的万物互联底座。以「物」为本体的轻量级 AIoT 平台 �
 
 **智能运维**
 - L0-L3 分级自愈引擎：system/device/task 三级探针，自动故障检测与恢复
-- 自治运维（Thing Agent Loop）：AI 被设备事件/定时巡检/用户指令唤醒，查本体、做决策、经三态策略门（off/diagnose/act）自主操作设备，行动后回读验证并留全量审计
+- 自治运维（Assistant 常驻会话）：AI 被 Assistant 调度、设备事件或用户指令唤醒，查本体、做决策、按权限模式（read_only/ask）操作设备，行动后回读验证并留全量审计
 - 规则引擎：阈值、范围、变化、持续时间、组合五种条件类型
-- 心跳探针：定期自检网关与子设备，提前发现隐患；诊断结论自动转交自治 Loop 处置
+- 心跳探针：定期自检网关与子设备，提前发现隐患；诊断结论自动转交 Assistant 处置
 - Cron 定时任务：Workspace 隔离，执行记录与统计
 
 **AI 原生**
@@ -466,11 +466,17 @@ web/
 - `GET /api/v1/agents` - 获取 Agent 列表
 - `GET /api/v1/agents/{id}/config` - 获取 Agent 配置
 - `PUT /api/v1/agents/{id}/config` - 更新 Agent 配置
-- `GET /api/v1/agents/{id}/heartbeat/config` - 获取心跳配置
-- `PUT /api/v1/agents/{id}/heartbeat/config` - 更新心跳配置
-- `GET /api/v1/agents/{id}/heartbeat/logs` - 获取心跳执行日志
-- `GET /api/v1/agents/{id}/heartbeat/tasks` - 获取心跳任务列表
-- `PUT /api/v1/agents/{id}/heartbeat/tasks` - 更新心跳任务
+- `GET /api/v1/workspaces/{workspace_id}/agent/hud` - Assistant 全局 HUD（状态/设备/告警/待答/待批/调度）
+- `GET /api/v1/workspaces/{workspace_id}/agent/schedule` - 获取 Assistant 调度
+- `PUT /api/v1/workspaces/{workspace_id}/agent/schedule` - 更新 Assistant 调度（间隔/权限模式/提示词）
+- `GET /api/v1/workspaces/{workspace_id}/agent/tasks` - 获取 Task 列表
+- `POST /api/v1/workspaces/{workspace_id}/agent/tasks` - 创建 Task
+- `GET /api/v1/workspaces/{workspace_id}/agent/tasks/{task_id}/stream` - Task SSE 流
+- `GET /api/v1/chat/sessions` - 获取 Assistant 会话列表
+- `POST /api/v1/chat/sessions/{session_key}/label` - 更新会话标签
+- `DELETE /api/v1/chat/sessions/{session_key}` - 删除会话
+- `GET /api/v1/chat/sessions/{session_key}/events` - 获取会话事件
+- `GET /api/v1/chat/sessions/{session_key}/events/stream` - 会话事件 SSE
 - `GET /api/v1/agents/{id}/files` - 列出工作空间文件
 - `GET /api/v1/agents/{id}/files/{name}` - 读取工作空间文件
 - `PUT /api/v1/agents/{id}/files/{name}` - 写入工作空间文件
