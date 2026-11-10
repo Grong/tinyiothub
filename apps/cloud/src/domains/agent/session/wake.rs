@@ -19,7 +19,7 @@ use tinyiothub_storage::session::Session;
 use super::trigger::EventWake;
 use crate::domains::agent::pool::AgentPool;
 use crate::domains::agent::session::SESSION_TURN_TIMEOUT;
-use crate::domains::agent::session::chat::service::ensure_agent_legacy as ensure_agent;
+use crate::domains::agent::session::chat::service::ensure_agent;
 use crate::domains::agent::session::context::TurnContext;
 use crate::domains::agent::session::events::{SessionEventSink, session_event, session_started_payload};
 use crate::domains::agent::session::runner::{SessionRunner, TurnOutcome};
@@ -66,6 +66,21 @@ pub fn build_wake_message(
     }
     message.push_str("按顺序执行；用 todo_write 维护进度，完成后总结结果。");
     Some(message)
+}
+
+async fn wake_prompt(
+    workspace_id: &str,
+    assistant_id: &str,
+    turn_input: String,
+) -> anyhow::Result<crate::domains::agent::prompt::assistant::PromptPackage> {
+    crate::domains::agent::prompt::assistant::build_assistant_prompt(
+        &tinyiothub_core::config::SystemPromptsConfig::default(),
+        workspace_id,
+        assistant_id,
+        turn_input,
+        None,
+    )
+    .await
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -180,12 +195,24 @@ impl WakeRunner {
                 outcome: WakeOutcome::Skipped,
             };
         };
+        let prompt = match wake_prompt(&schedule.workspace_id, &schedule.assistant_id, message).await {
+            Ok(prompt) => prompt,
+            Err(error) => {
+                return WakeReport {
+                    session_key: String::new(),
+                    outcome: WakeOutcome::Failed {
+                        error: error.to_string(),
+                    },
+                };
+            }
+        };
         let agent = match ensure_agent(
             &self.pool,
             &schedule.assistant_id,
             &schedule.workspace_id,
             &AgentRuntimeConfig::default(),
             true,
+            &prompt,
         )
         .await
         {
@@ -199,7 +226,7 @@ impl WakeRunner {
                 };
             }
         };
-        self.run_with_agent(schedule, agent, &message, cancel).await
+        self.run_with_agent(schedule, agent, &prompt.turn_input, cancel).await
     }
 
     pub(crate) async fn run_with_agent(
@@ -265,6 +292,17 @@ impl WakeRunner {
                 wake.summary
             ),
         };
+        let prompt = match wake_prompt(&wake.workspace_id, &assistant_agent_id(&wake.workspace_id), message).await {
+            Ok(prompt) => prompt,
+            Err(error) => {
+                return WakeReport {
+                    session_key: String::new(),
+                    outcome: WakeOutcome::Failed {
+                        error: error.to_string(),
+                    },
+                };
+            }
+        };
         let assistant_id = assistant_agent_id(&wake.workspace_id);
         let agent = match ensure_agent(
             &self.pool,
@@ -272,6 +310,7 @@ impl WakeRunner {
             &wake.workspace_id,
             &AgentRuntimeConfig::default(),
             true,
+            &prompt,
         )
         .await
         {
@@ -285,7 +324,7 @@ impl WakeRunner {
                 };
             }
         };
-        self.run_event_with_agent(wake.clone(), agent, &message, permission_mode, cancel)
+        self.run_event_with_agent(wake.clone(), agent, &prompt.turn_input, permission_mode, cancel)
             .await
     }
 
@@ -522,6 +561,13 @@ mod tests {
         }
     }
 
+    fn test_prompt() -> crate::domains::agent::prompt::assistant::PromptPackage {
+        crate::domains::agent::prompt::assistant::PromptPackage {
+            system_prompt: "test-prompt".into(),
+            turn_input: String::new(),
+        }
+    }
+
     fn schedule(prompt: &str) -> AssistantSchedule {
         AssistantSchedule {
             workspace_id: "ws".into(),
@@ -643,6 +689,7 @@ mod tests {
                 &AgentRuntimeConfig::default(),
                 vec![],
                 true,
+                &test_prompt(),
             )
             .unwrap();
         let report = wake
@@ -690,6 +737,7 @@ mod tests {
                 &AgentRuntimeConfig::default(),
                 vec![],
                 true,
+                &test_prompt(),
             )
             .unwrap();
         let first = wake
@@ -927,6 +975,7 @@ mod tests {
                 &AgentRuntimeConfig::default(),
                 vec![],
                 true,
+                &test_prompt(),
             )
             .unwrap();
         let report = wake

@@ -6,8 +6,6 @@
 
 use std::sync::Arc;
 
-use tinyiothub_agent::port::provider::ChatMessage;
-
 use crate::domains::agent::pool::AgentPool;
 use crate::domains::agent::session::context::TurnContext;
 use crate::domains::agent::session::runner::{SessionRunner, TurnOutcome};
@@ -51,15 +49,24 @@ impl PoolSubagentRunner {
             .filter(|tool| !matches!(tool.name(), "ask_user" | "spawn_subagent"))
             .collect();
 
+        let mut prompt = crate::domains::agent::prompt::assistant::build_assistant_prompt(
+            &tinyiothub_core::config::SystemPromptsConfig::default(),
+            &request.workspace_id,
+            &child_id,
+            request.prompt.clone(),
+            None,
+        )
+        .await
+        .map_err(|error| error.to_string())?;
+        prompt.system_prompt.push_str(&format!(
+            "\n\n## Subagent Assignment\nYou are a focused {} subagent. Complete the assigned task and return a concise final report. Never ask the user questions.\n\nTask: {}",
+            request.subagent_type, request.description
+        ));
         let agent = self
             .pool
-            .create(&child_id, &request.workspace_id, &config, tools, true)
+            .create(&child_id, &request.workspace_id, &config, tools, true, &prompt)
             .map_err(|error| error.to_string())?;
 
-        let system_prompt = format!(
-            "You are a focused {} subagent. Complete the assigned task and return a concise final report. Never ask the user questions.\n\nTask: {}",
-            request.subagent_type, request.description
-        );
         // 事件挂在父 Session 下（spec §7.3）；assistant_id 用子代理 id，
         // 让 TurnContextRegistry 与父 Turn 隔离。
         let context = TurnContext::new(
@@ -74,10 +81,6 @@ impl PoolSubagentRunner {
         let result = {
             let guard = agent.lock().await;
             guard.clear_history().await;
-            if let Err(error) = guard.seed_history(&[ChatMessage::system(system_prompt)]).await {
-                self.pool.invalidate(&child_id);
-                return Err(error.to_string());
-            }
             self.runner
                 .run_turn_bounded(
                     &*guard,
@@ -187,7 +190,13 @@ mod tests {
             .unwrap(),
         );
         let config = AgentRuntimeConfig::default();
-        let _parent = pool.create("agent_main", "ws-test", &config, vec![], false).unwrap();
+        let prompt = crate::domains::agent::prompt::assistant::PromptPackage {
+            system_prompt: "test-prompt".into(),
+            turn_input: String::new(),
+        };
+        let _parent = pool
+            .create("agent_main", "ws-test", &config, vec![], false, &prompt)
+            .unwrap();
         let sink = Arc::new(RecordingSink::default());
         let contexts = Arc::new(TurnContextRegistry::default());
         let runner = Arc::new(SessionRunner::new(sink.clone(), contexts));
@@ -216,13 +225,16 @@ mod tests {
         // lifecycle under the parent session key.
         let events = sink.events.lock().await;
         let types: Vec<&str> = events.iter().map(|event| event.event_type.as_str()).collect();
-        assert_eq!(types, vec!["turn.started", "message.created", "turn.completed"]);
+        assert_eq!(
+            types,
+            vec!["turn.started", "step.text", "message.created", "turn.completed"]
+        );
         assert!(
             events
                 .iter()
                 .all(|event| event.session_id == "agent:ws-test:agent_main/s1"),
             "subagent events are attributed to the parent session"
         );
-        assert_eq!(events[2].payload_json["outcome"], "completed");
+        assert_eq!(events[3].payload_json["outcome"], "completed");
     }
 }

@@ -33,16 +33,6 @@ use tinyiothub_agent::port::runtime::AgentLoopHandle;
 /// (`__heartbeat__:<ws>`); `get_or_create_agent` still uses `workspace_id` as
 /// the id and has no callers today — any future autonomous wiring must give it
 /// its own prefix.
-pub async fn ensure_agent_legacy(
-    pool: &AgentPool,
-    agent_id: &str,
-    workspace_id: &str,
-    config: &AgentRuntimeConfig,
-    session_tools_enabled: bool,
-) -> Result<AgentLoopHandle, AgentError> {
-    ensure_agent_inner(pool, agent_id, workspace_id, config, session_tools_enabled, None).await
-}
-
 pub async fn ensure_agent(
     pool: &AgentPool,
     agent_id: &str,
@@ -51,35 +41,16 @@ pub async fn ensure_agent(
     session_tools_enabled: bool,
     prompt: &crate::domains::agent::prompt::assistant::PromptPackage,
 ) -> Result<AgentLoopHandle, AgentError> {
-    ensure_agent_inner(
-        pool,
-        agent_id,
-        workspace_id,
-        config,
-        session_tools_enabled,
-        Some(prompt),
-    )
-    .await
-}
-
-async fn ensure_agent_inner(
-    pool: &AgentPool,
-    agent_id: &str,
-    workspace_id: &str,
-    config: &AgentRuntimeConfig,
-    session_tools_enabled: bool,
-    prompt: Option<&crate::domains::agent::prompt::assistant::PromptPackage>,
-) -> Result<AgentLoopHandle, AgentError> {
-    let prompt_hash = prompt.map(|prompt| {
+    let prompt_hash = {
         let mut hasher = std::collections::hash_map::DefaultHasher::new();
         std::hash::Hash::hash(&prompt.system_prompt, &mut hasher);
         std::hash::Hasher::finish(&hasher)
-    });
+    };
     if let Some(agent) = pool.get_cached(agent_id) {
         // The tool set and static prompt are fixed at creation. Either change
         // requires a fresh loop, otherwise stale rules remain in the preamble.
         let tools_match = pool.agent_session_tools(agent_id) == Some(session_tools_enabled);
-        let prompt_matches = prompt_hash.is_none() || pool.agent_prompt_hash(agent_id) == prompt_hash;
+        let prompt_matches = pool.agent_prompt_hash(agent_id) == Some(prompt_hash);
         if tools_match && prompt_matches {
             return Ok(agent);
         }
@@ -93,10 +64,7 @@ async fn ensure_agent_inner(
         .tool_registry()
         .resolve_tools_for_agent(config, workspace_id, trust_config, &runtime)
         .await;
-    match prompt {
-        Some(prompt) => pool.create_with_prompt(agent_id, workspace_id, config, tools, session_tools_enabled, prompt),
-        None => pool.create(agent_id, workspace_id, config, tools, session_tools_enabled),
-    }
+    pool.create(agent_id, workspace_id, config, tools, session_tools_enabled, prompt)
 }
 
 /// Chat send formerly on `impl AgentPool` (`host/agent/chat.rs`). The session
@@ -108,9 +76,8 @@ pub async fn send_with_pool(
     db_pool: &sqlx::SqlitePool,
     agent_id: &str,
     session_key: &str,
-    message: &str,
+    prompt: crate::domains::agent::prompt::assistant::PromptPackage,
     run_id: &str,
-    system_prompt: &str,
     authorized_workspace: &str,
     config: &AgentRuntimeConfig,
     memory_service: Option<Arc<tinyiothub_memory::service::MemoryService>>,
@@ -121,14 +88,13 @@ pub async fn send_with_pool(
     if !authorized_workspace.is_empty() {
         parsed.verify_workspace(authorized_workspace)?;
     }
-    let agent = ensure_agent_legacy(pool, agent_id, &parsed.workspace_id, config, true).await?;
+    let agent = ensure_agent(pool, agent_id, &parsed.workspace_id, config, true, &prompt).await?;
     let event_publisher = pool.event_publisher.read().await.clone();
     send_message(
         &agent,
-        message,
+        prompt,
         run_id,
         session_key,
-        system_prompt,
         &pool.chat_handles,
         memory_service,
         event_publisher,
@@ -242,10 +208,9 @@ impl crate::domains::agent::session::TurnObserver for ChatEventObserver {
 #[allow(clippy::too_many_arguments)]
 pub async fn send_message(
     agent: &AgentLoopHandle,
-    message: &str,
+    prompt: crate::domains::agent::prompt::assistant::PromptPackage,
     run_id: &str,
     session_key: &str,
-    system_prompt: &str,
     chat_handles: &Arc<tokio::sync::Mutex<std::collections::HashMap<String, tokio::task::JoinHandle<()>>>>,
     memory_service: Option<std::sync::Arc<tinyiothub_memory::service::MemoryService>>,
     event_publisher: Option<std::sync::Arc<crate::domains::agent::event::bus::AiEventPublisher>>,
@@ -257,6 +222,7 @@ pub async fn send_message(
     session_runtime: Arc<crate::domains::agent::session::SessionRuntime>,
 ) -> Result<mpsc::Receiver<ChatEvent>, ChatError> {
     let agent = Arc::clone(agent);
+    let message = prompt.turn_input;
     // Resolve a leading `/trigger` skill token: prepend the full skill body to
     // this turn (so the model reliably has it) and keep a clean message for
     // display/reflection. A bare trigger (e.g. auto-`/workspace`) falls back to
@@ -264,7 +230,7 @@ pub async fn send_message(
     let (turn_message, reflect_message, trigger_skill) = {
         let ws_dir = crate::domains::agent::prompt::paths::workspace_dir(workspace_id);
         let skills = crate::domains::agent::pool::load_workspace_skills(&ws_dir);
-        match tinyiothub_skills::resolve_trigger(message, &skills) {
+        match tinyiothub_skills::resolve_trigger(&message, &skills) {
             Some(hit) => {
                 let user_text = if hit.cleaned_message.is_empty() {
                     "综合情况".to_string()
@@ -284,7 +250,6 @@ pub async fn send_message(
     };
     let run_id = run_id.to_string();
     let session_key = session_key.to_string();
-    let system_prompt = system_prompt.to_string();
     let chat_handles = Arc::clone(chat_handles);
     let chat_handles_inner = Arc::clone(&chat_handles);
     let workspace_id = workspace_id.to_string();
@@ -321,30 +286,33 @@ pub async fn send_message(
         // the history in between.
         let ag = agent.lock().await;
 
-        if let Err(e) = super::history::ensure_session(&db_pool, &session_key, &workspace_id, &agent_id).await {
+        if let Err(e) = crate::domains::agent::session::chat::history::ensure_session(
+            &db_pool,
+            &session_key,
+            &workspace_id,
+            &agent_id,
+        )
+        .await
+        {
             tracing::warn!(error = %e, %session_key, "Failed to ensure chat session row");
         }
-        let prior =
-            super::history::list_messages(&db_pool, &session_key, super::history::SESSION_CONTEXT_MESSAGE_LIMIT)
-                .await
-                .unwrap_or_default();
+        let prior = crate::domains::agent::session::chat::history::list_messages(
+            &db_pool,
+            &session_key,
+            crate::domains::agent::session::chat::history::SESSION_CONTEXT_MESSAGE_LIMIT,
+        )
+        .await
+        .unwrap_or_default();
         ag.clear_history().await;
-        if !system_prompt.is_empty() || !prior.is_empty() {
-            let mut seed = Vec::with_capacity(prior.len() + 1);
-            if !system_prompt.is_empty() {
-                seed.push(tinyiothub_agent::port::provider::ChatMessage::system(
-                    system_prompt.clone(),
-                ));
-            }
-            seed.extend(
-                prior
-                    .into_iter()
-                    .map(|(role, content)| tinyiothub_agent::port::provider::ChatMessage {
-                        role,
-                        content,
-                        attachments: vec![],
-                    }),
-            );
+        if !prior.is_empty() {
+            let seed = prior
+                .into_iter()
+                .map(|(role, content)| tinyiothub_agent::port::provider::ChatMessage {
+                    role,
+                    content,
+                    attachments: vec![],
+                })
+                .collect::<Vec<_>>();
             if let Err(error) = ag.seed_history(&seed).await {
                 let _ = tx
                     .send(ChatEvent::Error {
@@ -357,7 +325,14 @@ pub async fn send_message(
                 return;
             }
         }
-        if let Err(e) = super::history::append_message(&db_pool, &session_key, "user", &reflect_message, &run_id).await
+        if let Err(e) = crate::domains::agent::session::chat::history::append_message(
+            &db_pool,
+            &session_key,
+            "user",
+            &reflect_message,
+            &run_id,
+        )
+        .await
         {
             tracing::warn!(error = %e, %session_key, "Failed to persist user message");
         }
@@ -475,8 +450,14 @@ pub async fn send_message(
         };
 
         if let Some(ref assistant_text) = final_text
-            && let Err(e) =
-                super::history::append_message(&db_pool, &session_key, "assistant", assistant_text, &run_id).await
+            && let Err(e) = crate::domains::agent::session::chat::history::append_message(
+                &db_pool,
+                &session_key,
+                "assistant",
+                assistant_text,
+                &run_id,
+            )
+            .await
         {
             tracing::warn!(error = %e, %session_key, "Failed to persist assistant message");
         }
@@ -533,6 +514,7 @@ mod tests {
     use super::*;
     use tinyiothub_agent::port::attribution::{Attributable, ProviderKind, Role};
     use tinyiothub_agent::port::provider::{ChatRequest, ChatResponse, ModelProvider};
+    use tokio_util::sync::CancellationToken;
 
     /// Builds without touching provider config (the minimax factory requires a
     /// `[minimax]` config section at build time).
@@ -587,9 +569,11 @@ mod tests {
             &db,
             "agent_main",
             "agent:ws_other:agent_main/s1",
-            "hi",
+            crate::domains::agent::prompt::assistant::PromptPackage {
+                system_prompt: String::new(),
+                turn_input: "hi".into(),
+            },
             "r1",
-            "",
             "ws_mine",
             &AgentRuntimeConfig::default(),
             None,
@@ -624,7 +608,7 @@ mod tests {
             turn_input: "input".into(),
         };
         let cached = pool
-            .create("agent_main", "ws-test", &config, vec![], false)
+            .create("agent_main", "ws-test", &config, vec![], false, &prompt)
             .expect("seed cached agent");
         assert_eq!(pool.agent_session_tools("agent_main"), Some(false));
 
@@ -682,6 +666,105 @@ mod tests {
             .await
             .unwrap();
         assert!(Arc::ptr_eq(&rebuilt, &cached));
+    }
+
+    #[derive(Default)]
+    struct RecordingState {
+        seeds: Vec<Vec<tinyiothub_agent::port::provider::ChatMessage>>,
+        inputs: Vec<String>,
+    }
+
+    struct RecordingLoop {
+        state: Arc<tokio::sync::Mutex<RecordingState>>,
+    }
+
+    #[async_trait::async_trait]
+    impl tinyiothub_agent::port::runtime::AgentLoop for RecordingLoop {
+        async fn turn_streamed(
+            &self,
+            user_message: &str,
+            _event_tx: mpsc::Sender<TurnEvent>,
+            _cancel_token: Option<CancellationToken>,
+        ) -> anyhow::Result<String> {
+            self.state.lock().await.inputs.push(user_message.into());
+            Ok("done".into())
+        }
+
+        async fn run_single(&self, message: &str) -> anyhow::Result<String> {
+            self.state.lock().await.inputs.push(message.into());
+            Ok("done".into())
+        }
+
+        async fn clear_history(&self) {}
+
+        async fn seed_history(&self, messages: &[tinyiothub_agent::port::provider::ChatMessage]) -> anyhow::Result<()> {
+            self.state.lock().await.seeds.push(messages.to_vec());
+            Ok(())
+        }
+    }
+
+    #[tokio::test]
+    async fn chat_history_seed_does_not_duplicate_system_prompt() {
+        let db = sqlx::SqlitePool::connect("sqlite::memory:").await.unwrap();
+        tinyiothub_storage::test_helpers::run_all_migrations(&db).await.unwrap();
+        let session_key = "agent:ws-test:agent_main/s1";
+        crate::domains::agent::session::chat::history::ensure_session(&db, session_key, "ws-test", "agent_main")
+            .await
+            .unwrap();
+        crate::domains::agent::session::chat::history::append_message(&db, session_key, "user", "old-user", "old-run")
+            .await
+            .unwrap();
+        crate::domains::agent::session::chat::history::append_message(
+            &db,
+            session_key,
+            "assistant",
+            "old-assistant",
+            "old-run",
+        )
+        .await
+        .unwrap();
+        let state = Arc::new(tokio::sync::Mutex::new(RecordingState::default()));
+        let agent = Arc::new(tokio::sync::Mutex::new(RecordingLoop { state: state.clone() })) as AgentLoopHandle;
+        let chat_handles = Arc::new(tokio::sync::Mutex::new(std::collections::HashMap::new()));
+        let session_runtime = Arc::new(crate::domains::agent::session::SessionRuntime::new(
+            Arc::new(tinyiothub_storage::Db::new(db.clone())),
+            Arc::new(crate::domains::agent::runtime::session_stream::SessionStreamHub::default()),
+        ));
+        let prompt = crate::domains::agent::prompt::assistant::PromptPackage {
+            system_prompt: "unique-system-prompt".into(),
+            turn_input: "new-input".into(),
+        };
+        let mut rx = send_message(
+            &agent,
+            prompt,
+            "run-new",
+            session_key,
+            &chat_handles,
+            None,
+            None,
+            false,
+            "test-model",
+            "ws-test",
+            "agent_main",
+            &db,
+            session_runtime,
+        )
+        .await
+        .unwrap();
+        while rx.recv().await.is_some() {}
+
+        let state = state.lock().await;
+        assert_eq!(state.inputs, vec!["new-input"]);
+        let seeds = state.seeds.iter().flatten().collect::<Vec<_>>();
+        assert_eq!(
+            seeds.iter().map(|message| message.role.as_str()).collect::<Vec<_>>(),
+            ["user", "assistant"]
+        );
+        assert!(
+            seeds
+                .iter()
+                .all(|message| !message.content.contains("unique-system-prompt"))
+        );
     }
 
     #[test]

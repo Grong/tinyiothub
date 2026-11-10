@@ -29,6 +29,21 @@ impl HostAgentPoolAdapter {
     }
 }
 
+async fn prompt_package(
+    workspace_id: &str,
+    agent_id: &str,
+    turn_input: String,
+) -> anyhow::Result<crate::domains::agent::prompt::assistant::PromptPackage> {
+    crate::domains::agent::prompt::assistant::build_assistant_prompt(
+        &tinyiothub_core::config::SystemPromptsConfig::default(),
+        workspace_id,
+        agent_id,
+        turn_input,
+        None,
+    )
+    .await
+}
+
 #[async_trait]
 impl AgentPoolLike for HostAgentPoolAdapter {
     async fn get_or_create_agent(&self, workspace_id: &str) -> anyhow::Result<String> {
@@ -37,12 +52,14 @@ impl AgentPoolLike for HostAgentPoolAdapter {
         let config = crate::domains::agent::session::config::service::get_config(&self.db_pool, workspace_id)
             .await
             .map_err(|e| anyhow::anyhow!("Agent config error: {}", e))?;
-        crate::domains::agent::session::chat::service::ensure_agent_legacy(
+        let prompt = prompt_package(workspace_id, workspace_id, String::new()).await?;
+        crate::domains::agent::session::chat::service::ensure_agent(
             &self.pool,
             workspace_id,
             workspace_id,
             &config,
             false,
+            &prompt,
         )
         .await
         .map_err(|e| anyhow::anyhow!("AgentPool error: {}", e))?;
@@ -54,18 +71,20 @@ impl AgentPoolLike for HostAgentPoolAdapter {
         // Ensure the heartbeat agent is pooled (cache hit is config-fetch-free),
         // then delegate to AgentPool's run_streaming and collect the response.
         let agent_id = crate::domains::agent::pool::heartbeat_agent_id(workspace_id);
-        crate::domains::agent::session::chat::service::ensure_agent_legacy(
+        let prompt = prompt_package(workspace_id, &agent_id, prompt.to_string()).await?;
+        crate::domains::agent::session::chat::service::ensure_agent(
             &self.pool,
             &agent_id,
             workspace_id,
             &tinyiothub_agent::config::AgentRuntimeConfig::default(),
             false,
+            &prompt,
         )
         .await
         .map_err(|e| anyhow::anyhow!("AgentPool error: {}", e))?;
         let result = self
             .pool
-            .run_streaming(workspace_id, prompt)
+            .run_streaming(workspace_id, &prompt.turn_input)
             .await
             .map_err(|e| anyhow::anyhow!("LLM error: {}", e))?;
         let (tool_calls, trace): (Vec<ToolCallRecord>, Vec<tinyiothub_core::agent_runs::ToolTraceEntry>) =

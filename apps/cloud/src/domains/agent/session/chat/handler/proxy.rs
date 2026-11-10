@@ -5,6 +5,7 @@ use async_stream::stream;
 use axum::{
     Json,
     extract::{Path, Query, State},
+    http::{HeaderValue, header},
     response::{IntoResponse, Response, Sse, sse::Event as SseEvent},
 };
 use tinyiothub_web::response::ApiResponseBuilder;
@@ -43,23 +44,23 @@ pub async fn chat_stream(
     let memory_source: std::sync::Arc<dyn crate::domains::agent::prompt::PromptMemorySource> = std::sync::Arc::new(
         crate::domains::agent::session::persist::memory::PromptMemoryStoreAdapter(state.memory_store.clone()),
     );
-    let mut full_prompt = crate::domains::agent::prompt::build_full_system_prompt(
+    let prompt = match crate::domains::agent::prompt::assistant::build_assistant_prompt(
         system_prompts,
-        Some(&workspace_id),
-        None,
+        &workspace_id,
+        &req.agent_id,
+        req.message.clone(),
         Some(&memory_source),
     )
-    .await;
+    .await
+    {
+        Ok(prompt) => prompt,
+        Err(error) => {
+            let err: Json<ApiResponse<()>> =
+                ApiResponseBuilder::error(format!("Failed to build assistant prompt: {error}"));
+            return err.into_response();
+        }
+    };
 
-    if !workspace_id.is_empty() {
-        full_prompt = format!(
-            "# Current Workspace\nworkspace_id: {ws}\n\n{prompt}",
-            ws = workspace_id,
-            prompt = full_prompt,
-        );
-    }
-
-    let message = req.message.clone();
     // Server-minted run_id: the client learns it from the first SSE event
     // (every ChatEvent carries runId) and uses it for /chat/abort.
     let run_id = uuid::Uuid::new_v4().to_string();
@@ -81,9 +82,8 @@ pub async fn chat_stream(
         &db_pool,
         &agent_id,
         &session_key,
-        &message,
+        prompt,
         &run_id,
-        &full_prompt,
         &claims.workspace_id,
         &config,
         state.memory_service.clone(),
@@ -105,7 +105,15 @@ pub async fn chat_stream(
         }
     };
 
-    Sse::new(event_stream).into_response()
+    let mut response = Sse::new(event_stream).into_response();
+    response
+        .headers_mut()
+        .insert(header::CACHE_CONTROL, HeaderValue::from_static("no-cache"));
+    response.headers_mut().insert(
+        axum::http::HeaderName::from_static("x-accel-buffering"),
+        HeaderValue::from_static("no"),
+    );
+    response
 }
 
 /// GET /api/v1/chat/history
