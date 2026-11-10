@@ -105,6 +105,14 @@ impl Tool for GetSkillTool {
                     attachments: vec![],
                 })
             }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound && skill_name == "visualization" => {
+                Ok(ToolResult {
+                    success: true,
+                    output: crate::domains::agent::prompt::templates::VISUALIZATION_SKILL_MD.to_string(),
+                    error: None,
+                    attachments: vec![],
+                })
+            }
             Err(_) => Ok(ToolResult {
                 success: false,
                 output: String::new(),
@@ -160,4 +168,20 @@ fn skill_dir() -> std::path::PathBuf {
         .into_iter()
         .find(|p| p.is_dir())
         .unwrap_or_else(|| std::path::PathBuf::from("data/skills"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn visualization_skill_loads_from_embedded_fallback() {
+        let result = GetSkillTool
+            .execute(serde_json::json!({"skill_name":"visualization"}))
+            .await
+            .unwrap();
+        assert!(result.success);
+        assert!(result.output.contains("a2ui_push"));
+        assert!(result.output.contains("ThingCard"));
+    }
 }

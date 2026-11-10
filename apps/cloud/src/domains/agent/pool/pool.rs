@@ -31,8 +31,24 @@ use tinyiothub_agent::provider::ProviderFactory;
 
 /// Load skills for a workspace, workspace-specific dir overriding the global one.
 pub fn load_workspace_skills(workspace_dir: &std::path::Path) -> Vec<tinyiothub_skills::LoadedSkill> {
-    let dirs = vec![workspace_dir.join("skills"), std::path::PathBuf::from("data/skills")];
-    tinyiothub_skills::load_skills_from_dirs(&dirs)
+    load_workspace_skills_from(workspace_dir, std::path::Path::new("data/skills"))
+}
+
+fn load_workspace_skills_from(
+    workspace_dir: &std::path::Path,
+    global_dir: &std::path::Path,
+) -> Vec<tinyiothub_skills::LoadedSkill> {
+    let dirs = vec![workspace_dir.join("skills"), global_dir.to_path_buf()];
+    let mut skills = tinyiothub_skills::load_skills_from_dirs(&dirs);
+    if !skills.iter().any(|skill| skill.name == "visualization")
+        && let Some(skill) = tinyiothub_skills::parse_skill(
+            "visualization",
+            crate::domains::agent::prompt::templates::VISUALIZATION_SKILL_MD,
+        )
+    {
+        skills.push(skill);
+    }
+    skills
 }
 
 // ============================================================================
@@ -482,5 +498,17 @@ mod tests {
 
         let cached = pool.create("a1", "ws-test", &config, vec![], false, &prompt_b).unwrap();
         assert!(Arc::ptr_eq(&second, &cached));
+    }
+
+    #[test]
+    fn visualization_skill_is_indexed_when_runtime_dirs_have_no_file() {
+        let root = tempfile::tempdir().unwrap();
+        let workspace = root.path().join("ws");
+        let global = root.path().join("global");
+        std::fs::create_dir_all(&workspace).unwrap();
+        std::fs::create_dir_all(&global).unwrap();
+
+        let skills = load_workspace_skills_from(&workspace, &global);
+        assert!(skills.iter().any(|skill| skill.name == "visualization"));
     }
 }

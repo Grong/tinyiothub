@@ -7,6 +7,8 @@
 
 /// ASSISTANT.md — Assistant 默认职责与每轮工作方式
 pub const ASSISTANT_MD: &str = include_str!("../../../../templates/agent/ASSISTANT.md");
+/// VISUALIZATION.md — 可视化技能模板
+pub const VISUALIZATION_SKILL_MD: &str = include_str!("../../../../templates/skills/visualization.md");
 /// IDENTITY.md — 身份层模板
 pub const IDENTITY_MD: &str = include_str!("../../../../templates/agent/IDENTITY.md");
 /// SOUL.md — 行为原则模板
