@@ -64,6 +64,11 @@ pub async fn build_assistant_prompt(
     };
     let skills = super::super::pool::load_workspace_skills(&workspace_dir);
     let skill_index = tinyiothub_skills::build_skill_index_prompt(&skills);
+    let turn_brief = match std::fs::read_to_string(workspace_dir.join("TURN_BRIEF.md")) {
+        Ok(content) => content,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => String::new(),
+        Err(error) => return Err(error.into()),
+    };
     let builder = SystemPromptBuilder::empty()
         .add_section(Box::new(StaticPromptSection::new("harness", HARNESS_CONTRACT)))
         .add_section(Box::new(SafetySection))
@@ -72,7 +77,16 @@ pub async fn build_assistant_prompt(
             super::templates::ASSISTANT_MD,
         )))
         .add_section(Box::new(StaticPromptSection::new("workspace", workspace_prompt)))
-        .add_section(Box::new(StaticPromptSection::new("skills", skill_index)))
+        .add_section(Box::new(StaticPromptSection::new("skills", skill_index)));
+    let builder = if turn_brief.trim().is_empty() {
+        builder
+    } else {
+        builder.add_section(Box::new(StaticPromptSection::new(
+            "turn_brief",
+            format!("## Turn Brief\n\n{turn_brief}"),
+        )))
+    };
+    let builder = builder
         .add_section(Box::new(DateTimeSection))
         .add_section(Box::new(ChannelMediaSection));
     let system_prompt = builder.build(&PromptContext {
@@ -294,5 +308,73 @@ mod tests {
                 "missing visualization guidance: {marker}"
             );
         }
+    }
+
+    #[tokio::test]
+    async fn turn_brief_is_loaded_verbatim_without_being_rewritten() {
+        let root = tempfile::tempdir().unwrap();
+        let workspace = root.path().join("ws-test");
+        std::fs::create_dir_all(&workspace).unwrap();
+        let content = "1. 使用 inspection 技能完成设备巡检。\n2. 使用 energy-saving 技能评估节能机会。";
+        std::fs::write(workspace.join("TURN_BRIEF.md"), content).unwrap();
+
+        let package = build_assistant_prompt(&config(root.path()), "ws-test", "assistant", "turn".into(), None)
+            .await
+            .unwrap();
+
+        assert!(package.system_prompt.contains(content));
+        assert_eq!(package.turn_input, "turn");
+        assert_eq!(
+            std::fs::read_to_string(workspace.join("TURN_BRIEF.md")).unwrap(),
+            content
+        );
+    }
+
+    #[tokio::test]
+    async fn turn_brief_edit_changes_the_next_prompt() {
+        let root = tempfile::tempdir().unwrap();
+        let workspace = root.path().join("ws-test");
+        std::fs::create_dir_all(&workspace).unwrap();
+        let path = workspace.join("TURN_BRIEF.md");
+        std::fs::write(&path, "inspection-marker").unwrap();
+        let first = build_assistant_prompt(&config(root.path()), "ws-test", "assistant", "one".into(), None)
+            .await
+            .unwrap();
+
+        std::fs::write(&path, "event-marker").unwrap();
+        let second = build_assistant_prompt(&config(root.path()), "ws-test", "assistant", "two".into(), None)
+            .await
+            .unwrap();
+
+        assert_ne!(first.system_prompt, second.system_prompt);
+        assert!(second.system_prompt.contains("event-marker"));
+        assert!(!second.system_prompt.contains("inspection-marker"));
+    }
+
+    #[tokio::test]
+    async fn missing_or_empty_turn_brief_is_optional() {
+        let root = tempfile::tempdir().unwrap();
+        let workspace = root.path().join("ws-test");
+        std::fs::create_dir_all(&workspace).unwrap();
+        let missing = build_assistant_prompt(&config(root.path()), "ws-test", "assistant", "turn".into(), None)
+            .await
+            .unwrap();
+        assert!(!missing.system_prompt.contains("\n## Turn Brief\n\n"));
+
+        std::fs::write(workspace.join("TURN_BRIEF.md"), " \n").unwrap();
+        let empty = build_assistant_prompt(&config(root.path()), "ws-test", "assistant", "turn".into(), None)
+            .await
+            .unwrap();
+        assert!(!empty.system_prompt.contains("\n## Turn Brief\n\n"));
+    }
+
+    #[tokio::test]
+    async fn turn_brief_read_failure_fails_closed() {
+        let root = tempfile::tempdir().unwrap();
+        let workspace = root.path().join("ws-test");
+        std::fs::create_dir_all(workspace.join("TURN_BRIEF.md")).unwrap();
+
+        let result = build_assistant_prompt(&config(root.path()), "ws-test", "assistant", "turn".into(), None).await;
+        assert!(result.is_err());
     }
 }
