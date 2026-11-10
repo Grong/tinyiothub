@@ -697,6 +697,21 @@ mod tests {
         }
 
         let db = Arc::new(test_db().await);
+        sqlx::query("INSERT INTO subscription_plans (id, name, display_name) VALUES ('plan_free', 'free', 'Free')")
+            .execute(db.pool())
+            .await
+            .unwrap();
+        sqlx::query(
+            "INSERT INTO tenants (id, name, slug) VALUES ('tenant-default-001', 'tenant', 'tenant-default-001')",
+        )
+        .execute(db.pool())
+        .await
+        .unwrap();
+        sqlx::query("INSERT INTO workspaces (id, name, tenant_id, created_at, updated_at) VALUES ('ws-e2e', 'workspace', 'tenant-default-001', 'now', 'now')")
+            .execute(db.pool())
+            .await
+            .unwrap();
+        db.create_workspace_store("ws-e2e").await.unwrap();
         let now = ts(1_800_000_000);
         db.ensure_assistant_schedule("ws-e2e", "__assistant__ws-e2e", now)
             .await
@@ -735,6 +750,7 @@ mod tests {
                 "wake.dispatched",
                 "session.started",
                 "turn.started",
+                "step.text",
                 "message.created",
                 "turn.completed",
                 "session.ended",
