@@ -33,17 +33,54 @@ use tinyiothub_agent::port::runtime::AgentLoopHandle;
 /// (`__heartbeat__:<ws>`); `get_or_create_agent` still uses `workspace_id` as
 /// the id and has no callers today — any future autonomous wiring must give it
 /// its own prefix.
-pub async fn ensure_agent(
+pub async fn ensure_agent_legacy(
     pool: &AgentPool,
     agent_id: &str,
     workspace_id: &str,
     config: &AgentRuntimeConfig,
     session_tools_enabled: bool,
 ) -> Result<AgentLoopHandle, AgentError> {
+    ensure_agent_inner(pool, agent_id, workspace_id, config, session_tools_enabled, None).await
+}
+
+pub async fn ensure_agent(
+    pool: &AgentPool,
+    agent_id: &str,
+    workspace_id: &str,
+    config: &AgentRuntimeConfig,
+    session_tools_enabled: bool,
+    prompt: &crate::domains::agent::prompt::assistant::PromptPackage,
+) -> Result<AgentLoopHandle, AgentError> {
+    ensure_agent_inner(
+        pool,
+        agent_id,
+        workspace_id,
+        config,
+        session_tools_enabled,
+        Some(prompt),
+    )
+    .await
+}
+
+async fn ensure_agent_inner(
+    pool: &AgentPool,
+    agent_id: &str,
+    workspace_id: &str,
+    config: &AgentRuntimeConfig,
+    session_tools_enabled: bool,
+    prompt: Option<&crate::domains::agent::prompt::assistant::PromptPackage>,
+) -> Result<AgentLoopHandle, AgentError> {
+    let prompt_hash = prompt.map(|prompt| {
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        std::hash::Hash::hash(&prompt.system_prompt, &mut hasher);
+        std::hash::Hasher::finish(&hasher)
+    });
     if let Some(agent) = pool.get_cached(agent_id) {
-        // The tool set is fixed at creation: a reused id with a different
-        // flavor must be rebuilt, otherwise the wrong primitives leak.
-        if pool.agent_session_tools(agent_id) == Some(session_tools_enabled) {
+        // The tool set and static prompt are fixed at creation. Either change
+        // requires a fresh loop, otherwise stale rules remain in the preamble.
+        let tools_match = pool.agent_session_tools(agent_id) == Some(session_tools_enabled);
+        let prompt_matches = prompt_hash.is_none() || pool.agent_prompt_hash(agent_id) == prompt_hash;
+        if tools_match && prompt_matches {
             return Ok(agent);
         }
         pool.invalidate(agent_id);
@@ -56,7 +93,10 @@ pub async fn ensure_agent(
         .tool_registry()
         .resolve_tools_for_agent(config, workspace_id, trust_config, &runtime)
         .await;
-    pool.create(agent_id, workspace_id, config, tools, session_tools_enabled)
+    match prompt {
+        Some(prompt) => pool.create_with_prompt(agent_id, workspace_id, config, tools, session_tools_enabled, prompt),
+        None => pool.create(agent_id, workspace_id, config, tools, session_tools_enabled),
+    }
 }
 
 /// Chat send formerly on `impl AgentPool` (`host/agent/chat.rs`). The session
@@ -81,7 +121,7 @@ pub async fn send_with_pool(
     if !authorized_workspace.is_empty() {
         parsed.verify_workspace(authorized_workspace)?;
     }
-    let agent = ensure_agent(pool, agent_id, &parsed.workspace_id, config, true).await?;
+    let agent = ensure_agent_legacy(pool, agent_id, &parsed.workspace_id, config, true).await?;
     let event_publisher = pool.event_publisher.read().await.clone();
     send_message(
         &agent,
@@ -579,12 +619,16 @@ mod tests {
         )
         .expect("test AgentPool");
         let config = AgentRuntimeConfig::default();
+        let prompt = crate::domains::agent::prompt::assistant::PromptPackage {
+            system_prompt: "stable-prompt".into(),
+            turn_input: "input".into(),
+        };
         let cached = pool
             .create("agent_main", "ws-test", &config, vec![], false)
             .expect("seed cached agent");
         assert_eq!(pool.agent_session_tools("agent_main"), Some(false));
 
-        let rebuilt = ensure_agent(&pool, "agent_main", "ws-test", &config, true)
+        let rebuilt = ensure_agent(&pool, "agent_main", "ws-test", &config, true, &prompt)
             .await
             .expect("rebuild with session tools");
         assert!(
@@ -593,13 +637,51 @@ mod tests {
         );
         assert_eq!(pool.agent_session_tools("agent_main"), Some(true));
 
-        let again = ensure_agent(&pool, "agent_main", "ws-test", &config, true)
+        let again = ensure_agent(&pool, "agent_main", "ws-test", &config, true, &prompt)
             .await
             .expect("cache hit");
         assert!(
             Arc::ptr_eq(&rebuilt, &again),
             "matching flavor reuses the cached handle"
         );
+    }
+
+    #[tokio::test]
+    async fn ensure_agent_rebuilds_only_when_prompt_hash_changes() {
+        let pool = AgentPool::new(
+            &tinyiothub_core::config::AgentSettings::default(),
+            Arc::new(tinyiothub_agent::port::memory::NoopMemory),
+            Arc::new(tinyiothub_agent::port::observer::NoopObserver),
+            Arc::new(|| Ok(Box::new(ScriptedProvider))),
+        )
+        .expect("test AgentPool");
+        let config = AgentRuntimeConfig::default();
+        let prompt_a = crate::domains::agent::prompt::assistant::PromptPackage {
+            system_prompt: "prompt-a".into(),
+            turn_input: "input".into(),
+        };
+        let prompt_same = prompt_a.clone();
+        let prompt_b = crate::domains::agent::prompt::assistant::PromptPackage {
+            system_prompt: "prompt-b".into(),
+            turn_input: "input".into(),
+        };
+
+        let first = ensure_agent(&pool, "agent_main", "ws-test", &config, false, &prompt_a)
+            .await
+            .unwrap();
+        let same = ensure_agent(&pool, "agent_main", "ws-test", &config, false, &prompt_same)
+            .await
+            .unwrap();
+        assert!(Arc::ptr_eq(&first, &same));
+
+        let rebuilt = ensure_agent(&pool, "agent_main", "ws-test", &config, false, &prompt_b)
+            .await
+            .unwrap();
+        assert!(!Arc::ptr_eq(&first, &rebuilt));
+        let cached = ensure_agent(&pool, "agent_main", "ws-test", &config, false, &prompt_b)
+            .await
+            .unwrap();
+        assert!(Arc::ptr_eq(&rebuilt, &cached));
     }
 
     #[test]

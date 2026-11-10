@@ -2,9 +2,7 @@
 
 use std::sync::Arc;
 
-use tinyiothub_agent::port::prompt::{
-    PromptContext, StaticPromptSection, SystemPromptBuilder,
-};
+use tinyiothub_agent::port::prompt::{PromptContext, StaticPromptSection, SystemPromptBuilder};
 use tinyiothub_agent::port::prompt_sections::{ChannelMediaSection, DateTimeSection, SafetySection};
 
 use super::PromptMemorySource;
@@ -30,13 +28,8 @@ pub async fn build_assistant_prompt(
     turn_input: String,
     memory_source: Option<&Arc<dyn PromptMemorySource>>,
 ) -> anyhow::Result<PromptPackage> {
-    let workspace_prompt = super::build_full_system_prompt(
-        config,
-        Some(workspace_id),
-        Some(assistant_id),
-        memory_source,
-    )
-    .await;
+    let workspace_prompt =
+        super::build_full_system_prompt(config, Some(workspace_id), Some(assistant_id), memory_source).await;
     let workspace_prompt = format!("# Current Workspace\nworkspace_id: {workspace_id}\n\n{workspace_prompt}");
     let workspace_dir = if config.workspace_dir.is_empty() {
         super::paths::workspace_dir(workspace_id)
@@ -83,11 +76,7 @@ mod tests {
 
     #[async_trait::async_trait]
     impl PromptMemorySource for FakeMemory {
-        async fn list_active(
-            &self,
-            _workspace_id: &str,
-            _agent_id: &str,
-        ) -> anyhow::Result<Vec<AgentMemory>> {
+        async fn list_active(&self, _workspace_id: &str, _agent_id: &str) -> anyhow::Result<Vec<AgentMemory>> {
             Ok(vec![AgentMemory {
                 id: "memory-1".into(),
                 workspace_id: "ws-test".into(),
@@ -135,15 +124,9 @@ mod tests {
         )
         .unwrap();
 
-        let package = build_assistant_prompt(
-            &config(root.path()),
-            "ws-test",
-            "assistant",
-            "turn-marker".into(),
-            None,
-        )
-        .await
-        .unwrap();
+        let package = build_assistant_prompt(&config(root.path()), "ws-test", "assistant", "turn-marker".into(), None)
+            .await
+            .unwrap();
 
         let harness = package.system_prompt.find("Harness Contract").unwrap();
         let assistant = package.system_prompt.find("Assistant Defaults").unwrap();

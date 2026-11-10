@@ -37,7 +37,7 @@ impl AgentPoolLike for HostAgentPoolAdapter {
         let config = crate::domains::agent::session::config::service::get_config(&self.db_pool, workspace_id)
             .await
             .map_err(|e| anyhow::anyhow!("Agent config error: {}", e))?;
-        crate::domains::agent::session::chat::service::ensure_agent(
+        crate::domains::agent::session::chat::service::ensure_agent_legacy(
             &self.pool,
             workspace_id,
             workspace_id,
@@ -54,7 +54,7 @@ impl AgentPoolLike for HostAgentPoolAdapter {
         // Ensure the heartbeat agent is pooled (cache hit is config-fetch-free),
         // then delegate to AgentPool's run_streaming and collect the response.
         let agent_id = crate::domains::agent::pool::heartbeat_agent_id(workspace_id);
-        crate::domains::agent::session::chat::service::ensure_agent(
+        crate::domains::agent::session::chat::service::ensure_agent_legacy(
             &self.pool,
             &agent_id,
             workspace_id,

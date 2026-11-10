@@ -4,10 +4,15 @@
 //
 // Task 14 自 apps/cloud `host/agent/pool.rs` 迁入（该文件 Task 7 起即存储无关）。
 
-use std::{sync::Arc, time::Instant};
+use std::{
+    hash::{Hash, Hasher},
+    sync::Arc,
+    time::Instant,
+};
 
 use dashmap::DashMap;
 
+use crate::domains::agent::prompt::assistant::PromptPackage;
 use crate::domains::agent::tools::{ToolRegistry, ToolRuntimeContext};
 use tinyiothub_agent::config::AgentRuntimeConfig;
 use tinyiothub_agent::error::AgentError;
@@ -75,6 +80,7 @@ pub struct Agent {
     /// Tool-set flavor fixed at creation: whether the session primitives
     /// (`todo_write` / `ask_user` / `spawn_subagent`) were exposed.
     pub session_tools_enabled: bool,
+    pub prompt_hash: Option<u64>,
 }
 
 // ============================================================================
@@ -212,6 +218,49 @@ impl AgentPool {
         tools: Vec<Box<dyn Tool>>,
         session_tools_enabled: bool,
     ) -> Result<AgentLoopHandle, AgentError> {
+        self.create_with_prompt_builder(
+            agent_id,
+            workspace_id,
+            config,
+            tools,
+            session_tools_enabled,
+            SystemPromptBuilder::with_defaults().add_section(Box::new(TinyIoTHubSkillsSection)),
+            None,
+        )
+    }
+
+    pub fn create_with_prompt(
+        &self,
+        agent_id: &str,
+        workspace_id: &str,
+        config: &AgentRuntimeConfig,
+        tools: Vec<Box<dyn Tool>>,
+        session_tools_enabled: bool,
+        prompt: &PromptPackage,
+    ) -> Result<AgentLoopHandle, AgentError> {
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        prompt.system_prompt.hash(&mut hasher);
+        self.create_with_prompt_builder(
+            agent_id,
+            workspace_id,
+            config,
+            tools,
+            session_tools_enabled,
+            SystemPromptBuilder::from_static(prompt.system_prompt.clone()),
+            Some(hasher.finish()),
+        )
+    }
+
+    fn create_with_prompt_builder(
+        &self,
+        agent_id: &str,
+        workspace_id: &str,
+        config: &AgentRuntimeConfig,
+        tools: Vec<Box<dyn Tool>>,
+        session_tools_enabled: bool,
+        prompt_builder: SystemPromptBuilder,
+        prompt_hash: Option<u64>,
+    ) -> Result<AgentLoopHandle, AgentError> {
         let namespaced: Arc<dyn Memory> = Arc::new(WorkspaceScopedMemory::new(
             Arc::clone(&self.shared_memory),
             workspace_id.to_string(),
@@ -221,7 +270,7 @@ impl AgentPool {
 
         let cfg = AgentLoopConfig {
             model_name: config.model.clone(),
-            prompt_builder: SystemPromptBuilder::with_defaults().add_section(Box::new(TinyIoTHubSkillsSection)),
+            prompt_builder,
             tools,
             memory: namespaced,
             observer: Arc::clone(&self.observer),
@@ -245,6 +294,7 @@ impl AgentPool {
             workspace_id: workspace_id.to_string(),
             config: config.clone(),
             session_tools_enabled,
+            prompt_hash,
         };
 
         // Double-checked insert: a concurrent creator may have won the race
@@ -277,6 +327,10 @@ impl AgentPool {
         self.agents
             .get(agent_id)
             .map(|entry| entry.metadata.session_tools_enabled)
+    }
+
+    pub fn agent_prompt_hash(&self, agent_id: &str) -> Option<u64> {
+        self.agents.get(agent_id).and_then(|entry| entry.metadata.prompt_hash)
     }
 
     /// Remove an agent from the pool (on config change).
@@ -380,6 +434,7 @@ mod tests {
                 ..Default::default()
             },
             session_tools_enabled: false,
+            prompt_hash: None,
         };
         assert_eq!(metadata.agent_id, "a1");
         assert_eq!(metadata.workspace_id, "ws1");

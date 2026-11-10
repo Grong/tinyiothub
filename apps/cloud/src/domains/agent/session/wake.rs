@@ -19,7 +19,7 @@ use tinyiothub_storage::session::Session;
 use super::trigger::EventWake;
 use crate::domains::agent::pool::AgentPool;
 use crate::domains::agent::session::SESSION_TURN_TIMEOUT;
-use crate::domains::agent::session::chat::service::ensure_agent;
+use crate::domains::agent::session::chat::service::ensure_agent_legacy as ensure_agent;
 use crate::domains::agent::session::context::TurnContext;
 use crate::domains::agent::session::events::{SessionEventSink, session_event, session_started_payload};
 use crate::domains::agent::session::runner::{SessionRunner, TurnOutcome};
@@ -322,19 +322,43 @@ impl WakeRunner {
         permission_mode: PermissionMode,
         cancel: CancellationToken,
     ) -> WakeReport {
-        let session_key = format!(
-            "agent:{}:{}/{}",
-            origin.workspace_id,
-            origin.assistant_id,
-            Uuid::new_v4()
-        );
-        let session = Session::new(
-            session_key.clone(),
-            origin.workspace_id.to_string(),
-            origin.assistant_id.to_string(),
-        )
-        .with_kind(origin.kind);
-        if let Err(error) = self.db.create_session(&session).await {
+        let session_key = format!("agent:{}:{}/main", origin.workspace_id, origin.assistant_id);
+        if let Err(error) = self
+            .db
+            .ensure_session(&session_key, origin.workspace_id, origin.assistant_id)
+            .await
+        {
+            return WakeReport {
+                session_key,
+                outcome: WakeOutcome::Failed {
+                    error: error.to_string(),
+                },
+            };
+        }
+        let mut session = match self.db.get_session(&session_key).await {
+            Ok(Some(session)) => session,
+            Ok(None) => Session::new(
+                session_key.clone(),
+                origin.workspace_id.to_string(),
+                origin.assistant_id.to_string(),
+            )
+            .with_kind(origin.kind),
+            Err(error) => {
+                return WakeReport {
+                    session_key,
+                    outcome: WakeOutcome::Failed {
+                        error: error.to_string(),
+                    },
+                };
+            }
+        };
+        session.kind = origin.kind.to_string();
+        if session.label.is_none() {
+            session.label = Some("大脑".to_string());
+        }
+        session.status = "active".to_string();
+        session.touch();
+        if let Err(error) = self.db.update_session(&session).await {
             return WakeReport {
                 session_key,
                 outcome: WakeOutcome::Failed {
@@ -364,7 +388,8 @@ impl WakeRunner {
 
         let turn = {
             let guard = agent.lock().await;
-            let _ = guard.clear_history().await;
+            // The workspace assistant keeps one default session across wakes;
+            // preserve the model context so each run continues the same work.
             let turn = tokio::select! {
                 _ = cancel.cancelled() => None,
                 outcome = self
@@ -637,6 +662,7 @@ mod tests {
                 "wake.dispatched",
                 "session.started",
                 "turn.started",
+                "step.text",
                 "message.created",
                 "turn.completed",
                 "session.ended",
@@ -651,6 +677,33 @@ mod tests {
         let session = wake.db.get_session(&report.session_key).await.unwrap().unwrap();
         assert_eq!(session.kind, "scheduled");
         assert_eq!(session.status, "ended");
+    }
+
+    #[tokio::test]
+    async fn subsequent_wakes_reuse_the_default_assistant_session() {
+        let (wake, agent_pool, _sink) = fixture().await;
+        let schedule = schedule("");
+        let agent = agent_pool
+            .create(
+                &schedule.assistant_id,
+                "ws",
+                &AgentRuntimeConfig::default(),
+                vec![],
+                true,
+            )
+            .unwrap();
+        let first = wake
+            .run_with_agent(&schedule, agent.clone(), "第一次巡检", CancellationToken::new())
+            .await;
+        let second = wake
+            .run_with_agent(&schedule, agent, "第二次巡检", CancellationToken::new())
+            .await;
+        assert_eq!(first.outcome, WakeOutcome::Completed);
+        assert_eq!(second.outcome, WakeOutcome::Completed);
+        assert_eq!(first.session_key, second.session_key);
+        assert!(first.session_key.ends_with("/main"));
+        let sessions = wake.db.list_sessions(Some("ws"), None, 100, 0).await.unwrap();
+        assert_eq!(sessions.len(), 1, "a workspace must not create one session per wake");
     }
 
     #[tokio::test]
@@ -901,6 +954,7 @@ mod tests {
                 "wake.dispatched",
                 "session.started",
                 "turn.started",
+                "step.text",
                 "message.created",
                 "turn.completed",
                 "session.ended"
