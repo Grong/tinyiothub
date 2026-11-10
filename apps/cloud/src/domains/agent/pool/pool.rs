@@ -19,28 +19,15 @@ use tinyiothub_agent::error::AgentError;
 use tinyiothub_agent::memory::workspace_memory::WorkspaceScopedMemory;
 use tinyiothub_agent::port::memory::Memory;
 use tinyiothub_agent::port::observer::Observer;
-use tinyiothub_agent::port::prompt::{PromptContext, PromptSection, SystemPromptBuilder};
+use tinyiothub_agent::port::prompt::SystemPromptBuilder;
 use tinyiothub_agent::port::runtime::{AgentLoopConfig, AgentLoopHandle};
 use tinyiothub_agent::port::tool::Tool;
 
 use tinyiothub_agent::provider::ProviderFactory;
 
 // ============================================================================
-// Skills Section (port SystemPromptBuilder integration)
+// Skills loading
 // ============================================================================
-
-struct TinyIoTHubSkillsSection;
-
-impl PromptSection for TinyIoTHubSkillsSection {
-    fn name(&self) -> &str {
-        "tinyiothub_skills"
-    }
-
-    fn build(&self, ctx: &PromptContext<'_>) -> anyhow::Result<String> {
-        let skills = load_workspace_skills(ctx.workspace_dir);
-        Ok(tinyiothub_skills::build_skill_index_prompt(&skills))
-    }
-}
 
 /// Load skills for a workspace, workspace-specific dir overriding the global one.
 pub fn load_workspace_skills(workspace_dir: &std::path::Path) -> Vec<tinyiothub_skills::LoadedSkill> {
@@ -217,25 +204,6 @@ impl AgentPool {
         config: &AgentRuntimeConfig,
         tools: Vec<Box<dyn Tool>>,
         session_tools_enabled: bool,
-    ) -> Result<AgentLoopHandle, AgentError> {
-        self.create_with_prompt_builder(
-            agent_id,
-            workspace_id,
-            config,
-            tools,
-            session_tools_enabled,
-            SystemPromptBuilder::with_defaults().add_section(Box::new(TinyIoTHubSkillsSection)),
-            None,
-        )
-    }
-
-    pub fn create_with_prompt(
-        &self,
-        agent_id: &str,
-        workspace_id: &str,
-        config: &AgentRuntimeConfig,
-        tools: Vec<Box<dyn Tool>>,
-        session_tools_enabled: bool,
         prompt: &PromptPackage,
     ) -> Result<AgentLoopHandle, AgentError> {
         let mut hasher = std::collections::hash_map::DefaultHasher::new();
@@ -302,8 +270,19 @@ impl AgentPool {
         use dashmap::mapref::entry::Entry;
         match self.agents.entry(agent_id.to_string()) {
             Entry::Occupied(mut occupied) => {
-                let agent = Arc::clone(&occupied.get().agent);
-                occupied.get_mut().last_used = Instant::now();
+                let matches = occupied.get().metadata.session_tools_enabled == session_tools_enabled
+                    && occupied.get().metadata.prompt_hash == prompt_hash;
+                if matches {
+                    let agent = Arc::clone(&occupied.get().agent);
+                    occupied.get_mut().last_used = Instant::now();
+                    return Ok(agent);
+                }
+                // A concurrent or direct create may hold an entry built from a
+                // different package. Never return that stale prompt to this caller.
+                occupied.remove();
+                let entry = PoolEntry::new(agent, metadata);
+                let agent = Arc::clone(&entry.agent);
+                self.agents.insert(agent_id.to_string(), entry);
                 Ok(agent)
             }
             Entry::Vacant(vacant) => {
@@ -467,8 +446,12 @@ mod tests {
         };
         // Tools are caller-resolved and injected; the test passes an empty
         // list and the agent is built purely from the injected config.
+        let prompt = PromptPackage {
+            system_prompt: "test-prompt".into(),
+            turn_input: String::new(),
+        };
         let a1 = pool
-            .create("a1", "ws-test", &config, vec![], false)
+            .create("a1", "ws-test", &config, vec![], false, &prompt)
             .expect("create with injected config");
         let entry = pool.agents.get("a1").expect("cached entry");
         assert_eq!(entry.metadata.config.model, "injected-model");
@@ -479,5 +462,25 @@ mod tests {
         assert!(Arc::ptr_eq(&a1, &a2));
         assert_eq!(pool.pool_size(), 1);
         assert!(pool.get_cached("unknown").is_none());
+    }
+
+    #[test]
+    fn occupied_entry_with_different_prompt_is_replaced() {
+        let pool = test_pool();
+        let config = AgentRuntimeConfig::default();
+        let prompt_a = PromptPackage {
+            system_prompt: "prompt-a".into(),
+            turn_input: String::new(),
+        };
+        let prompt_b = PromptPackage {
+            system_prompt: "prompt-b".into(),
+            turn_input: String::new(),
+        };
+        let first = pool.create("a1", "ws-test", &config, vec![], false, &prompt_a).unwrap();
+        let second = pool.create("a1", "ws-test", &config, vec![], false, &prompt_b).unwrap();
+        assert!(!Arc::ptr_eq(&first, &second));
+
+        let cached = pool.create("a1", "ws-test", &config, vec![], false, &prompt_b).unwrap();
+        assert!(Arc::ptr_eq(&second, &cached));
     }
 }

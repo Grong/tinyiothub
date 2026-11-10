@@ -44,7 +44,7 @@ pub async fn chat_stream(
     let memory_source: std::sync::Arc<dyn crate::domains::agent::prompt::PromptMemorySource> = std::sync::Arc::new(
         crate::domains::agent::session::persist::memory::PromptMemoryStoreAdapter(state.memory_store.clone()),
     );
-    let prompt = match crate::domains::agent::prompt::assistant::build_assistant_prompt(
+    let prompt = match crate::domains::agent::prompt::assistant::build_chat_assistant_prompt(
         system_prompts,
         &workspace_id,
         &req.agent_id,

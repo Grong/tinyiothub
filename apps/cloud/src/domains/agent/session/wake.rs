@@ -68,19 +68,22 @@ pub fn build_wake_message(
     Some(message)
 }
 
-async fn wake_prompt(
-    workspace_id: &str,
-    assistant_id: &str,
-    turn_input: String,
-) -> anyhow::Result<crate::domains::agent::prompt::assistant::PromptPackage> {
-    crate::domains::agent::prompt::assistant::build_assistant_prompt(
-        &tinyiothub_core::config::SystemPromptsConfig::default(),
-        workspace_id,
-        assistant_id,
-        turn_input,
-        None,
-    )
-    .await
+impl WakeRunner {
+    async fn wake_prompt(
+        &self,
+        workspace_id: &str,
+        assistant_id: &str,
+        turn_input: String,
+    ) -> anyhow::Result<crate::domains::agent::prompt::assistant::PromptPackage> {
+        crate::domains::agent::prompt::assistant::build_assistant_prompt(
+            &self.system_prompts,
+            workspace_id,
+            assistant_id,
+            turn_input,
+            None,
+        )
+        .await
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -129,6 +132,7 @@ pub struct WakeRunner {
     events: Arc<dyn SessionEventSink>,
     todos: Arc<TodoStore>,
     runner: Arc<SessionRunner>,
+    system_prompts: Arc<tinyiothub_core::config::SystemPromptsConfig>,
 }
 
 /// 一次 wake session 的来源（scheduled / event 共用同一套生命周期写入）。
@@ -155,6 +159,7 @@ impl WakeRunner {
             events: runtime.events.clone(),
             todos: runtime.todos.clone(),
             runner: runtime.runner.clone(),
+            system_prompts: runtime.system_prompts.clone(),
         }
     }
 
@@ -171,6 +176,7 @@ impl WakeRunner {
             events,
             todos,
             runner,
+            system_prompts: Arc::new(tinyiothub_core::config::SystemPromptsConfig::default()),
         }
     }
 
@@ -195,7 +201,10 @@ impl WakeRunner {
                 outcome: WakeOutcome::Skipped,
             };
         };
-        let prompt = match wake_prompt(&schedule.workspace_id, &schedule.assistant_id, message).await {
+        let prompt = match self
+            .wake_prompt(&schedule.workspace_id, &schedule.assistant_id, message)
+            .await
+        {
             Ok(prompt) => prompt,
             Err(error) => {
                 return WakeReport {
@@ -292,7 +301,10 @@ impl WakeRunner {
                 wake.summary
             ),
         };
-        let prompt = match wake_prompt(&wake.workspace_id, &assistant_agent_id(&wake.workspace_id), message).await {
+        let prompt = match self
+            .wake_prompt(&wake.workspace_id, &assistant_agent_id(&wake.workspace_id), message)
+            .await
+        {
             Ok(prompt) => prompt,
             Err(error) => {
                 return WakeReport {
@@ -351,6 +363,53 @@ impl WakeRunner {
             cancel,
         )
         .await
+    }
+
+    async fn reseed_session_history(
+        &self,
+        agent: &dyn tinyiothub_agent::port::runtime::AgentLoop,
+        workspace_id: &str,
+        session_key: &str,
+    ) -> anyhow::Result<()> {
+        let filter = tinyiothub_storage::harness_event::EventFilter {
+            session_id: Some(session_key.to_string()),
+            run_id: None,
+            task_id: None,
+            execution_mode: tinyiothub_core::harness::ExecutionMode::Production,
+        };
+        let mut messages = Vec::new();
+        let mut after = 0;
+        loop {
+            let page = self.db.session_event_page(workspace_id, &filter, after, 200).await?;
+            let Some(last) = page.events.last() else {
+                break;
+            };
+            after = last.seq;
+            for event in page.events {
+                if event.event_type != "message.created" {
+                    continue;
+                }
+                let Some(role) = event.payload_json["role"].as_str() else {
+                    continue;
+                };
+                if role != "user" && role != "assistant" {
+                    continue;
+                }
+                let Some(text) = event.payload_json["text"].as_str() else {
+                    continue;
+                };
+                messages.push(tinyiothub_agent::port::provider::ChatMessage {
+                    role: role.to_string(),
+                    content: text.to_string(),
+                    attachments: vec![],
+                });
+            }
+            if after >= page.high_watermark {
+                break;
+            }
+        }
+        agent.clear_history().await;
+        agent.seed_history(&messages).await
     }
 
     async fn run_session_with_agent(
@@ -427,8 +486,18 @@ impl WakeRunner {
 
         let turn = {
             let guard = agent.lock().await;
-            // The workspace assistant keeps one default session across wakes;
-            // preserve the model context so each run continues the same work.
+            // The shared loop must contain only this Assistant session's history.
+            if let Err(error) = self
+                .reseed_session_history(&*guard, origin.workspace_id, &session_key)
+                .await
+            {
+                return WakeReport {
+                    session_key,
+                    outcome: WakeOutcome::Failed {
+                        error: error.to_string(),
+                    },
+                };
+            }
             let turn = tokio::select! {
                 _ = cancel.cancelled() => None,
                 outcome = self
@@ -515,9 +584,10 @@ mod tests {
     use tinyiothub_agent::port::attribution::{Attributable, ModelProviderKind, ProviderKind, Role};
     use tinyiothub_agent::port::memory::NoopMemory;
     use tinyiothub_agent::port::observer::NoopObserver;
-    use tinyiothub_agent::port::provider::{ChatRequest, ChatResponse, ModelProvider};
+    use tinyiothub_agent::port::provider::{ChatMessage, ChatRequest, ChatResponse, ModelProvider};
     use tinyiothub_core::heartbeat::HeartbeatTask;
     use tinyiothub_storage::assistant_schedule::AssistantSchedule;
+    use tokio::sync::mpsc;
 
     struct ScriptedProvider;
 
@@ -545,6 +615,41 @@ mod tests {
 
         fn alias(&self) -> &str {
             "ScriptedProvider"
+        }
+    }
+
+    #[derive(Default)]
+    struct RecordingWakeState {
+        seeds: Vec<Vec<ChatMessage>>,
+        inputs: Vec<String>,
+    }
+
+    struct RecordingWakeLoop {
+        state: Arc<tokio::sync::Mutex<RecordingWakeState>>,
+    }
+
+    #[async_trait::async_trait]
+    impl tinyiothub_agent::port::runtime::AgentLoop for RecordingWakeLoop {
+        async fn turn_streamed(
+            &self,
+            user_message: &str,
+            _event_tx: mpsc::Sender<tinyiothub_agent::port::events::TurnEvent>,
+            _cancel_token: Option<CancellationToken>,
+        ) -> anyhow::Result<String> {
+            self.state.lock().await.inputs.push(user_message.into());
+            Ok("done".into())
+        }
+
+        async fn run_single(&self, message: &str) -> anyhow::Result<String> {
+            self.state.lock().await.inputs.push(message.into());
+            Ok("done".into())
+        }
+
+        async fn clear_history(&self) {}
+
+        async fn seed_history(&self, messages: &[ChatMessage]) -> anyhow::Result<()> {
+            self.state.lock().await.seeds.push(messages.to_vec());
+            Ok(())
         }
     }
 
@@ -594,6 +699,12 @@ mod tests {
             .await
             .unwrap();
         let db = Arc::new(tinyiothub_storage::Db::new(pool));
+        tinyiothub_storage::seed::seed_system(&db).await.unwrap();
+        sqlx::query("INSERT INTO workspaces (id, name, tenant_id, created_at, updated_at) VALUES ('ws', 'workspace', 'tenant-default-001', 'now', 'now')")
+            .execute(db.pool())
+            .await
+            .unwrap();
+        db.create_workspace_store("ws").await.unwrap();
         let agent_pool = Arc::new(
             AgentPool::new(
                 &tinyiothub_core::config::AgentSettings::default(),
@@ -676,6 +787,64 @@ mod tests {
             ),
             WakeOutcome::Completed
         );
+    }
+
+    #[tokio::test]
+    async fn wake_reseeds_only_current_session_history() {
+        let (wake, _agent_pool, _sink) = fixture().await;
+        let assistant_id = assistant_agent_id("ws");
+        let session_key = format!("agent:ws:{assistant_id}/main");
+        for (session, text) in [
+            (session_key.as_str(), "current-session-marker"),
+            ("agent:ws:other/other", "other-session-marker"),
+        ] {
+            let context = TurnContext::new("ws".into(), assistant_id.clone(), session.into(), "old-run".into(), 0);
+            wake.db
+                .append_session_event(&session_event(
+                    &context,
+                    "message.created",
+                    json!({ "messageId": uuid::Uuid::new_v4().to_string(), "role": "user", "text": text }),
+                ))
+                .await
+                .unwrap();
+        }
+        let state = Arc::new(tokio::sync::Mutex::new(RecordingWakeState::default()));
+        let agent = Arc::new(tokio::sync::Mutex::new(RecordingWakeLoop { state: state.clone() })) as AgentLoopHandle;
+
+        let report = wake
+            .run_with_agent(&schedule(""), agent, "next-turn", CancellationToken::new())
+            .await;
+
+        assert_eq!(report.outcome, WakeOutcome::Completed);
+        let state = state.lock().await;
+        let seeded = state.seeds.iter().flatten().collect::<Vec<_>>();
+        assert!(
+            seeded
+                .iter()
+                .any(|message| message.content.contains("current-session-marker"))
+        );
+        assert!(
+            seeded
+                .iter()
+                .all(|message| !message.content.contains("other-session-marker"))
+        );
+        assert_eq!(state.inputs, vec!["next-turn"]);
+    }
+
+    #[tokio::test]
+    async fn wake_prompt_uses_injected_workspace_root() {
+        let root = tempfile::tempdir().unwrap();
+        let workspace = root.path().join("ws");
+        std::fs::create_dir_all(&workspace).unwrap();
+        std::fs::write(workspace.join("AGENTS.md"), "configured-workspace-marker").unwrap();
+        let (mut wake, _agent_pool, _sink) = fixture().await;
+        wake.system_prompts = Arc::new(tinyiothub_core::config::SystemPromptsConfig {
+            workspace_dir: root.path().display().to_string(),
+            ..Default::default()
+        });
+
+        let package = wake.wake_prompt("ws", "assistant", "turn".into()).await.unwrap();
+        assert!(package.system_prompt.contains("configured-workspace-marker"));
     }
 
     #[tokio::test]

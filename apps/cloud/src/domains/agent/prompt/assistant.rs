@@ -66,6 +66,19 @@ pub async fn build_assistant_prompt(
     })
 }
 
+pub async fn build_chat_assistant_prompt(
+    config: &tinyiothub_core::config::SystemPromptsConfig,
+    workspace_id: &str,
+    agent_id: &str,
+    turn_input: String,
+    memory_source: Option<&Arc<dyn PromptMemorySource>>,
+) -> anyhow::Result<PromptPackage> {
+    // Existing chat memories were written under the legacy `default` key.
+    // Keep that lookup stable while the package uses the requested agent for execution.
+    let _ = agent_id;
+    build_assistant_prompt(config, workspace_id, "default", turn_input, memory_source).await
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -77,11 +90,14 @@ mod tests {
 
     #[async_trait::async_trait]
     impl PromptMemorySource for FakeMemory {
-        async fn list_active(&self, _workspace_id: &str, _agent_id: &str) -> anyhow::Result<Vec<AgentMemory>> {
+        async fn list_active(&self, _workspace_id: &str, agent_id: &str) -> anyhow::Result<Vec<AgentMemory>> {
+            if agent_id != "default" {
+                return Ok(vec![]);
+            }
             Ok(vec![AgentMemory {
                 id: "memory-1".into(),
                 workspace_id: "ws-test".into(),
-                agent_id: "assistant".into(),
+                agent_id: "default".into(),
                 zone: MemoryZone::Work,
                 content: "existing-memory-marker".into(),
                 source: MemorySource::Reflection,
@@ -158,15 +174,9 @@ mod tests {
     async fn workspace_layer_preserves_existing_memory_prompt() {
         let root = tempfile::tempdir().unwrap();
         let memory: Arc<dyn PromptMemorySource> = Arc::new(FakeMemory);
-        let package = build_assistant_prompt(
-            &config(root.path()),
-            "ws-test",
-            "assistant",
-            "turn".into(),
-            Some(&memory),
-        )
-        .await
-        .unwrap();
+        let package = build_assistant_prompt(&config(root.path()), "ws-test", "default", "turn".into(), Some(&memory))
+            .await
+            .unwrap();
 
         assert_eq!(package.system_prompt.matches("existing-memory-marker").count(), 1);
     }
@@ -185,6 +195,23 @@ mod tests {
         assert_eq!(scheduled.system_prompt, event.system_prompt);
         assert_eq!(scheduled.turn_input, "schedule-marker");
         assert_eq!(event.turn_input, "event-marker");
+    }
+
+    #[tokio::test]
+    async fn chat_prompt_preserves_legacy_memory_agent_key() {
+        let root = tempfile::tempdir().unwrap();
+        let memory: Arc<dyn PromptMemorySource> = Arc::new(FakeMemory);
+        let package = build_chat_assistant_prompt(
+            &config(root.path()),
+            "ws-test",
+            "custom-agent",
+            "turn".into(),
+            Some(&memory),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(package.system_prompt.matches("existing-memory-marker").count(), 1);
     }
 
     #[test]

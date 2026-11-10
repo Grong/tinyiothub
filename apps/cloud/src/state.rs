@@ -401,10 +401,10 @@ impl AppState {
             .expect("failed to build AgentPool"),
         );
 
-        let session_runtime = Arc::new(crate::domains::agent::session::SessionRuntime::new(
-            database.clone(),
-            session_stream.clone(),
-        ));
+        let session_runtime = Arc::new(
+            crate::domains::agent::session::SessionRuntime::new(database.clone(), session_stream.clone())
+                .with_system_prompts(settings.agent.system_prompts.clone()),
+        );
 
         alarm_service.set_device_cache(device_cache.clone());
 

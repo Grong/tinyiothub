@@ -361,11 +361,13 @@ impl ServiceManager {
             }
             // Session 子代理：用 AgentPool 创建一次性子 Agent 执行 spawn_subagent
             // 请求；与 SessionRunner 共享 Turn 上下文/事件。
-            let subagent_runner: Arc<dyn crate::domains::agent::session::SubagentRunner> =
-                Arc::new(crate::domains::agent::session::chat::subagent::PoolSubagentRunner::new(
+            let subagent_runner: Arc<dyn crate::domains::agent::session::SubagentRunner> = Arc::new(
+                crate::domains::agent::session::chat::subagent::PoolSubagentRunner::new(
                     app_state.agent_pool.clone(),
                     app_state.session_runtime.runner.clone(),
-                ));
+                )
+                .with_system_prompts(app_state.system_prompts.clone()),
+            );
             app_state.session_runtime.subagents.set(subagent_runner);
             tool_registry.register_provider(crate::domains::agent::tool::chat_builtin_tools_provider(
                 app_state.db.pool().clone(),

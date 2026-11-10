@@ -21,27 +21,32 @@ use tinyiothub_agent::runtime::agent::pool::{AgentPoolLike, AgentRunOutput, Tool
 pub struct HostAgentPoolAdapter {
     pool: Arc<AgentPool>,
     db_pool: sqlx::SqlitePool,
+    system_prompts: Arc<tinyiothub_core::config::SystemPromptsConfig>,
 }
 
 impl HostAgentPoolAdapter {
     pub fn new(pool: Arc<AgentPool>, db_pool: sqlx::SqlitePool) -> Self {
-        Self { pool, db_pool }
+        Self {
+            pool,
+            db_pool,
+            system_prompts: Arc::new(tinyiothub_core::config::SystemPromptsConfig::default()),
+        }
+    }
+
+    pub fn with_system_prompts(mut self, system_prompts: tinyiothub_core::config::SystemPromptsConfig) -> Self {
+        self.system_prompts = Arc::new(system_prompts);
+        self
     }
 }
 
 async fn prompt_package(
+    config: &tinyiothub_core::config::SystemPromptsConfig,
     workspace_id: &str,
     agent_id: &str,
     turn_input: String,
 ) -> anyhow::Result<crate::domains::agent::prompt::assistant::PromptPackage> {
-    crate::domains::agent::prompt::assistant::build_assistant_prompt(
-        &tinyiothub_core::config::SystemPromptsConfig::default(),
-        workspace_id,
-        agent_id,
-        turn_input,
-        None,
-    )
-    .await
+    crate::domains::agent::prompt::assistant::build_assistant_prompt(config, workspace_id, agent_id, turn_input, None)
+        .await
 }
 
 #[async_trait]
@@ -52,7 +57,7 @@ impl AgentPoolLike for HostAgentPoolAdapter {
         let config = crate::domains::agent::session::config::service::get_config(&self.db_pool, workspace_id)
             .await
             .map_err(|e| anyhow::anyhow!("Agent config error: {}", e))?;
-        let prompt = prompt_package(workspace_id, workspace_id, String::new()).await?;
+        let prompt = prompt_package(&self.system_prompts, workspace_id, workspace_id, String::new()).await?;
         crate::domains::agent::session::chat::service::ensure_agent(
             &self.pool,
             workspace_id,
@@ -71,7 +76,7 @@ impl AgentPoolLike for HostAgentPoolAdapter {
         // Ensure the heartbeat agent is pooled (cache hit is config-fetch-free),
         // then delegate to AgentPool's run_streaming and collect the response.
         let agent_id = crate::domains::agent::pool::heartbeat_agent_id(workspace_id);
-        let prompt = prompt_package(workspace_id, &agent_id, prompt.to_string()).await?;
+        let prompt = prompt_package(&self.system_prompts, workspace_id, &agent_id, prompt.to_string()).await?;
         crate::domains::agent::session::chat::service::ensure_agent(
             &self.pool,
             &agent_id,

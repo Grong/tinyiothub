@@ -63,6 +63,7 @@ pub struct SessionRuntime {
     pub approvals: Arc<ApprovalBroker>,
     pub subagents: Arc<SubagentSlot>,
     pub runner: Arc<SessionRunner>,
+    pub system_prompts: Arc<tinyiothub_core::config::SystemPromptsConfig>,
 }
 
 impl SessionRuntime {
@@ -82,7 +83,13 @@ impl SessionRuntime {
             approvals,
             subagents,
             runner,
+            system_prompts: Arc::new(tinyiothub_core::config::SystemPromptsConfig::default()),
         }
+    }
+
+    pub fn with_system_prompts(mut self, system_prompts: tinyiothub_core::config::SystemPromptsConfig) -> Self {
+        self.system_prompts = Arc::new(system_prompts);
+        self
     }
 }
 
