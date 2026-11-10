@@ -14,6 +14,30 @@ pub trait PromptSection: Send + Sync {
     fn build(&self, ctx: &PromptContext<'_>) -> anyhow::Result<String>;
 }
 
+pub struct StaticPromptSection {
+    name: String,
+    content: String,
+}
+
+impl StaticPromptSection {
+    pub fn new(name: impl Into<String>, content: impl Into<String>) -> Self {
+        Self {
+            name: name.into(),
+            content: content.into(),
+        }
+    }
+}
+
+impl PromptSection for StaticPromptSection {
+    fn name(&self) -> &str {
+        &self.name
+    }
+
+    fn build(&self, _ctx: &PromptContext<'_>) -> anyhow::Result<String> {
+        Ok(self.content.clone())
+    }
+}
+
 pub struct PromptContext<'a> {
     pub workspace_dir: &'a Path,
     pub agent_workspace_dir: &'a Path,
@@ -27,6 +51,14 @@ pub struct SystemPromptBuilder {
 }
 
 impl SystemPromptBuilder {
+    pub fn empty() -> Self {
+        Self { sections: vec![] }
+    }
+
+    pub fn from_static(prompt: String) -> Self {
+        Self::empty().add_section(Box::new(StaticPromptSection::new("static", prompt)))
+    }
+
     pub fn with_defaults() -> Self {
         Self {
             sections: vec![
@@ -59,5 +91,25 @@ impl SystemPromptBuilder {
             output.push_str("\n\n");
         }
         Ok(output)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn static_sections_skip_empty_content() {
+        let prompt = SystemPromptBuilder::empty()
+            .add_section(Box::new(StaticPromptSection::new("empty", "")))
+            .add_section(Box::new(StaticPromptSection::new("contract", "rule")));
+        let context = PromptContext {
+            workspace_dir: Path::new("/tmp"),
+            agent_workspace_dir: Path::new("/tmp"),
+            model_name: "test",
+            tool_specs: vec![],
+            security_summary: None,
+        };
+        assert_eq!(prompt.build(&context).unwrap(), "rule\n\n");
     }
 }

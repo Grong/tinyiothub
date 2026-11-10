@@ -5,6 +5,8 @@
 //! scaffold / files API / reflection（经这些常量引用，禁止跨 crate 相对路径
 //! include）。
 
+/// ASSISTANT.md — Assistant 默认职责与每轮工作方式
+pub const ASSISTANT_MD: &str = include_str!("../../../../templates/agent/ASSISTANT.md");
 /// IDENTITY.md — 身份层模板
 pub const IDENTITY_MD: &str = include_str!("../../../../templates/agent/IDENTITY.md");
 /// SOUL.md — 行为原则模板
