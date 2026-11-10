@@ -751,7 +751,6 @@ impl Tool for RecordingTool {
 async fn rig_loop_forwards_tool_and_usage_events() {
     use crate::adapters::rig::loop_::rig_loop_factory;
     use crate::port::events::TurnEvent;
-    use crate::port::runtime::AgentLoopConfig;
 
     let tool_calls: Arc<Mutex<Vec<serde_json::Value>>> = Arc::new(Mutex::new(vec![]));
     let tool = RecordingTool {
@@ -759,7 +758,7 @@ async fn rig_loop_forwards_tool_and_usage_events() {
     };
     let dir = tempfile::tempdir().expect("tempdir");
     let tool_call_ids: crate::port::tool::ToolCallIdSlot = Arc::new(Mutex::new(None));
-    let cfg = AgentLoopConfig {
+    let cfg = crate::port::runtime::AgentLoopConfig {
         model_name: "script-model".into(),
         prompt_builder: crate::port::prompt::SystemPromptBuilder::with_defaults(),
         tools: vec![Box::new(tool)],
@@ -1140,7 +1139,6 @@ async fn run_budget_rejects_fifth_distinct_image_before_provider_delivery() {
 #[tokio::test]
 async fn failing_tool_result_is_delivered_as_text_not_retried() {
     use crate::adapters::rig::loop_::rig_loop_factory;
-    use crate::port::runtime::AgentLoopConfig;
 
     struct FailingTool;
     crate::mock_tool_attribution!(FailingTool);
@@ -1222,7 +1220,7 @@ async fn failing_tool_result_is_delivered_as_text_not_retried() {
     }
 
     let dir = tempfile::tempdir().expect("tempdir");
-    let cfg = AgentLoopConfig {
+    let cfg = crate::port::runtime::AgentLoopConfig {
         model_name: "assert-model".into(),
         prompt_builder: crate::port::prompt::SystemPromptBuilder::with_defaults(),
         tools: vec![Box::new(FailingTool)],
@@ -1498,7 +1496,6 @@ impl crate::port::provider::ModelProvider for CancellingModel {
 #[tokio::test]
 async fn cancelled_after_stream_end_is_tool_loop_cancelled() {
     use crate::adapters::rig::loop_::rig_loop_factory;
-    use crate::port::runtime::AgentLoopConfig;
 
     let token = tokio_util::sync::CancellationToken::new();
     let model = CancellingModel {
@@ -1506,7 +1503,7 @@ async fn cancelled_after_stream_end_is_tool_loop_cancelled() {
         token: token.clone(),
     };
     let dir = tempfile::tempdir().expect("tempdir");
-    let cfg = AgentLoopConfig {
+    let cfg = crate::port::runtime::AgentLoopConfig {
         model_name: "cancelling-model".into(),
         prompt_builder: crate::port::prompt::SystemPromptBuilder::with_defaults(),
         tools: vec![],
@@ -1798,4 +1795,221 @@ async fn tools_descriptor_redacts_nested_secrets_in_public_events() {
     assert!(!serialized.contains("nested-token"), "{serialized}");
     assert_eq!(public_args["credentials"]["password"], "[REDACTED]");
     assert_eq!(public_args["thingId"], "camera-1");
+}
+
+#[tokio::test]
+async fn rig_loop_streams_tokens_and_tool_calls_from_real_sse() {
+    // The first model call requests a tool; the second returns the final text.
+    // This exercises real SSE deltas through the rig loop instead of the old
+    // completion-then-split adapter.
+    let requests = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let requests_for_server = requests.clone();
+    let request_bodies = Arc::new(Mutex::new(Vec::<serde_json::Value>::new()));
+    let bodies_for_server = request_bodies.clone();
+    let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let app = axum::Router::new().route(
+        "/v1/chat/completions",
+        axum::routing::post(move |request: axum::extract::Request| {
+            let requests = requests_for_server.clone();
+            let bodies = bodies_for_server.clone();
+            async move {
+                let bytes = axum::body::to_bytes(request.into_body(), 1024 * 1024)
+                    .await
+                    .expect("request body");
+                bodies
+                    .lock()
+                    .unwrap()
+                    .push(serde_json::from_slice(&bytes).expect("json request"));
+                let request_number = requests.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                let mut response = String::new();
+                if request_number == 0 {
+                    for text in ["先", "看", "设备"] {
+                        let payload = serde_json::json!({"choices": [{"delta": {"content": text}}]});
+                        response.push_str(&format!("data: {payload}\n\n"));
+                    }
+                    let tool_call = serde_json::json!({
+                        "choices": [{
+                            "delta": {
+                                "tool_calls": [{
+                                    "index": 0,
+                                    "id": "call_1",
+                                    "function": {"name": "recording_tool", "arguments": "{\"x\":1}"}
+                                }]
+                            }
+                        }]
+                    });
+                    response.push_str(&format!("data: {tool_call}\n\n"));
+                    response.push_str("data: {\"usage\":{\"prompt_tokens\":10,\"completion_tokens\":5}}\n\n");
+                } else {
+                    response.push_str("data: {\"choices\":[{\"delta\":{\"content\":\"final answer\"}}]}\n\n");
+                    response.push_str("data: {\"usage\":{\"prompt_tokens\":20,\"completion_tokens\":7}}\n\n");
+                }
+                response.push_str("data: [DONE]\n\n");
+                response
+            }
+        }),
+    );
+    let server = tokio::spawn(async move {
+        axum::serve(listener, app)
+            .with_graceful_shutdown(async {
+                let _ = shutdown_rx.await;
+            })
+            .await
+            .unwrap();
+    });
+
+    let provider = super::provider::StreamingOpenAiPort::new(format!("http://{addr}/v1"), "test-key".into());
+    let tool = RecordingTool {
+        calls: Arc::new(Mutex::new(Vec::new())),
+    };
+    let dir = tempfile::tempdir().expect("tempdir");
+    let cfg = crate::port::runtime::AgentLoopConfig {
+        model_name: "script-model".into(),
+        prompt_builder: crate::port::prompt::SystemPromptBuilder::with_defaults(),
+        tools: vec![Box::new(tool)],
+        memory: Arc::new(crate::port::memory::NoopMemory),
+        observer: Arc::new(crate::port::observer::NoopObserver),
+        workspace_dir: dir.path().to_path_buf(),
+        security_summary: None,
+        provider_factory: Arc::new(move || Ok(Box::new(provider.clone()))),
+        conversation_memory: false,
+        available_capabilities: vec![],
+        tool_call_ids: None,
+    };
+    let loop_handle = crate::adapters::rig::loop_::rig_loop_factory(cfg).expect("loop");
+    let (tx, mut rx) = tokio::sync::mpsc::channel(32);
+    let result = loop_handle
+        .lock()
+        .await
+        .turn_streamed("go", tx, None)
+        .await
+        .expect("turn completes");
+    let _ = shutdown_tx.send(());
+    server.await.unwrap();
+    assert_eq!(result, "final answer");
+    assert_eq!(requests.load(std::sync::atomic::Ordering::SeqCst), 2);
+
+    {
+        let bodies = request_bodies.lock().unwrap();
+        let second = &bodies[1];
+        let assistant = second["messages"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|message| message["role"] == "assistant")
+            .expect("assistant tool-call message");
+        assert_eq!(assistant["tool_calls"][0]["id"], "call_1");
+        let tool_result = second["messages"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|message| message["role"] == "tool")
+            .expect("tool result message");
+        assert_eq!(tool_result["tool_call_id"], "call_1");
+    }
+
+    let mut chunks = String::new();
+    let mut saw_tool = false;
+    let mut saw_result = false;
+    while let Some(event) = rx.recv().await {
+        match event {
+            crate::port::events::TurnEvent::Chunk { delta } => chunks.push_str(&delta),
+            crate::port::events::TurnEvent::ToolCall { name, .. } => {
+                saw_tool = name == "recording_tool";
+            }
+            crate::port::events::TurnEvent::ToolResult { name, output, .. } => {
+                saw_result = name == "recording_tool" && output == "recorded";
+            }
+            _ => {}
+        }
+    }
+    assert_eq!(chunks, "先看设备final answer");
+    assert!(saw_tool, "tool call from SSE must reach the loop");
+    assert!(saw_result, "tool result must be correlated back to the call");
+}
+
+struct GatedProvider {
+    release: Arc<tokio::sync::Notify>,
+}
+
+impl Attributable for GatedProvider {
+    fn role(&self) -> Role {
+        Role::Provider(crate::port::attribution::ProviderKind::Model(
+            crate::port::attribution::ModelProviderKind::Custom,
+        ))
+    }
+    fn alias(&self) -> &str {
+        "gated"
+    }
+}
+
+#[async_trait::async_trait]
+impl crate::port::provider::ModelProvider for GatedProvider {
+    async fn chat(
+        &self,
+        _request: crate::port::provider::ChatRequest<'_>,
+        _model: &str,
+        _temperature: Option<f64>,
+    ) -> anyhow::Result<crate::port::provider::ChatResponse> {
+        unreachable!("streaming test uses chat_stream")
+    }
+
+    async fn chat_stream(
+        &self,
+        _request: crate::port::provider::ChatRequest<'_>,
+        _model: &str,
+        _temperature: Option<f64>,
+        on_delta: &(dyn Fn(crate::port::provider::ChatStreamDelta) + Send + Sync),
+    ) -> anyhow::Result<crate::port::provider::ChatResponse> {
+        on_delta(crate::port::provider::ChatStreamDelta {
+            text: "first".into(),
+            reasoning: false,
+        });
+        self.release.notified().await;
+        Ok(crate::port::provider::ChatResponse {
+            text: Some("first".into()),
+            ..Default::default()
+        })
+    }
+}
+
+#[tokio::test]
+async fn adapter_emits_delta_before_provider_completion() {
+    let release = Arc::new(tokio::sync::Notify::new());
+    let provider = GatedProvider {
+        release: release.clone(),
+    };
+    let adapter = super::provider::PortModelAsRig::new(Arc::new(provider), "gated".into());
+    let request = rig_core::completion::CompletionRequest {
+        model: Some("gated".into()),
+        preamble: None,
+        chat_history: vec![rig_core::message::Message::user("go")],
+        documents: vec![],
+        tools: vec![],
+        temperature: None,
+        max_tokens: None,
+        tool_choice: None,
+        additional_params: None,
+        output_schema: None,
+        record_telemetry_content: false,
+    };
+    let mut stream = rig_core::completion::CompletionModel::stream(&adapter, request)
+        .await
+        .expect("stream opens");
+    let first = tokio::time::timeout(
+        std::time::Duration::from_millis(100),
+        futures::StreamExt::next(&mut stream),
+    )
+    .await
+    .expect("delta arrives before provider completion")
+    .expect("first item exists")
+    .expect("first item is valid");
+    assert!(matches!(
+        first,
+        rig_core::streaming::StreamedAssistantContent::Text(text) if text.text == "first"
+    ));
+    release.notify_one();
+    while futures::StreamExt::next(&mut stream).await.is_some() {}
 }
