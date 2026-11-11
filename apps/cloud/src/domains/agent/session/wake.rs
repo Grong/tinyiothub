@@ -497,18 +497,17 @@ impl WakeRunner {
                     },
                 };
             }
-            let turn = tokio::select! {
-                _ = cancel.cancelled() => None,
-                outcome = self
-                    .runner
+            let turn = Some(
+                self.runner
                     .run_turn(
                         &*guard,
                         &context,
                         message,
                         None,
                         Some(TurnCancellation::schedule(cancel.clone())),
-                    ) => Some(outcome),
-            };
+                    )
+                    .await,
+            );
             drop(guard);
             turn
         };
@@ -1133,6 +1132,13 @@ mod tests {
             "cancelled wake must still emit session.ended"
         );
         assert_eq!(events.last().unwrap().payload_json["outcome"], "cancelled");
+        let terminal = events
+            .iter()
+            .find(|event| event.event_type == "turn.completed")
+            .expect("cancelled wake must finish its turn");
+        assert_eq!(terminal.payload_json["outcome"], "cancelled");
+        assert_eq!(terminal.payload_json["source"], "schedule");
+        assert_eq!(terminal.payload_json["error"], "调度器停止本轮执行");
         drop(events);
 
         let session = wake.db.get_session(&report.session_key).await.unwrap().unwrap();

@@ -198,5 +198,19 @@ describe('TimelineModel', () => {
       source: 'user',
     });
   });
+  it('finalizes partial assistant content when the turn fails', () => {
+    const model = new TimelineModel();
+    model.ingestEvent(event(1, 'turn.started', { turnId: 't1' }));
+    model.ingestEvent(event(2, 'step.text', { turnId: 't1', text: '最后一次请求的部分正文' }));
+    model.ingestEvent(event(3, 'step.thinking', { turnId: 't1', thinking: '最后一次思考' }));
+    model.ingestEvent(event(4, 'turn.completed', {
+      turnId: 't1',
+      outcome: 'failed',
+      error: 'HTTP 503: unavailable',
+      source: 'system',
+    }));
+    expect(model.blocks.find((block) => block.kind === 'assistant')).toMatchObject({ streaming: false });
+    expect(model.blocks.find((block) => block.kind === 'reasoning')).toMatchObject({ streaming: false });
+  });
 
 });

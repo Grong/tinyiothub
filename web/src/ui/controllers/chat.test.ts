@@ -85,6 +85,38 @@ describe("handleChatEvent runId adoption", () => {
     expect(state.chatRunId).toBe("server-run-1");
     expect(state.chatStream).toBeNull();
   });
+  it("clears failed attempt text and reasoning when a retry starts", () => {
+    const state = makeState();
+    handleChatEvent(state, {
+      runId: "server-run-1",
+      sessionKey: "agent:ws:a1/s1",
+      state: "delta",
+      message: { role: "assistant", content: [{ type: "text", text: "partial" }] },
+    });
+    handleChatEvent(state, {
+      runId: "server-run-1",
+      sessionKey: "agent:ws:a1/s1",
+      state: "thinking",
+      thinking: "failed reasoning",
+    });
+    handleChatEvent(state, {
+      runId: "server-run-1",
+      sessionKey: "agent:ws:a1/s1",
+      state: "retry",
+      attempt: 1,
+      maxRetries: 3,
+      delayMs: 1000,
+      errorMessage: "HTTP 503: unavailable",
+    });
+    handleChatEvent(state, {
+      runId: "server-run-1",
+      sessionKey: "agent:ws:a1/s1",
+      state: "delta",
+      message: { role: "assistant", content: [{ type: "text", text: "recovered" }] },
+    });
+    expect(state.chatStream).toBe("recovered");
+    expect(state.chatThinking).toBeNull();
+  });
 });
 
 describe("sendChatMessage run state reset", () => {

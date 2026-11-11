@@ -750,11 +750,11 @@ impl CompletionModel for PortModelAsRig {
         let max_tokens = request.max_tokens;
         let stream_provider = provider.clone();
         let retry_events = self.retry_events.clone();
-        let retry_events_for_call = retry_events.clone();
+        let call_cancel = retry_events.cancellation();
         let output = async_stream::stream! {
             let (delta_tx, mut delta_rx) =
                 tokio::sync::mpsc::unbounded_channel::<ProviderStreamEvent>();
-            let call = tokio::spawn(async move {
+            let call = tokio_util::task::AbortOnDropHandle::new(tokio::spawn(async move {
                 let port_request = ChatRequest {
                     messages: &messages,
                     tools: if tool_specs.is_empty() { None } else { Some(&tool_specs) },
@@ -762,18 +762,26 @@ impl CompletionModel for PortModelAsRig {
                 };
                 let mut retries = 0;
                 loop {
-                    let result = inner
-                        .chat_stream(port_request, &model, temperature, &|delta| {
-                            let _ = delta_tx.send(ProviderStreamEvent::Delta(delta));
-                        })
-                        .await;
+                    let on_delta = |delta: crate::port::provider::ChatStreamDelta| {
+                        let _ = delta_tx.send(ProviderStreamEvent::Delta(delta));
+                    };
+                    let result = if let Some(token) = call_cancel.clone() {
+                        tokio::select! {
+                            result = inner.chat_stream(port_request, &model, temperature, &on_delta) => result,
+                            _ = token.cancelled() => {
+                                Err(anyhow::Error::new(crate::port::outcome::ToolLoopCancelled))
+                            }
+                        }
+                    } else {
+                        inner.chat_stream(port_request, &model, temperature, &on_delta).await
+                    };
                     let Err(error) = result else {
                         return result;
                     };
                     if retries >= MAX_MODEL_RETRIES || !is_retryable_error(&error) {
                         return Err(error);
                     }
-                    let cancel = retry_events_for_call.cancellation();
+                    let cancel = call_cancel.clone();
                     if cancel.as_ref().is_some_and(tokio_util::sync::CancellationToken::is_cancelled) {
                         return Err(anyhow::Error::new(crate::port::outcome::ToolLoopCancelled));
                     }
@@ -799,12 +807,19 @@ impl CompletionModel for PortModelAsRig {
                         delay.await;
                     }
                 }
-            });
+            }));
 
             // Retry notices share the delta channel so they cannot overtake
             // partial output from the failed attempt.
             while let Some(event) = delta_rx.recv().await {
                 match event {
+                    ProviderStreamEvent::Delta(delta) if delta.reasoning => {
+                        yield Ok(RawStreamingChoice::ReasoningDelta {
+                            id: StreamPartId::wire("reasoning"),
+                            provider_id: None,
+                            reasoning: delta.text,
+                        });
+                    }
                     ProviderStreamEvent::Delta(delta) => {
                         yield Ok(RawStreamingChoice::Message(delta.text));
                     }

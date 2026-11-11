@@ -31,6 +31,7 @@ export type ChatEventPayload = {
     | "final"
     | "aborted"
     | "error"
+    | "retry"
     | "tool_call_start"
     | "tool_call_delta"
     | "tool_call_end"
@@ -38,6 +39,9 @@ export type ChatEventPayload = {
   message?: ChatMessage;
   errorMessage?: string;
   source?: string;
+  attempt?: number;
+  maxRetries?: number;
+  delayMs?: number;
   a2ui?: string;
   toolName?: string;
   toolArgs?: string;
@@ -348,6 +352,12 @@ export function handleChatEvent(state: ChatState, payload: ChatEventPayload): vo
       state.chatRunId = null;
       state.chatStreamStartedAt = null;
       state.lastA2uiSurfaceId = undefined;
+      break;
+    }
+
+    case "retry": {
+      state.chatStream = null;
+      state.chatThinking = null;
       break;
     }
 

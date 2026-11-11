@@ -87,6 +87,19 @@ pub enum ChatEvent {
         session_key: String,
         message: serde_json::Value,
     },
+    Retry {
+        #[serde(rename = "runId")]
+        run_id: String,
+        #[serde(rename = "sessionKey")]
+        session_key: String,
+        attempt: u32,
+        #[serde(rename = "maxRetries")]
+        max_retries: u32,
+        #[serde(rename = "delayMs")]
+        delay_ms: u64,
+        #[serde(rename = "errorMessage")]
+        error: String,
+    },
     Error {
         #[serde(rename = "runId")]
         run_id: String,
@@ -106,7 +119,7 @@ impl ChatEvent {
             ChatEvent::ToolCallStart { run_id, .. } => run_id,
             ChatEvent::ToolResult { run_id, .. } => run_id,
             ChatEvent::Final { run_id, .. } => run_id,
-            ChatEvent::Error { run_id, .. } => run_id,
+            ChatEvent::Retry { run_id, .. } | ChatEvent::Error { run_id, .. } => run_id,
         }
     }
 
@@ -117,7 +130,7 @@ impl ChatEvent {
             ChatEvent::ToolCallStart { session_key, .. } => session_key,
             ChatEvent::ToolResult { session_key, .. } => session_key,
             ChatEvent::Final { session_key, .. } => session_key,
-            ChatEvent::Error { session_key, .. } => session_key,
+            ChatEvent::Retry { session_key, .. } | ChatEvent::Error { session_key, .. } => session_key,
         }
     }
 }

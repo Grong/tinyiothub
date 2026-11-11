@@ -203,7 +203,9 @@ export class TimelineModel {
         if (block && block.kind === 'turn') Object.assign(block, patch);
         else this.pushBlock({ kind: 'turn', id: id || event.eventId, at, ...patch }, event.seq);
         for (const item of this.blocks) {
-          if (item.kind === 'reasoning' && item.turnId === id) item.streaming = false;
+          if ((item.kind === 'reasoning' || item.kind === 'assistant') && item.turnId === id) {
+            item.streaming = false;
+          }
         }
         break;
       }

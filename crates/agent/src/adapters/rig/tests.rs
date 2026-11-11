@@ -2333,3 +2333,219 @@ async fn retry_backoff_stops_when_the_turn_is_cancelled() {
     assert!(crate::port::outcome::is_tool_loop_cancelled(&error));
     assert_eq!(observed.calls.load(std::sync::atomic::Ordering::SeqCst), 1);
 }
+
+#[derive(Clone)]
+struct InFlightRetryProvider {
+    calls: Arc<std::sync::atomic::AtomicUsize>,
+    release: Arc<tokio::sync::Notify>,
+}
+
+impl Attributable for InFlightRetryProvider {
+    fn role(&self) -> Role {
+        Role::Provider(crate::port::attribution::ProviderKind::Model(
+            crate::port::attribution::ModelProviderKind::Custom,
+        ))
+    }
+    fn alias(&self) -> &str {
+        "in-flight-retry"
+    }
+}
+
+#[async_trait::async_trait]
+impl crate::port::provider::ModelProvider for InFlightRetryProvider {
+    async fn chat(
+        &self,
+        _request: crate::port::provider::ChatRequest<'_>,
+        _model: &str,
+        _temperature: Option<f64>,
+    ) -> anyhow::Result<crate::port::provider::ChatResponse> {
+        unreachable!()
+    }
+
+    async fn chat_stream(
+        &self,
+        _request: crate::port::provider::ChatRequest<'_>,
+        _model: &str,
+        _temperature: Option<f64>,
+        _on_delta: &(dyn Fn(crate::port::provider::ChatStreamDelta) + Send + Sync),
+    ) -> anyhow::Result<crate::port::provider::ChatResponse> {
+        self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        self.release.notified().await;
+        Err(crate::port::provider::ProviderError::Internal("late temporary failure".into()).into())
+    }
+}
+
+#[tokio::test(start_paused = true)]
+async fn cancelling_an_in_flight_request_prevents_detached_retries() {
+    use crate::port::runtime::AgentLoopConfig;
+
+    let provider = Arc::new(InFlightRetryProvider {
+        calls: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
+        release: Arc::new(tokio::sync::Notify::new()),
+    });
+    let observed = provider.clone();
+    let dir = tempfile::tempdir().expect("tempdir");
+    let loop_handle = crate::adapters::rig::loop_::rig_loop_factory(AgentLoopConfig {
+        model_name: "retry-test".into(),
+        prompt_builder: crate::port::prompt::SystemPromptBuilder::with_defaults(),
+        tools: vec![],
+        memory: Arc::new(crate::port::memory::NoopMemory),
+        observer: Arc::new(crate::port::observer::NoopObserver),
+        workspace_dir: dir.path().to_path_buf(),
+        security_summary: None,
+        provider_factory: Arc::new(move || Ok(Box::new(provider.as_ref().clone()))),
+        conversation_memory: false,
+        available_capabilities: vec![],
+        tool_call_ids: None,
+    })
+    .expect("loop");
+    let cancel = tokio_util::sync::CancellationToken::new();
+    let driver_cancel = cancel.clone();
+    let (tx, _rx) = tokio::sync::mpsc::channel(32);
+    let driver = tokio::spawn(async move {
+        loop_handle
+            .lock()
+            .await
+            .turn_streamed("go", tx, Some(driver_cancel))
+            .await
+    });
+    while observed.calls.load(std::sync::atomic::Ordering::SeqCst) == 0 {
+        tokio::task::yield_now().await;
+    }
+    cancel.cancel();
+    let error = driver.await.unwrap().expect_err("cancelled in flight");
+    assert!(crate::port::outcome::is_tool_loop_cancelled(&error));
+    observed.release.notify_one();
+    tokio::time::advance(std::time::Duration::from_secs(10)).await;
+    for _ in 0..100 {
+        tokio::task::yield_now().await;
+    }
+    assert_eq!(observed.calls.load(std::sync::atomic::Ordering::SeqCst), 1);
+}
+
+#[derive(Clone)]
+struct ReasoningProvider;
+
+impl Attributable for ReasoningProvider {
+    fn role(&self) -> Role {
+        Role::Provider(crate::port::attribution::ProviderKind::Model(
+            crate::port::attribution::ModelProviderKind::Custom,
+        ))
+    }
+    fn alias(&self) -> &str {
+        "reasoning-test"
+    }
+}
+
+#[async_trait::async_trait]
+impl crate::port::provider::ModelProvider for ReasoningProvider {
+    async fn chat(
+        &self,
+        _request: crate::port::provider::ChatRequest<'_>,
+        _model: &str,
+        _temperature: Option<f64>,
+    ) -> anyhow::Result<crate::port::provider::ChatResponse> {
+        unreachable!()
+    }
+
+    async fn chat_stream(
+        &self,
+        _request: crate::port::provider::ChatRequest<'_>,
+        _model: &str,
+        _temperature: Option<f64>,
+        on_delta: &(dyn Fn(crate::port::provider::ChatStreamDelta) + Send + Sync),
+    ) -> anyhow::Result<crate::port::provider::ChatResponse> {
+        on_delta(crate::port::provider::ChatStreamDelta {
+            text: "check device".into(),
+            reasoning: true,
+        });
+        on_delta(crate::port::provider::ChatStreamDelta {
+            text: "device online".into(),
+            reasoning: false,
+        });
+        Ok(crate::port::provider::ChatResponse {
+            text: Some("device online".into()),
+            reasoning_content: Some("check device".into()),
+            ..Default::default()
+        })
+    }
+}
+
+#[tokio::test]
+async fn reasoning_deltas_stay_out_of_assistant_answer_text() {
+    use crate::port::events::TurnEvent;
+    use crate::port::runtime::AgentLoopConfig;
+
+    let dir = tempfile::tempdir().expect("tempdir");
+    let loop_handle = crate::adapters::rig::loop_::rig_loop_factory(AgentLoopConfig {
+        model_name: "reasoning-test".into(),
+        prompt_builder: crate::port::prompt::SystemPromptBuilder::with_defaults(),
+        tools: vec![],
+        memory: Arc::new(crate::port::memory::NoopMemory),
+        observer: Arc::new(crate::port::observer::NoopObserver),
+        workspace_dir: dir.path().to_path_buf(),
+        security_summary: None,
+        provider_factory: Arc::new(|| Ok(Box::new(ReasoningProvider))),
+        conversation_memory: false,
+        available_capabilities: vec![],
+        tool_call_ids: None,
+    })
+    .expect("loop");
+    let (tx, mut rx) = tokio::sync::mpsc::channel(32);
+    let result = loop_handle
+        .lock()
+        .await
+        .turn_streamed("go", tx, None)
+        .await
+        .expect("turn completes");
+    let mut text = String::new();
+    let mut thinking = String::new();
+    while let Some(event) = rx.recv().await {
+        match event {
+            TurnEvent::Chunk { delta } => text.push_str(&delta),
+            TurnEvent::Thinking { delta } => thinking.push_str(&delta),
+            _ => {}
+        }
+    }
+    assert_eq!(thinking, "check device");
+    assert_eq!(text, "device online");
+    assert_eq!(result, "device online");
+}
+
+#[tokio::test]
+async fn production_provider_preserves_retryable_http_errors() {
+    use crate::port::provider::{ChatMessage, ChatRequest, ProviderError};
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let app = axum::Router::new().route(
+        "/v1/chat/completions",
+        axum::routing::post(|| async { (axum::http::StatusCode::SERVICE_UNAVAILABLE, "upstream unavailable") }),
+    );
+    let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+    let provider = crate::provider::create_minimax_provider_with(&crate::provider::MinimaxSettings {
+        base_url: format!("http://{addr}/v1"),
+        auth_token: "test-key".into(),
+        model: "test-model".into(),
+    })
+    .expect("production provider");
+    let messages = vec![ChatMessage::user("go")];
+    let error = provider
+        .chat_stream(
+            ChatRequest {
+                messages: &messages,
+                tools: None,
+                max_tokens: None,
+            },
+            "test-model",
+            None,
+            &|_| {},
+        )
+        .await
+        .expect_err("HTTP 503");
+    assert!(matches!(
+        error.downcast_ref::<ProviderError>(),
+        Some(ProviderError::Http { status: 503, .. })
+    ));
+    server.abort();
+}
