@@ -173,8 +173,8 @@ fn turn_event_to_chat_event(evt: &TurnEvent, run_id: &str, session_key: &str) ->
             tool_args: arguments_summary.clone(),
             a2ui: None,
         },
-        TurnEvent::Usage { .. } => {
-            // Usage events are informational only; filter these out downstream
+        TurnEvent::Retry(_) | TurnEvent::Usage { .. } => {
+            // Informational only; session_events carries retry/usage downstream.
             ChatEvent::Delta {
                 run_id: run_id.to_string(),
                 session_key: session_key.to_string(),
@@ -194,7 +194,7 @@ struct ChatEventObserver {
 #[async_trait::async_trait]
 impl crate::domains::agent::session::TurnObserver for ChatEventObserver {
     async fn on_turn_event(&self, event: &TurnEvent) {
-        if matches!(event, TurnEvent::Usage { .. }) {
+        if matches!(event, TurnEvent::Usage { .. } | TurnEvent::Retry(_)) {
             return;
         }
         let chat = turn_event_to_chat_event(event, &self.run_id, &self.session_key);

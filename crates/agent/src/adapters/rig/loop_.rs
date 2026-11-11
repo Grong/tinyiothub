@@ -54,6 +54,7 @@ pub struct RigAgentLoop {
     /// Provider tool-call id of the call about to execute. Filled by the
     /// pre-execution hook and read by tools that freeze a durable identity.
     tool_call_ids: Option<crate::port::tool::ToolCallIdSlot>,
+    retry_events: super::provider::RetryEvents,
 }
 
 impl RigAgentLoop {
@@ -64,11 +65,17 @@ impl RigAgentLoop {
             seeded: tokio::sync::Mutex::new(Vec::new()),
             redactions: std::collections::HashMap::new(),
             tool_call_ids: None,
+            retry_events: super::provider::RetryEvents::default(),
         }
     }
 
     pub fn with_tool_call_ids(mut self, slot: Option<crate::port::tool::ToolCallIdSlot>) -> Self {
         self.tool_call_ids = slot;
+        self
+    }
+
+    fn with_retry_events(mut self, retry_events: super::provider::RetryEvents) -> Self {
+        self.retry_events = retry_events;
         self
     }
 
@@ -291,6 +298,8 @@ impl AgentLoop for RigAgentLoop {
         cancel_token: Option<CancellationToken>,
         steering: Option<SteeringBuffer>,
     ) -> anyhow::Result<String> {
+        let (retry_tx, mut retry_rx) = mpsc::channel(8);
+        let _retry_guard = self.retry_events.install(retry_tx, cancel_token.clone());
         let mut request = self
             .agent
             .stream_prompt(user_message.to_string())
@@ -311,6 +320,7 @@ impl AgentLoop for RigAgentLoop {
         let mut stream = request.await;
 
         let mut final_text = String::new();
+        let mut current_model_text = String::new();
         let cancelled = cancel_token.clone();
         loop {
             tokio::select! {
@@ -324,6 +334,12 @@ impl AgentLoop for RigAgentLoop {
                     drop(stream);
                     return Err(anyhow::Error::new(crate::port::outcome::ToolLoopCancelled));
                 }
+                notice = retry_rx.recv() => {
+                    let Some(notice) = notice else { continue };
+                    final_text.truncate(final_text.len() - current_model_text.len());
+                    current_model_text.clear();
+                    let _ = event_tx.send(TurnEvent::Retry(notice)).await;
+                }
                 item = stream.next() => {
                     let Some(item) = item else { break };
                     let item = match item {
@@ -334,6 +350,7 @@ impl AgentLoop for RigAgentLoop {
                         MultiTurnStreamItem::StreamAssistantItem(StreamedAssistantContent::Text(t)) => {
                             let _ = event_tx.send(TurnEvent::Chunk { delta: t.text.clone() }).await;
                             final_text.push_str(&t.text);
+                            current_model_text.push_str(&t.text);
                         }
                         MultiTurnStreamItem::StreamAssistantItem(
                             StreamedAssistantContent::ReasoningDelta { reasoning, .. },
@@ -371,6 +388,7 @@ impl AgentLoop for RigAgentLoop {
                             }).await;
                         }
                         MultiTurnStreamItem::CompletionCall(call) => {
+                            current_model_text.clear();
                             let _ = event_tx.send(TurnEvent::Usage {
                                 input_tokens: Some(call.usage.input_tokens),
                                 cached_input_tokens: Some(call.usage.cached_input_tokens),
@@ -380,6 +398,7 @@ impl AgentLoop for RigAgentLoop {
                         }
                         MultiTurnStreamItem::FinalResponse(resp) => {
                             final_text = resp.output().to_string();
+                            current_model_text.clear();
                         }
                         _ => {}
                     }
@@ -440,7 +459,9 @@ impl AgentLoop for RigAgentLoop {
 pub fn rig_loop_factory(cfg: AgentLoopConfig) -> anyhow::Result<AgentLoopHandle> {
     let provider = (cfg.provider_factory)()?;
     let provider_supports_vision = provider.supports_vision();
-    let model = PortModelAsRig::new(Arc::from(provider), cfg.model_name.clone());
+    let retry_events = super::provider::RetryEvents::default();
+    let model =
+        PortModelAsRig::new(Arc::from(provider), cfg.model_name.clone()).with_retry_events(retry_events.clone());
 
     // Resolve the capabilities actually available at composition time. Vision
     // comes from the provider port; callers add configuration-derived
@@ -513,7 +534,8 @@ pub fn rig_loop_factory(cfg: AgentLoopConfig) -> anyhow::Result<AgentLoopHandle>
     let handle: AgentLoopHandle = Arc::new(tokio::sync::Mutex::new(
         RigAgentLoop::new(agent, memory)
             .with_redactions(redactions)
-            .with_tool_call_ids(cfg.tool_call_ids),
+            .with_tool_call_ids(cfg.tool_call_ids)
+            .with_retry_events(retry_events),
     ));
     Ok(handle)
 }

@@ -8,10 +8,38 @@ pub struct ChatMessage {
     pub attachments: Vec<tinyiothub_core::media::MediaAttachment>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum ProviderError {
     #[error("image_unavailable")]
     ImageUnavailable,
+    #[error("LLM streaming request failed: HTTP {status}: {message}")]
+    Http { status: u16, message: String },
+    #[error("LLM stream error: {message}")]
+    Stream { code: Option<String>, message: String },
+    #[error("{0}")]
+    Internal(String),
+}
+
+impl ProviderError {
+    pub fn is_retryable(&self) -> bool {
+        match self {
+            Self::Http { status, .. } => matches!(*status, 408 | 429 | 500..=599),
+            Self::Stream { code, .. } => !code.as_deref().is_some_and(|code| {
+                matches!(
+                    code,
+                    "authentication_error"
+                        | "invalid_api_key"
+                        | "permission_denied"
+                        | "model_not_found"
+                        | "invalid_request"
+                        | "invalid_request_error"
+                        | "insufficient_quota"
+                )
+            }),
+            Self::Internal(_) => true,
+            Self::ImageUnavailable => false,
+        }
+    }
 }
 
 impl ChatMessage {
@@ -52,6 +80,13 @@ pub struct ToolCall {
     pub arguments: String, // JSON string
 }
 
+/// A streamed token/text delta (or a reasoning delta when `reasoning`).
+#[derive(Debug, Clone, Default)]
+pub struct ChatStreamDelta {
+    pub text: String,
+    pub reasoning: bool,
+}
+
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct TokenUsage {
     pub input_tokens: Option<u64>,
@@ -90,4 +125,95 @@ pub trait ModelProvider: Send + Sync + crate::port::attribution::Attributable {
         model: &str,
         temperature: Option<f64>,
     ) -> anyhow::Result<ChatResponse>;
+
+    /// True streaming when implemented. The default adapter fallback returns
+    /// the full response as one delta (no incremental tokens).
+    async fn chat_stream(
+        &self,
+        request: ChatRequest<'_>,
+        model: &str,
+        temperature: Option<f64>,
+        on_delta: &(dyn Fn(ChatStreamDelta) + Send + Sync),
+    ) -> anyhow::Result<ChatResponse> {
+        let response = self.chat(request, model, temperature).await?;
+        if let Some(text) = &response.text
+            && !text.is_empty()
+        {
+            on_delta(ChatStreamDelta {
+                text: text.clone(),
+                reasoning: false,
+            });
+        }
+        if let Some(reasoning) = &response.reasoning_content
+            && !reasoning.is_empty()
+        {
+            on_delta(ChatStreamDelta {
+                text: reasoning.clone(),
+                reasoning: true,
+            });
+        }
+        Ok(response)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::ProviderError;
+
+    #[test]
+    fn retry_policy_separates_recoverable_system_errors() {
+        for status in [408, 429, 500, 502, 503] {
+            assert!(
+                ProviderError::Http {
+                    status,
+                    message: "temporary".into()
+                }
+                .is_retryable()
+            );
+        }
+        assert!(
+            ProviderError::Stream {
+                code: Some("rate_limit".into()),
+                message: "slow down".into()
+            }
+            .is_retryable()
+        );
+        assert!(
+            ProviderError::Stream {
+                code: None,
+                message: "connection reset".into()
+            }
+            .is_retryable()
+        );
+        assert!(ProviderError::Internal("temporary database error".into()).is_retryable());
+    }
+
+    #[test]
+    fn retry_policy_stops_user_and_unrecoverable_errors() {
+        for status in [400, 401, 403, 404, 422] {
+            assert!(
+                !ProviderError::Http {
+                    status,
+                    message: "bad request".into()
+                }
+                .is_retryable()
+            );
+        }
+        for code in [
+            "authentication_error",
+            "invalid_api_key",
+            "permission_denied",
+            "model_not_found",
+            "invalid_request",
+        ] {
+            assert!(
+                !ProviderError::Stream {
+                    code: Some(code.into()),
+                    message: "stop".into()
+                }
+                .is_retryable()
+            );
+        }
+        assert!(!ProviderError::ImageUnavailable.is_retryable());
+    }
 }

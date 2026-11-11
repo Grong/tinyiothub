@@ -2013,3 +2013,323 @@ async fn adapter_emits_delta_before_provider_completion() {
     release.notify_one();
     while futures::StreamExt::next(&mut stream).await.is_some() {}
 }
+
+#[derive(Clone)]
+struct RetryProvider {
+    calls: Arc<std::sync::atomic::AtomicUsize>,
+    failures: usize,
+    error: fn(usize) -> anyhow::Error,
+    partial: bool,
+    tool_after_retry: bool,
+}
+
+impl Attributable for RetryProvider {
+    fn role(&self) -> Role {
+        Role::Provider(crate::port::attribution::ProviderKind::Model(
+            crate::port::attribution::ModelProviderKind::Custom,
+        ))
+    }
+    fn alias(&self) -> &str {
+        "retry-test"
+    }
+}
+
+#[async_trait::async_trait]
+impl crate::port::provider::ModelProvider for RetryProvider {
+    async fn chat(
+        &self,
+        _request: crate::port::provider::ChatRequest<'_>,
+        _model: &str,
+        _temperature: Option<f64>,
+    ) -> anyhow::Result<crate::port::provider::ChatResponse> {
+        unreachable!("retry tests use streaming")
+    }
+
+    async fn chat_stream(
+        &self,
+        _request: crate::port::provider::ChatRequest<'_>,
+        _model: &str,
+        _temperature: Option<f64>,
+        on_delta: &(dyn Fn(crate::port::provider::ChatStreamDelta) + Send + Sync),
+    ) -> anyhow::Result<crate::port::provider::ChatResponse> {
+        let call = self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1;
+        if call <= self.failures {
+            if self.partial {
+                on_delta(crate::port::provider::ChatStreamDelta {
+                    text: format!("partial-{call}"),
+                    reasoning: false,
+                });
+            }
+            return Err((self.error)(call));
+        }
+        if self.tool_after_retry && call == self.failures + 1 {
+            on_delta(crate::port::provider::ChatStreamDelta {
+                text: "before".into(),
+                reasoning: false,
+            });
+            return Ok(crate::port::provider::ChatResponse {
+                text: Some("before".into()),
+                tool_calls: vec![crate::port::provider::ToolCall {
+                    id: "retry-tool".into(),
+                    name: "recording_tool".into(),
+                    arguments: "{}".into(),
+                }],
+                ..Default::default()
+            });
+        }
+        on_delta(crate::port::provider::ChatStreamDelta {
+            text: "recovered".into(),
+            reasoning: false,
+        });
+        Ok(crate::port::provider::ChatResponse {
+            text: Some("recovered".into()),
+            ..Default::default()
+        })
+    }
+}
+
+fn retry_request() -> rig_core::completion::CompletionRequest {
+    rig_core::completion::CompletionRequest {
+        model: Some("retry-test".into()),
+        preamble: None,
+        chat_history: vec![rig_core::message::Message::user("go")],
+        documents: vec![],
+        tools: vec![],
+        temperature: None,
+        max_tokens: None,
+        tool_choice: None,
+        additional_params: None,
+        output_schema: None,
+        record_telemetry_content: false,
+    }
+}
+
+async fn collect_retry_stream(adapter: super::provider::PortModelAsRig) -> Result<Vec<String>, String> {
+    use futures::StreamExt;
+    use rig_core::completion::CompletionModel;
+
+    let mut stream = adapter
+        .stream(retry_request())
+        .await
+        .map_err(|error| error.to_string())?;
+    let mut text = Vec::new();
+    while let Some(item) = stream.next().await {
+        match item {
+            Ok(rig_core::streaming::StreamedAssistantContent::Text(delta)) => text.push(delta.text),
+            Ok(_) => {}
+            Err(error) => return Err(error.to_string()),
+        }
+    }
+    Ok(text)
+}
+
+fn retry_adapter(
+    failures: usize,
+    error: fn(usize) -> anyhow::Error,
+) -> (super::provider::PortModelAsRig, Arc<RetryProvider>) {
+    let provider = Arc::new(RetryProvider {
+        calls: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
+        failures,
+        error,
+        partial: false,
+        tool_after_retry: false,
+    });
+    let adapter = super::provider::PortModelAsRig::new(provider.clone(), "retry-test".into());
+    (adapter, provider)
+}
+
+#[tokio::test(start_paused = true)]
+async fn retry_recovers_after_two_temporary_failures() {
+    let events = super::provider::RetryEvents::default();
+    let (adapter, provider) = retry_adapter(2, |call| {
+        crate::port::provider::ProviderError::Internal(format!("temporary-{call}")).into()
+    });
+    let adapter = adapter.with_retry_events(events.clone());
+    let (tx, mut rx) = tokio::sync::mpsc::channel(4);
+    let _guard = events.install(tx, None);
+    let driver = tokio::spawn(collect_retry_stream(adapter));
+
+    let first = rx.recv().await.expect("first retry notice");
+    assert_eq!((first.attempt, first.delay_ms), (1, 1000));
+    tokio::time::advance(std::time::Duration::from_secs(1)).await;
+    let second = rx.recv().await.expect("second retry notice");
+    assert_eq!((second.attempt, second.delay_ms), (2, 2000));
+    tokio::time::advance(std::time::Duration::from_secs(2)).await;
+
+    assert_eq!(driver.await.unwrap().unwrap(), vec!["recovered"]);
+    assert_eq!(provider.calls.load(std::sync::atomic::Ordering::SeqCst), 3);
+}
+
+#[tokio::test(start_paused = true)]
+async fn retry_stops_after_three_retries_with_the_real_error() {
+    let events = super::provider::RetryEvents::default();
+    let (adapter, provider) = retry_adapter(4, |call| {
+        crate::port::provider::ProviderError::Internal(format!("temporary-{call}")).into()
+    });
+    let adapter = adapter.with_retry_events(events.clone());
+    let (tx, mut rx) = tokio::sync::mpsc::channel(4);
+    let _guard = events.install(tx, None);
+    let driver = tokio::spawn(collect_retry_stream(adapter));
+
+    for (attempt, seconds) in [(1, 1), (2, 2), (3, 4)] {
+        let notice = rx.recv().await.expect("retry notice");
+        assert_eq!(
+            (notice.attempt, notice.max_retries, notice.delay_ms),
+            (attempt, 3, seconds * 1000)
+        );
+        tokio::time::advance(std::time::Duration::from_secs(seconds)).await;
+    }
+    let error = driver.await.unwrap().expect_err("all attempts fail");
+    assert!(error.contains("temporary-4"), "{error}");
+    assert_eq!(provider.calls.load(std::sync::atomic::Ordering::SeqCst), 4);
+}
+
+#[tokio::test]
+async fn retry_does_not_repeat_an_unrecoverable_request() {
+    let (adapter, provider) = retry_adapter(1, |_| {
+        crate::port::provider::ProviderError::Http {
+            status: 400,
+            message: "invalid request".into(),
+        }
+        .into()
+    });
+    let error = collect_retry_stream(adapter).await.expect_err("invalid request");
+    assert!(error.contains("invalid request"), "{error}");
+    assert_eq!(provider.calls.load(std::sync::atomic::Ordering::SeqCst), 1);
+}
+
+#[tokio::test(start_paused = true)]
+async fn retry_notice_follows_failed_attempt_deltas() {
+    use futures::StreamExt;
+    use rig_core::completion::CompletionModel;
+
+    let events = super::provider::RetryEvents::default();
+    let provider = Arc::new(RetryProvider {
+        calls: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
+        failures: 1,
+        error: |call| crate::port::provider::ProviderError::Internal(format!("temporary-{call}")).into(),
+        partial: true,
+        tool_after_retry: false,
+    });
+    let adapter = super::provider::PortModelAsRig::new(provider, "retry-test".into()).with_retry_events(events.clone());
+    let (tx, mut rx) = tokio::sync::mpsc::channel(4);
+    let _guard = events.install(tx, None);
+    let mut stream = adapter.stream(retry_request()).await.expect("stream opens");
+
+    let first = stream.next().await.expect("partial delta").expect("valid delta");
+    assert!(matches!(
+        first,
+        rig_core::streaming::StreamedAssistantContent::Text(text) if text.text == "partial-1"
+    ));
+    assert!(
+        matches!(rx.try_recv(), Err(tokio::sync::mpsc::error::TryRecvError::Empty)),
+        "retry must not overtake the failed attempt's streamed text"
+    );
+}
+
+#[tokio::test(start_paused = true)]
+async fn retry_after_partial_text_does_not_duplicate_text_or_replay_tools() {
+    use crate::port::events::TurnEvent;
+    use crate::port::runtime::AgentLoopConfig;
+
+    let provider = Arc::new(RetryProvider {
+        calls: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
+        failures: 1,
+        error: |call| crate::port::provider::ProviderError::Internal(format!("temporary-{call}")).into(),
+        partial: true,
+        tool_after_retry: true,
+    });
+    let tool = RecordingTool {
+        calls: Arc::new(Mutex::new(Vec::new())),
+    };
+    let tool_calls = tool.calls.clone();
+    let dir = tempfile::tempdir().expect("tempdir");
+    let loop_handle = crate::adapters::rig::loop_::rig_loop_factory(AgentLoopConfig {
+        model_name: "retry-test".into(),
+        prompt_builder: crate::port::prompt::SystemPromptBuilder::with_defaults(),
+        tools: vec![Box::new(tool)],
+        memory: Arc::new(crate::port::memory::NoopMemory),
+        observer: Arc::new(crate::port::observer::NoopObserver),
+        workspace_dir: dir.path().to_path_buf(),
+        security_summary: None,
+        provider_factory: Arc::new(move || Ok(Box::new(provider.as_ref().clone()))),
+        conversation_memory: false,
+        available_capabilities: vec![],
+        tool_call_ids: None,
+    })
+    .expect("loop");
+    let (tx, mut rx) = tokio::sync::mpsc::channel(32);
+    let result = loop_handle
+        .lock()
+        .await
+        .turn_streamed("go", tx, None)
+        .await
+        .expect("retry recovers");
+
+    let mut retries = 0;
+    let mut streamed = String::new();
+    while let Some(event) = rx.recv().await {
+        match event {
+            TurnEvent::Retry(notice) => {
+                retries += 1;
+                assert_eq!(notice.attempt, 1);
+                assert_eq!(notice.error, "temporary-1");
+            }
+            TurnEvent::Chunk { delta } => streamed.push_str(&delta),
+            _ => {}
+        }
+    }
+    assert_eq!(retries, 1);
+    assert_eq!(result, "recovered");
+    assert_eq!(streamed, "partial-1beforerecovered");
+    assert_eq!(tool_calls.lock().unwrap().len(), 1, "successful tool executes once");
+}
+
+#[tokio::test(start_paused = true)]
+async fn retry_backoff_stops_when_the_turn_is_cancelled() {
+    use crate::port::events::TurnEvent;
+    use crate::port::runtime::AgentLoopConfig;
+
+    let provider = Arc::new(RetryProvider {
+        calls: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
+        failures: 4,
+        error: |call| crate::port::provider::ProviderError::Internal(format!("temporary-{call}")).into(),
+        partial: false,
+        tool_after_retry: false,
+    });
+    let observed = provider.clone();
+    let dir = tempfile::tempdir().expect("tempdir");
+    let loop_handle = crate::adapters::rig::loop_::rig_loop_factory(AgentLoopConfig {
+        model_name: "retry-test".into(),
+        prompt_builder: crate::port::prompt::SystemPromptBuilder::with_defaults(),
+        tools: vec![],
+        memory: Arc::new(crate::port::memory::NoopMemory),
+        observer: Arc::new(crate::port::observer::NoopObserver),
+        workspace_dir: dir.path().to_path_buf(),
+        security_summary: None,
+        provider_factory: Arc::new(move || Ok(Box::new(provider.as_ref().clone()))),
+        conversation_memory: false,
+        available_capabilities: vec![],
+        tool_call_ids: None,
+    })
+    .expect("loop");
+    let cancel = tokio_util::sync::CancellationToken::new();
+    let driver_cancel = cancel.clone();
+    let (tx, mut rx) = tokio::sync::mpsc::channel(32);
+    let driver = tokio::spawn(async move {
+        loop_handle
+            .lock()
+            .await
+            .turn_streamed("go", tx, Some(driver_cancel))
+            .await
+    });
+    while let Some(event) = rx.recv().await {
+        if matches!(event, TurnEvent::Retry(_)) {
+            cancel.cancel();
+            break;
+        }
+    }
+    let error = driver.await.unwrap().expect_err("cancelled during backoff");
+    assert!(crate::port::outcome::is_tool_loop_cancelled(&error));
+    assert_eq!(observed.calls.load(std::sync::atomic::Ordering::SeqCst), 1);
+}
