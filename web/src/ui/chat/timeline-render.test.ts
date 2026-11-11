@@ -70,7 +70,13 @@ describe('timeline render helpers', () => {
         at: '2026-11-09T10:00:00Z',
         completedAt: '2026-11-09T10:00:02Z',
       },
-      { kind: 'assistant', id: 'old-answer', text: '上一轮结论', at: '2026-11-09T10:00:01Z', turnId: 'old' },
+      {
+        kind: 'assistant',
+        id: 'old-answer',
+        text: '上一轮结论',
+        at: '2026-11-09T10:00:01Z',
+        turnId: 'old',
+      },
       { kind: 'turn', id: 'current', status: 'running', at: '2026-11-09T10:01:00Z' },
       {
         kind: 'tool',
@@ -97,7 +103,9 @@ describe('timeline render helpers', () => {
     expect(groups[0].querySelector('.timeline-todos')).toBeNull();
     expect(groups[1].querySelector('.timeline-todos__count')?.textContent).toBe('1/2');
     expect(groups[1].querySelector('.timeline-todo--completed')?.textContent).toContain('检查离线');
-    expect(groups[1].querySelector('.timeline-todo--in_progress')?.textContent).toContain('生成摘要');
+    expect(groups[1].querySelector('.timeline-todo--in_progress')?.textContent).toContain(
+      '生成摘要',
+    );
   });
 
   it('derives running and completion status from the latest turn', () => {
@@ -116,7 +124,7 @@ describe('timeline render helpers', () => {
 
     const current = () => host.querySelector('.timeline-turn-group--current');
     expect(current()).not.toBeNull();
-    expect(current()?.querySelector('.activity--current')?.textContent).toContain('查找设备 3号楼');
+    expect(current()?.querySelector('.turn-footer')?.textContent).toContain('查找设备 3号楼');
 
     parts[0] = {
       kind: 'turn',
@@ -127,8 +135,8 @@ describe('timeline render helpers', () => {
     };
     render(renderTimeline(parts), host);
 
-    expect(current()?.querySelector('.activity--done')?.textContent).toContain('已完成');
-    expect(current()?.querySelector('.activity--done')?.textContent).toContain('3.0s');
+    expect(current()?.querySelector('.turn-footer')?.textContent).toContain('已完成');
+    expect(current()?.querySelector('.turn-footer')?.textContent).toContain('3.0s');
   });
 
   it('renders retry reason, attempt, and delay', () => {

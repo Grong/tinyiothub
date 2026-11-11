@@ -329,8 +329,7 @@ export class ChatView extends LitElement {
 
   private refreshDrawer(): void {
     const drawer = this.querySelector('session-drawer') as
-      | (HTMLElement & { refresh(): Promise<void> })
-      | null;
+      (HTMLElement & { refresh(): Promise<void> }) | null;
     void drawer?.refresh();
   }
 
@@ -455,18 +454,24 @@ export class ChatView extends LitElement {
                 完全访问
               </button>
             </div>
-            ${this.sending
-              ? html`<button class="composer-stop chat-abort-btn" aria-label="停止" @click=${() => this.stop()}>
-                  停
-                </button>`
-              : html`<button
-                  class="composer-send chat-send-btn"
-                  aria-label="发送"
-                  ?disabled=${!this.draft.trim()}
-                  @click=${() => this.send()}
-                >
-                  ↑
-                </button>`}
+            ${
+              this.sending
+                ? html`<button
+                    class="composer-stop chat-abort-btn"
+                    aria-label="停止"
+                    @click=${() => this.stop()}
+                  >
+                    停
+                  </button>`
+                : html`<button
+                    class="composer-send chat-send-btn"
+                    aria-label="发送"
+                    ?disabled=${!this.draft.trim()}
+                    @click=${() => this.send()}
+                  >
+                    ↑
+                  </button>`
+            }
           </div>
         </div>
       </div>
@@ -481,6 +486,28 @@ export class ChatView extends LitElement {
       Boolean(pending) ||
       this.timeline.pendingApprovals.length > 0 ||
       Boolean(this.liveText);
+    const turnActions =
+      pending || this.timeline.pendingApprovals.length > 0
+        ? html`
+            ${
+              pending
+                ? html`<question-card
+                    .sessionKey=${this.sessionKey}
+                    .pending=${pending}
+                    @answered=${() => this.answerPending()}
+                  ></question-card>`
+                : nothing
+            }
+            ${this.timeline.pendingApprovals.map(
+              (item) =>
+                html`<approval-card
+                  .sessionKey=${this.sessionKey}
+                  .pending=${item}
+                  @answered=${(event: CustomEvent<string>) => this.onApprovalAnswered(event)}
+                ></approval-card>`,
+            )}
+          `
+        : undefined;
     return html`
       <div class="assistant-shell">
         <header class="assistant-topbar">
@@ -490,64 +517,69 @@ export class ChatView extends LitElement {
             @click=${() => (this.drawerOpen = true)}
           >
             <svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true">
-              <path d="M2 4h12M2 8h12M2 12h8" stroke="currentColor" stroke-width="1.4" fill="none" />
+              <path
+                d="M2 4h12M2 8h12M2 12h8"
+                stroke="currentColor"
+                stroke-width="1.4"
+                fill="none"
+              />
             </svg>
             ${this.activeSessions > 0 ? html`<span class="icon-button__dot" aria-hidden="true"></span>` : nothing}
           </button>
           <div class="assistant-topbar__identity">
             <span class="assistant-topbar__title">${this.sessionTitleText()}</span>
-            <span class="assistant-topbar__kind">${KIND_LABEL[this.sessionKind] ?? this.sessionKind}</span>
+            <span class="assistant-topbar__kind"
+              >${KIND_LABEL[this.sessionKind] ?? this.sessionKind}</span
+            >
           </div>
           <span class="assistant-topbar__spacer"></span>
-          ${this.liveSession()
-            ? html`<button
-                class="assistant-live"
-                aria-label="查看正在运行的会话"
-                title=${this.liveSession()!.label ?? '正在运行的会话'}
-                @click=${() => this.selectSession(this.liveSession()!.sessionKey)}
-              >
-                <span class="assistant-live__dot" aria-hidden="true"></span>
-                <span>正在运行</span>
-                <span class="assistant-live__title">${this.liveSession()!.label ?? '查看执行过程'}</span>
-              </button>`
-            : nothing}
+          ${
+            this.liveSession()
+              ? html`<button
+                  class="assistant-live"
+                  aria-label="查看正在运行的会话"
+                  title=${this.liveSession()!.label ?? '正在运行的会话'}
+                  @click=${() => this.selectSession(this.liveSession()!.sessionKey)}
+                >
+                  <span class="assistant-live__dot" aria-hidden="true"></span>
+                  <span>正在运行</span>
+                  <span class="assistant-live__title"
+                    >${this.liveSession()!.label ?? '查看执行过程'}</span
+                  >
+                </button>`
+              : nothing
+          }
           <button class="assistant-topbar__new" @click=${() => this.newSession()}>
             <span>新会话</span><span aria-hidden="true">＋</span>
           </button>
         </header>
         <global-hud .workspaceId=${this.workspaceId} @hud-update=${this.onHudUpdate}></global-hud>
         <div class="assistant-thread" @scroll=${() => this.onThreadScroll()}>
-          ${!hasContent && !this.sending && !this.loading
-            ? this.renderEmpty()
-            : !hasContent && this.loading
-              ? html`<div class="assistant-empty__foot">正在读取会话…</div>`
-              : html`
-                ${renderTimeline(this.timeline.parts, {
-                  liveText: this.liveText,
-                  thinking: this.sending ? this.thinking : '',
-                  sending: this.sending,
-                  todos: this.timeline.todos,
-                })}
-                ${pending
-                  ? html`<question-card
-                      .sessionKey=${this.sessionKey}
-                      .pending=${pending}
-                      @answered=${() => this.answerPending()}
-                    ></question-card>`
-                  : ''}
-                ${this.timeline.pendingApprovals.map(
-                  (item) => html`<approval-card
-                    .sessionKey=${this.sessionKey}
-                    .pending=${item}
-                    @answered=${(event: CustomEvent<string>) => this.onApprovalAnswered(event)}
-                  ></approval-card>`,
-                )}
-                ${this.a2uiRenderer.renderSurfacesByKind('inline')}
-                ${this.a2uiRenderer.renderSurfacesByKind('overlay')}
-                ${this.error
-                  ? html`<div class="timeline-notice timeline-notice--timed_out">${this.error}</div>`
-                  : ''}
-              `}
+          ${
+            !hasContent && !this.sending && !this.loading
+              ? this.renderEmpty()
+              : !hasContent && this.loading
+                ? html`<div class="assistant-empty__foot">正在读取会话…</div>`
+                : html`
+                    ${renderTimeline(this.timeline.parts, {
+                      liveText: this.liveText,
+                      thinking: this.sending ? this.thinking : '',
+                      sending: this.sending,
+                      todos: this.timeline.todos,
+                      waitingForUser: Boolean(pending) || this.timeline.pendingApprovals.length > 0,
+                      turnActions,
+                    })}
+                    ${this.a2uiRenderer.renderSurfacesByKind('inline')}
+                    ${this.a2uiRenderer.renderSurfacesByKind('overlay')}
+                    ${
+                      this.error
+                        ? html`<div class="timeline-notice timeline-notice--timed_out">
+                            ${this.error}
+                          </div>`
+                        : ''
+                    }
+                  `
+          }
         </div>
         ${this.renderComposer()}
         <session-drawer
@@ -561,7 +593,9 @@ export class ChatView extends LitElement {
             if (event.detail === this.sessionKey) this.newSession();
             else this.refreshDrawer();
           }}
-          @sessions-updated=${(event: CustomEvent<{ active: number; sessions: SessionSummary[] }>) => {
+          @sessions-updated=${(
+            event: CustomEvent<{ active: number; sessions: SessionSummary[] }>,
+          ) => {
             this.activeSessions = event.detail.active;
             this.activeSessionList = event.detail.sessions;
           }}

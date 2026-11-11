@@ -110,27 +110,25 @@ function activity(content: TemplateResult, className = ''): TemplateResult {
   return html`<div class="activity ${className}">${content}</div>`;
 }
 
-function renderTurn(part: Extract<ContentPart, { kind: 'turn' }>): TemplateResult {
-  const time = formatAt(part.at);
-  const meta = [
-    part.toolCalls ? `${part.toolCalls} 次工具` : '',
-    formatTokens((part.usage?.inputTokens ?? 0) + (part.usage?.outputTokens ?? 0))
-      ? `${formatTokens((part.usage?.inputTokens ?? 0) + (part.usage?.outputTokens ?? 0))} tokens`
-      : '',
-    formatDuration(part.at, part.completedAt),
-  ]
-    .filter(Boolean)
-    .join(' · ');
+function renderTurn(
+  part: Extract<ContentPart, { kind: 'turn' }>,
+  waitingForUser = false,
+): TemplateResult {
+  const totalTokens = (part.usage?.inputTokens ?? 0) + (part.usage?.outputTokens ?? 0);
+  const elapsed = formatDuration(part.at, part.completedAt ?? new Date().toISOString());
+  const state = waitingForUser ? '等待批准' : (TURN_STATE[part.status] ?? part.status);
   return html`
-    <div class="timeline-turn timeline-turn--${part.status}">
-      <time datetime=${part.at}>${time || '—'}</time>
-      <span class="timeline-turn__rule" aria-hidden="true"></span>
-      <span class="timeline-turn__tail">
-        ${meta ? html`<span class="timeline-turn__meta">${meta}</span>` : nothing}
-        <span class="timeline-turn__state">${TURN_STATE[part.status] ?? part.status}</span>
-      </span>
-    </div>
-    ${part.error ? html`<div class="timeline-turn__error">${part.error}</div>` : nothing}
+    <header class="turn-header turn-header--${part.status}">
+      <span class="turn-header__identity"
+        ><span class="turn-header__mark" aria-hidden="true">脑</span>大脑</span
+      >
+      <span class="turn-header__state ${waitingForUser ? 'turn-header__state--waiting' : ''}"
+        >${state}</span
+      >
+      <span class="turn-header__spacer"></span>
+      ${totalTokens > 0 ? html`<span class="turn-header__meta">${formatTokens(totalTokens)} tokens</span>` : nothing}
+      ${elapsed ? html`<span class="turn-header__meta">已处理 ${elapsed}</span>` : nothing}
+    </header>
   `;
 }
 
@@ -175,15 +173,14 @@ function renderReasoning(part: ReasoningPart): TemplateResult {
       <span class="activity__label">${part.streaming ? '正在思考中' : '思考过程'}</span>
       <span class="activity__meta">展开</span>
     </summary>
-    <div class="activity__detail">${part.text}</div>
+    <div class="activity__detail process-detail">${part.text}</div>
   </details>`;
 }
 
-function renderTool(part: ToolPart, compact = false): TemplateResult {
+function renderTool(part: ToolPart): TemplateResult {
   const meta = TOOL_META[part.name];
   const icon = meta?.icon ?? '⚙';
   const failed = part.status === 'failed';
-  const hideMeta = compact && !failed && Boolean(part.result);
   const stateClass = failed
     ? 'activity__meta--failed'
     : part.result
@@ -195,15 +192,11 @@ function renderTool(part: ToolPart, compact = false): TemplateResult {
     <summary class="activity__summary">
       <span class="activity__icon" aria-hidden="true">${icon}</span>
       <span class="activity__label">${toolSummary(part)}</span>
-      ${
-        hideMeta
-          ? nothing
-          : html`<span class="activity__meta ${stateClass}"
-              >${failed ? '失败' : part.result ? '完成' : '执行中'}</span
-            >`
-      }
+      <span class="activity__meta ${stateClass}"
+        >${failed ? '失败' : part.result ? '完成' : '执行中'}</span
+      >
     </summary>
-    <div class="activity__detail">
+    <div class="activity__detail process-detail">
       <div class="activity__detail-label">参数</div>
       <pre>${JSON.stringify(part.args ?? {}, null, 2)}</pre>
       ${
@@ -222,14 +215,6 @@ function renderTool(part: ToolPart, compact = false): TemplateResult {
   </details>`;
 }
 
-function renderToolRun(items: Array<{ part: ContentPart; index: number }>): TemplateResult {
-  const compact = items.length > 1;
-  return html`<div class="timeline-tools">
-    ${compact ? html`<div class="timeline-tools__count">${items.length} 次工具调用</div>` : nothing}
-    ${items.map(({ part }) => renderTool(part as ToolPart, compact))}
-  </div>`;
-}
-
 function renderSubagent(part: Extract<ContentPart, { kind: 'subagent' }>): TemplateResult {
   const status = part.status ?? 'running';
   return html`<details class="activity activity--subagent log-entry">
@@ -238,7 +223,7 @@ function renderSubagent(part: Extract<ContentPart, { kind: 'subagent' }>): Templ
       <span class="activity__label">子代理 · ${part.description || part.id}</span>
       <span class="activity__meta">${SUBAGENT_STATUS[status] ?? status}</span>
     </summary>
-    <div class="activity__detail">
+    <div class="activity__detail process-detail">
       ${part.subagentType ? html`<div>类型 ${part.subagentType}</div>` : nothing}
       ${part.summary ? html`<div>${unsafeHTML(md(part.summary))}</div>` : nothing}
     </div>
@@ -293,6 +278,66 @@ function renderUnknown(part: ContentPart): TemplateResult {
   `);
 }
 
+function isProcessPart(part: ContentPart): boolean {
+  return ['origin', 'skill', 'tool', 'reasoning', 'subagent', 'notice', 'retry'].includes(
+    part.kind,
+  );
+}
+
+function processSummary(items: Array<{ part: ContentPart; index: number }>): string {
+  const tools = items.filter((item) => item.part.kind === 'tool').length;
+  const retries = items.filter((item) => item.part.kind === 'retry').length;
+  const subagents = items.filter((item) => item.part.kind === 'subagent').length;
+  const details = [
+    tools > 0 ? `${tools} 个工具` : '',
+    retries > 0 ? `${retries} 次重试` : '',
+    subagents > 0 ? `${subagents} 个子代理` : '',
+  ].filter(Boolean);
+  return ['执行过程', ...details].join(' · ');
+}
+
+function latestProcessText(items: Array<{ part: ContentPart; index: number }>): string {
+  const part = items[items.length - 1]?.part;
+  if (!part) return '';
+  switch (part.kind) {
+    case 'tool':
+      return toolSummary(part);
+    case 'reasoning':
+      return part.streaming ? '正在思考中' : '思考过程';
+    case 'retry':
+      return `服务暂时不可用，第 ${part.attempt} 次重试`;
+    case 'subagent':
+      return `子代理 · ${part.description || part.id}`;
+    case 'skill':
+      return `技能 · ${part.name}`;
+    case 'notice':
+      return part.text;
+    case 'origin':
+      return TRIGGER_LABEL[part.source] ?? part.source;
+    default:
+      return '';
+  }
+}
+
+function renderProcessRun(
+  items: Array<{ part: ContentPart; index: number }>,
+  current: boolean,
+  todos: TodoItem[],
+): TemplateResult {
+  return html`<details class="turn-process">
+    <summary class="turn-process__summary activity__summary">
+      <span class="turn-process__summary-label">${processSummary(items)}</span>
+      <span class="turn-process__latest" title=${latestProcessText(items)}
+        >${latestProcessText(items)}</span
+      >
+    </summary>
+    <div class="turn-process__content">
+      ${items.map(({ part }) => (PART_RENDERERS[part.kind] ?? renderUnknown)(part as never))}
+      ${current ? renderTodoPanel(todos) : nothing}
+    </div>
+  </details>`;
+}
+
 type PartRenderer = (part: never) => TemplateResult | typeof nothing;
 const PART_RENDERERS: Record<string, PartRenderer> = {
   user: renderUser as PartRenderer,
@@ -311,7 +356,7 @@ export function renderTodoPanel(todos: TodoItem[]): TemplateResult | typeof noth
   const { done, total } = todoProgress(todos);
   const percent = total === 0 ? 0 : Math.round((done / total) * 100);
   return html`
-    <section class="timeline-todos" aria-label="本轮计划">
+    <section class="timeline-todos process-detail" aria-label="本轮计划">
       <div class="timeline-todos__head">
         <span>本轮计划</span>
         <span class="timeline-todos__count">${done}/${total}</span>
@@ -347,51 +392,66 @@ function currentWork(parts: ContentPart[], liveText: string, thinking: string): 
   return '等待模型响应';
 }
 
-function renderTrailingStatus(
+function renderTurnFooter(
   parts: ContentPart[],
   sending: boolean,
   liveText: string,
   thinking: string,
+  waitingForUser: boolean,
+  turnActions?: TemplateResult,
 ): TemplateResult | typeof nothing {
   const lastTurn = [...parts].reverse().find((part) => part.kind === 'turn');
   const running = sending || (lastTurn?.kind === 'turn' && lastTurn.status === 'running');
-  if (running) {
-    const elapsed = lastTurn ? formatDuration(lastTurn.at, new Date().toISOString()) : '';
-    return activity(
-      html`
-        <span class="activity__icon" aria-hidden="true">◌</span>
-        <span class="activity__label">${currentWork(parts, liveText, thinking)}</span>
-        <span class="activity__meta">${elapsed ? `已处理 ${elapsed}` : '进行中'}</span>
-      `,
-      'activity--current',
-    );
-  }
-  if (lastTurn?.kind === 'turn' && lastTurn.completedAt) {
-    const label =
-      lastTurn.status === 'completed'
+  if (!lastTurn && !running) return nothing;
+  const label = waitingForUser
+    ? '等待批准'
+    : running
+      ? currentWork(parts, liveText, thinking)
+      : lastTurn?.status === 'completed'
         ? '已完成'
-        : lastTurn.status === 'failed'
+        : lastTurn?.status === 'failed'
           ? '执行失败'
           : '已取消';
-    return activity(
-      html`
-        <span class="activity__icon" aria-hidden="true"
-          >${lastTurn.status === 'completed' ? '✓' : '!'}</span
-        >
-        <span class="activity__label">${label}</span>
-        <span class="activity__meta">${formatDuration(lastTurn.at, lastTurn.completedAt)}</span>
-      `,
-      `activity--current ${lastTurn.status === 'completed' ? 'activity--done' : 'activity--failed'}`,
-    );
-  }
-  return nothing;
+  const elapsed = lastTurn
+    ? formatDuration(lastTurn.at, lastTurn.completedAt ?? new Date().toISOString())
+    : '';
+  const cost = lastTurn?.kind === 'turn' ? lastTurn.usage?.costUsd : undefined;
+  return html`<footer class="turn-footer ${waitingForUser ? 'turn-footer--waiting' : ''}">
+    <span class="turn-footer__icon" aria-hidden="true"
+      >${running && !waitingForUser ? '◌' : lastTurn?.status === 'completed' && !waitingForUser ? '✓' : '!'}</span
+    >
+    <span class="turn-footer__state">${label}</span>
+    <span class="turn-footer__meta"
+      >${[elapsed, cost && cost > 0 ? `$${cost.toFixed(4)}` : ''].filter(Boolean).join(' · ')}</span
+    >
+    ${
+      lastTurn?.kind === 'turn' && lastTurn.error
+        ? html`<div class="turn-footer__error">${lastTurn.error}</div>`
+        : nothing
+    }
+    ${turnActions ? html`<div class="turn-actions">${turnActions}</div>` : nothing}
+  </footer>`;
 }
 
 export function renderTimeline(
   parts: ContentPart[],
-  opts: { liveText?: string; thinking?: string; sending?: boolean; todos?: TodoItem[] } = {},
+  opts: {
+    liveText?: string;
+    thinking?: string;
+    sending?: boolean;
+    todos?: TodoItem[];
+    waitingForUser?: boolean;
+    turnActions?: TemplateResult;
+  } = {},
 ): TemplateResult {
-  const { liveText = '', thinking = '', sending = false, todos = [] } = opts;
+  const {
+    liveText = '',
+    thinking = '',
+    sending = false,
+    todos = [],
+    waitingForUser = false,
+    turnActions,
+  } = opts;
   let lastStreamingAssistant = -1;
   parts.forEach((part, index) => {
     if (part.kind === 'assistant' && part.streaming) lastStreamingAssistant = index;
@@ -417,17 +477,17 @@ export function renderTimeline(
           <section class="timeline-turn-group ${current ? 'timeline-turn-group--current' : ''}">
             ${items.map(({ part, index }) => {
               if (consumed.has(index)) return nothing;
-              if (part.kind === 'tool') {
-                const run: Array<{ part: ToolPart; index: number }> = [{ part, index }];
+              if (isProcessPart(part)) {
+                const run = [{ part, index }];
                 let next = index + 1;
-                while (items[next]?.part.kind === 'tool') {
-                  const item = items[next];
-                  if (item.part.kind === 'tool') run.push({ part: item.part, index: item.index });
+                while (items[next] && isProcessPart(items[next].part)) {
+                  run.push(items[next]);
                   next += 1;
                 }
                 for (const item of run) consumed.add(item.index);
-                return renderToolRun(run);
+                return renderProcessRun(run, current, todos);
               }
+              if (part.kind === 'turn') return renderTurn(part, current && waitingForUser);
               if (part.kind !== 'assistant') {
                 return (PART_RENDERERS[part.kind] ?? renderUnknown)(part as never);
               }
@@ -465,8 +525,18 @@ export function renderTimeline(
                   })
                 : nothing
             }
-            ${current ? renderTodoPanel(todos) : nothing}
-            ${current ? renderTrailingStatus(parts, sending, liveText, thinking) : nothing}
+            ${
+              current
+                ? renderTurnFooter(
+                    items.map((item) => item.part),
+                    sending,
+                    liveText,
+                    thinking,
+                    waitingForUser,
+                    turnActions,
+                  )
+                : nothing
+            }
           </section>
         `;
       })}

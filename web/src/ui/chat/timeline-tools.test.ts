@@ -17,19 +17,18 @@ function tool(id: string, name = 'read_device', status?: 'ok' | 'failed'): Conte
 }
 
 describe('consecutive tool presentation', () => {
-  it('groups adjacent tools and hides repetitive success labels', () => {
+  it('keeps adjacent tools as independent expandable items with visible status', () => {
     const host = document.createElement('div');
     render(
       renderTimeline([tool('c1'), tool('c2', 'list_alarms'), tool('c3', 'query_events')]),
       host,
     );
-    expect(host.querySelectorAll('.timeline-tools')).toHaveLength(1);
-    expect(host.querySelector('.timeline-tools__count')?.textContent).toContain('3 次工具调用');
-    expect(host.querySelectorAll('.timeline-tools details')).toHaveLength(3);
-    expect(host.querySelectorAll('.timeline-tools .activity__meta--ok')).toHaveLength(0);
+    expect(host.querySelectorAll('.timeline-tools')).toHaveLength(0);
+    expect(host.querySelectorAll('.turn-process details.activity--tool')).toHaveLength(3);
+    expect(host.querySelectorAll('.turn-process .activity__meta--ok')).toHaveLength(3);
   });
 
-  it('keeps non-adjacent tools in separate groups and preserves failures', () => {
+  it('preserves failure status without adding a tool grouping layer', () => {
     const host = document.createElement('div');
     const assistant: ContentPart = {
       kind: 'assistant',
@@ -41,7 +40,7 @@ describe('consecutive tool presentation', () => {
       renderTimeline([tool('c1'), tool('c2'), assistant, tool('c3', 'read_device', 'failed')]),
       host,
     );
-    expect(host.querySelectorAll('.timeline-tools')).toHaveLength(2);
-    expect(host.querySelector('.timeline-tools .activity__meta--failed')?.textContent).toBe('失败');
+    expect(host.querySelectorAll('.timeline-tools')).toHaveLength(0);
+    expect(host.querySelector('.turn-process .activity__meta--failed')?.textContent).toBe('失败');
   });
 });
