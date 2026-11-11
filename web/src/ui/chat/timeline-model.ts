@@ -1,9 +1,37 @@
 import type { Question, SessionEvent, SessionEventPage, TodoItem } from '../../api/assistant.js';
 
+export interface TurnUsage {
+  inputTokens?: number;
+  cachedInputTokens?: number;
+  outputTokens?: number;
+  costUsd?: number;
+}
+
 export type TimelineBlock =
   | { kind: 'user'; id: string; text: string; at: string }
-  | { kind: 'assistant'; id: string; text: string; at: string }
-  | { kind: 'turn'; id: string; status: 'running' | 'completed' | 'failed' | 'cancelled'; at: string }
+  | { kind: 'assistant'; id: string; text: string; at: string; turnId?: string; streaming?: boolean }
+  | {
+      kind: 'turn';
+      id: string;
+      status: 'running' | 'completed' | 'failed' | 'cancelled';
+      at: string;
+      completedAt?: string;
+      toolCalls?: number;
+      usage?: TurnUsage;
+      error?: string;
+      source?: string;
+    }
+  | {
+      kind: 'retry';
+      id: string;
+      turnId: string;
+      attempt: number;
+      maxRetries: number;
+      delayMs: number;
+      error: string;
+      at: string;
+    }
+  | { kind: 'origin'; id: string; source: string; sourceId?: string; at: string }
   | {
       kind: 'tool';
       id: string;
@@ -11,9 +39,12 @@ export type TimelineBlock =
       args: unknown;
       result?: string;
       evidence?: unknown[];
+      status?: 'ok' | 'failed';
+      error?: string;
       at: string;
     }
   | { kind: 'skill'; id: string; name: string; version: string; at: string }
+  | { kind: 'reasoning'; id: string; text: string; turnId?: string; streaming?: boolean; at: string }
   | {
       kind: 'subagent';
       id: string;
@@ -46,8 +77,51 @@ function asString(value: unknown): string {
   return typeof value === 'string' ? value : '';
 }
 
+function asNumber(value: unknown): number | undefined {
+  return typeof value === 'number' && Number.isFinite(value) ? value : undefined;
+}
+
+function usageFrom(value: unknown): TurnUsage | undefined {
+  if (!value || typeof value !== 'object') return undefined;
+  const usage = value as Record<string, unknown>;
+  const result: TurnUsage = {
+    inputTokens: asNumber(usage.inputTokens),
+    cachedInputTokens: asNumber(usage.cachedInputTokens),
+    outputTokens: asNumber(usage.outputTokens),
+    costUsd: asNumber(usage.costUsd),
+  };
+  return Object.values(result).some((item) => item !== undefined) ? result : undefined;
+}
+
+/** Tool payloads only carry a string; surface the structured failure when present. */
+export function toolFailure(result?: string): string | undefined {
+  if (!result) return undefined;
+  try {
+    const parsed = JSON.parse(result) as unknown;
+    if (parsed && typeof parsed === 'object') {
+      const record = parsed as Record<string, unknown>;
+      if (record.success === false) {
+        return asString(record.error) || '工具执行失败';
+      }
+      if (typeof record.error === 'string' && record.error.trim()) {
+        return record.error;
+      }
+    }
+  } catch {
+    // Plain text results are common; fall through to the prefix check.
+  }
+  const text = result.trim();
+  return /^(error|failed|失败)[:：]/i.test(text) ? text.slice(0, 200) : undefined;
+}
+
+export type ContentPart = TimelineBlock;
+
 export class TimelineModel {
   blocks: TimelineBlock[] = [];
+  /** Generic ordered content parts consumed by the renderer registry. */
+  get parts(): ContentPart[] {
+    return this.blocks;
+  }
   todos: TodoItem[] = [];
   pendingQuestion: PendingQuestion | null = null;
   pendingApprovals: PendingApproval[] = [];
@@ -96,16 +170,105 @@ export class TimelineModel {
     const at = event.occurredAt;
 
     switch (event.eventType) {
+      case 'trigger.received': {
+        const source = asString(payload.trigger) || 'event';
+        this.pushBlock(
+          {
+            kind: 'origin',
+            id: event.eventId,
+            source,
+            sourceId: asString(payload.sourceId) || undefined,
+            at,
+          },
+          event.seq,
+        );
+        break;
+      }
       case 'turn.started':
         this.pushBlock({ kind: 'turn', id: asString(payload.turnId) || event.eventId, status: 'running', at }, event.seq);
         break;
       case 'turn.completed': {
         const id = asString(payload.turnId);
         const status = asString(payload.outcome);
-        const block = this.blocks.find((item) => item.kind === 'turn' && item.id === id);
         const mapped = status === 'completed' ? 'completed' : status === 'failed' ? 'failed' : 'cancelled';
-        if (block && block.kind === 'turn') block.status = mapped;
-        else this.pushBlock({ kind: 'turn', id: id || event.eventId, status: mapped, at }, event.seq);
+        const block = this.blocks.find((item) => item.kind === 'turn' && item.id === id);
+        const patch = {
+          status: mapped,
+          completedAt: at,
+          toolCalls: asNumber(payload.toolCalls),
+          usage: usageFrom(payload.usage),
+          error: asString(payload.error) || undefined,
+          source: asString(payload.source) || undefined,
+        } as const;
+        if (block && block.kind === 'turn') Object.assign(block, patch);
+        else this.pushBlock({ kind: 'turn', id: id || event.eventId, at, ...patch }, event.seq);
+        for (const item of this.blocks) {
+          if (item.kind === 'reasoning' && item.turnId === id) item.streaming = false;
+        }
+        break;
+      }
+      case 'turn.retry': {
+        const turnId = asString(payload.turnId);
+        while (this.blocks.length > 0) {
+          const last = this.blocks[this.blocks.length - 1];
+          const isFailedAttemptContent =
+            (last?.kind === 'assistant' || last?.kind === 'reasoning') &&
+            last.turnId === turnId &&
+            last.streaming === true;
+          if (!isFailedAttemptContent) break;
+          this.blocks.pop();
+        }
+        this.pushBlock(
+          {
+            kind: 'retry',
+            id: event.eventId,
+            turnId,
+            attempt: asNumber(payload.attempt) ?? 0,
+            maxRetries: asNumber(payload.maxRetries) ?? 0,
+            delayMs: asNumber(payload.delayMs) ?? 0,
+            error: asString(payload.error) || '模型请求失败',
+            at,
+          },
+          event.seq,
+        );
+        break;
+      }
+      case 'step.thinking': {
+        const turnId = asString(payload.turnId);
+        const text = asString(payload.thinking);
+        if (!text) break;
+        const last = this.blocks[this.blocks.length - 1];
+        if (last?.kind === 'reasoning' && last.turnId === turnId) {
+          last.text += text;
+          last.streaming = true;
+        } else {
+          this.pushBlock(
+            {
+              kind: 'reasoning',
+              id: `thinking-${turnId}`,
+              text,
+              turnId,
+              streaming: true,
+              at,
+            },
+            event.seq,
+          );
+        }
+        break;
+      }
+      case 'step.text': {
+        const turnId = asString(payload.turnId);
+        const text = asString(payload.text);
+        if (!text) break;
+        const last = this.blocks[this.blocks.length - 1];
+        if (last?.kind === 'assistant' && last.streaming && last.turnId === turnId) {
+          last.text += text;
+        } else {
+          this.pushBlock(
+            { kind: 'assistant', id: `stream-${event.eventId}`, text, at, turnId, streaming: true },
+            event.seq,
+          );
+        }
         break;
       }
       case 'message.created': {
@@ -117,7 +280,19 @@ export class TimelineModel {
           this.pushBlock({ kind: 'user', id, text, at }, event.seq);
           if (!this.firstUserText) this.firstUserText = text;
         } else {
-          this.pushBlock({ kind: 'assistant', id, text, at }, event.seq);
+          const turnId = asString(payload.turnId);
+          const streamed = this.blocks.filter(
+            (block) => block.kind === 'assistant' && block.streaming && block.turnId === turnId,
+          );
+          if (streamed.length > 0) {
+            // step.text already produced the chronological text segments;
+            // finalizing them avoids duplicating the full turn text.
+            for (const block of streamed) {
+              if (block.kind === 'assistant') block.streaming = false;
+            }
+          } else {
+            this.pushBlock({ kind: 'assistant', id, text, at, turnId }, event.seq);
+          }
         }
         break;
       }
@@ -134,12 +309,16 @@ export class TimelineModel {
         if (name === 'canvas') break;
         const result = asString(payload.result);
         const evidence = Array.isArray(payload.evidence) ? payload.evidence : undefined;
+        const error = toolFailure(result);
+        const status = error ? 'failed' : 'ok';
         const block = this.blocks.find((item) => item.kind === 'tool' && item.id === id);
         if (block && block.kind === 'tool') {
           block.result = result;
           block.evidence = evidence;
+          block.status = status;
+          block.error = error;
         } else {
-          this.pushBlock({ kind: 'tool', id, name, args: null, result, evidence, at }, event.seq);
+          this.pushBlock({ kind: 'tool', id, name, args: null, result, evidence, status, error, at }, event.seq);
         }
         break;
       }

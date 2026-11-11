@@ -10,6 +10,7 @@ function makeState(): ChatState {
     chatSending: true,
     chatRunId: null,
     chatStream: null,
+    chatThinking: null,
     chatStreamStartedAt: null,
     chatStreamSegments: [],
     toolStreamById: new Map(),
@@ -33,6 +34,43 @@ describe("handleChatEvent runId adoption", () => {
     });
     expect(state.chatRunId).toBe("server-run-1");
     expect(state.chatStream).toBe("hi");
+  });
+
+  it("accumulates thinking deltas and clears them on final", () => {
+    const state = makeState();
+    handleChatEvent(state, {
+      runId: "server-run-1",
+      sessionKey: "agent:ws:a1/s1",
+      state: "thinking",
+      thinking: "先看设备，",
+    });
+    handleChatEvent(state, {
+      runId: "server-run-1",
+      sessionKey: "agent:ws:a1/s1",
+      state: "thinking",
+      thinking: "再看告警。",
+    });
+    expect(state.chatThinking).toBe("先看设备，再看告警。");
+
+    handleChatEvent(state, {
+      runId: "server-run-1",
+      sessionKey: "agent:ws:a1/s1",
+      state: "final",
+      message: { role: "assistant", content: [{ type: "text", text: "done" }] },
+    });
+    expect(state.chatThinking).toBeNull();
+  });
+
+  it("shows the real server error instead of Unknown error", () => {
+    const state = makeState();
+    handleChatEvent(state, {
+      runId: "server-run-1",
+      sessionKey: "agent:ws:a1/s1",
+      state: "error",
+      errorMessage: "HTTP 500: upstream unavailable",
+      source: "system",
+    });
+    expect(state.lastError).toBe("HTTP 500: upstream unavailable");
   });
 
   it("does not overwrite the adopted runId on later events", () => {

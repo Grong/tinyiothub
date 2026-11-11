@@ -94,4 +94,109 @@ describe('TimelineModel', () => {
     const turn = model.blocks.find((block) => block.kind === 'turn');
     expect(turn).toMatchObject({ status: 'completed' });
   });
+  it('keeps the trigger origin and turn execution metrics', () => {
+    const model = new TimelineModel();
+    model.ingestEvent(event(1, 'trigger.received', { trigger: 'schedule', sourceId: 'wake-123456789' }));
+    model.ingestEvent(event(2, 'turn.started', { turnId: 't1' }));
+    model.ingestEvent(event(3, 'tool.called', { toolCallId: 'c1', tool: 'read_device', args: { thingId: 'dev-1' } }));
+    model.ingestEvent(event(4, 'tool.returned', { toolCallId: 'c1', tool: 'read_device', result: '{"online":true}' }));
+    model.ingestEvent(
+      event(5, 'turn.completed', {
+        turnId: 't1',
+        outcome: 'completed',
+        toolCalls: 16,
+        usage: { inputTokens: 76064, cachedInputTokens: 61442, outputTokens: 2973, costUsd: 0 },
+      }),
+    );
+
+    expect(model.blocks.find((block) => block.kind === 'origin')).toMatchObject({
+      source: 'schedule',
+      sourceId: 'wake-123456789',
+    });
+    expect(model.blocks.find((block) => block.kind === 'turn')).toMatchObject({
+      status: 'completed',
+      toolCalls: 16,
+      usage: { inputTokens: 76064, outputTokens: 2973 },
+      completedAt: expect.any(String),
+    });
+  });
+
+  it('marks failed tool results with the structured error', () => {
+    const model = new TimelineModel();
+    model.ingestEvent(event(1, 'tool.called', { toolCallId: 'c1', tool: 'get_skill', args: { skill_name: 'patrol' } }));
+    model.ingestEvent(
+      event(2, 'tool.returned', {
+        toolCallId: 'c1',
+        tool: 'get_skill',
+        result: '{"error":"Skill patrol not found","success":false}',
+      }),
+    );
+    expect(model.blocks.find((block) => block.kind === 'tool')).toMatchObject({
+      status: 'failed',
+      error: 'Skill patrol not found',
+    });
+  });
+
+  it('coalesces step.text deltas and finalizes them with message.created', () => {
+    const model = new TimelineModel();
+    model.ingestEvent(event(1, 'turn.started', { turnId: 't1' }));
+    model.ingestEvent(event(2, 'step.text', { turnId: 't1', text: '先看' }));
+    model.ingestEvent(event(3, 'step.text', { turnId: 't1', text: '设备。' }));
+    let assistant = model.blocks.find((block) => block.kind === 'assistant');
+    expect(assistant).toMatchObject({ text: '先看设备。', streaming: true, turnId: 't1' });
+
+    model.ingestEvent(
+      event(4, 'message.created', { turnId: 't1', role: 'assistant', text: '先看设备。结论如下。' }),
+    );
+    const assistants = model.blocks.filter((block) => block.kind === 'assistant');
+    expect(assistants).toHaveLength(1);
+    assistant = assistants[0];
+    expect(assistant).toMatchObject({
+      text: '先看设备。',
+      streaming: false,
+      turnId: 't1',
+    });
+  });
+  it('rolls back only the failed model attempt and records retry details', () => {
+    const model = new TimelineModel();
+    model.ingestEvent(event(1, 'turn.started', { turnId: 't1' }));
+    model.ingestEvent(event(2, 'tool.called', { toolCallId: 'c1', tool: 'read_device', args: {} }));
+    model.ingestEvent(event(3, 'tool.returned', { toolCallId: 'c1', tool: 'read_device', result: 'online' }));
+    model.ingestEvent(event(4, 'step.text', { turnId: 't1', text: '失效的部分正文' }));
+    model.ingestEvent(event(5, 'step.thinking', { turnId: 't1', thinking: '失效的思考' }));
+    model.ingestEvent(event(6, 'turn.retry', {
+      turnId: 't1',
+      attempt: 1,
+      maxRetries: 3,
+      delayMs: 1000,
+      error: 'HTTP 503: unavailable',
+    }));
+
+    expect(model.blocks.find((block) => block.kind === 'tool')).toMatchObject({ id: 'c1', result: 'online' });
+    expect(model.blocks.some((block) => block.kind === 'assistant' || block.kind === 'reasoning')).toBe(false);
+    expect(model.blocks.find((block) => block.kind === 'retry')).toMatchObject({
+      turnId: 't1',
+      attempt: 1,
+      maxRetries: 3,
+      delayMs: 1000,
+      error: 'HTTP 503: unavailable',
+    });
+  });
+
+  it('keeps cancellation reason and source after a history reload', () => {
+    const model = new TimelineModel();
+    model.ingestEvent(event(1, 'turn.started', { turnId: 't1' }));
+    model.ingestEvent(event(2, 'turn.completed', {
+      turnId: 't1',
+      outcome: 'cancelled',
+      error: '用户主动停止本轮执行',
+      source: 'user',
+    }));
+    expect(model.blocks.find((block) => block.kind === 'turn')).toMatchObject({
+      status: 'cancelled',
+      error: '用户主动停止本轮执行',
+      source: 'user',
+    });
+  });
+
 });
