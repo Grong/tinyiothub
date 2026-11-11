@@ -20,10 +20,43 @@ pub trait TurnObserver: Send + Sync {
     async fn on_turn_event(&self, event: &TurnEvent);
 }
 
+#[derive(Debug, Clone)]
+pub struct TurnCancellation {
+    pub token: CancellationToken,
+    pub reason: String,
+    pub source: String,
+}
+
+impl TurnCancellation {
+    pub fn user(token: CancellationToken) -> Self {
+        Self {
+            token,
+            reason: "用户主动停止本轮执行".into(),
+            source: "user".into(),
+        }
+    }
+
+    pub fn schedule(token: CancellationToken) -> Self {
+        Self {
+            token,
+            reason: "调度器停止本轮执行".into(),
+            source: "schedule".into(),
+        }
+    }
+
+    pub fn system(token: CancellationToken, reason: impl Into<String>) -> Self {
+        Self {
+            token,
+            reason: reason.into(),
+            source: "system".into(),
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TurnOutcome {
     Completed { text: String, tool_calls: u32 },
-    Cancelled,
+    Cancelled { reason: String, source: String },
     Failed { error: String },
 }
 
@@ -81,7 +114,7 @@ impl SessionRunner {
         context: &TurnContext,
         message: &str,
         observer: Option<Arc<dyn TurnObserver>>,
-        cancel: Option<CancellationToken>,
+        cancel: Option<TurnCancellation>,
     ) -> TurnOutcome {
         let _guard = self.contexts.set(context.clone());
         self.emit(context, "turn.started", json!({ "turnId": &context.turn_id }))
@@ -95,9 +128,38 @@ impl SessionRunner {
             async move {
                 let mut tool_calls = 0u32;
                 let mut usage = UsageTotals::default();
+                let mut text_buf = String::new();
+                let mut last_text_flush = tokio::time::Instant::now();
                 while let Some(event) = event_rx.recv().await {
                     match &event {
+                        TurnEvent::Chunk { delta } => {
+                            text_buf.push_str(delta);
+                            let due = text_buf.chars().count() >= 200
+                                || last_text_flush.elapsed() >= std::time::Duration::from_millis(250);
+                            if due && !text_buf.is_empty() {
+                                let text = std::mem::take(&mut text_buf);
+                                let _ = events
+                                    .emit(session_event(
+                                        &context,
+                                        "step.text",
+                                        json!({ "turnId": &context.turn_id, "text": text }),
+                                    ))
+                                    .await;
+                                last_text_flush = tokio::time::Instant::now();
+                            }
+                        }
                         TurnEvent::ToolCall { id, name, args } => {
+                            if !text_buf.is_empty() {
+                                let text = std::mem::take(&mut text_buf);
+                                let _ = events
+                                    .emit(session_event(
+                                        &context,
+                                        "step.text",
+                                        json!({ "turnId": &context.turn_id, "text": text }),
+                                    ))
+                                    .await;
+                                last_text_flush = tokio::time::Instant::now();
+                            }
                             tool_calls += 1;
                             let _ = events
                                 .emit(session_event(
@@ -113,6 +175,17 @@ impl SessionRunner {
                             output,
                             attachments,
                         } => {
+                            if !text_buf.is_empty() {
+                                let text = std::mem::take(&mut text_buf);
+                                let _ = events
+                                    .emit(session_event(
+                                        &context,
+                                        "step.text",
+                                        json!({ "turnId": &context.turn_id, "text": text }),
+                                    ))
+                                    .await;
+                                last_text_flush = tokio::time::Instant::now();
+                            }
                             let evidence: Vec<tinyiothub_core::media::EvidenceRef> =
                                 attachments.iter().map(Into::into).collect();
                             let _ = events
@@ -124,6 +197,33 @@ impl SessionRunner {
                                         "tool": name,
                                         "result": truncate(output, 2000),
                                         "evidence": evidence
+                                    }),
+                                ))
+                                .await;
+                        }
+                        TurnEvent::Thinking { delta } => {
+                            let _ = events
+                                .emit(session_event(
+                                    &context,
+                                    "step.thinking",
+                                    json!({ "turnId": &context.turn_id, "thinking": delta }),
+                                ))
+                                .await;
+                        }
+                        TurnEvent::Retry(notice) => {
+                            // Buffered text belongs to the failed model attempt;
+                            // persisted chunks are rolled back by turn.retry in the UI.
+                            text_buf.clear();
+                            let _ = events
+                                .emit(session_event(
+                                    &context,
+                                    "turn.retry",
+                                    json!({
+                                        "turnId": &context.turn_id,
+                                        "attempt": notice.attempt,
+                                        "maxRetries": notice.max_retries,
+                                        "delayMs": notice.delay_ms,
+                                        "error": notice.error
                                     }),
                                 ))
                                 .await;
@@ -140,11 +240,21 @@ impl SessionRunner {
                         observer.on_turn_event(&event).await;
                     }
                 }
+                if !text_buf.is_empty() {
+                    let _ = events
+                        .emit(session_event(
+                            &context,
+                            "step.text",
+                            json!({ "turnId": &context.turn_id, "text": std::mem::take(&mut text_buf) }),
+                        ))
+                        .await;
+                }
                 (tool_calls, usage.to_json())
             }
         });
 
-        let result = agent.turn_streamed(message, event_tx, cancel.clone()).await;
+        let cancel_token = cancel.as_ref().map(|cancellation| cancellation.token.clone());
+        let result = agent.turn_streamed(message, event_tx, cancel_token).await;
         let (tool_calls, usage) = forward.await.unwrap_or((0, serde_json::Value::Null));
 
         match result {
@@ -154,6 +264,7 @@ impl SessionRunner {
                     "message.created",
                     json!({
                         "messageId": uuid::Uuid::new_v4().to_string(),
+                        "turnId": &context.turn_id,
                         "role": "assistant",
                         "text": &text
                     }),
@@ -174,20 +285,27 @@ impl SessionRunner {
                 TurnOutcome::Completed { text, tool_calls }
             }
             Err(error) => {
-                let cancelled = cancel.as_ref().is_some_and(|token| token.is_cancelled());
+                let cancellation = cancel.as_ref().filter(|cancellation| cancellation.token.is_cancelled());
                 let error = error.to_string();
                 let mut payload = json!({
                     "turnId": &context.turn_id,
-                    "outcome": if cancelled { "cancelled" } else { "failed" },
+                    "outcome": if cancellation.is_some() { "cancelled" } else { "failed" },
                     "toolCalls": tool_calls,
                     "usage": &usage
                 });
-                if !cancelled {
+                if let Some(cancellation) = cancellation {
+                    payload["error"] = json!(&cancellation.reason);
+                    payload["source"] = json!(&cancellation.source);
+                } else {
                     payload["error"] = json!(&error);
+                    payload["source"] = json!("system");
                 }
                 self.emit(context, "turn.completed", payload).await;
-                if cancelled {
-                    TurnOutcome::Cancelled
+                if let Some(cancellation) = cancellation {
+                    TurnOutcome::Cancelled {
+                        reason: cancellation.reason.clone(),
+                        source: cancellation.source.clone(),
+                    }
                 } else {
                     TurnOutcome::Failed { error }
                 }
@@ -377,13 +495,20 @@ mod tests {
             types,
             vec![
                 "turn.started",
+                "step.text",
                 "tool.called",
                 "tool.returned",
                 "message.created",
                 "turn.completed"
             ]
         );
-        assert_eq!(events[4].payload_json["outcome"], "completed");
+        assert_eq!(events[1].payload_json["text"], "hi");
+        assert!(
+            events[1].payload_json["turnId"]
+                .as_str()
+                .is_some_and(|id| !id.is_empty())
+        );
+        assert_eq!(events[5].payload_json["outcome"], "completed");
         assert_eq!(observer.events.lock().await.len(), 3);
         assert!(contexts.get("agent_main").is_none(), "guard clears turn context");
     }
@@ -448,14 +573,63 @@ mod tests {
         cancel.cancel();
 
         let outcome = runner
-            .run_turn(&ScriptedLoop::failed("aborted"), &ctx(), "hello", None, Some(cancel))
+            .run_turn(
+                &ScriptedLoop::failed("aborted"),
+                &ctx(),
+                "hello",
+                None,
+                Some(TurnCancellation::user(cancel)),
+            )
             .await;
 
-        assert_eq!(outcome, TurnOutcome::Cancelled);
+        assert_eq!(
+            outcome,
+            TurnOutcome::Cancelled {
+                reason: "用户主动停止本轮执行".into(),
+                source: "user".into(),
+            }
+        );
         let events = sink.events.lock().await;
         let payload = completed_payload(&events);
         assert_eq!(payload["outcome"], "cancelled");
-        assert!(payload.get("error").is_none(), "cancelled turn omits error");
+        assert_eq!(payload["error"], "用户主动停止本轮执行");
+        assert_eq!(payload["source"], "user");
+    }
+
+    #[tokio::test]
+    async fn retry_events_are_persisted_with_attempt_and_delay() {
+        let (runner, sink) = runner_and_sink();
+        let notice = tinyiothub_agent::port::events::RetryNotice {
+            attempt: 2,
+            max_retries: 3,
+            delay_ms: 2000,
+            error: "HTTP 503: unavailable".into(),
+        };
+        let outcome = runner
+            .run_turn(
+                &ScriptedLoop::completed(vec![TurnEvent::Retry(notice)]),
+                &ctx(),
+                "hello",
+                None,
+                None,
+            )
+            .await;
+        assert!(matches!(outcome, TurnOutcome::Completed { .. }));
+        let events = sink.events.lock().await;
+        let retry = events
+            .iter()
+            .find(|event| event.event_type == "turn.retry")
+            .expect("turn.retry emitted");
+        assert_eq!(
+            retry.payload_json,
+            json!({
+                "turnId": retry.payload_json["turnId"],
+                "attempt": 2,
+                "maxRetries": 3,
+                "delayMs": 2000,
+                "error": "HTTP 503: unavailable"
+            })
+        );
     }
 
     #[tokio::test]
@@ -496,5 +670,6 @@ mod tests {
         let payload = completed_payload(&events);
         assert_eq!(payload["outcome"], "failed");
         assert!(payload["error"].as_str().is_some_and(|error| error.contains("boom")));
+        assert_eq!(payload["source"], "system");
     }
 }

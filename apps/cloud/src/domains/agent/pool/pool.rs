@@ -94,13 +94,15 @@ pub struct Agent {
 /// handles and no method signature mentions them. Callers (the composition
 /// layer) resolve per-request data — agent config, tool list, memory
 /// service — and inject the results into the pool's pure methods.
+pub type ChatHandles = Arc<tokio::sync::Mutex<std::collections::HashMap<String, tokio_util::sync::CancellationToken>>>;
+
 pub struct AgentPool {
     pub(crate) agents: Arc<DashMap<String, PoolEntry>>,
     pub(crate) shared_memory: Arc<dyn Memory>,
     pub(crate) observer: Arc<dyn Observer>,
     #[allow(dead_code)]
     pub(crate) agent_settings: tinyiothub_core::config::AgentSettings,
-    pub chat_handles: Arc<tokio::sync::Mutex<std::collections::HashMap<String, tokio::task::JoinHandle<()>>>>,
+    pub chat_handles: ChatHandles,
     pub trust_configs: DashMap<String, tinyiothub_core::heartbeat::TrustConfig>,
     pub event_publisher: tokio::sync::RwLock<Option<Arc<crate::domains::agent::event::bus::AiEventPublisher>>>,
     /// Builds a fresh model provider per agent (injected by the composition

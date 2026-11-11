@@ -21,7 +21,7 @@ use crate::domains::agent::pool::AgentPool;
 use crate::domains::agent::session::chat::service::ensure_agent;
 use crate::domains::agent::session::context::TurnContext;
 use crate::domains::agent::session::events::{SessionEventSink, session_event, session_started_payload};
-use crate::domains::agent::session::runner::{SessionRunner, TurnOutcome};
+use crate::domains::agent::session::runner::{SessionRunner, TurnCancellation, TurnOutcome};
 use crate::domains::agent::session::todos::TodoStore;
 use crate::domains::agent::session::types::{PermissionMode, Todo, TodoStatus};
 
@@ -501,7 +501,13 @@ impl WakeRunner {
                 _ = cancel.cancelled() => None,
                 outcome = self
                     .runner
-                    .run_turn(&*guard, &context, message, None, Some(cancel.clone())) => Some(outcome),
+                    .run_turn(
+                        &*guard,
+                        &context,
+                        message,
+                        None,
+                        Some(TurnCancellation::schedule(cancel.clone())),
+                    ) => Some(outcome),
             };
             drop(guard);
             turn
@@ -565,7 +571,7 @@ fn outcome_with_todos(outcome: TurnOutcome, todos: &[Todo]) -> WakeOutcome {
             WakeOutcome::Partial
         }
         TurnOutcome::Completed { .. } => WakeOutcome::Completed,
-        TurnOutcome::Cancelled => WakeOutcome::Cancelled,
+        TurnOutcome::Cancelled { .. } => WakeOutcome::Cancelled,
         TurnOutcome::Failed { error } => WakeOutcome::Failed { error },
     }
 }

@@ -18,4 +18,4 @@ mod chat;
 mod pool;
 
 pub use chat::{StreamingRunResult, StreamingToolCall, heartbeat_agent_id};
-pub use pool::{Agent, AgentPool, load_workspace_skills};
+pub use pool::{Agent, AgentPool, ChatHandles, load_workspace_skills};

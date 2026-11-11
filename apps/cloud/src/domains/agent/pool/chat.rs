@@ -53,7 +53,7 @@ impl AgentPool {
         if let Some(rid) = run_id {
             let mut handles = self.chat_handles.lock().await;
             match handles.remove(rid) {
-                Some(handle) => handle.abort(),
+                Some(cancellation) => cancellation.cancel(),
                 // An unknown run_id must not look like a successful abort —
                 // the caller's run may still be streaming.
                 None => {
@@ -202,6 +202,18 @@ mod tests {
         pool.chat_abort("agent_main", "agent:ws1:agent_main/s1", None, "")
             .await
             .unwrap();
+    }
+
+    #[tokio::test]
+    async fn chat_abort_uses_graceful_cancellation() {
+        let pool = test_pool();
+        let cancel = tokio_util::sync::CancellationToken::new();
+        pool.chat_handles.lock().await.insert("run-1".into(), cancel.clone());
+        pool.chat_abort("agent_main", "agent:ws1:agent_main/s1", Some("run-1"), "ws1")
+            .await
+            .expect("abort known run");
+        assert!(cancel.is_cancelled());
+        assert!(pool.chat_handles.lock().await.is_empty());
     }
 
     #[tokio::test]

@@ -121,10 +121,10 @@ impl PoolSubagentRunner {
                 evidence_refs: vec![],
                 recommended_actions: vec![],
             }),
-            TurnOutcome::Cancelled => Ok(SubagentReport {
+            TurnOutcome::Cancelled { reason, .. } => Ok(SubagentReport {
                 subagent_id: request.subagent_id,
                 status: SubagentStatus::Cancelled,
-                summary: "subagent cancelled".to_string(),
+                summary: reason,
                 tool_calls: 0,
                 evidence_refs: vec![],
                 recommended_actions: vec![],

@@ -6,6 +6,7 @@
 use std::sync::Arc;
 
 use tokio::sync::mpsc;
+use tokio_util::sync::CancellationToken;
 
 use crate::domains::agent::pool::AgentPool;
 use crate::domains::agent::session::chat_types::{ChatError, ChatEvent};
@@ -211,7 +212,7 @@ pub async fn send_message(
     prompt: crate::domains::agent::prompt::assistant::PromptPackage,
     run_id: &str,
     session_key: &str,
-    chat_handles: &Arc<tokio::sync::Mutex<std::collections::HashMap<String, tokio::task::JoinHandle<()>>>>,
+    chat_handles: &crate::domains::agent::pool::ChatHandles,
     memory_service: Option<std::sync::Arc<tinyiothub_memory::service::MemoryService>>,
     event_publisher: Option<std::sync::Arc<crate::domains::agent::event::bus::AiEventPublisher>>,
     enable_reflection: bool,
@@ -263,7 +264,9 @@ pub async fn send_message(
 
     let run_id_for_handle = run_id.clone();
     let run_id_for_remove = run_id.clone();
-    let handle = tokio::spawn(async move {
+    let cancellation = CancellationToken::new();
+    let cancellation_for_turn = cancellation.clone();
+    tokio::spawn(async move {
         // Probe before ensure_session inserts the row, so we know whether this
         // turn opened the session.
         let is_new_session =
@@ -319,6 +322,7 @@ pub async fn send_message(
                         run_id: run_id.clone(),
                         session_key: session_key.clone(),
                         error: error.to_string(),
+                        source: "system".into(),
                     })
                     .await;
                 chat_handles_inner.lock().await.remove(&run_id_for_remove);
@@ -403,7 +407,15 @@ pub async fn send_message(
         });
         let outcome = session_runtime
             .runner
-            .run_turn(&*ag, &context, &turn_message, Some(observer), None)
+            .run_turn(
+                &*ag,
+                &context,
+                &turn_message,
+                Some(observer),
+                Some(crate::domains::agent::session::runner::TurnCancellation::user(
+                    cancellation_for_turn,
+                )),
+            )
             .await;
         drop(ag);
 
@@ -421,12 +433,13 @@ pub async fn send_message(
                     .await;
                 Some(text)
             }
-            crate::domains::agent::session::TurnOutcome::Cancelled => {
+            crate::domains::agent::session::TurnOutcome::Cancelled { reason, source } => {
                 let _ = tx
                     .send(ChatEvent::Error {
                         run_id: run_id.clone(),
                         session_key: session_key.clone(),
-                        error: "Agent execution cancelled".to_string(),
+                        error: reason,
+                        source,
                     })
                     .await;
                 None
@@ -437,6 +450,7 @@ pub async fn send_message(
                         run_id: run_id.clone(),
                         session_key: session_key.clone(),
                         error,
+                        source: "system".into(),
                     })
                     .await;
                 None
@@ -498,7 +512,7 @@ pub async fn send_message(
         chat_handles_inner.lock().await.remove(&run_id_for_remove);
     });
 
-    chat_handles.lock().await.insert(run_id_for_handle, handle);
+    chat_handles.lock().await.insert(run_id_for_handle, cancellation);
 
     Ok(rx)
 }
@@ -508,7 +522,6 @@ mod tests {
     use super::*;
     use tinyiothub_agent::port::attribution::{Attributable, ProviderKind, Role};
     use tinyiothub_agent::port::provider::{ChatRequest, ChatResponse, ModelProvider};
-    use tokio_util::sync::CancellationToken;
 
     /// Builds without touching provider config (the minimax factory requires a
     /// `[minimax]` config section at build time).

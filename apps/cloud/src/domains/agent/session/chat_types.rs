@@ -92,7 +92,9 @@ pub enum ChatEvent {
         run_id: String,
         #[serde(rename = "sessionKey")]
         session_key: String,
+        #[serde(rename = "errorMessage")]
         error: String,
+        source: String,
     },
 }
 
@@ -170,5 +172,20 @@ mod tests {
             ChatError::RuntimeError(msg) => assert!(msg.contains("test error")),
             _ => panic!("Expected RuntimeError variant"),
         }
+    }
+
+    #[test]
+    fn chat_error_uses_frontend_wire_fields() {
+        let payload = serde_json::to_value(ChatEvent::Error {
+            run_id: "run-1".into(),
+            session_key: "agent:ws:a/s1".into(),
+            error: "HTTP 503: unavailable".into(),
+            source: "system".into(),
+        })
+        .expect("serialize error");
+        assert_eq!(payload["state"], "error");
+        assert_eq!(payload["errorMessage"], "HTTP 503: unavailable");
+        assert_eq!(payload["source"], "system");
+        assert!(payload.get("error").is_none());
     }
 }
