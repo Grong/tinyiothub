@@ -170,10 +170,11 @@ describe('view-chat codex layout', () => {
     hoisted.updateSessionPermission.mockResolvedValue(undefined);
     const el = document.createElement('view-chat') as ChatView;
     document.body.appendChild(el);
-    await vi.waitFor(() => expect(el.querySelector('.permission-mode')).toBeTruthy());
-    const select = el.querySelector('.permission-mode') as HTMLSelectElement;
-    select.value = 'read_only';
-    select.dispatchEvent(new Event('change'));
+    await vi.waitFor(() =>
+      expect(el.querySelector('.permission-mode button[data-mode="ask"]')).toBeTruthy(),
+    );
+    const readOnly = el.querySelector('.permission-mode button[data-mode="read_only"]') as HTMLButtonElement;
+    readOnly.click();
     await el.updateComplete;
     expect(hoisted.updateSessionPermission).toHaveBeenCalledWith('agent:ws-1:default/s1', 'read_only');
   });
@@ -194,12 +195,13 @@ describe('view-chat codex layout', () => {
     const el = document.createElement('view-chat') as ChatView;
     document.body.appendChild(el);
     await vi.waitFor(() =>
-      expect((el.querySelector('.permission-mode') as HTMLSelectElement)?.value).toBe('ask'),
+      expect(
+        el.querySelector('.permission-mode button[data-mode="ask"]')?.getAttribute('aria-pressed'),
+      ).toBe('true'),
     );
 
-    const select = el.querySelector('.permission-mode') as HTMLSelectElement;
-    select.value = 'read_only';
-    select.dispatchEvent(new Event('change'));
+    const readOnly = el.querySelector('.permission-mode button[data-mode="read_only"]') as HTMLButtonElement;
+    readOnly.click();
     await el.updateComplete;
     expect(hoisted.updateSessionPermission).toHaveBeenCalledWith('agent:ws-1:default/a', 'read_only');
 
@@ -211,15 +213,63 @@ describe('view-chat codex layout', () => {
       }),
     );
     await vi.waitFor(() =>
-      expect((el.querySelector('.permission-mode') as HTMLSelectElement).value).toBe('full_access'),
+      expect(
+        el.querySelector('.permission-mode button[data-mode="full_access"]')?.getAttribute('aria-pressed'),
+      ).toBe('true'),
     );
 
     rejectPut(new Error('保存权限模式失败'));
     await Promise.resolve();
     await el.updateComplete;
 
-    expect((el.querySelector('.permission-mode') as HTMLSelectElement).value).toBe('full_access');
+    expect(
+      el.querySelector('.permission-mode button[data-mode="full_access"]')?.getAttribute('aria-pressed'),
+    ).toBe('true');
     expect(el.querySelector('.timeline-notice')).toBeNull();
+  });
+
+  it('shows the Night Shift empty state and composer controls for a fresh session', async () => {
+    hoisted.fetchSessionEvents.mockResolvedValue({ events: [], highWatermark: 0 });
+    const el = document.createElement('view-chat') as ChatView;
+    document.body.appendChild(el);
+    await vi.waitFor(() => expect(el.querySelector('.assistant-empty')).toBeTruthy());
+    expect(el.textContent).toContain('告诉我这班岗要看什么');
+    expect(el.querySelectorAll('.empty-chip')).toHaveLength(4);
+    expect(el.querySelectorAll('.permission-mode button')).toHaveLength(3);
+    expect(el.querySelector('.composer-send')).toBeTruthy();
+  });
+
+  it('offers a direct entry into another live session', async () => {
+    hoisted.fetchSessionEvents.mockResolvedValue({ events: [], highWatermark: 0 });
+    const el = document.createElement('view-chat') as ChatView;
+    document.body.appendChild(el);
+    await vi.waitFor(() => expect(el.querySelector('session-drawer')).toBeTruthy());
+    el.querySelector('session-drawer')!.dispatchEvent(
+      new CustomEvent('sessions-updated', {
+        detail: {
+          active: 1,
+          sessions: [
+            {
+              sessionKey: 'agent:ws-1:default/live',
+              kind: 'scheduled',
+              status: 'active',
+              label: '巡检 · 当前',
+              updatedAt: 2,
+            },
+          ],
+        },
+        bubbles: true,
+        composed: true,
+      }),
+    );
+    await el.updateComplete;
+    const live = el.querySelector('.assistant-live') as HTMLButtonElement;
+    expect(live).toBeTruthy();
+    expect(live.textContent).toContain('正在运行');
+    live.click();
+    await vi.waitFor(() =>
+      expect(hoisted.connectSessionEvents.mock.calls.some((call) => call[0].sessionKey === 'agent:ws-1:default/live')).toBe(true),
+    );
   });
 
   it('hydrates a2ui history even when session events exist', async () => {

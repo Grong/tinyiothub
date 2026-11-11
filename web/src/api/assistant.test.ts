@@ -53,7 +53,7 @@ describe('assistant api', () => {
       result: { sessions: [{ sessionKey: 'agent:ws-1:default/a', kind: 'chat', status: 'active', label: null }] },
     });
     const sessions = await listChatSessions('default');
-    expect(hoisted.apiGet).toHaveBeenCalledWith('/chat/sessions', { agent_id: 'default', limit: 50 });
+    expect(hoisted.apiGet).toHaveBeenCalledWith('/chat/sessions', { limit: 100 });
     expect(sessions).toHaveLength(1);
     expect(sessions[0].sessionKey).toBe('agent:ws-1:default/a');
   });

@@ -8,7 +8,7 @@ use std::time::Duration;
 use async_stream::stream;
 use axum::Json;
 use axum::extract::{Path, Query, State};
-use axum::http::StatusCode;
+use axum::http::{HeaderValue, StatusCode, header};
 use axum::response::sse::{Event, KeepAlive, Sse};
 use axum::response::{IntoResponse, Response};
 use serde::Deserialize;
@@ -144,11 +144,19 @@ pub async fn stream_events(
                     tracing::warn!(%error, %session_key, "session event tail failed");
                 }
             }
-            tokio::time::sleep(Duration::from_millis(500)).await;
+            tokio::time::sleep(Duration::from_millis(200)).await;
         }
     };
 
-    Sse::new(event_stream).keep_alive(KeepAlive::default()).into_response()
+    let mut response = Sse::new(event_stream).keep_alive(KeepAlive::default()).into_response();
+    response
+        .headers_mut()
+        .insert(header::CACHE_CONTROL, HeaderValue::from_static("no-cache"));
+    response.headers_mut().insert(
+        axum::http::HeaderName::from_static("x-accel-buffering"),
+        HeaderValue::from_static("no"),
+    );
+    response
 }
 
 pub async fn todos(State(state): State<AgentState>, claims: Claims, Path(session_key): Path<String>) -> Response {

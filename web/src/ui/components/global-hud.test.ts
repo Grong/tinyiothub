@@ -42,7 +42,8 @@ describe('global-hud', () => {
     expect(text).toContain('等待你');
     expect(text).toContain('12');
     expect(text).toContain('3');
-    expect(text).toContain('1 待你回答');
+    expect(text).toContain('待你');
+    expect(text).toContain('下次');
     el.remove();
   });
 

@@ -10,31 +10,46 @@ export class QuestionCard extends LitElement {
       display: block;
       width: 100%;
       max-width: 760px;
-      margin: 0 auto 10px;
+      margin: 0 auto 14px;
     }
     .card {
-      border: 1px solid var(--accent);
+      padding: 13px 14px;
+      border: 1px solid var(--border);
       border-radius: var(--radius-md);
       background: var(--card);
-      padding: 12px;
     }
     .head {
-      font-size: 12px;
+      display: flex;
+      align-items: center;
+      gap: 7px;
+      margin-bottom: 9px;
       color: var(--accent);
-      margin-bottom: 8px;
+      font-family: var(--mono);
+      font-size: 9.5px;
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
+    }
+    .head::before {
+      content: "";
+      width: 5px;
+      height: 5px;
+      background: var(--accent);
     }
     .question {
       margin-bottom: 12px;
     }
     .question__header {
-      font-size: 11px;
-      color: var(--muted);
       margin-bottom: 2px;
-      letter-spacing: 0.02em;
+      color: var(--muted);
+      font-family: var(--mono);
+      font-size: 9.5px;
+      letter-spacing: 0.04em;
     }
     .question__title {
-      font-size: 13.5px;
-      margin-bottom: 6px;
+      margin-bottom: 7px;
+      color: var(--text);
+      font-size: 13px;
+      line-height: 1.55;
     }
     .options {
       display: flex;
@@ -42,21 +57,26 @@ export class QuestionCard extends LitElement {
       gap: 6px;
     }
     .question-option {
-      border: 1px solid var(--border);
-      background: var(--panel-strong);
-      color: var(--text);
-      border-radius: 999px;
       padding: 6px 12px;
+      border: 1px solid var(--border);
+      border-radius: var(--radius-full);
+      background: transparent;
+      color: var(--text);
       cursor: pointer;
-      font-size: 12.5px;
+      font-size: 12px;
+    }
+    .question-option:hover {
+      border-color: var(--asst-hairline-strong, #3a4047);
+      color: var(--asst-ink, #e9e6df);
     }
     .question-option[aria-pressed='true'] {
       border-color: var(--accent);
-      color: var(--accent);
+      background: var(--accent-subtle);
+      color: var(--text);
     }
     .question-option__desc {
       display: block;
-      font-size: 11px;
+      font-size: 10.5px;
       color: var(--muted);
     }
     .footer {
@@ -64,20 +84,22 @@ export class QuestionCard extends LitElement {
       justify-content: flex-end;
     }
     .question-submit {
-      background: var(--accent);
-      color: #fff;
+      padding: 5px 13px;
       border: 0;
-      border-radius: var(--radius-sm);
-      padding: 6px 14px;
+      border-radius: 6px;
+      background: var(--accent-gradient);
+      color: var(--accent-foreground);
       cursor: pointer;
+      font-family: var(--mono);
+      font-size: 10.5px;
     }
     .question-submit:disabled {
-      opacity: 0.5;
+      opacity: 0.45;
       cursor: default;
     }
     .error {
-      color: var(--danger, #ef4444);
-      font-size: 12px;
+      color: var(--danger);
+      font-size: 11px;
     }
   `;
 

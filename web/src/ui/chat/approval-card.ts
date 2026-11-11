@@ -6,18 +6,92 @@ import type { PendingApproval } from './timeline-model.js';
 @customElement('approval-card')
 export class ApprovalCard extends LitElement {
   static styles = css`
-    :host { display: block; width: 100%; max-width: 760px; margin: 0 auto 10px; }
-    .card { border: 1px solid var(--warn, #f59e0b); border-radius: var(--radius-md); background: var(--card); padding: 12px; }
-    .head { font-size: 12px; color: var(--warn, #f59e0b); margin-bottom: 6px; }
-    .tool { font-family: var(--mono); font-size: 12.5px; color: var(--text); }
-    .summary { margin-top: 6px; font-size: 12px; color: var(--muted); max-height: 120px; overflow: auto; white-space: pre-wrap; }
-    .actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 10px; }
-    .approval-approve, .approval-deny { border-radius: var(--radius-sm); padding: 6px 14px; cursor: pointer; font-size: 12.5px; }
-    .approval-approve { background: var(--accent); color: #fff; border: 0; }
-    .approval-deny { background: transparent; color: var(--text); border: 1px solid var(--border); }
-    button:disabled { opacity: 0.5; cursor: default; }
-    .done { font-size: 12px; color: var(--muted); }
-    .error { color: var(--danger, #ef4444); font-size: 12px; margin-top: 6px; }
+    :host {
+      display: block;
+      width: 100%;
+      max-width: 760px;
+      margin: 0 auto 14px;
+    }
+    .card {
+      padding: 13px 14px;
+      border: 1px solid var(--border);
+      border-radius: var(--radius-md);
+      background: var(--card);
+    }
+    .head {
+      display: flex;
+      align-items: center;
+      gap: 7px;
+      margin-bottom: 7px;
+      color: var(--warn);
+      font-family: var(--mono);
+      font-size: 9.5px;
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
+    }
+    .head::before {
+      content: "";
+      width: 5px;
+      height: 5px;
+      background: var(--warn);
+    }
+    .tool {
+      font-family: var(--mono);
+      font-size: 11.5px;
+      color: var(--text);
+    }
+    .summary {
+      margin-top: 7px;
+      max-height: 132px;
+      overflow: auto;
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.6;
+      white-space: pre-wrap;
+    }
+    .actions {
+      display: flex;
+      justify-content: flex-end;
+      gap: 7px;
+      margin-top: 11px;
+    }
+    .approval-approve,
+    .approval-deny {
+      padding: 5px 13px;
+      border-radius: 6px;
+      cursor: pointer;
+      font-family: var(--mono);
+      font-size: 10.5px;
+      letter-spacing: 0.03em;
+    }
+    .approval-approve {
+      border: 0;
+      background: var(--accent-gradient);
+      color: var(--accent-foreground);
+    }
+    .approval-deny {
+      border: 1px solid var(--border);
+      background: transparent;
+      color: var(--muted);
+    }
+    .approval-deny:hover {
+      border-color: var(--asst-hairline-strong, #3a4047);
+      color: var(--asst-ink, #e9e6df);
+    }
+    button:disabled {
+      opacity: 0.45;
+      cursor: default;
+    }
+    .done {
+      color: var(--ok);
+      font-family: var(--mono);
+      font-size: 10px;
+    }
+    .error {
+      margin-top: 6px;
+      color: var(--danger);
+      font-size: 11px;
+    }
   `;
 
   @property({ attribute: false }) sessionKey = '';

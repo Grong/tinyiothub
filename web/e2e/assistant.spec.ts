@@ -17,21 +17,26 @@ test('assistant workbench renders drawer, timeline, hud and composer', async ({ 
 
   // app.ts routes on pathname, so the chat route is `/chat`.
   await page.goto('/chat');
-  await expect(page.locator('view-chat session-drawer')).toBeVisible();
+  await expect(page.locator('view-chat .assistant-topbar')).toBeVisible();
   await expect(page.locator('view-chat global-hud')).toBeVisible();
-  await expect(page.locator('view-chat .chat-input')).toBeVisible();
-  await expect(page.locator('view-chat .codex-thread')).toBeVisible();
-  // Fixture-backed content proves the assistant projections were consumed.
-  await expect(page.locator('view-chat session-drawer')).toContainText('巡检');
-  await expect(page.locator('view-chat global-hud')).toContainText('空闲');
+  await expect(page.locator('view-chat .composer-input')).toBeVisible();
+  await expect(page.locator('view-chat .assistant-thread')).toBeVisible();
+  await expect(page.locator('view-chat global-hud')).toContainText('待命');
+  // The session list is a drawer: closed by default, opened from the top bar.
+  await page.locator('view-chat .assistant-topbar .icon-button').click();
+  await expect(page.locator('view-chat session-drawer')).toBeVisible();
+  await expect(page.locator('view-chat session-drawer')).toContainText('巡检 · 当前');
+  await expect(page.locator('view-chat session-drawer')).toContainText('运行中');
+  await page.keyboard.press('Escape');
+  await expect(page.locator('view-chat session-drawer')).toBeHidden();
   expect(consoleErrors).toEqual([]);
 });
 
 test('opens the assistant from a canonical #/assistant deep link', async ({ page }) => {
   await page.goto('/#/assistant');
-  await expect(page.locator('view-chat session-drawer')).toBeVisible();
+  await expect(page.locator('view-chat .assistant-topbar')).toBeVisible();
   await expect(page.locator('view-chat global-hud')).toBeVisible();
-  await expect(page.locator('view-chat .chat-input')).toBeVisible();
+  await expect(page.locator('view-chat .composer-input')).toBeVisible();
 });
 
 test('redirects legacy Runtime and Harness deep links to the assistant', async ({ page }) => {

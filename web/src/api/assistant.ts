@@ -108,10 +108,12 @@ async function rawJson<T>(response: Response, message: string): Promise<T> {
   return (await response.json()) as T;
 }
 
-export async function listChatSessions(agentId: string): Promise<SessionSummary[]> {
+export async function listChatSessions(_agentId?: string): Promise<SessionSummary[]> {
+  // The assistant owns scheduled/event sessions under a workspace-specific
+  // assistant id, not the interactive `default` agent. Filtering by agent_id
+  // hid those sessions from the drawer entirely.
   const response = await ApiClient.get<{ sessions: SessionSummary[] }>('/chat/sessions', {
-    agent_id: agentId,
-    limit: 50,
+    limit: 100,
   });
   return response.result?.sessions ?? [];
 }

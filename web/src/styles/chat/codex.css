@@ -74,7 +74,10 @@
   background: transparent;
   color: var(--asst-ink-dim);
   cursor: pointer;
-  transition: color var(--duration-fast), border-color var(--duration-fast), background var(--duration-fast);
+  transition:
+    color var(--duration-fast),
+    border-color var(--duration-fast),
+    background var(--duration-fast);
 }
 
 .icon-button {
@@ -173,7 +176,9 @@
   font-size: 11px;
   letter-spacing: 0.02em;
   cursor: pointer;
-  transition: color var(--duration-fast), border-color var(--duration-fast);
+  transition:
+    color var(--duration-fast),
+    border-color var(--duration-fast);
 }
 
 .assistant-topbar__new:hover {
@@ -428,7 +433,7 @@ global-hud {
 }
 
 .timeline-turn::before {
-  content: "";
+  content: '';
   position: absolute;
   left: -16px;
   top: 50%;
@@ -538,18 +543,76 @@ global-hud {
   font-size: 15px;
   line-height: 1.75;
   max-width: 68ch;
+  overflow-wrap: anywhere;
 }
 
-.timeline-assistant :is(p, ul, ol, pre, blockquote) {
-  margin: 0 0 10px;
+.timeline-assistant > :first-child {
+  margin-top: 0;
+}
+
+.timeline-assistant > :last-child {
+  margin-bottom: 0;
+}
+
+.timeline-assistant :is(p, ul, ol, pre, blockquote, table) {
+  margin: 0 0 12px;
+}
+
+.timeline-assistant :is(h1, h2, h3, h4) {
+  margin: 22px 0 8px;
+  color: var(--asst-ink);
+  font-weight: 650;
+  line-height: 1.35;
+  letter-spacing: normal;
+}
+
+.timeline-assistant h1 {
+  font-size: 20px;
+}
+
+.timeline-assistant h2 {
+  font-size: 18px;
+}
+
+.timeline-assistant h3 {
+  font-size: 16px;
+}
+
+.timeline-assistant h4 {
+  font-size: 15px;
 }
 
 .timeline-assistant :is(ul, ol) {
-  padding-left: 20px;
+  padding-left: 22px;
+}
+
+.timeline-assistant li + li {
+  margin-top: 4px;
+}
+
+.timeline-assistant li::marker {
+  color: var(--asst-muted);
+}
+
+.timeline-assistant blockquote {
+  padding: 8px 12px;
+  border-radius: var(--radius-sm);
+  background: var(--asst-surface);
+  color: var(--asst-ink-dim);
+}
+
+.timeline-assistant blockquote p {
+  margin: 0;
 }
 
 .timeline-assistant a {
   color: var(--asst-signal);
+  text-underline-offset: 3px;
+  text-decoration-color: var(--asst-hairline-strong);
+}
+
+.timeline-assistant a:hover {
+  text-decoration-color: var(--asst-signal);
 }
 
 .timeline-assistant code {
@@ -561,17 +624,73 @@ global-hud {
 }
 
 .timeline-assistant pre {
-  padding: 10px 12px;
+  padding: 12px 14px;
   overflow-x: auto;
   border: 1px solid var(--asst-hairline);
   border-radius: var(--radius-sm);
   background: var(--asst-sunken);
   font-family: var(--asst-mono);
   font-size: 12px;
+  line-height: 1.65;
+  tab-size: 2;
+}
+
+.timeline-assistant pre code {
+  padding: 0;
+  border-radius: 0;
+  background: transparent;
+  font-size: inherit;
+}
+
+.timeline-assistant .hljs {
+  color: var(--asst-ink-dim);
+  background: transparent;
+}
+
+.timeline-assistant :is(.hljs-keyword, .hljs-selector-tag, .hljs-built_in) {
+  color: var(--asst-signal);
+}
+
+.timeline-assistant :is(.hljs-string, .hljs-number, .hljs-literal) {
+  color: var(--asst-verify);
+}
+
+.timeline-assistant :is(.hljs-comment, .hljs-quote) {
+  color: var(--asst-muted);
+}
+
+.timeline-assistant table {
+  display: block;
+  max-width: 100%;
+  overflow-x: auto;
+  border-collapse: collapse;
+  font-size: 13px;
+  line-height: 1.55;
+}
+
+.timeline-assistant :is(th, td) {
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--asst-hairline);
+  text-align: left;
+  vertical-align: top;
+}
+
+.timeline-assistant th {
+  background: var(--asst-surface);
+  font-weight: 650;
+}
+
+.timeline-assistant tbody tr:last-child td {
+  border-bottom: 0;
+}
+
+.timeline-assistant img {
+  max-width: 100%;
+  border-radius: var(--radius-sm);
 }
 
 .timeline-assistant--live::after {
-  content: "";
+  content: '';
   display: inline-block;
   width: 7px;
   height: 14px;
@@ -601,7 +720,7 @@ global-hud {
 }
 
 .timeline-skill::before {
-  content: "◆";
+  content: '◆';
   color: var(--asst-signal);
   font-size: 8px;
 }
@@ -610,7 +729,9 @@ global-hud {
   border: 1px solid transparent;
   border-radius: var(--radius-sm);
   background: transparent;
-  transition: background var(--duration-fast), border-color var(--duration-fast);
+  transition:
+    background var(--duration-fast),
+    border-color var(--duration-fast);
 }
 
 .timeline-tool:hover,
@@ -965,7 +1086,7 @@ global-hud {
 }
 
 .assistant-empty__eyebrow::before {
-  content: "";
+  content: '';
   width: 22px;
   height: 1px;
   background: var(--asst-signal);
@@ -1015,7 +1136,10 @@ global-hud {
   opacity: 0;
   transform: translateY(6px);
   animation: asst-chip-in 420ms var(--ease-out) forwards;
-  transition: color var(--duration-fast), border-color var(--duration-fast), background var(--duration-fast);
+  transition:
+    color var(--duration-fast),
+    border-color var(--duration-fast),
+    background var(--duration-fast);
 }
 
 .empty-chip:hover,
@@ -1144,15 +1268,17 @@ global-hud {
   font-size: 10px;
   letter-spacing: 0.02em;
   cursor: pointer;
-  transition: background var(--duration-fast), color var(--duration-fast);
+  transition:
+    background var(--duration-fast),
+    color var(--duration-fast);
 }
 
-.mode-switch button[aria-pressed="true"] {
+.mode-switch button[aria-pressed='true'] {
   background: var(--asst-raised);
   color: var(--asst-ink);
 }
 
-.mode-switch button[data-mode="full_access"][aria-pressed="true"] {
+.mode-switch button[data-mode='full_access'][aria-pressed='true'] {
   background: var(--asst-danger-soft);
   color: var(--asst-danger);
 }
@@ -1170,7 +1296,9 @@ global-hud {
   height: 30px;
   border-radius: var(--radius-sm);
   cursor: pointer;
-  transition: opacity var(--duration-fast), transform var(--duration-fast);
+  transition:
+    opacity var(--duration-fast),
+    transform var(--duration-fast);
 }
 
 .composer-send {

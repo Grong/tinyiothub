@@ -70,6 +70,16 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
           created_at: 1,
           updated_at: 1,
         },
+        {
+          session_key: 'agent:ws-e2e:__assistant__ws-e2e/scheduled-1',
+          workspace_id: workspaceId,
+          agent_id: '__assistant__ws-e2e',
+          label: '巡检 · 当前',
+          kind: 'scheduled',
+          status: 'active',
+          created_at: 2,
+          updated_at: 2,
+        },
       ],
     });
     return;

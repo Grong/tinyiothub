@@ -36,9 +36,14 @@ describe('session-drawer', () => {
     const el = document.createElement('session-drawer') as SessionDrawer;
     el.agentId = 'default';
     el.current = 'agent:ws:a/c1';
+    el.open = true;
     const selected: string[] = [];
     el.addEventListener('session-select', (event) =>
       selected.push((event as CustomEvent<string>).detail),
+    );
+    const activeCounts: number[] = [];
+    el.addEventListener('sessions-updated', (event) =>
+      activeCounts.push((event as CustomEvent<{ active: number }>).detail.active),
     );
     document.body.appendChild(el);
     await el.refresh();
@@ -46,6 +51,7 @@ describe('session-drawer', () => {
 
     expect(el.shadowRoot!.textContent).toContain('对话');
     expect(el.shadowRoot!.textContent).toContain('巡检');
+    expect(el.shadowRoot!.textContent).toContain('运行中');
     const items = el.shadowRoot!.querySelectorAll('.drawer-item');
     expect(items).toHaveLength(2);
     const actionLabels = Array.from(el.shadowRoot!.querySelectorAll('.drawer-action')).map(
@@ -54,5 +60,6 @@ describe('session-drawer', () => {
     expect(actionLabels).toContain('改名 新会话');
     (items[1] as HTMLButtonElement).click();
     expect(selected).toEqual(['agent:ws:a/s1']);
+    expect(activeCounts[0]).toBe(1);
   });
 });

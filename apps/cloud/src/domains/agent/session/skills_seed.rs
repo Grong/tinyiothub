@@ -10,6 +10,12 @@ use tinyiothub_storage::Db;
 /// 技能模板（含 frontmatter）。编译期嵌入，默认正文与模板不再漂移。
 const INSPECTION_TEMPLATE: &str = include_str!("../../../../templates/skills/inspection.md");
 
+const TODO_LIFECYCLE: &str = "\n## 计划状态\n\n\
+- 开始执行前调用 `todo_write` 创建本轮计划：当前步骤为 `in_progress`，其余步骤为 `pending`。\n\
+- 每完成一个步骤，立即再次调用 `todo_write`：将该步骤标记为 `completed`，并将下一步骤标记为 `in_progress`。不要等到最终回复才更新。\n\
+- 输出最终总结前，必须再次调用 `todo_write`，将全部标记为 completed。\n\
+- 没有异常或提前结束时也要更新已执行项，不得让计划停留在初始状态。\n";
+
 pub async fn ensure_inspection_skill_at(workspace_dir: &Path, db: &Db, workspace_id: &str) -> anyhow::Result<bool> {
     let skills_dir = workspace_dir.join("skills");
     let path = skills_dir.join("inspection.md");
@@ -40,6 +46,7 @@ pub async fn ensure_inspection_skill_at(workspace_dir: &Path, db: &Db, workspace
         for (index, task) in tasks.iter().filter(|task| !task.paused).enumerate() {
             body.push_str(&format!("{}. {}\n", index + 1, task.text));
         }
+        body.push_str(TODO_LIFECYCLE);
         body.push_str("\n## 注意事项\n\n- 涉及写设备必须先获得审批。\n");
         format!("---\nname: inspection\nversion: \"1\"\ntrigger: /inspection\ninject: index\n---\n\n{body}")
     } else {
@@ -68,6 +75,13 @@ mod tests {
         Db::new(pool)
     }
 
+    #[test]
+    fn inspection_template_defines_todo_lifecycle() {
+        assert!(INSPECTION_TEMPLATE.contains("todo_write"));
+        assert!(INSPECTION_TEMPLATE.contains("每完成一个步骤"));
+        assert!(INSPECTION_TEMPLATE.contains("全部标记为 completed"));
+    }
+
     #[tokio::test]
     async fn seeds_inspection_skill_from_tasks_once() {
         let dir = tempfile::tempdir().unwrap();
@@ -88,6 +102,7 @@ mod tests {
         let body = std::fs::read_to_string(dir.path().join("skills/inspection.md")).unwrap();
         assert!(body.contains("检查离线设备"));
         assert!(body.contains("name: inspection"));
+        assert!(body.contains("每完成一个步骤"));
     }
 
     #[tokio::test]

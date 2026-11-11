@@ -82,7 +82,7 @@ impl Tool for TodoWriteTool {
     }
 
     fn description(&self) -> &str {
-        "Create or replace the session todo list. Use it to plan multi-step work and keep exactly one item in_progress."
+        "Create or replace the session todo list. For multi-step work, call it before starting and after every step: mark finished items completed and the next item in_progress. Keep at most one item in_progress; mark every item completed before the final response."
     }
 
     fn parameters_schema(&self) -> serde_json::Value {
@@ -120,6 +120,20 @@ mod tests {
     use crate::domains::agent::session::events::test_support::RecordingSink;
     use serde_json::json;
     use std::sync::Arc;
+
+    #[test]
+    fn description_defines_progress_updates_and_a_completed_final_state() {
+        let tool = TodoWriteTool::new(
+            "agent_main".to_string(),
+            Arc::new(TurnContextRegistry::default()),
+            Arc::new(TodoStore::default()),
+            Arc::new(RecordingSink::default()),
+        );
+
+        assert!(tool.description().contains("after every step"));
+        assert!(tool.description().contains("at most one item in_progress"));
+        assert!(tool.description().contains("before the final response"));
+    }
 
     #[tokio::test]
     async fn todo_write_persists_and_emits() {

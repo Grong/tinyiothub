@@ -113,7 +113,7 @@ Main Agent 汇总并协调后续 Workflow；压缩/清理自己的上下文
 
 - `agent_workflows(workflow_id PRIMARY KEY, enabled, current_version, updated_at)` 只是 workspace DB 中的 current/enabled 指针；不可变 `workflow_revisions(workflow_id, version, definition_json, created_at, PRIMARY KEY(workflow_id, version))` 保存每次定义。`agent_tasks` 增加 `workflow_id/workflow_version/parent_task_id`，`agent_runs` 增加 `parent_run_id`，事件用 `cause_id` 串起主/子因果。编辑追加 revision 并移动 current 指针，不覆盖旧定义；被任何 Task/Run 引用的 revision 不得删除。
 - 定义只包含声明数据：`objective`、`trigger(cron|watch|event)`、`device_selector`、`source_selector`、`tool_ids`、带版本的 `skill_refs`、`required_capabilities`、`approval_policy`、`evidence_policy`。巡检、视频问题发现、多设备协同和节能优化都是同一 schema 的配置实例，不分别创建 Rust loop 或场景专用表。
-- **内置模板（X1，XD2 已批准）**：提供巡检、视频、节能三份版本化配置模板，运维复制后修改设备、数据源和策略即可运行。模板复用统一 schema/引用校验并有实例化与版本测试，不新增执行引擎或默认放开额外 Effect 权限。通用定义文件导入仍属 deferred X5，本期不实现。
+- **内置模板（X1，XD2 已批准；DR4=B）**：提供巡检、视频、节能三份版本化配置模板。实例化路径为「选择模板 → 填写设备、数据源与策略参数 → 当前 workspace 引用/能力/策略校验 → 创建 enabled Workflow」；校验失败不创建配置或调度。dry-run 是独立可选旁路，不是启用前置步骤。创建成功后进入 Workflow 详情，显示 enabled、current version 和下一次计划 wake；只按正常 trigger 调度，不补跑过期 slot。模板复用统一 schema/引用校验并有实例化与版本测试，不新增执行引擎或默认放开额外 Effect 权限。通用定义文件导入仍属 deferred X5，本期不实现。
 - 代码负责精确的 cron/watch/event 下一次唤醒与 `workflow_id + trigger_id + slot/event_id` 来源幂等键，**版本号不进入来源身份**；首次持久 wake 时固定 revision，同一 slot/event 在编辑、回退或重启后仍返回原 Task，不重复物理动作。主 Agent 负责跨任务协调，不让 LLM 猜测时间或充当持久调度器。配置写入时校验引用的工具、Skills、设备/数据源选择器与策略，错误在保存时可见。
 - Subagent 只接收本次 workflow 版本、设备/证据快照和必要上下文，返回 `{status, summary, observations, evidence_refs, recommended_actions}`。主 Agent 可以协调多设备后续任务；Subagent 也可以在一个 Run 内直接操作多台设备，不需要第三层 Agent。`recommended_actions` 不是执行许可，后续动作必须重新走工具策略、审批和 Effect 边界。
 - **版本与启停**：Task/Run 创建时固定 workflow 版本，编辑版本只影响后续调度；禁用 workflow 只停止未来 wake，不隐式取消在途 Task/effect，显式取消仍走统一控制契约。调度 slot 使用 UTC 与确定时区配置，重复 slot/event 由唯一幂等键去重。
@@ -129,6 +129,7 @@ Main Agent 汇总并协调后续 Workflow；压缩/清理自己的上下文
 - dry-run 固定 workflow revision 和调用方明确选择的 `snapshot_seq`，复用生产 reducer、ToolDescriptor 和通用投影；snapshot 不存在或不可读时响亮失败。`execution_mode=simulation` 是 agent_tasks/agent_runs/session_events 的显式字段，事件包含输入 snapshot ID，不能与真实 Run 混淆。
 - simulation 组合根不注册任何设备 worker/driver dispatcher，并在创建 prepared Effect 之前即拒绝真实 Effect/Decision 写入。simulation 不产生生产 wake/outbox、parent 协调动作或真实恢复任务；真实列表、恢复扫描和 Main Agent 投影默认只读 `execution_mode=production`，模拟 TaskOutcome 绝不能触发真实后续 Task/Effect。
 - dry-run 用于配置、提示词、输出和投影验证，不证明真实模型、设备驱动或物理结果；UI 必须持续标注 simulation，不提供“批准真实执行”的捷径。模拟历史在事件库中不可变保留并默认隔离展示，不在 v1 删除或混入生产统计。
+- **Dry-run 交互（DR7=A）**：从固定 Workflow revision 详情进入独立 simulation Run 页面，不使用编辑器内对话框。开始前用 snapshot picker 显式选择 `snapshot_seq`，同时显示 `observed_at`；不存在或不可读即响亮失败。整个页面持续显示 simulation banner，结果复用通用 Run 的步骤/证据/错误投影但保持只读，并提供「返回此版本」；不得出现真实执行或生产审批入口。
 
 ### 模型与视频能力
 
@@ -140,7 +141,7 @@ Main Agent 汇总并协调后续 Workflow；压缩/清理自己的上下文
 
 - 在现有 Runtime UI 显示下一次 scheduled wake、oldest pending wake、调度延迟、活动 Main/Subagent 与 parent/cause、最近错误和恢复入口。scheduled 只表示计划时间，不承诺准点执行。
 - Host/Scheduler 健康来自进程健康与单条可变的 `supervisor_state` 当前状态行（tick_seq、last_started_at、last_completed_at、last_error），而不是 AI heartbeat；不要把每次 tick 追加进永久事件库。只有 `supervisor.stalled/recovered` 等状态变化写 session_events。进程内同时使用 monotonic clock 防瞬时回拨，持久 UTC 用于重启后判定；即使没有 enabled workflow 也执行轻量调度 tick，正常“下一 wake 很远”不判停滞。超过配置的 scheduler tick deadline 未完成、到期未开始，或持久时间回拨才显示 stalled/degraded；下一次成功 tick 清除恢复中状态。面板必须能区分“没有新 Run”与“调度器停滞”。
-- dead wake 恢复沿用 Agent 管理权限和原 event_id 幂等 retry；空态、延迟、权限与恢复都有测试，不新增 UI 面板插件框架。
+- dead wake 恢复沿用 Agent 管理权限和原 event_id 幂等 retry；Supervisor 详情逐条显示原 event_id、目标与失败原因，用户确认「按原事件重试」后只处理该条，不提供批量隐式重试。请求中禁用该行并保留完整列表，结果在原地持久显示；无管理权限时保持只读。空态、延迟、权限与恢复都有测试，不新增 UI 面板插件框架（DR5=A）。
 
 ### 存储布局
 
@@ -430,7 +431,7 @@ requested → withdrawn
 - 投影（Task/Trace/Workbench）由事件折叠；`projection_snapshots` 只加速启动，可随时丢弃重建。
 - `projection_snapshots(projection_name, subject_id, last_seq, projection_version, state_version, state_json, updated_at)` 以 `(projection_name, subject_id)` 为主键；`projection_version` 表示投影格式，`state_version` 是每次更新单调递增的并发版本。启动读取匹配版本的快照并只折叠 `seq > last_seq` 的尾部，版本不匹配才走完整 rebuild。不得在每次请求或启动时默认重放全部历史。
 - 非终态 effect/Task 的恢复扫描使用对应状态/部分索引；投影按 `(session/run/task, seq)` 增量更新，禁止用全事件扫描代替日常读取。完整 rebuild 是带进度与错误报告的维护操作，可删除快照后从事件重建全部投影，用于校验。
-- **压缩检查器（X4，XD5 已批准）**：显示压缩 seq 范围、projection_version、证据引用与最后完整点。重建与比较固定同一 `projection_version + last_seq` 边界，先在临时投影计算 canonical state/hash 并与同边界当前投影比较；匹配后仅以 expected `last_seq/state_version` CAS 替换快照。重建期间的新 append、比较后版本变化或 hash 不匹配都保留最新快照并显示差异/重试，不得以旧快照覆盖新快照。对 session facts、Task/Run、Effect/Decision 和外部系统只读，只允许 CAS 替换 projection snapshot，全程零 dispatch。
+- **压缩检查器（X4，XD5 已批准；DR8=A）**：显示压缩 seq 范围、projection_version、证据引用、canonical hash 与最后完整点。重建与比较固定同一 `projection_version + last_seq` 边界，先在临时投影计算 canonical state/hash 并与同边界当前投影比较；只有匹配时才显示可用「替换投影快照」动作，并以 expected `last_seq/state_version` CAS 替换。重建期间的新 append、比较后版本变化或 hash 不匹配都保留最新快照，显示可定位差异和「重新比较」，不自动重试，不得以旧快照覆盖新快照。对 session facts、Task/Run、Effect/Decision 和外部系统只读，全程零 dispatch；写动作继续使用 Agent 管理权限。
 
 ### Core 边界（D1 已批准）
 
@@ -476,11 +477,26 @@ Db.load → agent.reduce → Db.apply_tx(expected_version)
 
 ### 交互边界与状态覆盖
 
-- 提交使用稳定幂等键，按钮在请求中禁用但服务端仍去重；编辑配置时以 current_version 做 stale-submit Conflict，用户看到“配置已更新，请比较后重试”，不能覆盖他人新版本。
+- 提交使用稳定幂等键，按钮在请求中禁用但服务端仍去重；编辑配置时以 current_version 做 stale-submit Conflict，保留本地编辑并显示最新 current_version，文案为「配置已更新；重新加载后再试」。用户主动重载，不自动覆盖服务器版本，也不声称提供本期未实现的 diff（DR3=A）。
 - 离开页面/切换 Task 只释放当前 SSE 与媒体资源，不取消后端 Run；旧 generation 的响应和事件必须丢弃。恢复连接从最后确认 seq 续传，未知游标显式 Resync。
 - 空 workflow/无到期任务显示明确空态；大列表与 backlog 使用分页/增量渲染，不把全部子任务或历史事件一次塞进 DOM。
 - dry-run 始终显示 simulation banner；错误、partial replay、重建冲突和非视觉 provider 都有可恢复说明，不使用假进度、假在线或伪造百分比。
+- **写操作反馈（DR9=A）**：Workflow 启停、dead-wake retry 与快照 CAS 替换在请求中只禁用相关动作并保留已读内容，不清空页面或显示假进度。成功、冲突和失败在触发区域以持久文字更新，包含可执行的下一步，并通过克制的读屏公告通知；不能只依赖会消失的全局 toast。
 - 键盘可完成模板实例化、审批、对账与控制；焦点、Esc、屏幕阅读器状态文本、对比度与至少 44px 触摸目标沿用现有 Runtime 设计约束，新面板不得只在桌面悬停时显示关键信息。
+- **响应式（DR12=A）**：≥980px 时 Workflow 主表与当前协调侧栏并列；600–979px 时两者按首页信息优先级全宽顺序排列；<600px 时 Workflow 行改为带持久字段名的记录列表，Main/Subagent 使用文本层级，维护元数据改为 key-value，次要操作进入可键盘访问的 overflow。任何 viewport 不出现页面级横向滚动；200%/400% zoom 使用同一重排规则验证，所有操作目标至少 44px。
+- **焦点与公告（DR13=A）**：路由切换后聚焦页面 H1，tabs 使用方向键与正确选中语义，dialog/菜单关闭后归还触发控件。异步结果以持久文字配合去重的 `role=status`，错误用 `role=alert`，Workflow 表格保留语义表头，Main/Subagent 展开有可理解的 expanded 状态。持续 simulation banner 进入页面时可读但不反复播报；不得因动态更新把焦点丢到 body。
+- **中文状态文案（DR14=A）**：共享固定映射 `scheduled=计划`、`pending=等待调度`、`unknown=结果未知`、`cancelled_unknown=停止结果未知`、`simulation=模拟运行`；时间旁明确时区。状态用文字与图标共同表达，不用「在线」「已完成」「全部停止」覆盖这些事实。新增持久状态必须同时扩展文案映射和测试。
+- **设计系统映射（DR15=A）**：新表面复用 `{colors.deep-space}`、`{colors.surface-card}`、`{colors.surface-elevated}`、`{colors.text-primary}` 对应的双主题实际变量，以及既有 spacing/rounded/duration、table、dialog 和 focus-ring。`{colors.signal-blue}` 只用于可交互/焦点；simulation 与 unknown 使用 `{colors.warn-amber}` 配合图标和明确文字，danger 只表示明确失败。不新增 simulation 紫色、新色板、Runtime 专属字体或装饰光晕。
+
+**Harness 信息架构（DR1=B + DR1b=A，R31=A，2026-11-03）**：新增独立 `Harness` 顶级导航，Workflow、Supervisor 和 Task 归入该产品区域；现有 Runtime 入口保留，并指向同一批持久实体与同一套详情/控制写路径，不复制状态或维护第二套实现。canonical 地址使用 `#/harness`、`#/harness/workflows/*`、`#/harness/tasks/{task_id}`；旧 `#/runtime*` 重定向到对应 Harness 地址，保留编码 ID 与 `view/device/at/event` query，新旧入口共享同一组件与 API。Harness 首页第一层为「需要处理」的 unknown/恢复事项，第二层为 Workflow 配置与调度，第三层为当前 Main/Subagent 协调；「新建工作流」是唯一页面主行动，异常条目使用各自的就地对账动作。异常列表分页/折叠，不用无限堆叠或 KPI 卡片墙。Harness 内部必须提供清晰的列表、详情和返回路径。
+
+**Workflow 编辑（DR2=A，R30=A 修正启停）**：使用单页分组表单，顺序为「目标与设备 / 触发 / 工具与 Skills / 策略与证据 / 配置摘要」。所有字段有持久可见 label、字段级错误和可定位的顶部错误摘要；长表单提供分组锚点与配置摘要，未保存离开不得静默丢弃。新建空白 Workflow 保存为 disabled，进入详情后由 Agent 管理角色显式启用；编辑已有 Workflow 时保留其 enabled/disabled 状态，新 revision 只影响后续 wake。模板实例化仍按 DR4=B 在校验后直接 enabled。禁用只通过显式动作发生；在途 Task/Run 固定旧 revision，不隐式取消。
+
+**Main/Subagent 浏览（DR6=A）**：当前协调使用两层可展开列表。Main 行显示最近有限轮次、协调状态和活动子任务数；展开后每个 Subagent 显示独立 Task/Run、当前状态、等待原因和最近结果，不暗示共享上下文。子项进入同一 Task 详情，并保留可返回父级协调视图的 breadcrumb；parent/cause 以可读链接呈现，不绘制 DAG。大量子项按序分页/增量加载，展开和父子链接均可键盘操作。
+
+**首次配置旅程（DR10=A）**：空态用一句具体说明解释持续 Workflow 的用途，主行动为「从模板新建」，同时保留次要空白配置入口。路径为「选择巡检/视频/节能模板 → 参数与引用校验 → 可选 dry-run → 按 DR4=B 创建 enabled Workflow → 详情查看 enabled/version/下一计划 wake」。5 秒内必须知道从哪开始；5 分钟内能完成校验、可选模拟与创建；未来触发只显示计划时间，不伪装成已立即运行。
+
+**异常处置旅程（DR11=A）**：Harness 首页「需要处理」条目直接进入对应 Task/Effect 的脱敏摘要与证据；管理角色现场确认后选择「已执行」或「未执行」，沿用统一 reconciliation decision 与单赢家规则。只有对账事务提交并形成唯一终态后，问题条才可移除；用户随后可返回 Supervisor 核对恢复。迟到结果、Conflict 和仍未知都保留可见事实，不用关闭横幅伪装完成。长期审计保留 answer_actor、证据和 cause 链。
 
 | Feature | Loading | Empty | Error | Success | Partial |
 |---|---|---|---|---|---|
@@ -517,6 +533,7 @@ Db.load → agent.reduce → Db.apply_tx(expected_version)
 - **组合根 E2E（计划：`apps/cloud/tests/harness_core_e2e_tests.rs`）**：在 dispatch 许可提交前、物理发送后、终态 wake 前分别 kill/restart；覆盖自动/人工对账两种顺序、取消、权限和独立恢复。
 - **既有回归迁移**：保留 `runtime_event`、`task_approval`、`device_job`、`runtime/stream`、`runtime-projection`、`runtime-stream` 的行为断言，把独立 Job/双审批实现测试迁到统一 Effect/Decision，不删除覆盖率。
 - **前端 Vitest（Node 24）**：通用 step/effect/decision 投影、过滤空档、high-watermark、Resync、脱敏、取消/对账交互与错误可见性。
+- **Harness UI 合同（DR1-DR15）**：独立导航与旧 Runtime 同实体/写路径、异常优先首页、编辑/冲突、模板直接 enabled、主子展开与父级返回、dry-run snapshot/只读回程、逐条恢复、压缩 CAS 反馈、中文映射、tokens、三档 viewport、200%/400% zoom、键盘/读屏/44px。组件测试之后仍需真实浏览器 `/design-review`；本轮未完成该视觉验证。
 - **LLM/eval**：扩展 `apps/cloud/tests/runtime_eval.rs` 的 scripted provider 场景，覆盖新 ToolDescriptor、denied/unknown 后不重复副作用、ACK 不冒充物理完成；同场景进入 opt-in live-provider eval，记录 provider/model/版本。mock 通过不代表 live 模型质量或真实设备安全。
 - 文档中的 121 条新代码/用户路径均有测试要求；本次仅做静态评审，未运行这些未来测试。
 
@@ -820,6 +837,7 @@ Target: `docs/superpowers/specs/2026-11-02-agent-harness-core-design.md`
 - complexity: 原方案估计至少 8 个文件、2 个新 crate；接受方案不新增 crate，功能覆盖不变。
 - scope result: scope accepted as-is（结构缩小，不减少功能）。
 - fresh CEO-expanded review: 结构复用 D1，无功能裁减或新增 crate；Scope Challenge 无新增问题，接受范围保持 20 项任务与已批准处置。
+- design-decision review: DR1-DR15 已形成 16 个实际回答；结构继续复用 D1，不新增 crate/service，功能范围不裁减。独立 Harness 导航与旧 Runtime 必须复用同一实体和写路径。新发现 R30-R31 分别处理编辑 enabled 状态冲突与 canonical/legacy 路由，未回答前不是 accepted remedy。
 
 ## Decision ledger
 
@@ -1374,7 +1392,101 @@ Actual answer: 既有独立恢复与无静默失败合同的必要实现，无�
 Accepted scope: 平台注册表持久化 restore_journal(epoch/phase/paths)；使用不含 WAL 的 restore 目录与完整目录原子改名，phase 同步更新；启动只选择 journal 指向的完整 live/rollback 目录，损坏/缺失则回滚，恢复前保持 unavailable。测试 rename 前/中/后、journal 损坏和文件缺失，其他 workspace 不受影响。
 History: none
 
-Approval readiness: PASS。D1-D8 均有用户实际回答；R4/R5/R7 承接既有 Runtime 合同，R9-R22 为已批准存储、事件、安全、测试和性能合同的必要实现，R23-R29 由用户 24x7 补充目标与 D8 覆盖。没有已接受但缺少批准依据的 remedy。开放问题仅保留 telemetry split、Admin 聚合与 crate rename，均未进入本期 accepted scope。
+### R30: 编辑 Workflow 时的 enabled 状态
+Finding: DESIGN-ENG-1, CRITICAL, confidence 10/10, docs/superpowers/specs/2026-11-02-agent-harness-core-design.md:116 and :490, native design-change eng reviewer.
+Plan baseline: 既有合同为「编辑版本只影响后续调度；禁用 workflow 只停止未来 wake」；DR2=A 又写「保存只创建 disabled 新 revision」，两者对 enabled Workflow 编辑后的状态冲突。
+Runtime evidence: Workflow 仍是计划功能，无已部署行为；现有文本明确要求编辑不隐式取消在途 Task/effect，但未规定编辑是否同时禁用未来 wake。DR4=B 的模板直接 enabled 是独立已批准路径。
+Comparison grid:
+| Choice | Current | A) Preserve on edit | B) Disable on every save |
+|---|---|---|---|
+| 新建空白 Workflow | DR2 disabled | disabled，详情显式启用 | disabled |
+| 编辑 enabled Workflow | 文本冲突 | 新 revision 保持 enabled，仅未来 wake 用新版本 | 新 revision disabled，未来 wake 停止 |
+| 编辑 disabled Workflow | DR2 disabled | 保持 disabled | disabled |
+| 模板实例化 | DR4=B enabled | 保持 enabled（不变） | 保持 enabled（不变） |
+| 在途 Task/Effect | 固定旧 revision，不隐式取消 | 不变 | 不变 |
+Question D1:
+D1 — 编辑 enabled Workflow 后是否保持调度？
+Project/branch/task: DR2 的 disabled 保存与既有「编辑不等于禁用」合同冲突。
+ELI10: 修改配置和停止持续工作是两个不同动作。如果保存配置会隐式禁用，操作者可能在不知情的情况下停止后续巡检。
+Stakes if we pick wrong: 一次普通编辑可能让 24x7 Workflow 不再产生未来 Task，且没有明确禁用动作。
+Recommendation: A because 保留当前 enabled 状态才能同时满足不可变 revision 与显式启停边界。
+Completeness: A=10/10, B=7/10
+Pros / cons:
+A) Preserve on edit (recommended)
+  ✅ 新建空白配置仍为 disabled；编辑只移动 revision，enabled/disabled 保持不变。
+  ✅ 模板 DR4=B 仍直接 enabled，禁用只通过显式动作发生，行为容易预测。
+  ❌ 需要区分新建与普通编辑，并测试 enabled/disabled 两种保存路径。
+B) Disable on every save
+  ✅ 所有普通保存都进入同一 disabled 状态，表单实现规则最统一。
+  ✅ 用户必须在每次编辑后显式启用，能强制一次调度确认。
+  ❌ 编辑会隐式停止未来巡检，违背既有版本与启停合同。
+Net: A 分离内容编辑与启停；B 用每次重新启用换取统一保存状态。
+Header: 编辑启停
+Options:
+A) Preserve on edit (recommended)
+新建空白 Workflow 为 disabled；编辑 enabled/disabled Workflow 时保留原状态，新 revision 只影响后续 wake；模板仍按 DR4=B 直接 enabled。（human: ~1d / CC: ~1h）
+✅ 内容编辑和启停完全分离，不会意外停止持续巡检。
+✅ 保留不可变 revision、在途旧版本与模板直接启用合同。
+❌ 需要分别测试新建、enabled 编辑与 disabled 编辑。
+B) Disable on every save
+所有普通新建和编辑保存都为 disabled，只有模板按 DR4=B 直接 enabled；用户需重新显式启用。（human: ~0.5d / CC: ~30min）
+✅ 普通保存路径只有一种启停结果，表单逻辑较简单。
+✅ 每次内容变化后都需要一次明确的调度确认。
+❌ 普通编辑会停止未来 wake，与既有「编辑不等于禁用」合同冲突。
+
+State: approved
+Actual answer: A) Preserve on edit / D1，2026-11-03。
+Accepted scope: 新建空白 Workflow 为 disabled；编辑 enabled/disabled Workflow 保留原状态，新 revision 只影响后续 wake；模板仍按 DR4=B 直接 enabled。禁用仅显式发生，在途 Task/Effect 固定旧版本且不隐式取消。新增新建、enabled 编辑、disabled 编辑与模板路径测试。
+History: DR2=A 于设计评审选择单页分组与 disabled 保存；本项因与既有版本/启停合同的具体冲突而重开，只重开 enabled 状态，不重开单页表单。
+
+### R31: Harness canonical 路由与 Runtime 旧链接
+Finding: DESIGN-ENG-2, INFORMATIONAL, confidence 9/10, docs/superpowers/specs/2026-11-02-agent-harness-core-design.md:488, web/src/ui/views/runtime-url-state.ts:43-72 and web/src/ui/app.ts:333-349, native design-change eng reviewer.
+Plan baseline: DR1=B 选择独立 Harness 顶级导航，现有 Runtime 入口保留并复用同一实体/写路径；没有 canonical URL、旧链接重定向或状态保留合同。
+Runtime evidence: 当前 `parseRuntimeHash` 支持 `#/runtime`、`#/runtime/new`、`#/runtime/tasks/{id}`，Task URL 携带 `view/device/at/event`；`app.ts` 在 pathname 路由之前处理这些 hash routes。未来 Harness 路由尚不存在。
+Comparison grid:
+| Choice | Current | A) Canonical + redirect | B) Two live route families |
+|---|---|---|---|
+| 独立 Harness 导航 | DR1=B 已批准 | 不变 | 不变 |
+| canonical Task URL | 仅 Runtime | `#/harness/tasks/{id}`，Workflow/Supervisor 同属 Harness | Runtime 与 Harness 都可作为长期地址 |
+| 旧 Runtime 链接 | 保留入口，细节未定 | 重定向到对应 Harness 地址 | 原地渲染共享组件 |
+| view/device/at/event | Runtime query 已存在 | 完整保留并编码 | 两个解析器/出口都保留 |
+| 组件与写路径 | 必须同一套 | 同一套组件和 API，无状态复制 | 同一套组件和 API，但两套 URL 持续有效 |
+Question D2:
+D2 — Runtime 旧链接如何进入独立 Harness？
+Project/branch/task: DR1=B 已确定独立导航，本项只决定 canonical URL 与旧链接行为。
+ELI10: 已有书签和回放链接包含任务、视图、设备和历史游标。迁移导航时不能丢这些状态，也不该让两套页面分别生长。
+Stakes if we pick wrong: 旧链接可能失效或丢回放位置，两个 URL 体系也可能让分享、测试和返回路径持续分叉。
+Recommendation: A because 一个 canonical 地址加保留状态的旧链接重定向，既保留兼容入口又避免双写界面。
+Completeness: A=10/10, B=9/10
+Pros / cons:
+A) Canonical + redirect (recommended)
+  ✅ Workflow、Supervisor、Task 使用统一 Harness 地址，Runtime 旧链接转到对应页面。
+  ✅ view/device/at/event 全部保留，组件与 API 写路径只有一套。
+  ❌ 需要系统映射旧 list/new/task 地址，并验证编码 ID、query 与返回历史。
+B) Two live route families
+  ✅ Runtime 用户可继续使用熟悉地址，不发生重定向或地址变化。
+  ✅ 两个入口仍可通过共享组件复用同一后端和交互实现。
+  ❌ 分享链接、导航选中与测试长期分裂，未来更容易出现行为差异。
+Net: A 用重定向收敛到一个地址体系；B 保留两个长期地址体系。
+Header: 路由映射
+Options:
+A) Canonical + redirect (recommended)
+Harness 使用 `#/harness`、`#/harness/workflows/*`、`#/harness/tasks/{id}` 等 canonical 地址；旧 `#/runtime*` 映射到对应 Harness 地址，保留 view/device/at/event 与编码 ID，共享同一组件和 API。（human: ~1d / CC: ~1h）
+✅ 一个 canonical 地址体系避免后续页面与测试分裂。
+✅ 旧书签、历史回放和设备选择状态都能保留。
+❌ 需要完整路由映射与重定向回归测试。
+B) Two live route families
+Runtime 与 Harness 地址都长期有效，渲染同一组件并调用同一 API；各自解析和生成携带状态的 URL。（human: ~1d / CC: ~1h）
+✅ 不改变现有用户地址，两个入口都可直接使用。
+✅ 共享组件仍避免复制后端状态和写操作。
+❌ 两套 URL 的生成、导航和测试需要永久同步。
+
+State: approved
+Actual answer: A) Canonical + redirect / D2，2026-11-03。
+Accepted scope: canonical 使用 `#/harness`、`#/harness/workflows/*`、`#/harness/tasks/{id}`；旧 `#/runtime*` 映射到对应 Harness 地址，保留编码 ID 与 view/device/at/event，共享同一组件和 API。新增 list/new/task 映射、编码 ID、query、历史回放、设备选择与返回路径回归测试。
+History: DR1=B 选择独立 Harness 并保留 Runtime 入口；本项是具体现有深链接证据暴露的后续工程决定。
+
+Approval readiness: PASS。D1-D8、DR1-DR15 均有实际回答；R30=A 与 R31=A 分别由本轮 D1/D2 回答并写回正文、任务和测试计划。R4/R5/R7 承接既有 Runtime 合同，R9-R29 的已批准处置不变。本轮没有 accepted remedy 缺少批准依据；telemetry split、Admin 聚合、crate rename 与历史设计延期保持 deferred。
 
 ## CEO Expansion Evaluation
 
@@ -2162,6 +2274,8 @@ Approval readiness: PASS（CEO）。已检查 D1-D8、X1-X6（XD2-XD7）、M1/XD
 
 **深度与 red flags**：Effect 统一执行真源消除 split ownership；Main/Subagent 只两层避免递归编排；rig 保持私有适配器防止 importable internals；ToolDescriptor 消除手同步清单；Db 仍是唯一 SQL 入口，agent 只做纯 reducer，cloud 负责组合。v1 不引入浅插件接口、第二套审批或场景专用 loop。
 
+**Design-change re-review**：独立 Harness 与 Runtime 内嵌两种形状已经由 DR1=B 比较并选择前者；R31=A 用 canonical redirect + 共享组件/API 防止 split ownership 和两套写路径。R30=A 将内容编辑与显式启停分离，消除新发现的调度合同冲突。没有新增后端 service、crate、设备依赖或分发面，Architecture 无其他新发现。
+
 ### Code Quality Review
 
 发现 3 项，均已闭合：
@@ -2171,6 +2285,8 @@ Approval readiness: PASS（CEO）。已检查 D1-D8、X1-X6（XD2-XD7）、M1/XD
 - CQ3：事务 helper 复制会重犯 SQLite code 5/6 与 COMMIT 未知问题。R15 统一 apply_workspace_transition，整事务重试并先按稳定 ID 去重。
 
 复用优先于新抽象：`runtime_event.rs` 的稳定 ID/游标、`device_job.rs` 的条件更新与终态+wake、`task_approval.rs` 的锁重试、`stream.rs` 的 Snapshot/Event/Resync、`migrations.rs` 的 VACUUM INTO、`runtime_eval.rs` 的 provider/eval 基线均有第一方实现与测试。新代码只抽共同状态迁移和投影契约，不按相似外观重复封装。设计阶段不虚报净行数收益，迁移测试会先增加总量，旧写路径删除后再核算。
+
+Design-change code quality：扩展现有 `runtime-url-state.ts` 的解析/生成合同以支持 canonical 与 legacy 映射，Harness/Runtime 只保留一套视图组件和 API 写路径；不新增平行 URL 状态实现。DR2-DR15 的反馈、文案和状态映射由通用声明驱动，新增状态必须同步测试。无额外共享代码抽取或 code-quality 新发现。
 
 ### Test Review
 
@@ -2183,6 +2299,28 @@ Approval readiness: PASS（CEO）。已检查 D1-D8、X1-X6（XD2-XD7）、M1/XD
 
 测试计划：`~/.gstack/projects/Grong-tinyiothub/chenguorong-e4-p2-declaration-closeout-eng-review-test-plan-20261102-163828.md`。现有测试只作为迁移基线，不能证明新实现；mock 不能证明真实设备或 live 模型质量。旧 runtime_event、独立 Job 和双审批测试只迁移断言，不以“删除旧测试”换绿灯。
 
+Design-change Test review：新增 17 条路径均有计划断言与 value card，尚未实现或执行。扩展 `runtime-url-state.test.ts`、`app.test.ts`、Workflow/Task 组件测试和组合根 E2E；优先表格行与既有 fixture，不创建生产专用测试 seam。
+
+```text
+CODE PATHS                                           USER FLOWS
+[+] canonical/legacy route mapping                    [+] 首次配置与异常闭环 [→E2E]
+  ├── [GAP→PLANNED] 编码 ID + view/device/at/event      ├── [GAP→PLANNED] 模板→enabled→下一 wake
+  └── [GAP→PLANNED] Runtime 重定向与父级返回             └── [GAP→PLANNED] unknown→对账→Supervisor
+[+] Workflow create/edit/template                     [+] dry-run 与维护操作 [→E2E]
+  ├── [GAP→PLANNED] 空白 disabled                       ├── [GAP→PLANNED] snapshot→只读结果→返回版本
+  ├── [GAP→PLANNED] 编辑保持 enabled/disabled           ├── [GAP→PLANNED] dead-wake 原 ID 重试
+  └── [GAP→PLANNED] 模板 enabled + 不补 misfire         └── [GAP→PLANNED] 比较/CAS/冲突/重比较
+[+] 通用 Harness 投影与状态                            [+] 响应式与可访问性
+  ├── [GAP→PLANNED] 中文/五态/就地持久反馈               ├── [GAP→PLANNED] 三档 viewport + zoom + 44px
+  ├── [GAP→PLANNED] 主子展开与 simulation 只读           └── [GAP→PLANNED] 焦点/公告/键盘/读屏语义
+  └── [GAP→PLANNED] 双主题 token 与颜色语义
+
+LLM integration: 本轮没有新增 prompt/tool 合同；既有 scripted + live eval 要求不变。
+COVERAGE: 0/17 existing implementation tests | PLANNED 17/17 | 0 executed
+```
+
+Dispositions：DR1-DR15 与 R30/R31 均有实际回答；17 个 Test gaps 全部转为 T11、T15-T18 与测试计划的必修验证，无 pending 测试选择。未新增 LLM eval 范围。
+
 ### Performance Review
 
 发现 3 项，均已闭合：
@@ -2192,6 +2330,8 @@ Approval readiness: PASS（CEO）。已检查 D1-D8、X1-X6（XD2-XD7）、M1/XD
 - P3：媒体与规模证据缺失。R22 禁止媒体字节进事件，并给出 workspace/event 规模桶、main/分支 p50/p95 与原始数据要求。
 
 所有规模数字仅为测试输入，不是固定配额或生产 SLA。当前未跑基准。
+
+Design-change Performance：新页面继续使用分页/增量子项、有界 SSE replay 与快照尾部，不允许为独立 Harness 复制全量历史或并行第二套订阅。纯路由、文案和 token 改动没有新增数据库热路径；无性能新发现，未运行新基准。
 
 ### NOT in scope
 
@@ -2214,6 +2354,7 @@ Approval readiness: PASS（CEO）。已检查 D1-D8、X1-X6（XD2-XD7）、M1/XD
 - `crates/agent/src/port/` 与 `adapters/rig/`：通用执行端口与私有引擎边界，D1 直接复用。
 - declaration/manifest、Skills、Task/wake/outbox：作为 WorkflowDefinition 的输入，不另造设备或调度模型。
 - `apps/cloud/tests/runtime_eval.rs` 与前端 runtime 测试：迁移时必须保留的行为基线。
+- `web/src/ui/views/runtime-url-state.ts` 与 `app.ts`：现有 list/new/task、编码 ID、view/device/at/event 和 hash 路由入口；R31 在此基础上扩展 canonical/legacy 映射，不另写第二套解析器。
 
 ### Failure modes
 
@@ -2232,6 +2373,8 @@ Approval readiness: PASS（CEO）。已检查 D1-D8、X1-X6（XD2-XD7）、M1/XD
 | 修改/禁用 Workflow | 在途固定旧版本，禁用只停未来 wake | 不隐式取消设备动作 |
 | 老游标或百万事件重连 | 分页流出、lag Resync、内存有界 | 不丢帧伪装成功，明确 Resync |
 | 非视觉 provider 处理视频 | 能力边界失败关闭，保留证据引用 | 明确“视觉不可用”，不编造观察 |
+| 编辑 enabled Workflow 时误置 disabled | R30=A 保留原启停；新建/编辑/模板矩阵测试 | 编辑成功且后续调度状态保持，不静默停止 |
+| 旧 Runtime 深链接迁往 Harness | R31=A 保留编码 ID 与全部 query；重定向回归 | 打开同一 Task/设备/历史位置，无空白或状态丢失 |
 
 关键缺口：0。上述路径均有错误处理与计划测试，但实现和测试尚未执行。
 
@@ -2249,7 +2392,7 @@ Approval readiness: PASS（CEO）。已检查 D1-D8、X1-X6（XD2-XD7）、M1/XD
 
 ## Design Review Body
 
-> 2026-11-03 `/plan-design-review`。本轮只记录评审证据与 pending remedies；15 个新发现均未取得独立用户裁决，不能当成已批准实现要求。既有 D1-D8、XD2-XD10、OQ1-OQ3 与 Runtime 已批准设计不变。视觉工具虽可执行，但缺少图片 API key，3 个请求均未生成图片；没有 Approved Mockup，也没有制作替代 HTML wireframe。
+> 2026-11-03 `/plan-design-review`。DR1-DR15 已全部逐项裁决（DR1 分为导航与首屏两项，共 16 个决定），接受内容已写回正文和 T11、T15-T18。既有 D1-D8、XD2-XD10、OQ1-OQ3 与 Runtime 已批准设计不变。视觉工具缺少图片 API key，未生成图片；没有 Approved Mockup，也没有制作替代 HTML wireframe。后续页面级 `/design-review` 已由用户中止，待实现后再做真实视觉 QA。
 
 ### System Audit 与 Step 0
 
@@ -2259,65 +2402,65 @@ Approval readiness: PASS（CEO）。已检查 D1-D8、X1-X6（XD2-XD7）、M1/XD
 - `DESIGN.md` 与 `web/DESIGN_SYSTEM.md` 均存在；所有建议以「自治机舱」和现有 Runtime 为基准。历史主字体与 captions 延期项不在本轮重开。
 - 聚焦全部 7 个 pass；outside design voices 未运行，不能计为独立覆盖。
 
-### Pass 1 — Information Architecture：5/10 → 5/10
+### Pass 1 — Information Architecture：5/10 → 10/10
 
-正文给出了流程和粗略信息顺序，但没有定义新功能在现有 Runtime 路由中的位置、每屏主行动及从列表到详情的返回路径。
+初始缺口是路由、首屏层级、每屏主行动及父子返回路径。DR1=B + DR1b=A 确定独立 Harness 与异常优先首页，DR6=A 确定两层因果浏览和父级返回；相关合同已进入正文与 T11，当前无遗留 IA 项。
 
-- **DR1 — 新表面的路由与首屏层级（pending）**：Workflow、Supervisor、Main/Subagent 和压缩入口目前只是箭头流程，实施者可能分别堆进 Task 详情或新建多套页面。建议 pending 方案为扩展现有 `Runtime` shell 为「工作流 / 任务」视图：工作流页以需要处理的问题、配置与调度、当前协调为三层，主行动为「新建工作流」；Supervisor 和压缩进入对应详情，不新增顶层 Harness 导航。备选是独立顶层 Harness 页面，但会割裂既有 Task 工作流。
-- **DR6 — Main/Subagent 因果浏览（pending）**：只有 parent/cause 数据要求，没有说明用户如何展开子任务、进入详情和返回父级。建议 pending 方案为一个 Main 行下可展开的 Subagent 列表，子项进入现有 Task 详情并保留父级 breadcrumb；不画 DAG。备选是带类型列的平铺表格，但层级与大量子任务扫描更弱。
+- **DR1 — 新表面的路由与首屏层级（已裁决，R31=A 补齐路由）**：用户选择 DR1=B、DR1b=A：独立 Harness 顶级导航，首页按「需要处理 → Workflow 与调度 → 当前 Main/Subagent」排列，唯一主行动为「新建工作流」。R31=A 确定 `#/harness*` canonical 地址，旧 `#/runtime*` 保留编码 ID 和 view/device/at/event 后重定向；同一组件/API，无状态复制。异常分页/折叠，不做 KPI 卡片墙。
+- **DR6 — Main/Subagent 因果浏览（已裁决 A）**：Main 行下展开独立 Subagent Task/Run，显示状态、等待原因与最近结果；子项进入同一 Task 详情并通过 breadcrumb 返回父级。parent/cause 为可读链接，不画 DAG；大量子项分页/增量加载，展开与父子链接可键盘操作。
 
-### Pass 2 — Interaction State Coverage：7/10 → 7/10
+### Pass 2 — Interaction State Coverage：7/10 → 10/10
 
-已有五态表是良好基础，但模板创建、配置保存、dead-wake retry、dry-run 和压缩替换尚缺具体可见操作与结果；通用「有错误」不足以让实现一致。
+原五态表保留；DR2-DR5、DR7-DR9 已补齐编辑、冲突、模板、恢复、dry-run、压缩与写操作的具体可见行为。所有接受项均有正文合同和任务验证，不再把通用「有错误」当作完整 UX。
 
-- **DR2 — Workflow 编辑结构与保存结果（pending）**：定义字段很多，但没有表单分组、校验摘要、保存后落点或 enabled 状态。建议 pending 方案为单页分组表单「目标与设备 / 触发 / 工具与 Skills / 策略与证据 / 配置摘要」，可见 label 与字段级错误，保存创建 disabled 新 revision 后进入详情，再由用户显式启用。备选是多步 wizard，但长配置来回修改成本更高。
-- **DR3 — stale-submit 与 deferred diff 的冲突（pending）**：正文要求「请比较后重试」，而 X5 明确不做 diff，当前文案承诺了不存在的界面。建议 pending 方案为保留本地编辑，显示当前版本与「配置已更新；重新加载后再试」，由用户主动加载，不声称已比较。备选是本期增加只读 submitted/current 对照，但这会重新打开已延期的 X5 范围。
-- **DR4 — 模板实例化旅程（pending）**：三份模板有后端要求，没有说明从模板到可运行 Workflow 的字段、预览、默认启停和完成页。建议 pending 方案为模板选择 → 实例参数与引用校验 → 可选 dry-run → 保存为 disabled → 详情显式启用；主行动始终只有一个，不能保存即偷偷调度。备选是直接实例化并启用，不适合有设备后果的配置。
-- **DR5 — Supervisor 恢复操作（pending）**：面板字段已列出，但 dead-wake retry 的选择、确认、pending/结果、无权限表现未定义。建议 pending 方案为逐条 dead wake 展示原 event_id、失败原因与目标，使用「按原事件重试」确认；请求中保留列表并禁用该行，结果就地显示，无权限只读，不做批量隐式重试。备选是跳既有 Admin 页，但上下文切换更长。
-- **DR7 — dry-run 的 snapshot 选择与结果回程（pending）**：固定 revision/snapshot 是硬合同，但用户尚无法知道在哪里选、错误归属哪里、结果如何回到编辑器。建议 pending 方案为从固定 revision 的编辑详情进入独立 simulation Run；snapshot picker 显示 seq/observed_at，banner 全旅程持续存在，结果复用通用 Run 投影但完全只读，并提供「返回此版本」。备选是对话框内 dry-run，但完整过程与证据空间不足。
-- **DR8 — 压缩检查器的比较与冲突呈现（pending）**：已有 canonical hash/CAS 规则，没有定义用户看到的差异、可执行动作和冲突后的焦点。建议 pending 方案为显示固定边界、hash、证据范围与最后完整点；只有同边界匹配才允许「替换投影快照」，mismatch/CAS conflict 保留最新快照并显示差异与「重新比较」，不自动重试或 dispatch。备选是只读检查不配替换动作，但不符合已接受的 CAS 维护操作范围。
-- **DR9 — 写操作的可见反馈（pending）**：启停、恢复重试与 CAS 替换没有统一的请求中/成功/失败外观。建议 pending 方案为触发按钮进入 pending、保留已读内容、结果就地更新并用文字宣布；失败保留可修正上下文，不只发短暂 toast，也不显示假进度。备选是全局 toast-only，会让关键恢复结果失去持久上下文。
+- **DR2 — Workflow 编辑结构与保存结果（已裁决 A，R30=A 修正）**：单页分组表单依次为「目标与设备 / 触发 / 工具与 Skills / 策略与证据 / 配置摘要」；可见 label、字段级错误和顶部摘要。新建空白配置为 disabled；编辑保留原 enabled/disabled，新 revision 只影响未来 wake；模板仍按 DR4=B 直接 enabled。长表单有锚点/摘要，未保存离开不静默丢弃。
+- **DR3 — stale-submit 与 deferred diff 的冲突（已裁决 A）**：保留本地编辑，显示最新 current_version 与「配置已更新；重新加载后再试」；用户主动重载，不自动覆盖，不提供或声称 diff，X5 继续 deferred。
+- **DR4 — 模板实例化旅程（已裁决 B）**：选择模板后填写设备、数据源与策略，经当前 workspace 校验直接创建 enabled Workflow；dry-run 为可选旁路。成功进入详情并显示 enabled/version/下一计划 wake；校验失败不创建，过期 slot 不补跑。此选择只覆盖模板实例化，不改变 DR2 普通编辑保存为 disabled revision 的合同。
+- **DR5 — Supervisor 恢复操作（已裁决 A）**：Supervisor 详情逐条展示原 event_id、目标和失败原因，确认后按原 event_id 幂等重试；请求中禁用该行、保留列表并就地显示持久结果，无权限只读，不做批量隐式重试。
+- **DR7 — dry-run 的 snapshot 选择与结果回程（已裁决 A）**：从固定 revision 进入独立 simulation Run；snapshot picker 显示 seq/observed_at，缺失响亮失败。持续 simulation banner，结果复用通用 Run 投影且只读，提供「返回此版本」，不出现真实执行或生产审批入口。
+- **DR8 — 压缩检查器的比较与冲突呈现（已裁决 A）**：显示固定边界、hash、证据范围与最后完整点；仅同边界匹配时允许「替换投影快照」。mismatch/CAS conflict 保留最新快照，显示可定位差异和「重新比较」，不自动重试或 dispatch，写动作保持管理权限。
+- **DR9 — 写操作的可见反馈（已裁决 A）**：启停、恢复重试与 CAS 替换请求中只禁用相关动作并保留内容；成功、冲突、失败在原区域持久呈现并文字宣布，包含下一步。不只依赖 toast，不显示假进度或整体白屏。
 
-### Pass 3 — User Journey & Emotional Arc：5/10 → 5/10
+### Pass 3 — User Journey & Emotional Arc：5/10 → 10/10
 
-已有从模板到审计的单向箭头，但缺少首次配置的完成感和异常处置后的回程；未形成 5 秒、5 分钟、长期信任的可检查 storyboard。
+DR10=A 与 DR11=A 已补齐首次配置和异常处置闭环，并保留 DR4=B 的直接启用选择。5 秒入口、5 分钟完成、长期版本/证据信任以及异常后的返回路径均已进入正文。
 
-- **DR10 — 首次配置 storyboard（pending）**：建议补齐「空状态理解价值 → 从模板开始 → 校验/可选 dry-run → 保存 disabled → 显式启用 → 看见下一计划 wake」；如果计划在未来，不伪造立即运行。5 秒应知道从哪开始，5 分钟能完成安全启用，长期能确认版本与调度身份。备选是空白表单起步，但首次使用成本更高。
-- **DR11 — 异常到处置完成的 storyboard（pending）**：建议补齐「需要处理 → unknown Effect 与证据 → 人工对账 → 唯一终态 → 返回 Supervisor」；问题条只有在对账事务提交后才消失，用户知道仍需做什么。5 秒看见需要处理，5 分钟完成核查，长期保留 actor/证据审计。备选是从 Admin 队列进入，但会削弱 Runtime 内的上下文连续性。
+- **DR10 — 首次配置 storyboard（已裁决 A）**：空态说明持续 Workflow 价值，主行动「从模板新建」，保留次要空白入口；模板 → 校验 → 可选 dry-run → 按 DR4=B 创建 enabled → 详情下一计划 wake。5 秒知道从哪开始，5 分钟完成创建，未来触发不冒充立即运行。
+- **DR11 — 异常到处置完成的 storyboard（已裁决 A）**：Harness 需要处理 → Task/Effect 脱敏摘要与证据 → 人工已执行/未执行 → 唯一终态 → 返回 Supervisor。问题条只有事务提交后才移除；迟到结果、Conflict 和仍未知保持可见，长期保留 actor/证据/cause 审计。
 
-### Pass 4 — AI Slop Risk：8/10 → 8/10
+### Pass 4 — AI Slop Risk：8/10 → 10/10
 
 模式为 **OPERATE / APP UI**。没有触发 hard rejection：计划明确拒绝通用卡片堆、假 KPI、假进度和场景专用 UI；既有品牌、tokens 与 Runtime 组件可复用。未生成 mockup，因此以下只评价计划，不是视觉 PASS。
 
 | Litmus | 结果 | 证据/缺口 |
 |---|---|---|
 | 产品/品牌可识别 | YES | 自治机舱、深空与信号蓝已有明确系统 |
-| 一个强视觉锚点 | NO | 新页面首要视觉区域尚未指定，DR1 |
-| 只看标题可理解 | NO | 新 section 标题与页面层级未写，DR1 |
-| 每 section 一个工作 | NO | Supervisor、Workflow、协调面板的位置未定，DR1 |
+| 一个强视觉锚点 | YES | DR1b=A 以「需要处理」为首页第一层 |
+| 只看标题可理解 | YES | DR1/DR2/DR6 定义页面层级、分组与返回路径 |
+| 每 section 一个工作 | YES | 异常、Workflow/调度、当前协调各自独立 |
 | Cards 确有必要 | YES | 计划拒绝通用卡片堆；既有设备卡是交互实体 |
 | Motion 改善层级 | YES | 沿用克制状态反馈与 reduced-motion，不新增装饰 |
 | 无装饰阴影仍成立 | YES | 信息设计依赖文字、表格与状态，而非光晕 |
 
-无新增独立 AI-slop remedy；具体性缺口由 DR1/DR15 承担，不能因本项 8/10 视为已解决。
+无新增独立 AI-slop remedy；DR1/DR15 已闭合具体性缺口。10/10 表示计划规则完整，不是对未实现页面的视觉 PASS。
 
-### Pass 5 — Design System Alignment：7/10 → 7/10
+### Pass 5 — Design System Alignment：7/10 → 10/10
 
-根目录设计系统和 Runtime token 契约足够，但本计划仅写「沿用现有设计系统」，尚未把 simulation、unknown、恢复和维护表面映射到既有词汇。
+DR15=A 已把 simulation、unknown、恢复和维护表面映射到现有双主题 tokens 与组件；不新增色板、字体或装饰光晕，当前无设计系统遗留项。
 
-- **DR15 — 新状态的 token 与组件映射（pending）**：建议复用 `{colors.deep-space}`、`{colors.surface-card}`、`{colors.surface-elevated}`、`{colors.text-primary}` 与双主题实际变量；`signal-blue` 只用于行动/焦点，simulation 与 unknown 使用 `{colors.warn-amber}` + 图标/文字，danger 只表达明确失败；表格、dialog、focus ring、spacing/radius/duration 均复用现有组件，不新增色板或 Runtime 专属字体。备选是新增 simulation 紫色，会与品牌紫和交互色混淆。
+- **DR15 — 新状态的 token 与组件映射（已裁决 A）**：复用现有双主题表面/文字、spacing、rounded、table、dialog 与 focus-ring；signal-blue 只用于行动/焦点，simulation/unknown 用 warn-amber+图标/文字，danger 只表示明确失败。不新增 simulation 紫色、新色板、专属字体或装饰光晕。
 
-### Pass 6 — Responsive & Accessibility：6/10 → 6/10
+### Pass 6 — Responsive & Accessibility：6/10 → 10/10
 
-已有 44px、键盘、读屏、对比度和移动测试原则，也有可复用的三档 Runtime 实现；但新 Workflow 表格、主子层级、维护面板没有逐 viewport 和焦点/公告合同。
+DR12=A、DR13=A、DR14=A 已确定三档 viewport、zoom/44px、焦点/公告/语义和中文状态合同；均有实现任务与验证要求，当前无本维度遗留项。
 
-- **DR12 — 新表面的响应式合同（pending）**：建议 ≥980px 使用 Workflow 主表 + 当前协调侧栏；600–979px 两者全宽顺序排列；<600px Workflow 行改为带可见字段名的记录列表，Main/Subagent 保留文本层级，维护元数据改 key-value，操作进可键盘访问的 overflow。不能只写「堆叠」或让整表横向溢出。备选是保留表格横向滚动，但单手操作与扫描较差。
-- **DR13 — 焦点与读屏公告（pending）**：建议路由切换聚焦页面 H1，tabs 遵循方向键模式，异步结果用持久文字和克制的 `role=status`，错误用 `role=alert`，dialog/菜单关闭归还焦点；simulation banner 不反复播报，表格保留语义表头。备选是只沿用全局 CSS，不足以保证新交互可操作。
-- **DR14 — 中文状态词汇（pending）**：建议固定用户文案映射：`scheduled=计划`、`pending=等待调度`、`unknown=结果未知`、`cancelled_unknown=停止结果未知`、`simulation=模拟运行`；时间旁明确时区，禁止用「在线/已完成/全部停止」替代这些事实。备选是直接显示枚举，稳定但不易理解且容易误判设备状态。
+- **DR12 — 新表面的响应式合同（已裁决 A）**：≥980px 主表+协调侧栏，600–979px 全宽顺序区，<600px 带字段名记录列表、文本父子层级、key-value 维护信息和可键盘 overflow。无页面级横滚，覆盖 200%/400% zoom，目标至少 44px。
+- **DR13 — 焦点与读屏公告（已裁决 A）**：路由聚焦 H1，tabs 方向键，dialog/菜单归还焦点；异步结果持久文字+去重 role=status，错误 role=alert，语义表头与主子 expanded 状态明确。simulation banner 不反复播报，动态更新不丢焦点到 body。
+- **DR14 — 中文状态词汇（已裁决 A）**：固定 scheduled=计划、pending=等待调度、unknown=结果未知、cancelled_unknown=停止结果未知、simulation=模拟运行；时间带时区，文字+图标共同表达。新增状态必须同步文案映射和测试，不用在线/已完成/全部停止覆盖事实。
 
 ### Pass 7 — Unresolved Design Decisions
 
-本轮 **0 resolved / 15 pending**：DR1-DR15 均未独立裁决。既有 OQ1-OQ3 与历史设计延期的主字体、captions 仍未解决，但不被本轮重新打开。未获得批准的 recommendation 不进入 Implementation Tasks，也不提高评分。
+本轮 **16 resolved / 0 new pending**：DR1 的导航与首屏分别裁决，DR2-DR15 各裁决一次。所有选择已写回正文及 T11、T15-T18。既有 OQ1-OQ3 与历史设计延期的主字体、captions 仍未解决，但未被本轮重开。
 
 ### Design NOT in scope
 
@@ -2336,7 +2479,7 @@ Approval readiness: PASS（CEO）。已检查 D1-D8、X1-X6（XD2-XD7）、M1/XD
 
 ### Design Implementation Tasks
 
-本轮没有新增已批准 task。DR1-DR15 裁决后，分别并入现有 T11、T15-T18 与前端回归/真实浏览器验证；在此之前不虚构细分子任务，不提高完成度。既有 20 项任务保持原范围和顺序。前序 Runtime 的 T8「完整 Runtime 验证与真实 Workbench 视觉 QA」继续承接到 Harness UI 验收，未在本轮执行；其余 6 项按当前分支已有实现记录为 done，但未在本轮重跑测试。
+DR1-DR15 的 16 个决定已分别并入 T11、T15-T18 与前端回归/真实浏览器验证；既有 20 项任务保持同一交付范围。前序 Runtime 的 T8「完整 Runtime 验证与真实 Workbench 视觉 QA」继续承接到 Harness UI 验收，未在本轮执行；其余 6 项按当前分支已有实现记录为 done，但未在本轮重跑测试。页面级 `/design-review` 曾由用户中止，不能计为视觉验收。
 
 ## Implementation Tasks
 
@@ -2382,10 +2525,10 @@ Synthesized from this review's findings. Each task derives from a specific findi
   - Surfaced by: R16-R18，重写必须保留现有 Runtime 行为并证明新失败路径
   - Files: `apps/cloud/tests/harness_core_e2e_tests.rs`, `apps/cloud/tests/runtime_eval.rs`, `crates/db/src/harness_*.rs`, `apps/cloud/src/domains/agent/runtime/`, `web/src/`
   - Verify: `cargo test -p tinyiothub-cloud --test harness_core_e2e_tests`，并运行迁移后的现有 Runtime 测试
-- [ ] **T11 (P1, human: ~2-4d / CC: ~3-6h)** — Runtime workbench — Project workflows and Main/Subagent causality
-  - Surfaced by: R18/R24，操作者需要通用实时/历史投影，不是场景定制 UI
-  - Files: `web/src/ui/views/`, `web/src/api/`, `web/src/types/`
-  - Verify: Node 24 下 `pnpm --dir web vitest run src/api/runtime-stream.test.ts src/ui/views/runtime-projection.test.ts src/ui/views/runtime-task.test.ts`
+- [ ] **T11 (P1, human: ~3-5d / CC: ~4-8h)** — Harness workbench — Build independent navigation, workflow overview and Main/Subagent causality
+  - Surfaced by: DR1/DR1b/DR6/DR9/DR12-DR15，独立 Harness 需要完整导航、层级、因果浏览与通用状态合同
+  - Files: `web/src/ui/app.ts`, `web/src/ui/views/`, `web/src/api/`, `web/src/types/`, `web/src/styles/`
+  - Verify: 独立 Harness 与 Runtime canonical/legacy 映射，保留编码 ID 和 view/device/at/event；新建 disabled、编辑保持 enabled/disabled、模板直接 enabled；异常优先首页、可展开主子列表和父级返回；就地持久反馈、中文映射、token 复用；三档 viewport、200%/400% zoom、键盘/读屏/44px 测试；Node 24 下运行相关 Vitest
 - [ ] **T12 (P1, human: ~1-2d / CC: ~2-4h)** — LLM evaluation — Add scripted and opt-in live-provider scenarios
   - Surfaced by: R19，工具与提示词变化需要同源 eval，不可只看 mock
   - Files: `apps/cloud/tests/runtime_eval.rs`, `evals/scenarios.json`, `evals/README.md`
@@ -2398,22 +2541,22 @@ Synthesized from this review's findings. Each task derives from a specific findi
   - Surfaced by: 用户简化要求与 R12，旧新并行会保留历史混乱
   - Files: `crates/db/migrations/`, `crates/db/src/runtime_event.rs`, `crates/db/src/task_approval.rs`, `apps/cloud/src/domains/agent/`, `web/src/`, `AGENTS.md`
   - Verify: 全量调用点无旧写路径，随后运行 `cargo test --workspace --lib --bins --tests` 与 Node 24 的 `just ci-full`
-- [ ] **T15 (P1, human: ~1-2d / CC: ~2-4h)** — Workflow templates — Add versioned inspection/video/energy templates and instantiation tests
-  - Surfaced by: X1/XD2，已接受模板不能停留在 CEO scope
-  - Files: `apps/cloud/templates/workflows/`, `crates/db/src/seed.rs`, `apps/cloud/tests/harness_core_e2e_tests.rs`
-  - Verify: 三模板实例化、引用、版本与无额外权限测试；通用文件导入仍属 X5 deferred
-- [ ] **T16 (P1, human: ~2-3d / CC: ~3-6h)** — Workflow dry-run — Add isolated simulation composition and projection
-  - Surfaced by: X2/XD3 与联合审查 1.1，模拟不得污染生产 wake/恢复/Main 协调
+- [ ] **T15 (P1, human: ~1-2d / CC: ~2-4h)** — Workflow templates — Add versioned inspection/video/energy templates and direct-enabled instantiation
+  - Surfaced by: X1/XD2、DR4=B、DR10=A，模板校验后直接启用，首次旅程以模板为主入口
+  - Files: `apps/cloud/templates/workflows/`, `crates/db/src/seed.rs`, `apps/cloud/tests/harness_core_e2e_tests.rs`, `web/src/ui/views/`
+  - Verify: 三模板参数/引用/能力/策略校验；成功创建 enabled 并进入详情显示下一计划 wake，失败零创建，过期 slot 不补跑；空态模板主行动和可选 dry-run；无额外权限，通用文件导入仍属 X5 deferred
+- [ ] **T16 (P1, human: ~2-3d / CC: ~3-6h)** — Workflow dry-run — Add isolated simulation composition and independent read-only Run page
+  - Surfaced by: X2/XD3、DR7=A，模拟需要固定 snapshot、全旅程标识和明确返回路径
   - Files: `apps/cloud/src/domains/agent/workflows/`, `apps/cloud/src/domains/agent/runtime/`, `crates/db/src/`, `web/src/ui/views/`
-  - Verify: 固定 snapshot、零 worker、禁止 Effect/Decision/wake、生产查询隔离、simulation 标识测试
-- [ ] **T17 (P1, human: ~2-3d / CC: ~3-6h)** — Supervisor health — Add scheduler tick facts and health/recovery panel
-  - Surfaced by: X3/XD4 与联合审查 1.4，需区分正常空闲和调度停滞
+  - Verify: 固定 revision 与 snapshot seq/observed_at picker、缺失响亮失败；独立 simulation Run 持续 banner、只读通用投影和「返回此版本」；零 worker、禁止 Effect/Decision/wake、生产查询隔离、无真实执行入口测试
+- [ ] **T17 (P1, human: ~2-3d / CC: ~3-6h)** — Supervisor health — Add scheduler tick facts and in-context dead-wake recovery
+  - Surfaced by: X3/XD4、DR5=A、DR9=A，需区分正常空闲/调度停滞并就地完成可审计恢复
   - Files: `apps/cloud/src/domains/agent/runtime/`, `web/src/ui/views/`, `web/src/api/`, `docs/runbooks/`
-  - Verify: 空态、tick deadline、时间回拨、恢复清除、权限与 dead-wake 幂等测试
-- [ ] **T18 (P1, human: ~1-2d / CC: ~2-4h)** — Compaction inspector — Add fixed-boundary rebuild comparison and CAS replacement
-  - Surfaced by: X4/XD5 与联合审查 3.3，持续 append 不得造成误报或旧快照覆盖
+  - Verify: 空态、tick deadline、时间回拨、恢复清除；逐条 event_id/目标/原因、确认后原 ID 幂等 retry、行 pending 与持久结果、无权限只读、无批量重试测试
+- [ ] **T18 (P1, human: ~1-2d / CC: ~2-4h)** — Compaction inspector — Add fixed-boundary comparison and explicit CAS replacement
+  - Surfaced by: X4/XD5、DR8=A、DR9=A，比较与维护结果必须可见，持续 append 不得造成旧快照覆盖
   - Files: `crates/db/src/`, `apps/cloud/src/domains/agent/runtime/`, `web/src/ui/views/`
-  - Verify: 同 seq/version 比较、重建期间 append、CAS 冲突、失败保留与零 dispatch 测试
+  - Verify: 同 seq/version/hash/证据边界展示、仅匹配可替换、重建期间 append、CAS 冲突保留最新、可定位差异/重新比较、就地持久反馈、管理权限与零 dispatch 测试
 - [ ] **T19 (P2, human: ~1d / CC: ~2h)** — Soak runbook — Write 24h soak/fault-injection method without claiming execution
   - Surfaced by: X6/XD7 与 XD9=C，本期只交方法，不执行 24h
   - Files: `docs/runbooks/harness-soak.md`, `docs/runbooks/runtime-rollout.md`
@@ -2449,6 +2592,25 @@ REALITY: perf-table pass 已规定机器/引擎/N/p50/p95/main-branch/稳态/病
 REALITY: recall pass 未修改搜索排序，Admin 聚合不宣称召回 docs/superpowers/specs/2026-11-02-agent-harness-core-design.md:442
 REALITY: dependency-fallback pass 不依赖 AGH/Dapr/Temporal，T1 失败可退回代码 Supervisor docs/superpowers/specs/2026-11-02-agent-harness-core-design.md:496
 REALITY: obligation-tiers pass must-ship 与 deferred 经 XD2-XD10 明确，X5 入 TODO docs/superpowers/specs/2026-11-02-agent-harness-core-design.md:1240
+
+REALITY: premise-table pass 设计决定与现有路由/任务合同已核对；AGH 行为覆盖与 IoT 完整性仍未独立证明，unverified=2 docs/superpowers/specs/2026-11-02-agent-harness-core-design.md:28
+REALITY: already-done finding origin/main 两次 fetch 均失败，当前只能使用本地 base 历史；未把未刷新 base 当作无实现证据 docs/superpowers/specs/2026-11-02-agent-harness-core-design.md:2355
+REALITY: surface-check pass 现有 Runtime list/new/task 与 query 由解析器证实；未来 Harness 路由标为计划 docs/superpowers/specs/2026-11-02-agent-harness-core-design.md:488
+REALITY: binding-decisions pass DR1-DR15、R30/R31 与 D6/D8 均保持，无被项目默认覆盖 docs/superpowers/specs/2026-11-02-agent-harness-core-design.md:488
+REALITY: numbers pass 16 个设计决定、17 条计划测试路径按本轮实际清单计数；工时均为估计，未运行基准 docs/superpowers/specs/2026-11-02-agent-harness-core-design.md:2288
+REALITY: deferred-asks pass 主子/配置/视频/节能/清理均保留；页面视觉评审按用户要求中止并留待实现后 docs/superpowers/specs/2026-11-02-agent-harness-core-design.md:38
+REALITY: pr-count pass 全部工作仍进入现有 PR #101，无新增队列成本 docs/superpowers/specs/2026-11-02-agent-harness-core-design.md:559
+REALITY: prior-art pass 不新增外部依赖或 patched vendor；复用现有 Lit/hash 路由与设计 tokens docs/superpowers/specs/2026-11-02-agent-harness-core-design.md:488
+REALITY: transaction-semantics pass R30/R31 不改 Effect/Decision 事务；既有 CAS、wake、恢复合同不变 docs/superpowers/specs/2026-11-02-agent-harness-core-design.md:490
+REALITY: contract-assumptions pass 不假设外部仓库默认；旧 Runtime 行为以当前源码和既有测试为准 docs/superpowers/specs/2026-11-02-agent-harness-core-design.md:488
+REALITY: falsification-box pass 若编辑改变 enabled 或重定向丢 query 即对应测试失败；修复限 R30/R31，不扩大架构 docs/superpowers/specs/2026-11-02-agent-harness-core-design.md:490
+REALITY: stop-reasons pass unknown/cancelled_unknown/simulation 的中文与可见状态均有计划触发测试 docs/superpowers/specs/2026-11-02-agent-harness-core-design.md:485
+REALITY: reporter-environment pass 本轮仅静态代码/计划证据；无真实浏览器、Linux、硬件或生产结论 docs/superpowers/specs/2026-11-02-agent-harness-core-design.md:2288
+REALITY: units pass 时间沿用 UTC/确定时区与显式时间戳；像素和断点单位明确 docs/superpowers/specs/2026-11-02-agent-harness-core-design.md:483
+REALITY: perf-table pass 本轮无性能数字或基准；既有 main/branch、p50/p95 与规模方法不变 docs/superpowers/specs/2026-11-02-agent-harness-core-design.md:2321
+REALITY: dependency-fallback pass 新导航不依赖前置服务；无 canonical 实现时旧 Runtime 继续现有行为 docs/superpowers/specs/2026-11-02-agent-harness-core-design.md:488
+REALITY: obligation-tiers pass 17 条已批准路径为 must-ship 验证；OQ/X5/字体/captions 保持 deferred docs/superpowers/specs/2026-11-02-agent-harness-core-design.md:2355
+PLAN_REALITY: phase=eng rows=7/7 required +10 scoped missing=none unverified=2 verdict=complete
 
 PLAN_REALITY: phase=ceo rows=18/18 missing=none unverified=2 verdict=complete
 
@@ -2492,6 +2654,18 @@ PLAN_REALITY: phase=ceo rows=18/18 missing=none unverified=2 verdict=complete
 
 Implementation task artifact：20 项已保存并承接前序列表；测试计划已更新。24h soak 按 XD9=C 只交 runbook，未执行；第三轮 spec 修复文本验证 10/10，但没有第四轮 PASS。
 
+### Engineering design-change completion
+
+- Step 0 / Scope Challenge：scope accepted as-is；结构复用 D1；R30/R31 已裁决。
+- Reality rows：7/7 required + 10 scoped emitted，`PLAN_REALITY` complete，2 个 unverified premises。
+- Architecture：0 个额外问题（2 个 Scope Challenge 发现已闭合）；Code Quality：0；Performance：0。
+- Test Review：17 条新路径有 diagram、value cards 与计划断言，0 条已执行；无新增 LLM eval。
+- Tasks：20 项承接，T11、T15-T18 已按实际回答更新；TODOS 新增 0。
+- Failure modes：0 critical gaps；编辑启停与旧链接状态保留已加入失败表。
+- Unresolved decisions：本轮 0；Outside voice：Codex unavailable，原生 fallback 五分钟无完整报告。
+- Parallelization：沿用 A/B/C 三 lane 与既有依赖；Lake Score：2/2（R30/R31 均选 10/10 选项）。
+- 验证边界：只有静态计划/源码审查，未实现新 UI、未运行其未来测试，也没有真实视觉或生产证据。
+
 ### Suppressed findings
 
 无。低置信度猜测未列入主报告；外部代理的未完成片段未计为评审证据。
@@ -2502,75 +2676,45 @@ Implementation task artifact：20 项已保存并承接前序列表；测试计�
 +====================================================================+
 |         DESIGN PLAN REVIEW — COMPLETION SUMMARY                    |
 +====================================================================+
-| System Audit         | DESIGN.md 已找到；显著 Runtime UI scope     |
-| Step 0               | 5/10；覆盖全部 7 个设计维度                 |
-| Pass 1  (Info Arch)  | 5/10 → 5/10；DR1/DR6 pending               |
-| Pass 2  (States)     | 7/10 → 7/10；DR2-DR5/DR7-DR9 pending       |
-| Pass 3  (Journey)    | 5/10 → 5/10；DR10/DR11 pending             |
-| Pass 4  (AI Slop)    | 8/10 → 8/10；无 hard rejection             |
-| Pass 5  (Design Sys) | 7/10 → 7/10；DR15 pending                  |
-| Pass 6  (Responsive) | 6/10 → 6/10；DR12-DR14 pending             |
-| Pass 7  (Decisions)  | 0 resolved, 15 new pending                 |
+| System Audit         | DESIGN.md 已找到；独立 Harness UI scope     |
+| Step 0               | 5/10；DR1-DR15 逐项裁决                     |
+| Pass 1  (Info Arch)  | 5/10 → 10/10；DR1/DR1b/DR6 accepted        |
+| Pass 2  (States)     | 7/10 → 10/10；DR2-DR5/DR7-DR9 accepted     |
+| Pass 3  (Journey)    | 5/10 → 10/10；DR10/DR11 accepted           |
+| Pass 4  (AI Slop)    | 8/10 → 10/10；无 hard rejection            |
+| Pass 5  (Design Sys) | 7/10 → 10/10；DR15 accepted                |
+| Pass 6  (Responsive) | 6/10 → 10/10；DR12-DR14 accepted           |
+| Pass 7  (Decisions)  | 16 resolved, 0 new deferred                |
 +--------------------------------------------------------------------+
 | NOT in scope         | written (4 design items)                    |
 | What already exists  | written；复用现有 Runtime 与设计系统         |
 | TODOS.md updates     | 0 items proposed                            |
-| Approved Mockups     | 0 generated, 0 approved；3 requested 未保存 |
-| Decisions made       | 0 added to plan                             |
-| Decisions deferred   | 20 = 15 new + 5 prior                       |
-| Overall design score | 5/10 → 5/10                                 |
+| Approved Mockups     | 0 generated, 0 approved                     |
+| Decisions made       | 16 added to plan                            |
+| Decisions deferred   | 5 prior；本轮 0                             |
+| Overall design score | 5/10 → 10/10                                |
 +====================================================================+
 ```
 
-没有已批准的新设计 remedy，因而没有新增实施任务或 TODOS。当前不是 design-complete；实现前需逐项裁决 DR1-DR15，实现后仍需 `/design-review` 验证真实页面。视觉工具缺少图片 API key，未产生可审查图片；outside design voices 未运行。
+DR1-DR15 的计划决策已完整，T11、T15-T18 已更新。该评分表示设计合同完整，不表示实现或视觉质量已通过。页面级 `/design-review` 由用户中止，图片生成也因缺少 API key 没有产出；实现后仍需真实浏览器 `/design-review`。
 
 ### Design Review — Unresolved Decisions
 
-- DR1：新 Workflow/Supervisor/协调表面的 Runtime 路由、首屏层级与主行动。
-- DR2：Workflow 编辑表单分组、校验摘要、保存落点与默认启停。
-- DR3：stale-submit 的保留/重载交互，以及「比较」文案与 deferred X5 的冲突。
-- DR4：模板实例化字段、预览、dry-run、保存与显式启用旅程。
-- DR5：dead-wake 逐条恢复、确认、权限与结果反馈。
-- DR6：Main/Subagent 展开、进入详情与返回父级的因果浏览。
-- DR7：dry-run snapshot picker、持续 simulation 标识、结果页与返回编辑器。
-- DR8：压缩比较的 hash/差异/冲突呈现及 CAS 替换操作。
-- DR9：启停、恢复、CAS 等写操作的 pending/success/error 持久反馈。
-- DR10：首次配置从空态到首次计划 wake 的完整 storyboard。
-- DR11：unknown 到人工对账、终态和返回 Supervisor 的异常 storyboard。
-- DR12：新表格、主子层级与维护面板在桌面/平板/手机的具体布局。
-- DR13：新路由、tabs、异步结果、dialog/菜单的焦点与读屏公告。
-- DR14：scheduled/pending/unknown/cancelled_unknown/simulation 的中文文案映射。
-- DR15：simulation/unknown/恢复/维护表面的既有 token 与组件映射。
-- 既有 deferred：OQ1-OQ3，以及历史 Runtime 主字体与含语音证据 captions；本轮未重开。
+本轮 0 个新未决项。既有 deferred 保持：OQ1 telemetry 拆库、OQ2 Admin 聚合、OQ3 crate 改名，以及历史 Runtime 主字体与含语音证据 captions；本轮未重开。
 
 ## GSTACK REVIEW REPORT
 
 | Review | Trigger | Why | Runs | Status | Findings |
 |--------|---------|-----|------|--------|----------|
 | CEO Review | `/plan-ceo-review` | Scope & strategy | 2 | issues_open | 6 proposals，5 accepted，1 deferred；0 critical gaps |
-| Outside Review | Codex `/plan-eng-review` outside voice | Independent 2nd opinion | 1 | unavailable | 模型路由无效；fresh 原生 fallback 无完整报告 |
-| Eng Review | `/plan-eng-review` | Architecture & tests (required) | 7 | issues_open | 138 issues，0 critical gaps；3 deferred decisions |
-| Design Review | `/plan-design-review` | UI/UX gaps | 2 | issues_open | score 5/10 → 5/10；0 decisions；15 new pending |
+| Outside Review | Codex `/plan-eng-review` outside voice | Independent 2nd opinion | 2 | unavailable | 模型路由无效；原生 fallback 五分钟无完整报告 |
+| Eng Review | `/plan-eng-review` | Architecture & tests (required) | 8 | issues_open | 17 issues，0 critical gaps；0 unresolved；R30/R31 已闭合 |
+| Design Review | `/plan-design-review` | UI/UX gaps | 3 | issues_open | score 5/10 → 10/10；16 decisions；2 historical deferred |
 | DX Review | `/plan-devex-review` | Developer experience gaps | 0 | — | — |
 
-- **OUTSIDE COVERAGE:** Codex plan review unavailable；自定义 endpoint 未配置 frontier plan-review model。当前 design outside voices 未运行，图片生成因缺少 API key 未产生结果；均无外部或视觉完成证据。
-- **VERDICT:** CEO + ENG + DESIGN ISSUES OPEN — DR1-DR15 require individual decisions before UI implementation; eng review required after design changes and implementation.
+- **OUTSIDE COVERAGE:** Codex plan review unavailable；自定义 endpoint 未配置 frontier plan-review model，未发起 Codex 调用；原生 Plan fallback 五分钟内无完整报告，迟到片段未计为发现或覆盖。
+- **VERDICT:** DESIGN DECISIONS COMPLETE；CEO + ENG + DESIGN ISSUES OPEN。R30/R31 与 17 条计划测试路径已映射，但实现、测试和真实视觉 QA 均未完成；无 CLEAR 实施门禁结论。
 
 **UNRESOLVED DECISIONS:**
-- DR1：新表面的 Runtime 路由、信息层级与主行动。
-- DR2：Workflow 编辑结构与保存结果。
-- DR3：stale-submit 交互与 deferred diff 的文案冲突。
-- DR4：模板实例化与安全启用旅程。
-- DR5：Supervisor dead-wake 恢复操作。
-- DR6：Main/Subagent 因果浏览与返回路径。
-- DR7：dry-run snapshot 选择、结果与回程。
-- DR8：压缩检查器比较、冲突与 CAS 替换呈现。
-- DR9：写操作的 pending/success/error 可见反馈。
-- DR10：首次配置完整 storyboard。
-- DR11：异常到对账完成与返回的 storyboard。
-- DR12：新表面的逐 viewport 响应式合同。
-- DR13：新交互的焦点与读屏公告。
-- DR14：中文状态词汇映射。
-- DR15：新状态的既有 token 与组件映射。
-- +5 unresolved from prior reviews（CEO OQ1-OQ3 + Design 主字体/captions）。
+- +5 unresolved from prior reviews（CEO OQ1-OQ3 + Design 主字体/captions）；本轮工程与设计新决定均无未决项。
 
