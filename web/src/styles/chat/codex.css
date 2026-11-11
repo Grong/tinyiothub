@@ -330,16 +330,51 @@ global-hud {
   font-size: 12px;
 }
 
+details.activity {
+  display: block;
+}
+
+.timeline-tools {
+  margin: 0 0 12px 56px;
+}
+
+.timeline-tools .log-entry {
+  margin-left: 0;
+  margin-bottom: 0;
+}
+
+.timeline-tools__count {
+  margin-bottom: 4px;
+  color: var(--asst-muted);
+  font-family: var(--asst-mono);
+  font-size: 10px;
+}
+
 .activity__summary {
   display: flex;
   align-items: center;
   gap: 8px;
   min-width: 0;
+  min-height: 28px;
   padding: 0;
   color: inherit;
   font: inherit;
   cursor: pointer;
   list-style: none;
+}
+
+.activity__summary::after {
+  content: '›';
+  width: 12px;
+  margin-left: 2px;
+  color: var(--asst-muted);
+  font-size: 14px;
+  text-align: center;
+  transition: transform var(--duration-fast) var(--ease-out);
+}
+
+details[open] > .activity__summary::after {
+  transform: rotate(90deg);
 }
 
 .activity__summary::-webkit-details-marker {
@@ -394,6 +429,10 @@ global-hud {
   white-space: pre-wrap;
 }
 
+.activity--tool .activity__detail {
+  white-space: normal;
+}
+
 .activity__detail pre {
   margin: 6px 0;
   padding: 8px 10px;
@@ -404,6 +443,8 @@ global-hud {
   font-size: 11px;
   line-height: 1.55;
   white-space: pre-wrap;
+  overflow-x: auto;
+  overflow-wrap: anywhere;
 }
 
 .activity__detail-label {
@@ -1378,9 +1419,14 @@ global-hud {
 
   .log-entry,
   .timeline-dots,
+  .timeline-tools,
   .timeline-turn-group .timeline-todos,
   .timeline-turn-group > .activity--current {
     margin-left: 0;
+  }
+
+  .activity__summary {
+    min-height: 44px;
   }
 
   .timeline-user__bubble {
@@ -1428,7 +1474,8 @@ global-hud {
   .empty-chip,
   .timeline-dots span,
   .timeline-assistant--live::after,
-  .timeline-todos__meter span {
+  .timeline-todos__meter span,
+  .activity__summary::after {
     animation: none !important;
     transition: none !important;
     opacity: 1;

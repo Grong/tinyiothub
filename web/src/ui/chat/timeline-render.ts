@@ -153,13 +153,15 @@ function renderAssistant(
   // avoid showing the same text twice while both update.
   if (part.streaming && liveText) return nothing;
   return html`<article class="log-entry log-entry--assistant">
-    ${showHeader
-      ? html`<div class="assistant-message__head">
-          <span class="assistant-message__avatar" aria-hidden="true">脑</span>
-          <span class="assistant-message__name">大脑</span>
-          <time class="assistant-message__time" datetime=${part.at}>${formatAt(part.at)}</time>
-        </div>`
-      : nothing}
+    ${
+      showHeader
+        ? html`<div class="assistant-message__head">
+            <span class="assistant-message__avatar" aria-hidden="true">脑</span>
+            <span class="assistant-message__name">大脑</span>
+            <time class="assistant-message__time" datetime=${part.at}>${formatAt(part.at)}</time>
+          </div>`
+        : nothing
+    }
     <div class="timeline-assistant ${showCursor ? 'timeline-assistant--live' : ''}">
       ${unsafeHTML(md(part.text))}
     </div>
@@ -177,32 +179,55 @@ function renderReasoning(part: ReasoningPart): TemplateResult {
   </details>`;
 }
 
-function renderTool(part: ToolPart): TemplateResult {
+function renderTool(part: ToolPart, compact = false): TemplateResult {
   const meta = TOOL_META[part.name];
   const icon = meta?.icon ?? '⚙';
   const failed = part.status === 'failed';
+  const hideMeta = compact && !failed && Boolean(part.result);
   const stateClass = failed
     ? 'activity__meta--failed'
     : part.result
       ? 'activity__meta--ok'
       : 'activity__meta--pending';
-  return html`<details class="activity activity--tool log-entry ${failed ? 'activity--failed' : ''}">
+  return html`<details
+    class="activity activity--tool log-entry ${failed ? 'activity--failed' : ''}"
+  >
     <summary class="activity__summary">
       <span class="activity__icon" aria-hidden="true">${icon}</span>
       <span class="activity__label">${toolSummary(part)}</span>
-      <span class="activity__meta ${stateClass}">${failed ? '失败' : part.result ? '完成' : '执行中'}</span>
+      ${
+        hideMeta
+          ? nothing
+          : html`<span class="activity__meta ${stateClass}"
+              >${failed ? '失败' : part.result ? '完成' : '执行中'}</span
+            >`
+      }
     </summary>
     <div class="activity__detail">
       <div class="activity__detail-label">参数</div>
       <pre>${JSON.stringify(part.args ?? {}, null, 2)}</pre>
-      ${part.result
-        ? html`<div class="activity__detail-label">结果</div><pre>${part.result}</pre>`
-        : nothing}
-      ${part.evidence?.length
-        ? html`<div class="activity__detail-label">证据</div><pre>${JSON.stringify(part.evidence, null, 2)}</pre>`
-        : nothing}
+      ${
+        part.result
+          ? html`<div class="activity__detail-label">结果</div>
+              <pre>${part.result}</pre>`
+          : nothing
+      }
+      ${
+        part.evidence?.length
+          ? html`<div class="activity__detail-label">证据</div>
+              <pre>${JSON.stringify(part.evidence, null, 2)}</pre>`
+          : nothing
+      }
     </div>
   </details>`;
+}
+
+function renderToolRun(items: Array<{ part: ContentPart; index: number }>): TemplateResult {
+  const compact = items.length > 1;
+  return html`<div class="timeline-tools">
+    ${compact ? html`<div class="timeline-tools__count">${items.length} 次工具调用</div>` : nothing}
+    ${items.map(({ part }) => renderTool(part as ToolPart, compact))}
+  </div>`;
 }
 
 function renderSubagent(part: Extract<ContentPart, { kind: 'subagent' }>): TemplateResult {
@@ -223,7 +248,9 @@ function renderSubagent(part: Extract<ContentPart, { kind: 'subagent' }>): Templ
 function renderSkill(part: Extract<ContentPart, { kind: 'skill' }>): TemplateResult {
   return activity(html`
     <span class="activity__icon" aria-hidden="true">◆</span>
-    <span class="activity__label">技能 · ${part.name}${part.version ? ` ${part.version}` : ''}</span>
+    <span class="activity__label"
+      >技能 · ${part.name}${part.version ? ` ${part.version}` : ''}</span
+    >
   `);
 }
 
@@ -236,10 +263,13 @@ function renderOrigin(part: Extract<ContentPart, { kind: 'origin' }>): TemplateR
 }
 
 function renderNotice(part: Extract<ContentPart, { kind: 'notice' }>): TemplateResult {
-  return activity(html`
-    <span class="activity__icon" aria-hidden="true">·</span>
-    <span class="activity__label">${formatAt(part.at)} · ${part.text}</span>
-  `, `activity--notice activity--${part.tone}`);
+  return activity(
+    html`
+      <span class="activity__icon" aria-hidden="true">·</span>
+      <span class="activity__label">${formatAt(part.at)} · ${part.text}</span>
+    `,
+    `activity--notice activity--${part.tone}`,
+  );
 }
 
 function renderRetry(part: Extract<ContentPart, { kind: 'retry' }>): TemplateResult {
@@ -247,7 +277,9 @@ function renderRetry(part: Extract<ContentPart, { kind: 'retry' }>): TemplateRes
   const delay = Number.isInteger(seconds) ? String(seconds) : seconds.toFixed(1);
   return html`<div class="timeline-retry" role="status">
     <span class="timeline-retry__error">${part.error}</span>
-    <span class="timeline-retry__meta">${delay} 秒后重试 · 第 ${part.attempt}/${part.maxRetries} 次</span>
+    <span class="timeline-retry__meta"
+      >${delay} 秒后重试 · 第 ${part.attempt}/${part.maxRetries} 次</span
+    >
   </div>`;
 }
 
@@ -284,7 +316,9 @@ export function renderTodoPanel(todos: TodoItem[]): TemplateResult | typeof noth
         <span>本轮计划</span>
         <span class="timeline-todos__count">${done}/${total}</span>
       </div>
-      <div class="timeline-todos__meter" aria-hidden="true"><span style=${`width:${percent}%`}></span></div>
+      <div class="timeline-todos__meter" aria-hidden="true">
+        <span style=${`width:${percent}%`}></span>
+      </div>
       <ol class="timeline-todos__list">
         ${todos.map(
           (todo) => html`
@@ -313,24 +347,42 @@ function currentWork(parts: ContentPart[], liveText: string, thinking: string): 
   return '等待模型响应';
 }
 
-function renderTrailingStatus(parts: ContentPart[], sending: boolean, liveText: string, thinking: string): TemplateResult | typeof nothing {
+function renderTrailingStatus(
+  parts: ContentPart[],
+  sending: boolean,
+  liveText: string,
+  thinking: string,
+): TemplateResult | typeof nothing {
   const lastTurn = [...parts].reverse().find((part) => part.kind === 'turn');
   const running = sending || (lastTurn?.kind === 'turn' && lastTurn.status === 'running');
   if (running) {
     const elapsed = lastTurn ? formatDuration(lastTurn.at, new Date().toISOString()) : '';
-    return activity(html`
-      <span class="activity__icon" aria-hidden="true">◌</span>
-      <span class="activity__label">${currentWork(parts, liveText, thinking)}</span>
-      <span class="activity__meta">${elapsed ? `已处理 ${elapsed}` : '进行中'}</span>
-    `, 'activity--current');
+    return activity(
+      html`
+        <span class="activity__icon" aria-hidden="true">◌</span>
+        <span class="activity__label">${currentWork(parts, liveText, thinking)}</span>
+        <span class="activity__meta">${elapsed ? `已处理 ${elapsed}` : '进行中'}</span>
+      `,
+      'activity--current',
+    );
   }
   if (lastTurn?.kind === 'turn' && lastTurn.completedAt) {
-    const label = lastTurn.status === 'completed' ? '已完成' : lastTurn.status === 'failed' ? '执行失败' : '已取消';
-    return activity(html`
-      <span class="activity__icon" aria-hidden="true">${lastTurn.status === 'completed' ? '✓' : '!'}</span>
-      <span class="activity__label">${label}</span>
-      <span class="activity__meta">${formatDuration(lastTurn.at, lastTurn.completedAt)}</span>
-    `, `activity--current ${lastTurn.status === 'completed' ? 'activity--done' : 'activity--failed'}`);
+    const label =
+      lastTurn.status === 'completed'
+        ? '已完成'
+        : lastTurn.status === 'failed'
+          ? '执行失败'
+          : '已取消';
+    return activity(
+      html`
+        <span class="activity__icon" aria-hidden="true"
+          >${lastTurn.status === 'completed' ? '✓' : '!'}</span
+        >
+        <span class="activity__label">${label}</span>
+        <span class="activity__meta">${formatDuration(lastTurn.at, lastTurn.completedAt)}</span>
+      `,
+      `activity--current ${lastTurn.status === 'completed' ? 'activity--done' : 'activity--failed'}`,
+    );
   }
   return nothing;
 }
@@ -360,35 +412,59 @@ export function renderTimeline(
     <div class="timeline">
       ${groups.map((items, groupIndex) => {
         const current = groupIndex === groups.length - 1;
+        const consumed = new Set<number>();
         return html`
           <section class="timeline-turn-group ${current ? 'timeline-turn-group--current' : ''}">
             ${items.map(({ part, index }) => {
+              if (consumed.has(index)) return nothing;
+              if (part.kind === 'tool') {
+                const run: Array<{ part: ToolPart; index: number }> = [{ part, index }];
+                let next = index + 1;
+                while (items[next]?.part.kind === 'tool') {
+                  const item = items[next];
+                  if (item.part.kind === 'tool') run.push({ part: item.part, index: item.index });
+                  next += 1;
+                }
+                for (const item of run) consumed.add(item.index);
+                return renderToolRun(run);
+              }
               if (part.kind !== 'assistant') {
                 return (PART_RENDERERS[part.kind] ?? renderUnknown)(part as never);
               }
               const turnKey = part.turnId ?? part.id;
               const showHeader = !headerTurns.has(turnKey);
               headerTurns.add(turnKey);
-              return renderAssistant(part, liveText, showHeader, index === lastStreamingAssistant && !liveText);
+              return renderAssistant(
+                part,
+                liveText,
+                showHeader,
+                index === lastStreamingAssistant && !liveText,
+              );
             })}
-            ${current && liveText
-              ? html`<article class="log-entry log-entry--assistant">
-                  <div class="assistant-message__head">
-                    <span class="assistant-message__avatar" aria-hidden="true">脑</span>
-                    <span class="assistant-message__name">大脑</span>
-                  </div>
-                  <div class="timeline-assistant timeline-assistant--live">${unsafeHTML(md(liveText))}</div>
-                </article>`
-              : nothing}
-            ${current && thinking
-              ? renderReasoning({
-                  kind: 'reasoning',
-                  id: 'live-thinking',
-                  text: thinking,
-                  streaming: true,
-                  at: '',
-                })
-              : nothing}
+            ${
+              current && liveText
+                ? html`<article class="log-entry log-entry--assistant">
+                    <div class="assistant-message__head">
+                      <span class="assistant-message__avatar" aria-hidden="true">脑</span>
+                      <span class="assistant-message__name">大脑</span>
+                    </div>
+                    <div class="timeline-assistant timeline-assistant--live">
+                      ${unsafeHTML(md(liveText))}
+                    </div>
+                  </article>`
+                : nothing
+            }
+            ${
+              current && thinking
+                ? renderReasoning({
+                    kind: 'reasoning',
+                    id: 'live-thinking',
+                    text: thinking,
+                    streaming: true,
+                    at: '',
+                  })
+                : nothing
+            }
             ${current ? renderTodoPanel(todos) : nothing}
             ${current ? renderTrailingStatus(parts, sending, liveText, thinking) : nothing}
           </section>
