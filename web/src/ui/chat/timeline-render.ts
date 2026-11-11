@@ -472,22 +472,23 @@ export function renderTimeline(
     <div class="timeline">
       ${groups.map((items, groupIndex) => {
         const current = groupIndex === groups.length - 1;
-        const consumed = new Set<number>();
+        const process = items.filter((item) => isProcessPart(item.part));
+        const hasTurn = items.some((item) => item.part.kind === 'turn');
         return html`
           <section class="timeline-turn-group ${current ? 'timeline-turn-group--current' : ''}">
             ${items.map(({ part, index }) => {
-              if (consumed.has(index)) return nothing;
               if (isProcessPart(part)) {
-                const run = [{ part, index }];
-                let next = index + 1;
-                while (items[next] && isProcessPart(items[next].part)) {
-                  run.push(items[next]);
-                  next += 1;
+                if (!hasTurn && process[0]?.index === index) {
+                  return renderProcessRun(process, current, todos);
                 }
-                for (const item of run) consumed.add(item.index);
-                return renderProcessRun(run, current, todos);
+                return nothing;
               }
-              if (part.kind === 'turn') return renderTurn(part, current && waitingForUser);
+              if (part.kind === 'turn') {
+                return html`
+                  ${renderTurn(part, current && waitingForUser)}
+                  ${process.length > 0 ? renderProcessRun(process, current, todos) : nothing}
+                `;
+              }
               if (part.kind !== 'assistant') {
                 return (PART_RENDERERS[part.kind] ?? renderUnknown)(part as never);
               }

@@ -82,6 +82,23 @@ describe('turn functional regions', () => {
     expect(host.querySelector('.turn-footer .turn-actions')?.textContent).toContain('批准');
   });
 
+  it('keeps one collapsed process region when body segments interleave', () => {
+    const host = document.createElement('div');
+    const answer: ContentPart = { kind: 'assistant', id: 'a1', text: '中间发现', at, turnId: 't1' };
+    const reasoning: ContentPart = {
+      kind: 'reasoning',
+      id: 'r1',
+      text: '继续核对',
+      turnId: 't1',
+      streaming: true,
+      at,
+    };
+    render(renderTimeline([turn('running'), tool('c1'), answer, tool('c2'), reasoning]), host);
+    expect(host.querySelectorAll('.turn-process')).toHaveLength(1);
+    expect(host.querySelector('.turn-process')?.hasAttribute('open')).toBe(false);
+    expect(host.querySelectorAll('.turn-process details.activity--tool')).toHaveLength(2);
+  });
+
   it('places terminal error details in the footer', () => {
     const host = document.createElement('div');
     const failed = { ...turn('failed'), error: 'HTTP 503: unavailable' } as ContentPart;
