@@ -105,13 +105,7 @@ impl PoolSubagentRunner {
             let guard = agent.lock().await;
             guard.clear_history().await;
             self.runner
-                .run_turn_bounded(
-                    &*guard,
-                    &context,
-                    &request.prompt,
-                    None,
-                    crate::domains::agent::session::SUBAGENT_TURN_TIMEOUT,
-                )
+                .run_turn(&*guard, &context, &request.prompt, None, None)
                 .await
         };
 

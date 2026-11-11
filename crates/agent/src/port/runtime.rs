@@ -6,9 +6,6 @@ use std::sync::Arc;
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 
-/// 与 runner::MAX_TOOL_CALLS_PER_RUN 对齐的模型调用预算（含初始调用）。
-pub const MAX_LOOP_TURNS: usize = 25;
-
 pub type SteeringBuffer = Arc<std::sync::Mutex<Vec<String>>>;
 
 pub struct AgentLoopConfig {
@@ -136,7 +133,7 @@ mod tests {
     }
 
     #[test]
-    fn agent_loop_config_constructs_and_turn_budget() {
+    fn agent_loop_config_constructs() {
         let config = AgentLoopConfig {
             model_name: "test-model".into(),
             prompt_builder: crate::port::prompt::SystemPromptBuilder::with_defaults(),
@@ -152,6 +149,5 @@ mod tests {
         };
         assert_eq!(config.model_name, "test-model");
         assert_eq!(config.tools.len(), 1);
-        assert_eq!(MAX_LOOP_TURNS, 25);
     }
 }

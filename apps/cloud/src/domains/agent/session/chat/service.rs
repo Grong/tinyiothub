@@ -403,13 +403,7 @@ pub async fn send_message(
         });
         let outcome = session_runtime
             .runner
-            .run_turn_bounded(
-                &*ag,
-                &context,
-                &turn_message,
-                Some(observer),
-                crate::domains::agent::session::SESSION_TURN_TIMEOUT,
-            )
+            .run_turn(&*ag, &context, &turn_message, Some(observer), None)
             .await;
         drop(ag);
 
@@ -584,13 +578,6 @@ mod tests {
         assert!(matches!(err, AgentError::NotFound(_)));
         // The workspace check must run before any agent is built.
         assert_eq!(pool.pool_size(), 0);
-    }
-
-    #[test]
-    fn chat_timeout_allows_question_answer() {
-        use crate::domains::agent::session::{ASK_USER_TIMEOUT, SESSION_TURN_TIMEOUT};
-        assert!(SESSION_TURN_TIMEOUT > ASK_USER_TIMEOUT);
-        assert!(SESSION_TURN_TIMEOUT >= std::time::Duration::from_secs(15 * 60));
     }
 
     #[tokio::test]

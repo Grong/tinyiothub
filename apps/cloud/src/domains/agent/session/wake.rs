@@ -18,7 +18,6 @@ use tinyiothub_storage::session::Session;
 
 use super::trigger::EventWake;
 use crate::domains::agent::pool::AgentPool;
-use crate::domains::agent::session::SESSION_TURN_TIMEOUT;
 use crate::domains::agent::session::chat::service::ensure_agent;
 use crate::domains::agent::session::context::TurnContext;
 use crate::domains::agent::session::events::{SessionEventSink, session_event, session_started_payload};
@@ -502,7 +501,7 @@ impl WakeRunner {
                 _ = cancel.cancelled() => None,
                 outcome = self
                     .runner
-                    .run_turn_bounded(&*guard, &context, message, None, SESSION_TURN_TIMEOUT) => Some(outcome),
+                    .run_turn(&*guard, &context, message, None, Some(cancel.clone())) => Some(outcome),
             };
             drop(guard);
             turn

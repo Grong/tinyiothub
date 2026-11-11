@@ -1,8 +1,6 @@
 //! port AgentLoop → rig Agent 桥 + rig loop 工厂。
 
 use std::sync::Arc;
-use std::sync::atomic::{AtomicUsize, Ordering};
-use std::time::{Duration, Instant};
 
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
@@ -19,7 +17,7 @@ use rig_core::streaming::{StreamedAssistantContent, StreamedUserContent};
 use sha2::Digest;
 
 use crate::port::events::TurnEvent;
-use crate::port::runtime::{AgentLoop, AgentLoopConfig, AgentLoopHandle, MAX_LOOP_TURNS, SteeringBuffer};
+use crate::port::runtime::{AgentLoop, AgentLoopConfig, AgentLoopHandle, SteeringBuffer};
 
 use super::memory::PortMemoryAsConversation;
 use super::provider::{PortModelAsRig, port_messages_to_rig};
@@ -27,9 +25,6 @@ use super::tools::to_dynamic_tool;
 
 /// 固定会话 id：现状 zeroclaw 各 turn 独立、无显式会话（Global Constraints #6）。
 const CONVERSATION_ID: &str = "default";
-
-/// turn 内软时长预算；runner 外层还有 timeout 兜底。
-const MAX_TURN_DURATION: Duration = Duration::from_secs(300);
 
 /// port AgentLoop 的 rig 引擎实现。
 ///
@@ -99,10 +94,8 @@ impl RigAgentLoop {
     }
 }
 
-/// 工具数预算 hook（第二道防线；主防线是 runner 的 CancellationToken）。
+/// Turn 运行 hook：处理外部取消、steering 与媒体约束。
 struct BudgetHook {
-    budget: usize,
-    count: AtomicUsize,
     cancel: Option<CancellationToken>,
     steering: Option<SteeringBuffer>,
     media: tokio::sync::Mutex<RunMediaAccountant>,
@@ -129,14 +122,7 @@ fn take_steering_patch(steering: &SteeringBuffer) -> Option<RequestPatch> {
 impl BudgetHook {
     fn action(&self) -> ToolCallAction {
         if self.cancel.as_ref().is_some_and(CancellationToken::is_cancelled) {
-            return ToolCallAction::stop("run cancelled");
-        }
-        let n = self.count.fetch_add(1, Ordering::SeqCst) + 1;
-        if n > self.budget {
-            if let Some(token) = &self.cancel {
-                token.cancel();
-            }
-            ToolCallAction::stop("tool call budget exceeded")
+            ToolCallAction::stop("run cancelled")
         } else {
             ToolCallAction::Run
         }
@@ -308,11 +294,9 @@ impl AgentLoop for RigAgentLoop {
         let mut request = self
             .agent
             .stream_prompt(user_message.to_string())
-            .max_turns(MAX_LOOP_TURNS)
+            .max_turns(usize::MAX)
             .tool_concurrency(1)
             .add_hook(BudgetHook {
-                budget: MAX_LOOP_TURNS,
-                count: AtomicUsize::new(0),
                 cancel: cancel_token.clone(),
                 steering,
                 media: tokio::sync::Mutex::new(RunMediaAccountant::default()),
@@ -327,7 +311,6 @@ impl AgentLoop for RigAgentLoop {
         let mut stream = request.await;
 
         let mut final_text = String::new();
-        let start = Instant::now();
         let cancelled = cancel_token.clone();
         loop {
             tokio::select! {
@@ -394,10 +377,6 @@ impl AgentLoop for RigAgentLoop {
                                 output_tokens: Some(call.usage.output_tokens),
                                 cost_usd: None,
                             }).await;
-                            if start.elapsed() > MAX_TURN_DURATION {
-                                drop(stream);
-                                return Err(anyhow::Error::new(crate::port::outcome::ToolLoopCancelled));
-                            }
                         }
                         MultiTurnStreamItem::FinalResponse(resp) => {
                             final_text = resp.output().to_string();
@@ -408,9 +387,8 @@ impl AgentLoop for RigAgentLoop {
             }
         }
         drop(event_tx);
-        // I-2 取消竞态：stream 走 None（正常结束）后若 token 已触发
-        // （如 BudgetHook 超预算先 cancel 再 stop），归一化为
-        // ToolLoopCancelled，不让 runner 把预算超支误判为 TurnEnd::Text。
+        // I-2 取消竞态：stream 正常结束时若外部 token 已触发，仍归一化为
+        // ToolLoopCancelled，不让 runner 把取消误判为 TurnEnd::Text。
         if cancel_token.is_some_and(|t| t.is_cancelled()) {
             return Err(anyhow::Error::new(crate::port::outcome::ToolLoopCancelled));
         }
@@ -422,8 +400,6 @@ impl AgentLoop for RigAgentLoop {
             .agent
             .prompt(message.to_string())
             .add_hook(BudgetHook {
-                budget: MAX_LOOP_TURNS,
-                count: AtomicUsize::new(0),
                 cancel: None,
                 steering: None,
                 media: tokio::sync::Mutex::new(RunMediaAccountant::default()),
@@ -516,7 +492,7 @@ pub fn rig_loop_factory(cfg: AgentLoopConfig) -> anyhow::Result<AgentLoopHandle>
     // 即无自动 load/append，chat/heartbeat 的每轮 DB 重建不会重复累积。
     let mut builder = AgentBuilder::new(model)
         .preamble(&preamble)
-        .default_max_turns(MAX_LOOP_TURNS);
+        .default_max_turns(usize::MAX);
     if let Some(m) = &memory {
         builder = builder.memory(Arc::clone(m)).conversation(CONVERSATION_ID);
     }
@@ -606,15 +582,25 @@ mod tests {
         let cancel = CancellationToken::new();
         cancel.cancel();
         let hook = BudgetHook {
-            budget: 25,
-            count: AtomicUsize::new(0),
             cancel: Some(cancel),
             steering: None,
             media: tokio::sync::Mutex::new(RunMediaAccountant::default()),
             tool_call_ids: None,
         };
         assert_eq!(hook.action(), ToolCallAction::Stop("run cancelled".into()));
-        assert_eq!(hook.count.load(Ordering::SeqCst), 0);
+    }
+
+    #[test]
+    fn tool_calls_are_not_capped_by_an_execution_budget() {
+        let hook = BudgetHook {
+            cancel: None,
+            steering: None,
+            media: tokio::sync::Mutex::new(RunMediaAccountant::default()),
+            tool_call_ids: None,
+        };
+        for _ in 0..26 {
+            assert_eq!(hook.action(), ToolCallAction::Run);
+        }
     }
 
     #[test]

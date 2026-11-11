@@ -34,7 +34,7 @@ const HARNESS_CONTRACT: &str = "## Harness Contract\n\n\
 ### 停止与失败\n\
 - 已回答用户问题且没有需要继续的动作时停止。\n\
 - 本轮所有任务完成、明确跳过或阻塞后停止；正在等待用户回答或审批时停止。\n\
-- 缺少必要能力、权限或数据，继续调用不会改变结果时停止；达到现有 Loop 安全预算或发生取消时停止。\n\
+- 缺少必要能力、权限或数据，继续调用不会改变结果时停止；收到外部取消时停止。\n\
 - 工具失败时先判断能否用已有证据回答；否则说明失败、影响和下一步，不重复调用同一失败工具制造循环。\n\n\
 ### 事件与正文\n\
 - 工具、技能、Todo、审批和轮次状态以真实事件为准；正文负责解释和判断，不是执行状态真源。\n\
@@ -283,6 +283,12 @@ mod tests {
         ] {
             assert!(HARNESS_CONTRACT.contains(marker), "missing contract rule: {marker}");
         }
+    }
+
+    #[test]
+    fn harness_contract_does_not_impose_an_execution_budget() {
+        assert!(!HARNESS_CONTRACT.contains("Loop 安全预算"));
+        assert!(HARNESS_CONTRACT.contains("外部取消"));
     }
 
     #[test]
