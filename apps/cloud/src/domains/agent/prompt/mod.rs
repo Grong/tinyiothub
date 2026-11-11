@@ -75,7 +75,7 @@ pub async fn build_full_system_prompt(
     let full_prompt = format!("{}{}{}", workspace_prompt, memory_layer, context_layer);
     tracing::info!(
         "[SYSTEM_PROMPT] {} ... (truncated, total {} chars)",
-        &full_prompt[..full_prompt.len().min(2000)],
+        full_prompt.chars().take(2000).collect::<String>(),
         full_prompt.len()
     );
     full_prompt
@@ -246,5 +246,32 @@ mod tests {
         assert!(prompt.contains("Identity"), "identity template must load");
         assert!(prompt.contains("Agent Rules"), "agent rules template must load");
         assert!(prompt.contains("Capabilities"), "tools template must load");
+    }
+
+    #[tokio::test]
+    async fn chinese_prompt_log_truncation_is_char_boundary_safe() {
+        let _subscriber = tracing::subscriber::set_default(tracing_subscriber::fmt().finish());
+        let base = build_full_system_prompt(
+            &tinyiothub_core::config::SystemPromptsConfig::default(),
+            Some("ws-chinese"),
+            None,
+            None,
+        )
+        .await;
+        let insert_at = base.find("你是 TinyIoTHub").unwrap();
+        let root = tempfile::tempdir().unwrap();
+        let workspace = root.path().join("ws-chinese");
+        std::fs::create_dir_all(&workspace).unwrap();
+        std::fs::write(
+            workspace.join("IDENTITY.md"),
+            format!("{}结", "x".repeat(1999 - insert_at + "# Agent Identity\n\n".len())),
+        )
+        .unwrap();
+        let config = tinyiothub_core::config::SystemPromptsConfig {
+            workspace_dir: root.path().display().to_string(),
+            ..Default::default()
+        };
+        let prompt = build_full_system_prompt(&config, Some("ws-chinese"), None, None).await;
+        assert!(prompt.contains('结'));
     }
 }
