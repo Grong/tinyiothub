@@ -23,7 +23,9 @@ use crate::domains::agent::session::chat::service::ensure_agent;
 use crate::domains::agent::session::context::TurnContext;
 use crate::domains::agent::session::events::{SessionEventSink, session_event, session_started_payload};
 use crate::domains::agent::session::runner::{SessionRunner, TurnCancellation, TurnOutcome};
-use crate::domains::agent::session::suppression::registry::{self, WorkspaceSnapshotProvider};
+use crate::domains::agent::session::suppression::SuppressionMode;
+use crate::domains::agent::session::suppression::preflight::SuppressionService;
+use crate::domains::agent::session::suppression::registry::{self, SourceContext, WorkspaceSnapshotProvider};
 use crate::domains::agent::session::todos::TodoStore;
 use crate::domains::agent::session::types::{PermissionMode, Todo, TodoStatus};
 
@@ -106,6 +108,90 @@ impl WakeRunner {
             &semantic_events,
         )
         .await
+    }
+
+    /// Read-only suppression preflight observation.
+    ///
+    /// This task records the decision only: the full Turn below is unchanged
+    /// for shadow, vetoed and reconciliation-due wakes. Skipping and durable
+    /// lifecycle fences belong to the wake/audit integration.
+    async fn observe_suppression(&self, workspace_id: &str, assistant_id: &str) {
+        let config = match self.db.get_suppression_config(workspace_id).await {
+            Ok(Some(config)) => config,
+            Ok(None) => return,
+            Err(error) => {
+                tracing::warn!(%error, %workspace_id, "suppression preflight: config read failed");
+                return;
+            }
+        };
+        if config.mode == SuppressionMode::Off {
+            return;
+        }
+        let session_key = format!("agent:{workspace_id}:{assistant_id}/main");
+        let state = match self.db.load_suppression_state(workspace_id, &session_key).await {
+            Ok(state) => state,
+            Err(error) => {
+                tracing::warn!(%error, %workspace_id, "suppression preflight: state read failed");
+                return;
+            }
+        };
+        // Same cursor predicate as Task 2/3: production
+        // `message.created(role=user)` scoped to this session.
+        let current_user_seq = match registry::load_session_events(&self.db, workspace_id, &session_key).await {
+            Ok(capture) => capture.control_cursor,
+            Err(error) => {
+                tracing::warn!(
+                    code = %error.code,
+                    %workspace_id,
+                    "suppression preflight: user cursor read failed"
+                );
+                return;
+            }
+        };
+        let registry = match registry::default_sources(
+            self.system_prompts.clone(),
+            self.db.clone(),
+            self.memory_source.clone(),
+            self.snapshot_provider.clone(),
+        ) {
+            Ok(registry) => registry,
+            Err(error) => {
+                tracing::warn!(
+                    code = %error.code,
+                    %workspace_id,
+                    "suppression preflight: registry build failed"
+                );
+                return;
+            }
+        };
+        let context = SourceContext {
+            workspace_id: workspace_id.to_string(),
+            session_id: session_key,
+            observed_at: chrono::Utc::now(),
+            // The service applies the configured mode before capture.
+            mode: config.mode.into(),
+        };
+        let service = SuppressionService::new(Arc::new(registry));
+        match service
+            .evaluate(context, state.as_ref(), &config, current_user_seq)
+            .await
+        {
+            Ok(decision) => tracing::info!(
+                workspace_id = %workspace_id,
+                would_skip = decision.would_skip,
+                vetoes = ?decision.vetoes,
+                fence = %decision.fence,
+                baseline_state_id = decision.baseline_state_id.as_deref().unwrap_or(""),
+                config_version = decision.config_version,
+                mode = %config.mode.as_str(),
+                "suppression preflight observed"
+            ),
+            Err(error) => tracing::warn!(
+                code = %error.code,
+                %workspace_id,
+                "suppression preflight failed; full turn unchanged"
+            ),
+        }
     }
 }
 
@@ -257,6 +343,8 @@ impl WakeRunner {
                 outcome: WakeOutcome::Skipped,
             };
         };
+        self.observe_suppression(&schedule.workspace_id, &schedule.assistant_id)
+            .await;
         let prompt = match self
             .wake_prompt(&schedule.workspace_id, &schedule.assistant_id, message)
             .await
