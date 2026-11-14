@@ -18,10 +18,12 @@ use tinyiothub_storage::session::Session;
 
 use super::trigger::EventWake;
 use crate::domains::agent::pool::AgentPool;
+use crate::domains::agent::prompt::PromptMemorySource;
 use crate::domains::agent::session::chat::service::ensure_agent;
 use crate::domains::agent::session::context::TurnContext;
 use crate::domains::agent::session::events::{SessionEventSink, session_event, session_started_payload};
 use crate::domains::agent::session::runner::{SessionRunner, TurnCancellation, TurnOutcome};
+use crate::domains::agent::session::suppression::registry::{self, WorkspaceSnapshotProvider};
 use crate::domains::agent::session::todos::TodoStore;
 use crate::domains::agent::session::types::{PermissionMode, Todo, TodoStatus};
 
@@ -74,12 +76,34 @@ impl WakeRunner {
         assistant_id: &str,
         turn_input: String,
     ) -> anyhow::Result<crate::domains::agent::prompt::assistant::PromptPackage> {
-        crate::domains::agent::prompt::assistant::build_assistant_prompt(
+        let session_key = format!("agent:{workspace_id}:{assistant_id}/main");
+        let snapshot = match &self.snapshot_provider {
+            Some(provider) => provider.workspace_snapshot(workspace_id).await,
+            None => None,
+        };
+        // External semantic events are the same content the `session.events`
+        // Source captures; harness lifecycle and cursor-owned user messages
+        // are filtered there.
+        let semantic_events = match registry::load_session_events(&self.db, workspace_id, &session_key).await {
+            Ok(capture) => capture.events,
+            Err(error) => {
+                tracing::warn!(
+                    code = %error.code,
+                    what = %error.what,
+                    %workspace_id,
+                    "failed to load semantic session events for full turn"
+                );
+                Vec::new()
+            }
+        };
+        crate::domains::agent::prompt::assistant::build_assistant_prompt_with_sources(
             &self.system_prompts,
             workspace_id,
             assistant_id,
             turn_input,
-            None,
+            self.memory_source.as_ref(),
+            snapshot.as_ref(),
+            &semantic_events,
         )
         .await
     }
@@ -132,6 +156,20 @@ pub struct WakeRunner {
     todos: Arc<TodoStore>,
     runner: Arc<SessionRunner>,
     system_prompts: Arc<tinyiothub_core::config::SystemPromptsConfig>,
+    /// The same long-term memory selection the chat path injects.
+    memory_source: Option<Arc<dyn PromptMemorySource>>,
+    /// Existing live workspace snapshot; injected by the composition layer.
+    snapshot_provider: Option<Arc<dyn WorkspaceSnapshotProvider>>,
+}
+
+/// Build the memory port over the platform database, matching the chat
+/// composition (`MemoryStore::new(db.pool())`).
+fn default_memory_source(db: &Arc<Db>) -> Arc<dyn PromptMemorySource> {
+    Arc::new(
+        crate::domains::agent::session::persist::memory::PromptMemoryStoreAdapter(Arc::new(
+            tinyiothub_storage::memory::MemoryStore::new(db.pool().clone()),
+        )),
+    )
 }
 
 /// 一次 wake session 的来源（scheduled / event 共用同一套生命周期写入）。
@@ -152,6 +190,7 @@ impl WakeRunner {
         pool: Arc<AgentPool>,
         runtime: &crate::domains::agent::session::SessionRuntime,
     ) -> Self {
+        let memory_source = Some(default_memory_source(&db));
         Self {
             db,
             pool,
@@ -159,6 +198,8 @@ impl WakeRunner {
             todos: runtime.todos.clone(),
             runner: runtime.runner.clone(),
             system_prompts: runtime.system_prompts.clone(),
+            memory_source,
+            snapshot_provider: None,
         }
     }
 
@@ -169,6 +210,7 @@ impl WakeRunner {
         todos: Arc<TodoStore>,
         runner: Arc<SessionRunner>,
     ) -> Self {
+        let memory_source = Some(default_memory_source(&db));
         Self {
             db,
             pool,
@@ -176,7 +218,22 @@ impl WakeRunner {
             todos,
             runner,
             system_prompts: Arc::new(tinyiothub_core::config::SystemPromptsConfig::default()),
+            memory_source,
+            snapshot_provider: None,
         }
+    }
+
+    /// Inject the existing live workspace snapshot port. Without it the
+    /// `workspace.snapshot` Source is degraded (never silently empty).
+    pub fn with_snapshot_provider(mut self, provider: Arc<dyn WorkspaceSnapshotProvider>) -> Self {
+        self.snapshot_provider = Some(provider);
+        self
+    }
+
+    /// Override the long-term memory port (tests/composition).
+    pub fn with_memory_source(mut self, source: Arc<dyn PromptMemorySource>) -> Self {
+        self.memory_source = Some(source);
+        self
     }
 
     pub async fn run(&self, schedule: &AssistantSchedule, cancel: CancellationToken) -> WakeReport {
@@ -702,7 +759,11 @@ mod tests {
         tinyiothub_storage::test_helpers::run_all_migrations(&pool)
             .await
             .unwrap();
-        let db = Arc::new(tinyiothub_storage::Db::new(pool));
+        // Each test gets its own workspace-store root; the default root is
+        // shared repo state, so parallel tests would race harness migrations.
+        let db = Arc::new(tinyiothub_storage::Db::new(pool).with_workspace_store_root(
+            std::env::temp_dir().join(format!("tinyiothub-wake-store-{}", uuid::Uuid::new_v4())),
+        ));
         tinyiothub_storage::seed::seed_system(&db).await.unwrap();
         sqlx::query("INSERT INTO workspaces (id, name, tenant_id, created_at, updated_at) VALUES ('ws', 'workspace', 'tenant-default-001', 'now', 'now')")
             .execute(db.pool())
@@ -849,6 +910,61 @@ mod tests {
 
         let package = wake.wake_prompt("ws", "assistant", "turn".into()).await.unwrap();
         assert!(package.system_prompt.contains("configured-workspace-marker"));
+    }
+
+    #[tokio::test]
+    async fn wake_prompt_injects_short_term_snapshot_and_semantic_events_once() {
+        let root = tempfile::tempdir().unwrap();
+        let workspace = root.path().join("ws");
+        std::fs::create_dir_all(&workspace).unwrap();
+        std::fs::write(workspace.join("SHORT_TERM.md"), "short-term-wake-marker").unwrap();
+
+        let (mut wake, _agent_pool, _sink) = fixture().await;
+        wake.system_prompts = Arc::new(tinyiothub_core::config::SystemPromptsConfig {
+            workspace_dir: root.path().display().to_string(),
+            ..Default::default()
+        });
+        let snapshot = tinyiothub_runtime::watch::live_state::WorkspaceSnapshot {
+            v: 1,
+            devices: vec![tinyiothub_runtime::watch::live_state::DeviceSnapshot {
+                thing_id: "device-1".into(),
+                name: "wake-device-marker".into(),
+                health: tinyiothub_runtime::watch::live_state::Health::Ok,
+                online: true,
+                zone: "zone".into(),
+                values: vec![],
+                properties: vec![],
+            }],
+            total: 1,
+        };
+        wake = wake.with_snapshot_provider(Arc::new(
+            crate::domains::agent::session::suppression::registry::SnapshotProviderSlot::with(snapshot),
+        ));
+
+        let context = TurnContext::new(
+            "ws".into(),
+            assistant_agent_id("ws"),
+            format!("agent:ws:{}/main", assistant_agent_id("ws")),
+            "run".into(),
+            0,
+        );
+        wake.db
+            .append_session_event(&session_event(
+                &context,
+                "thing.event",
+                json!({ "marker": "wake-event-marker" }),
+            ))
+            .await
+            .unwrap();
+
+        let package = wake
+            .wake_prompt("ws", &assistant_agent_id("ws"), "turn".into())
+            .await
+            .unwrap();
+        assert_eq!(package.system_prompt.matches("short-term-wake-marker").count(), 1);
+        assert_eq!(package.system_prompt.matches("wake-device-marker").count(), 1);
+        assert_eq!(package.system_prompt.matches("wake-event-marker").count(), 1);
+        assert_eq!(package.turn_input, "turn");
     }
 
     #[tokio::test]

@@ -4,6 +4,9 @@ use std::sync::Arc;
 
 use tinyiothub_agent::port::prompt::{PromptContext, StaticPromptSection, SystemPromptBuilder};
 use tinyiothub_agent::port::prompt_sections::{ChannelMediaSection, DateTimeSection, SafetySection};
+use tinyiothub_runtime::watch::live_state::WorkspaceSnapshot;
+
+use crate::domains::agent::session::suppression::registry::{self, SemanticSessionEvent};
 
 use super::PromptMemorySource;
 
@@ -54,21 +57,34 @@ pub async fn build_assistant_prompt(
     turn_input: String,
     memory_source: Option<&Arc<dyn PromptMemorySource>>,
 ) -> anyhow::Result<PromptPackage> {
+    build_assistant_prompt_with_sources(config, workspace_id, assistant_id, turn_input, memory_source, None, &[]).await
+}
+
+/// Build the full Assistant prompt from the same content the Source adapters
+/// capture. `workspace_snapshot` and `semantic_events` are optional additions
+/// used by the scheduled wake path; turn brief, skills, memory and
+/// `SHORT_TERM.md` are always loaded from their existing single source.
+pub async fn build_assistant_prompt_with_sources(
+    config: &tinyiothub_core::config::SystemPromptsConfig,
+    workspace_id: &str,
+    assistant_id: &str,
+    turn_input: String,
+    memory_source: Option<&Arc<dyn PromptMemorySource>>,
+    workspace_snapshot: Option<&WorkspaceSnapshot>,
+    semantic_events: &[SemanticSessionEvent],
+) -> anyhow::Result<PromptPackage> {
     let workspace_prompt =
         super::build_full_system_prompt(config, Some(workspace_id), Some(assistant_id), memory_source).await;
     let workspace_prompt = format!("# Current Workspace\nworkspace_id: {workspace_id}\n\n{workspace_prompt}");
-    let workspace_dir = if config.workspace_dir.is_empty() {
-        super::paths::workspace_dir(workspace_id)
-    } else {
-        std::path::PathBuf::from(&config.workspace_dir).join(workspace_id)
-    };
-    let skills = super::super::pool::load_workspace_skills(&workspace_dir);
+    let workspace_dir = registry::workspace_dir_for(config, workspace_id);
+    let skills = registry::load_skills_for(&workspace_dir);
     let skill_index = tinyiothub_skills::build_skill_index_prompt(&skills);
-    let turn_brief = match std::fs::read_to_string(workspace_dir.join("TURN_BRIEF.md")) {
-        Ok(content) => content,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => String::new(),
-        Err(error) => return Err(error.into()),
-    };
+    let turn_brief = registry::read_workspace_file(&workspace_dir, "TURN_BRIEF.md")
+        .map_err(|error| anyhow::anyhow!("{}: {}", error.code, error.what))?
+        .unwrap_or_default();
+    let short_term = registry::read_workspace_file(&workspace_dir, "SHORT_TERM.md")
+        .map_err(|error| anyhow::anyhow!("{}: {}", error.code, error.what))?
+        .unwrap_or_default();
     let builder = SystemPromptBuilder::empty()
         .add_section(Box::new(StaticPromptSection::new("harness", HARNESS_CONTRACT)))
         .add_section(Box::new(SafetySection))
@@ -85,6 +101,32 @@ pub async fn build_assistant_prompt(
             "turn_brief",
             format!("## Turn Brief\n\n{turn_brief}"),
         )))
+    };
+    let builder = if short_term.trim().is_empty() {
+        builder
+    } else {
+        builder.add_section(Box::new(StaticPromptSection::new(
+            "short_term",
+            format!("## Short Term\n\n{short_term}"),
+        )))
+    };
+    let builder = match workspace_snapshot {
+        Some(snapshot) => {
+            let (body, _) = super::snapshot::render_snapshot(snapshot);
+            let section = super::snapshot::section(&body);
+            if section.is_empty() {
+                builder
+            } else {
+                builder.add_section(Box::new(StaticPromptSection::new("workspace_snapshot", section)))
+            }
+        }
+        None => builder,
+    };
+    let events_section = semantic_events_section(semantic_events);
+    let builder = if events_section.is_empty() {
+        builder
+    } else {
+        builder.add_section(Box::new(StaticPromptSection::new("session_events", events_section)))
     };
     let builder = builder
         .add_section(Box::new(DateTimeSection))
@@ -103,6 +145,22 @@ pub async fn build_assistant_prompt(
         system_prompt,
         turn_input,
     })
+}
+
+/// External semantic Session Events enter the full input once, fenced as
+/// untrusted data. Harness lifecycle, assistant output and cursor-owned user
+/// messages are already excluded by the Session Events adapter.
+fn semantic_events_section(events: &[SemanticSessionEvent]) -> String {
+    if events.is_empty() {
+        return String::new();
+    }
+    let mut out = String::from("## Session Events\n\n<session_events>\n");
+    for event in events {
+        let payload = serde_json::to_string(&event.payload).unwrap_or_else(|_| "null".to_string());
+        out.push_str(&format!("- {} ({}) {}\n", event.event_type, event.event_id, payload));
+    }
+    out.push_str("</session_events>");
+    out
 }
 
 pub async fn build_chat_assistant_prompt(
@@ -360,6 +418,68 @@ mod tests {
         assert_ne!(first.system_prompt, second.system_prompt);
         assert!(second.system_prompt.contains("event-marker"));
         assert!(!second.system_prompt.contains("inspection-marker"));
+    }
+
+    #[tokio::test]
+    async fn short_term_snapshot_and_semantic_events_render_once() {
+        use tinyiothub_runtime::watch::live_state::{DeviceSnapshot, Health, WorkspaceSnapshot};
+
+        let root = tempfile::tempdir().unwrap();
+        let workspace = root.path().join("ws-test");
+        std::fs::create_dir_all(&workspace).unwrap();
+        std::fs::write(workspace.join("SHORT_TERM.md"), "short-term-prompt-marker").unwrap();
+        let snapshot = WorkspaceSnapshot {
+            v: 1,
+            devices: vec![DeviceSnapshot {
+                thing_id: "device-1".into(),
+                name: "prompt-device-marker".into(),
+                health: Health::Ok,
+                online: true,
+                zone: "zone".into(),
+                values: vec![],
+                properties: vec![],
+            }],
+            total: 1,
+        };
+        let events = vec![
+            crate::domains::agent::session::suppression::registry::SemanticSessionEvent {
+                event_id: "event-1".into(),
+                event_type: "thing.event".into(),
+                payload: serde_json::json!({ "marker": "prompt-event-marker" }),
+            },
+        ];
+
+        let package = build_assistant_prompt_with_sources(
+            &config(root.path()),
+            "ws-test",
+            "assistant",
+            "turn".into(),
+            None,
+            Some(&snapshot),
+            &events,
+        )
+        .await
+        .unwrap();
+
+        for marker in [
+            "short-term-prompt-marker",
+            "prompt-device-marker",
+            "prompt-event-marker",
+        ] {
+            assert_eq!(package.system_prompt.matches(marker).count(), 1, "{marker}");
+        }
+        assert!(package.system_prompt.contains("<workspace_snapshot>"));
+        assert!(package.system_prompt.contains("<session_events>"));
+    }
+
+    #[tokio::test]
+    async fn missing_short_term_section_is_optional() {
+        let root = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(root.path().join("ws-test")).unwrap();
+        let package = build_assistant_prompt(&config(root.path()), "ws-test", "assistant", "turn".into(), None)
+            .await
+            .unwrap();
+        assert!(!package.system_prompt.contains("## Short Term"));
     }
 
     #[tokio::test]

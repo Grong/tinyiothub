@@ -6,3 +6,6 @@
 pub mod canonical;
 pub mod contract;
 pub mod error;
+pub mod registry;
+
+pub use registry::{AssistantSource, SourceContext, SourceRegistry, WorkspaceSnapshotProvider};
