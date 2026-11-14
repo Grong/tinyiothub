@@ -456,6 +456,17 @@ mod contract {
     }
 
     #[test]
+    fn canonically_equivalent_strings_share_nfc_bytes_and_hash() {
+        let composed = json!({"s": "é"});
+        let decomposed = json!({"s": "e\u{0301}"});
+        let composed_bytes = canonical_bytes(&composed).unwrap();
+        let decomposed_bytes = canonical_bytes(&decomposed).unwrap();
+        assert_eq!(composed_bytes, decomposed_bytes);
+        assert_eq!(hash_state(&composed_bytes), hash_state(&decomposed_bytes));
+        assert_eq!(composed_bytes, r#"{"s":"é"}"#.as_bytes());
+    }
+
+    #[test]
     fn object_keys_sort_by_utf16_code_units() {
         let value = json!({"\u{E000}": 1, "\u{10000}": 2, "z": 3});
         let expected = format!("{{\"z\":3,\"{}\":2,\"{}\":1}}", '\u{10000}', '\u{E000}');

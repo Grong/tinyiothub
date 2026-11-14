@@ -133,6 +133,7 @@ http = { workspace = true }
 # Encoding
 base64 = { workspace = true }
 urlencoding = { workspace = true }
+unicode-normalization = "0.1"
 
 # Crypto
 aes-gcm = { workspace = true }

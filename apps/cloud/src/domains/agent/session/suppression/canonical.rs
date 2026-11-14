@@ -6,10 +6,8 @@
 //! else. Arrays keep their order except `workItems`, which sort by
 //! `(workKey, revision)`.
 //!
-//! String inputs are required to already be Unicode NFC. RFC 8785 treats
-//! normalization as a property of the input data rather than something a
-//! canonicalizer silently applies, and this task forbids adding a
-//! normalization dependency.
+//! Strings are normalized to Unicode NFC before escaping, so canonically
+//! equivalent inputs produce identical bytes and hashes.
 
 // The typed error is the public prevention contract; boxing it would change
 // every producer/consumer signature for a clippy size heuristic.
@@ -22,6 +20,7 @@ use serde::Deserialize;
 use serde::de::{self, MapAccess, SeqAccess, Visitor};
 use serde_json::{Map, Number, Value};
 use sha2::{Digest, Sha256};
+use unicode_normalization::UnicodeNormalization;
 
 use super::contract::{SourceDescriptor, TURN_STATE_VERSION};
 use super::error::SuppressionError;
@@ -164,7 +163,7 @@ fn work_item_field<'a>(item: &'a Value, field: &str) -> Option<&'a str> {
 
 fn write_string(out: &mut String, value: &str) {
     out.push('"');
-    for character in value.chars() {
+    for character in value.nfc() {
         match character {
             '"' => out.push_str("\\\""),
             '\\' => out.push_str("\\\\"),
