@@ -4,12 +4,14 @@
 
 use std::sync::Arc;
 
-use serde_json::json;
+use chrono::{DateTime, Utc};
+use serde_json::{Value, json};
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
 use tinyiothub_agent::config::AgentRuntimeConfig;
 use tinyiothub_agent::port::runtime::AgentLoopHandle;
+use tinyiothub_core::harness::HarnessEventInput;
 use tinyiothub_core::heartbeat::HeartbeatTask;
 use tinyiothub_skills::LoadedSkill;
 use tinyiothub_storage::Db;
@@ -24,8 +26,11 @@ use crate::domains::agent::session::context::TurnContext;
 use crate::domains::agent::session::events::{SessionEventSink, session_event, session_started_payload};
 use crate::domains::agent::session::runner::{SessionRunner, TurnCancellation, TurnOutcome};
 use crate::domains::agent::session::suppression::SuppressionMode;
-use crate::domains::agent::session::suppression::preflight::SuppressionService;
-use crate::domains::agent::session::suppression::registry::{self, SourceContext, WorkspaceSnapshotProvider};
+use crate::domains::agent::session::suppression::audit::{PlannedWake, WakeAttempt, attempt_event};
+use crate::domains::agent::session::suppression::preflight::{PreflightDecision, SuppressionService};
+use crate::domains::agent::session::suppression::registry::{
+    self, SourceContext, SourceRegistry, WorkspaceSnapshotProvider,
+};
 use crate::domains::agent::session::todos::TodoStore;
 use crate::domains::agent::session::types::{PermissionMode, Todo, TodoStatus};
 
@@ -112,27 +117,32 @@ impl WakeRunner {
 
     /// Read-only suppression preflight observation.
     ///
-    /// This task records the decision only: the full Turn below is unchanged
-    /// for shadow, vetoed and reconciliation-due wakes. Skipping and durable
-    /// lifecycle fences belong to the wake/audit integration.
-    async fn observe_suppression(&self, workspace_id: &str, assistant_id: &str) {
+    /// Exactly one registry and capture is built per wake. The returned
+    /// registry owns the adapters' tombstone/payload caches, so the same
+    /// captured snapshots serve the preflight decision and the eventual skip
+    /// audit; rebuilding it between decision and commit is forbidden.
+    async fn observe_suppression(
+        &self,
+        workspace_id: &str,
+        assistant_id: &str,
+    ) -> Option<(Arc<SourceRegistry>, PreflightDecision)> {
         let config = match self.db.get_suppression_config(workspace_id).await {
             Ok(Some(config)) => config,
-            Ok(None) => return,
+            Ok(None) => return None,
             Err(error) => {
                 tracing::warn!(%error, %workspace_id, "suppression preflight: config read failed");
-                return;
+                return None;
             }
         };
         if config.mode == SuppressionMode::Off {
-            return;
+            return None;
         }
         let session_key = format!("agent:{workspace_id}:{assistant_id}/main");
         let state = match self.db.load_suppression_state(workspace_id, &session_key).await {
             Ok(state) => state,
             Err(error) => {
                 tracing::warn!(%error, %workspace_id, "suppression preflight: state read failed");
-                return;
+                return None;
             }
         };
         // Same cursor predicate as Task 2/3: production
@@ -145,7 +155,7 @@ impl WakeRunner {
                     %workspace_id,
                     "suppression preflight: user cursor read failed"
                 );
-                return;
+                return None;
             }
         };
         let registry = match registry::default_sources(
@@ -154,14 +164,14 @@ impl WakeRunner {
             self.memory_source.clone(),
             self.snapshot_provider.clone(),
         ) {
-            Ok(registry) => registry,
+            Ok(registry) => Arc::new(registry),
             Err(error) => {
                 tracing::warn!(
                     code = %error.code,
                     %workspace_id,
                     "suppression preflight: registry build failed"
                 );
-                return;
+                return None;
             }
         };
         let context = SourceContext {
@@ -171,26 +181,32 @@ impl WakeRunner {
             // The service applies the configured mode before capture.
             mode: config.mode.into(),
         };
-        let service = SuppressionService::new(Arc::new(registry));
+        let service = SuppressionService::new(registry.clone());
         match service
             .evaluate(context, state.as_ref(), &config, current_user_seq)
             .await
         {
-            Ok(decision) => tracing::info!(
-                workspace_id = %workspace_id,
-                would_skip = decision.would_skip,
-                vetoes = ?decision.vetoes,
-                fence = %decision.fence,
-                baseline_state_id = decision.baseline_state_id.as_deref().unwrap_or(""),
-                config_version = decision.config_version,
-                mode = %config.mode.as_str(),
-                "suppression preflight observed"
-            ),
-            Err(error) => tracing::warn!(
-                code = %error.code,
-                %workspace_id,
-                "suppression preflight failed; full turn unchanged"
-            ),
+            Ok(decision) => {
+                tracing::info!(
+                    workspace_id = %workspace_id,
+                    would_skip = decision.would_skip,
+                    vetoes = ?decision.vetoes,
+                    fence = %decision.fence,
+                    baseline_state_id = decision.baseline_state_id.as_deref().unwrap_or(""),
+                    config_version = decision.config_version,
+                    mode = %config.mode.as_str(),
+                    "suppression preflight observed"
+                );
+                Some((registry, decision))
+            }
+            Err(error) => {
+                tracing::warn!(
+                    code = %error.code,
+                    %workspace_id,
+                    "suppression preflight failed; full turn unchanged"
+                );
+                None
+            }
         }
     }
 }
@@ -199,9 +215,15 @@ impl WakeRunner {
 pub enum WakeOutcome {
     Completed,
     Partial,
-    Failed { error: String },
+    Failed {
+        error: String,
+    },
     Cancelled,
     Skipped,
+    /// The skip audit failed or rolled back. TriggerRouter persists this as the
+    /// Schedule outcome and it may not be overwritten by a later generic
+    /// skipped/failed outcome.
+    AuditFailed,
 }
 
 impl WakeOutcome {
@@ -212,6 +234,7 @@ impl WakeOutcome {
             Self::Failed { .. } => "failed",
             Self::Cancelled => "cancelled",
             Self::Skipped => "skipped",
+            Self::AuditFailed => "audit_failed",
         }
     }
 }
@@ -268,6 +291,9 @@ struct SessionOrigin<'a> {
     kind: &'a str,
     trigger: &'a str,
     source_id: Option<String>,
+    /// Stable planned wake time for scheduled dispatches. `None` keeps the
+    /// previous per-invocation identity used by direct and event wakes.
+    planned_wake_at: Option<DateTime<Utc>>,
 }
 
 impl WakeRunner {
@@ -343,7 +369,10 @@ impl WakeRunner {
                 outcome: WakeOutcome::Skipped,
             };
         };
-        self.observe_suppression(&schedule.workspace_id, &schedule.assistant_id)
+        // One shared registry/capture per wake survives until the Turn ends;
+        // Task 6 consumes the same decision for the durable skip audit.
+        let _suppression_observation = self
+            .observe_suppression(&schedule.workspace_id, &schedule.assistant_id)
             .await;
         let prompt = match self
             .wake_prompt(&schedule.workspace_id, &schedule.assistant_id, message)
@@ -396,6 +425,7 @@ impl WakeRunner {
                 kind: "scheduled",
                 trigger: "schedule",
                 source_id: None,
+                planned_wake_at: schedule.next_wake_at,
             },
             agent,
             message,
@@ -500,6 +530,7 @@ impl WakeRunner {
                 kind: "event",
                 trigger: &wake.trigger,
                 source_id: Some(wake.source_id.clone()),
+                planned_wake_at: None,
             },
             agent,
             message,
@@ -608,21 +639,46 @@ impl WakeRunner {
                 },
             };
         }
-        let context = wake_context(&origin, session_key.clone(), permission_mode);
-        let wake_event_id = Uuid::new_v4().to_string();
+        // A planned scheduled wake owns a stable wakeId derived from
+        // `(workspaceId, plannedWakeAt)` and an attempt-derived turnId. Direct
+        // and event wakes keep their previous per-invocation identity.
+        let planned_wake = origin
+            .planned_wake_at
+            .map(|planned_wake_at| PlannedWake::planned(origin.workspace_id, session_key.clone(), planned_wake_at));
+        let attempt = match &planned_wake {
+            Some(wake) => Some(wake.attempt(self.next_attempt_no(origin.workspace_id, &session_key).await)),
+            None => None,
+        };
+        let context = wake_context(
+            &origin,
+            session_key.clone(),
+            permission_mode,
+            attempt.as_ref().map(|attempt| attempt.turn_id.clone()),
+        );
+        let wake_event_id = attempt
+            .as_ref()
+            .map(|attempt| attempt.wake_event_id.clone())
+            .unwrap_or_else(|| Uuid::new_v4().to_string());
         // scheduled 无显式 source：与本轮 wake.dispatched.wakeEventId 保持同一
-        // UUID（历史行为）；event 使用告警 id。
+        // 身份；event 使用告警 id。
         let trigger_source_id = origin.source_id.unwrap_or_else(|| wake_event_id.clone());
-        self.emit(
+        self.emit_lifecycle(
             &context,
+            attempt.as_ref(),
             "trigger.received",
             json!({ "trigger": origin.trigger, "sourceId": trigger_source_id }),
         )
         .await;
-        self.emit(&context, "wake.dispatched", json!({ "wakeEventId": &wake_event_id }))
-            .await;
-        self.emit(
+        self.emit_lifecycle(
             &context,
+            attempt.as_ref(),
+            "wake.dispatched",
+            json!({ "wakeEventId": &wake_event_id }),
+        )
+        .await;
+        self.emit_lifecycle(
+            &context,
+            attempt.as_ref(),
             "session.started",
             session_started_payload(&session_key, origin.kind),
         )
@@ -661,8 +717,9 @@ impl WakeRunner {
             None => WakeOutcome::Cancelled,
         };
 
-        self.emit(
+        self.emit_lifecycle(
             &context,
+            attempt.as_ref(),
             "session.ended",
             json!({ "sessionId": &session_key, "outcome": outcome.as_str() }),
         )
@@ -677,8 +734,41 @@ impl WakeRunner {
         WakeReport { session_key, outcome }
     }
 
-    async fn emit(&self, context: &TurnContext, event_type: &str, payload: serde_json::Value) {
-        if let Err(error) = self.events.emit(session_event(context, event_type, payload)).await {
+    /// Next monotonic attempt number. Durable allocation happens in
+    /// `begin_full_attempt`/`begin_skip_attempt`; reading the current row keeps
+    /// the lifecycle identity aligned with the attempt those CAS operations
+    /// will grant.
+    async fn next_attempt_no(&self, workspace_id: &str, session_key: &str) -> i64 {
+        match self.db.load_suppression_state(workspace_id, session_key).await {
+            Ok(state) => state.map(|state| state.attempt_no + 1).unwrap_or(1),
+            Err(error) => {
+                tracing::warn!(
+                    %error,
+                    %workspace_id,
+                    "failed to load suppression attempt number; using the first attempt"
+                );
+                1
+            }
+        }
+    }
+
+    async fn emit_lifecycle(
+        &self,
+        context: &TurnContext,
+        attempt: Option<&WakeAttempt>,
+        event_type: &str,
+        payload: Value,
+    ) {
+        let input = match attempt {
+            Some(attempt) => attempt_event(context, attempt, event_type, payload),
+            None => session_event(context, event_type, payload),
+        };
+        self.emit_input(input).await;
+    }
+
+    async fn emit_input(&self, input: HarnessEventInput) {
+        let event_type = input.event_type.clone();
+        if let Err(error) = self.events.emit(input).await {
             tracing::warn!(%error, %event_type, "failed to persist wake session event");
         }
     }
@@ -698,15 +788,24 @@ impl WakeExecutor for WakeRunner {
 /// 构造 wake Turn 的上下文。scheduled / event 两个入口共用，确保 schedule
 /// 的 `permission_mode` 一定进入 `TurnContext`（`PermissionGuardTool` 读它做
 /// 工具层写拒绝）。
-fn wake_context(origin: &SessionOrigin<'_>, session_key: String, permission_mode: PermissionMode) -> TurnContext {
-    TurnContext::new(
+fn wake_context(
+    origin: &SessionOrigin<'_>,
+    session_key: String,
+    permission_mode: PermissionMode,
+    turn_id: Option<String>,
+) -> TurnContext {
+    let mut context = TurnContext::new(
         origin.workspace_id.to_string(),
         origin.assistant_id.to_string(),
         session_key,
         Uuid::new_v4().to_string(),
         0,
     )
-    .with_permission_mode(permission_mode)
+    .with_permission_mode(permission_mode);
+    if let Some(turn_id) = turn_id {
+        context.turn_id = turn_id;
+    }
+    context
 }
 
 fn outcome_with_todos(outcome: TurnOutcome, todos: &[Todo]) -> WakeOutcome {
@@ -1251,15 +1350,17 @@ mod tests {
             kind: "scheduled",
             trigger: "schedule",
             source_id: None,
+            planned_wake_at: None,
         };
-        let context = wake_context(&origin, "agent:ws:a/s".into(), PermissionMode::ReadOnly);
+        let context = wake_context(&origin, "agent:ws:a/s".into(), PermissionMode::ReadOnly, None);
         assert_eq!(context.workspace_id, "ws");
         assert_eq!(context.assistant_id, "__assistant__ws");
         assert_eq!(context.session_key, "agent:ws:a/s");
         assert_eq!(context.permission_mode, PermissionMode::ReadOnly);
 
-        let ask = wake_context(&origin, "s".into(), PermissionMode::Ask);
+        let ask = wake_context(&origin, "s".into(), PermissionMode::Ask, Some("turn-attempt-2".into()));
         assert_eq!(ask.permission_mode, PermissionMode::Ask);
+        assert_eq!(ask.turn_id, "turn-attempt-2");
     }
 
     struct SleepingProvider;

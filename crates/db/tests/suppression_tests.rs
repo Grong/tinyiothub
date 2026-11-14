@@ -824,6 +824,152 @@ async fn fail_skip_attempt_is_idempotent_for_unknown_outcome_reconciliation() {
     fixture.close().await;
 }
 
+fn event_for_run(event_id: &str, event_type: &str, payload: Value, run_id: &str) -> HarnessEventInput {
+    let mut input = event(event_id, event_type, payload);
+    input.run_id = Some(run_id.to_string());
+    input
+}
+
+fn skip_events_for_turn(turn_id: &str) -> Vec<HarnessEventInput> {
+    vec![
+        event_for_run(
+            "skip:turn.started",
+            "turn.started",
+            json!({"turnKind": "scheduled"}),
+            turn_id,
+        ),
+        event_for_run(
+            "skip:turn.completed",
+            "turn.completed",
+            json!({"outcome": "skipped", "reason": "no_material_change"}),
+            turn_id,
+        ),
+        event_for_run(
+            "skip:session.ended",
+            "session.ended",
+            json!({"outcome": "skipped"}),
+            turn_id,
+        ),
+    ]
+}
+
+#[tokio::test]
+async fn load_committed_skip_returns_only_the_matching_attempt() {
+    let fixture = SuppressionFixture::create().await;
+    install_complete_baseline(&fixture).await;
+    let (_state, attempt) = begin_skip(&fixture).await;
+    let events = skip_events_for_turn("turn-1");
+    fixture.db.commit_skip(&attempt, &events).await.expect("commit skip");
+    let expected: Vec<String> = events.iter().map(|event| event.event_id.clone()).collect();
+
+    let loaded = fixture
+        .db
+        .load_committed_skip(WS, SESSION, &attempt.attempt_id, "turn-1", &expected)
+        .await
+        .expect("load committed skip")
+        .expect("committed skip");
+    assert_eq!(loaded.attempt_id, attempt.attempt_id);
+    assert_eq!(loaded.attempt_no, attempt.attempt_no);
+    assert_eq!(loaded.events.len(), events.len());
+    assert_eq!(loaded.events.last().unwrap().event_type, "session.ended");
+
+    assert!(
+        fixture
+            .db
+            .load_committed_skip(WS, SESSION, &attempt.attempt_id, "turn-other", &expected)
+            .await
+            .expect("foreign turn")
+            .is_none(),
+        "a foreign turn id is not this attempt's skip"
+    );
+    assert!(
+        fixture
+            .db
+            .load_committed_skip(WS, SESSION, "other-attempt", "turn-1", &expected)
+            .await
+            .expect("foreign attempt")
+            .is_none(),
+        "only the latest committed attempt may be replayed"
+    );
+    let mut truncated = expected.clone();
+    truncated.pop();
+    assert!(
+        fixture
+            .db
+            .load_committed_skip(WS, SESSION, &attempt.attempt_id, "turn-1", &truncated)
+            .await
+            .expect("partial event set")
+            .is_none(),
+        "a partial lifecycle is not a committed skip"
+    );
+    fixture.close().await;
+}
+
+#[tokio::test]
+async fn duplicate_deterministic_event_ids_dedupe_in_one_transaction() {
+    let fixture = SuppressionFixture::create().await;
+    let duplicated = event_for_run(
+        "skip:session.ended",
+        "session.ended",
+        json!({"outcome": "skipped"}),
+        "turn-1",
+    );
+    let mut tx = fixture.workspace.begin().await.expect("event tx");
+    let first = append_session_event_tx(&mut tx, &duplicated)
+        .await
+        .expect("first append");
+    let second = append_session_event_tx(&mut tx, &duplicated)
+        .await
+        .expect("duplicate id dedupes");
+    tx.commit().await.expect("commit events");
+    assert_eq!(first, second);
+    assert_eq!(fixture.event_count().await, 1, "stable ids never duplicate events");
+    fixture.close().await;
+}
+
+#[tokio::test]
+async fn concurrent_skip_attempts_have_one_cas_winner() {
+    let fixture = SuppressionFixture::create().await;
+    install_complete_baseline(&fixture).await;
+    let state = fixture.current().await;
+    let (left, right) = tokio::join!(
+        fixture.db.begin_skip_attempt(SESSION, &state),
+        fixture.db.begin_skip_attempt(SESSION, &state)
+    );
+    let results = [left, right];
+    assert_eq!(
+        results.iter().filter(|result| result.is_ok()).count(),
+        1,
+        "exactly one worker may own the audit attempt"
+    );
+    let loser = results.into_iter().find(|result| result.is_err()).expect("loser");
+    assert!(matches!(loser, Err(DbError::CasConflict { .. })));
+    assert!(fixture.current().await.audit_in_progress);
+    fixture.close().await;
+}
+
+#[tokio::test]
+async fn commit_skip_rejects_mode_off_before_the_transaction() {
+    let fixture = SuppressionFixture::create().await;
+    install_complete_baseline(&fixture).await;
+    let (_state, attempt) = begin_skip(&fixture).await;
+    fixture
+        .db
+        .update_suppression_config(WS, Some(SuppressionMode::Off), None)
+        .await
+        .expect("turn off")
+        .expect("schedule row");
+
+    let error = fixture
+        .db
+        .commit_skip(&attempt, &skip_events())
+        .await
+        .expect_err("off must reject a skipped lifecycle");
+    assert!(matches!(error, DbError::CasConflict { .. }));
+    assert_eq!(fixture.event_count().await, 0);
+    fixture.close().await;
+}
+
 #[tokio::test]
 async fn suppression_schema_splits_workspace_tables_from_platform_config() {
     let fixture = SuppressionFixture::create().await;

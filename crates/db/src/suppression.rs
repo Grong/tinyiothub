@@ -12,11 +12,12 @@ use chrono::{DateTime, SecondsFormat, Utc};
 use serde_json::Value;
 use sqlx::sqlite::SqliteRow;
 use sqlx::{Row, Sqlite, Transaction};
-use tinyiothub_core::harness::{HarnessEvent, HarnessEventInput};
+use tinyiothub_core::harness::{ExecutionMode, HarnessEvent, HarnessEventInput};
 
 use crate::{
     Db,
     error::{DbError, Result},
+    harness_event::EventFilter,
 };
 
 /// Version of the generic Harness turn-state envelope (Task 1 contract).
@@ -812,6 +813,59 @@ impl Db {
             events: appended,
             state,
         })
+    }
+
+    /// Load the committed skip owned by one attempt.
+    ///
+    /// Replay must be able to return the exact committed skipped lifecycle
+    /// without writing anything. `turn_id` is the attempt's reserved run id and
+    /// `expected_event_ids` are the deterministic ids derived from
+    /// `(wakeId, attemptNo)`; a partial or foreign event set returns `None`
+    /// instead of being mistaken for a committed skip.
+    pub async fn load_committed_skip(
+        &self,
+        workspace_id: &str,
+        session_id: &str,
+        attempt_id: &str,
+        turn_id: &str,
+        expected_event_ids: &[String],
+    ) -> Result<Option<CommittedSkip>> {
+        let Some(state) = self.load_suppression_state(workspace_id, session_id).await? else {
+            return Ok(None);
+        };
+        if state.latest_outcome != OUTCOME_SKIPPED || state.latest_attempt_id.as_deref() != Some(attempt_id) {
+            return Ok(None);
+        }
+        let filter = EventFilter {
+            session_id: Some(session_id.to_string()),
+            run_id: Some(turn_id.to_string()),
+            task_id: None,
+            execution_mode: ExecutionMode::Production,
+        };
+        let page = self.session_event_page(workspace_id, &filter, 0, 256).await?;
+        let mut events = page.events;
+        events.sort_by_key(|event| event.seq);
+        if events.len() != expected_event_ids.len() {
+            return Ok(None);
+        }
+        let expected: std::collections::HashSet<&str> = expected_event_ids.iter().map(String::as_str).collect();
+        let actual: std::collections::HashSet<&str> = events.iter().map(|event| event.event_id.as_str()).collect();
+        if actual != expected {
+            return Ok(None);
+        }
+        let skipped_terminal = events
+            .iter()
+            .find(|event| event.event_type == "turn.completed")
+            .is_some_and(|event| event.payload_json.get("outcome").and_then(Value::as_str) == Some("skipped"));
+        if !skipped_terminal {
+            return Ok(None);
+        }
+        Ok(Some(CommittedSkip {
+            attempt_id: attempt_id.to_string(),
+            attempt_no: state.attempt_no,
+            events,
+            state,
+        }))
     }
 
     /// Clear one post-commit sync barrier after the corresponding consumer

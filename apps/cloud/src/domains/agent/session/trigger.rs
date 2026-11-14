@@ -18,10 +18,11 @@ use tinyiothub_core::models::event::{Event, EventType};
 use tinyiothub_runtime::event_bus::EventBus;
 use tinyiothub_storage::Db;
 use tinyiothub_storage::assistant_schedule::AssistantSchedule;
+use tinyiothub_storage::suppression::OUTCOME_AUDIT_FAILED;
 
 use crate::domains::agent::event::types::AiEvent;
 use crate::domains::agent::orchestrator::callbacks::extract_payload;
-use crate::domains::agent::session::wake::{WakeExecutor, assistant_agent_id};
+use crate::domains::agent::session::wake::{WakeExecutor, WakeOutcome, assistant_agent_id};
 
 pub const TRIGGER_TICK_INTERVAL: Duration = Duration::from_secs(30);
 const DUE_BATCH_LIMIT: i64 = 100;
@@ -182,9 +183,10 @@ impl TriggerRouter {
     async fn dispatch(self: Arc<Self>, schedule: AssistantSchedule, now: DateTime<Utc>) {
         let report = self.executor.execute(schedule.clone(), self.shutdown.clone()).await;
         let next_wake_at = now + ChronoDuration::seconds(i64::from(schedule.interval_seconds));
+        let outcome = persisted_outcome(schedule.last_outcome.as_deref(), &report.outcome);
         if let Err(error) = self
             .db
-            .mark_assistant_wake(&schedule.workspace_id, next_wake_at, now, report.outcome.as_str())
+            .mark_assistant_wake(&schedule.workspace_id, next_wake_at, now, &outcome)
             .await
         {
             tracing::warn!(%error, workspace_id = %schedule.workspace_id, "assistant schedule: mark wake failed");
@@ -263,6 +265,18 @@ impl TriggerRouter {
     /// 生命周期一致。
     pub fn shutdown_token(&self) -> CancellationToken {
         self.shutdown.clone()
+    }
+}
+
+/// TriggerRouter is the only Schedule outcome writer. An `audit_failed`
+/// barrier must stay visible until a later full Turn completes: generic
+/// skipped/failed outcomes may not overwrite it.
+fn persisted_outcome(previous: Option<&str>, outcome: &WakeOutcome) -> String {
+    let generic = matches!(outcome, WakeOutcome::Skipped | WakeOutcome::Failed { .. });
+    if previous == Some(OUTCOME_AUDIT_FAILED) && generic {
+        OUTCOME_AUDIT_FAILED.to_string()
+    } else {
+        outcome.as_str().to_string()
     }
 }
 
@@ -615,6 +629,59 @@ mod tests {
         let row = db.get_assistant_schedule("ws-skip").await.unwrap().unwrap();
         assert_eq!(row.next_wake_at, Some(now + chrono::Duration::seconds(300)));
         assert_eq!(row.last_outcome.as_deref(), Some("skipped"));
+    }
+
+    #[test]
+    fn audit_failed_outcome_is_not_overwritten_by_generic_failures() {
+        assert_eq!(
+            persisted_outcome(Some("audit_failed"), &WakeOutcome::Skipped),
+            "audit_failed"
+        );
+        assert_eq!(
+            persisted_outcome(
+                Some("audit_failed"),
+                &WakeOutcome::Failed {
+                    error: "provider".into()
+                }
+            ),
+            "audit_failed"
+        );
+        assert_eq!(
+            persisted_outcome(Some("audit_failed"), &WakeOutcome::AuditFailed),
+            "audit_failed"
+        );
+        assert_eq!(
+            persisted_outcome(Some("audit_failed"), &WakeOutcome::Completed),
+            "completed",
+            "a successful full Turn may clear the barrier"
+        );
+        assert_eq!(persisted_outcome(Some("completed"), &WakeOutcome::Skipped), "skipped");
+        assert_eq!(WakeOutcome::AuditFailed.as_str(), "audit_failed");
+    }
+
+    #[tokio::test]
+    async fn audit_failed_schedule_outcome_survives_a_later_skipped_wake() {
+        let db = Arc::new(test_db().await);
+        let now = ts(1_800_000_000);
+        db.ensure_assistant_schedule("ws-audit-failed", "__assistant__ws-audit-failed", now)
+            .await
+            .unwrap();
+        db.mark_assistant_wake("ws-audit-failed", now, now, "audit_failed")
+            .await
+            .unwrap();
+        let router = Arc::new(TriggerRouter::new(db.clone(), Arc::new(SkippedExecutor)));
+
+        for handle in router.tick(now).await {
+            handle.await.unwrap();
+        }
+
+        let row = db.get_assistant_schedule("ws-audit-failed").await.unwrap().unwrap();
+        assert_eq!(
+            row.last_outcome.as_deref(),
+            Some("audit_failed"),
+            "a generic skipped outcome must not hide the audit barrier"
+        );
+        assert_eq!(row.next_wake_at, Some(now + chrono::Duration::seconds(300)));
     }
 
     #[tokio::test]
