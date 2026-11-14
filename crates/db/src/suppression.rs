@@ -2,9 +2,11 @@
 //!
 //! Only generic version, cursor and fence semantics live here. Device, alarm,
 //! skill and business skip rules stay in the Source adapters (Task 3+). The
-//! state row is workspace-scoped platform state; skipped events are appended
-//! to a caller-provided per-workspace transaction. No method in this module
-//! claims cross-database atomicity.
+//! state row lives in the per-workspace Harness database next to
+//! `session_events`, so a skip commits its state, events and pending barriers
+//! in one workspace transaction. Only the schedule configuration
+//! (`assistant_schedules`) is platform state; no method claims atomicity
+//! across the platform and workspace databases.
 
 use chrono::{DateTime, SecondsFormat, Utc};
 use serde_json::Value;
@@ -301,10 +303,11 @@ fn attempt_id(workspace_id: &str, session_id: &str, attempt_no: i64) -> String {
     format!("{workspace_id}:{session_id}:attempt:{attempt_no}")
 }
 
-async fn state_by_attempt(db: &Db, attempt_id: &str) -> Result<Option<SuppressionState>> {
+async fn state_by_attempt(db: &Db, workspace_id: &str, attempt_id: &str) -> Result<Option<SuppressionState>> {
+    let pool = db.workspace_pool(workspace_id).await?;
     let row = sqlx::query(STATE_BY_ATTEMPT_SQL)
         .bind(attempt_id)
-        .fetch_optional(db.pool())
+        .fetch_optional(&pool)
         .await?;
     row.as_ref().map(map_state_row).transpose()
 }
@@ -315,10 +318,11 @@ impl Db {
         workspace_id: &str,
         session_id: &str,
     ) -> Result<Option<SuppressionState>> {
+        let pool = self.workspace_pool(workspace_id).await?;
         let row = sqlx::query(STATE_BY_KEY_SQL)
             .bind(workspace_id)
             .bind(session_id)
-            .fetch_optional(self.pool())
+            .fetch_optional(&pool)
             .await?;
         row.as_ref().map(map_state_row).transpose()
     }
@@ -332,6 +336,7 @@ impl Db {
                 message: "baseline session does not match the full attempt session".to_string(),
             });
         }
+        let pool = self.workspace_pool(&baseline.workspace_id).await?;
         let now = Utc::now();
         let stamp = format_ts(now);
         sqlx::query(
@@ -342,7 +347,7 @@ impl Db {
         .bind(session_id)
         .bind(&stamp)
         .bind(&stamp)
-        .execute(self.pool())
+        .execute(&pool)
         .await?;
 
         let attempt_no = baseline.attempt_no + 1;
@@ -361,7 +366,7 @@ impl Db {
         .bind(&baseline.workspace_id)
         .bind(session_id)
         .bind(baseline.state_version)
-        .execute(self.pool())
+        .execute(&pool)
         .await?
         .rows_affected();
         if updated != 1 {
@@ -382,12 +387,14 @@ impl Db {
     /// terminal outcome uses [`Db::fail_full_attempt`] instead.
     pub async fn complete_full_attempt(
         &self,
+        workspace_id: &str,
         attempt_id: impl AsRef<str>,
         completion: &FullAttemptCompletion,
     ) -> Result<SuppressionState> {
         validate_completion(completion)?;
+        let pool = self.workspace_pool(workspace_id).await?;
         let attempt_id = attempt_id.as_ref();
-        let current = state_by_attempt(self, attempt_id)
+        let current = state_by_attempt(self, workspace_id, attempt_id)
             .await?
             .ok_or_else(|| DbError::NotFound {
                 id: attempt_id.to_string(),
@@ -426,7 +433,7 @@ impl Db {
         .bind(&current.workspace_id)
         .bind(&current.session_id)
         .bind(attempt_id)
-        .execute(self.pool())
+        .execute(&pool)
         .await?
         .rows_affected();
         if updated != 1 {
@@ -442,7 +449,13 @@ impl Db {
     /// Every unsuccessful terminal (failed, cancelled, partial, degraded,
     /// timeout, unknown outcome) writes `full_failed`, keeping the old
     /// baseline ineligible until another fully successful Turn.
-    pub async fn fail_full_attempt(&self, attempt_id: impl AsRef<str>, reason: &str) -> Result<SuppressionState> {
+    pub async fn fail_full_attempt(
+        &self,
+        workspace_id: &str,
+        attempt_id: impl AsRef<str>,
+        reason: &str,
+    ) -> Result<SuppressionState> {
+        let pool = self.workspace_pool(workspace_id).await?;
         let attempt_id = attempt_id.as_ref();
         let reason = reason.trim();
         if reason.is_empty() {
@@ -450,7 +463,7 @@ impl Db {
                 message: "full attempt failure reason must not be empty".to_string(),
             });
         }
-        let current = state_by_attempt(self, attempt_id)
+        let current = state_by_attempt(self, workspace_id, attempt_id)
             .await?
             .ok_or_else(|| DbError::NotFound {
                 id: attempt_id.to_string(),
@@ -477,7 +490,7 @@ impl Db {
         .bind(&current.workspace_id)
         .bind(&current.session_id)
         .bind(attempt_id)
-        .execute(self.pool())
+        .execute(&pool)
         .await?
         .rows_affected();
         if updated != 1 {
@@ -504,6 +517,7 @@ impl Db {
                 message: format!("session {session_id} baseline is not eligible for a skip"),
             });
         }
+        let pool = self.workspace_pool(&baseline.workspace_id).await?;
         let attempt_no = baseline.attempt_no + 1;
         let attempt_id = attempt_id(&baseline.workspace_id, session_id, attempt_no);
         let updated = sqlx::query(
@@ -522,7 +536,7 @@ impl Db {
         .bind(&baseline.workspace_id)
         .bind(session_id)
         .bind(baseline.state_version)
-        .execute(self.pool())
+        .execute(&pool)
         .await?
         .rows_affected();
         if updated != 1 {
@@ -542,27 +556,23 @@ impl Db {
         })
     }
 
-    /// Re-validate every decision input and atomically commit the skipped
-    /// terminal plus its sync barriers.
+    /// Re-validate every decision input and commit the skipped terminal plus
+    /// its sync barriers in one workspace transaction.
     ///
-    /// The suppression row and `assistant_schedules` config are committed in
-    /// the platform database. Skipped events are appended to the caller's
-    /// workspace transaction, which the caller must commit. This is two
-    /// durable writes by design: no cross-database atomicity is claimed.
-    pub async fn commit_skip(
-        &self,
-        tx: &mut Transaction<'_, Sqlite>,
-        attempt: &SkipAttempt,
-        events: &[HarnessEventInput],
-    ) -> Result<CommittedSkip> {
-        let mut state_tx = self.pool().begin().await?;
-
+    /// `assistant_schedules` config is platform state, so mode/configVersion
+    /// are read immediately before the workspace transaction. Everything else
+    /// — the state row, the user cursor, the skipped events and the pending
+    /// barriers — commits together in the workspace database. Any rejection
+    /// or event failure rolls the whole transaction back; only the durable
+    /// `audit_in_progress` fence written by [`Db::begin_skip_attempt`]
+    /// remains, so no partial skipped lifecycle is visible.
+    pub async fn commit_skip(&self, attempt: &SkipAttempt, events: &[HarnessEventInput]) -> Result<CommittedSkip> {
         let schedule = sqlx::query_as::<_, (String, i64)>(
             "SELECT suppression_mode, suppression_config_version \
              FROM assistant_schedules WHERE workspace_id = ?",
         )
         .bind(&attempt.workspace_id)
-        .fetch_optional(&mut *state_tx)
+        .fetch_optional(self.pool())
         .await?;
         let Some((mode, schedule_config_version)) = schedule else {
             return Err(DbError::CasConflict {
@@ -585,10 +595,31 @@ impl Db {
             });
         }
 
+        let pool = self.workspace_pool(&attempt.workspace_id).await?;
+        let mut tx = pool.begin().await?;
+        let committed = match self.commit_skip_in_tx(&mut tx, attempt, events).await {
+            Ok(committed) => committed,
+            Err(error) => {
+                // The audit fence was committed by `begin_skip_attempt`; this
+                // transaction never becomes visible.
+                let _ = tx.rollback().await;
+                return Err(error);
+            }
+        };
+        tx.commit().await?;
+        Ok(committed)
+    }
+
+    async fn commit_skip_in_tx(
+        &self,
+        tx: &mut Transaction<'_, Sqlite>,
+        attempt: &SkipAttempt,
+        events: &[HarnessEventInput],
+    ) -> Result<CommittedSkip> {
         let row = sqlx::query(STATE_BY_KEY_SQL)
             .bind(&attempt.workspace_id)
             .bind(&attempt.session_id)
-            .fetch_optional(&mut *state_tx)
+            .fetch_optional(&mut **tx)
             .await?;
         let state = row
             .as_ref()
@@ -677,7 +708,7 @@ impl Db {
         .bind(&attempt.session_id)
         .bind(attempt.expected_state_version)
         .bind(&attempt.attempt_id)
-        .execute(&mut *state_tx)
+        .execute(&mut **tx)
         .await?
         .rows_affected();
         if updated != 1 {
@@ -685,12 +716,13 @@ impl Db {
                 message: format!("session {} skip commit lost its CAS", attempt.session_id),
             });
         }
-        state_tx.commit().await?;
 
-        let state = self
-            .load_suppression_state(&attempt.workspace_id, &attempt.session_id)
-            .await?
-            .ok_or_else(|| DbError::Internal("committed suppression row disappeared".to_string()))?;
+        let row = sqlx::query(STATE_BY_KEY_SQL)
+            .bind(&attempt.workspace_id)
+            .bind(&attempt.session_id)
+            .fetch_one(&mut **tx)
+            .await?;
+        let state = map_state_row(&row)?;
         Ok(CommittedSkip {
             attempt_id: attempt.attempt_id.clone(),
             attempt_no: attempt.attempt_no,
@@ -724,11 +756,12 @@ impl Db {
                  WHERE workspace_id = ? AND session_id = ?"
             }
         };
+        let pool = self.workspace_pool(workspace_id).await?;
         let updated = sqlx::query(sql)
             .bind(format_ts(Utc::now()))
             .bind(workspace_id)
             .bind(session_id)
-            .execute(self.pool())
+            .execute(&pool)
             .await?
             .rows_affected();
         if updated != 1 {

@@ -154,6 +154,13 @@ fn harness_migrator() -> Migrator {
             include_str!("../migrations/20261107000003_harness_events_recent_index.sql").into_sql_str(),
             false,
         ),
+        Migration::new(
+            20261114000002,
+            "harness_assistant_suppression_workspace".into(),
+            MigrationType::Simple,
+            include_str!("../migrations/20261114000002_harness_assistant_suppression_workspace.sql").into_sql_str(),
+            false,
+        ),
     ])
 }
 

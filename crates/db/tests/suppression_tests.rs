@@ -3,16 +3,16 @@
 //! These tests pin the crash/fence contract: only a fully installed baseline
 //! is eligible for a skip, every unsuccessful terminal leaves `full_failed`,
 //! and a skip commit re-validates every version/cursor/fence it was decided
-//! against. The suppression row lives in the platform database; skipped
-//! events live in the workspace database, so no test claims cross-database
-//! atomicity.
+//! against. Suppression state and skipped events live in the workspace
+//! Harness database; only the schedule configuration is platform state.
 
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 
 use chrono::{DateTime, Utc};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
-use sqlx::sqlite::{SqlitePool, SqlitePoolOptions};
+use sqlx::sqlite::{SqliteConnectOptions, SqlitePool, SqlitePoolOptions};
 use tinyiothub_core::harness::{ExecutionMode, HarnessEventInput};
 use tinyiothub_storage::assistant_schedule::SuppressionConfig;
 use tinyiothub_storage::harness_event::append_session_event_tx;
@@ -28,27 +28,31 @@ const OTHER_REGISTRY_VERSION: &str = "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
 
 struct SuppressionFixture {
     root: PathBuf,
-    database_path: PathBuf,
     db: Db,
-    /// Stand-in for the per-workspace Harness DB. `suppression_state` is
-    /// workspace-scoped platform state; skipped events belong to the workspace
-    /// store, so `commit_skip` receives this pool's transaction.
-    events: SqlitePool,
+    /// Direct connection to the workspace Harness DB, used only for raw
+    /// fixtures (version/fence mutation) and transaction-level event tests.
+    workspace: SqlitePool,
 }
 
 impl SuppressionFixture {
     async fn create() -> Self {
         let root = std::env::temp_dir().join(format!("tinyiothub-suppression-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&root).expect("fixture root");
-        let database_path = root.join("platform.db");
-        let db = open_platform_db(&database_path).await;
-        let events = event_pool().await;
-        let fixture = Self {
-            root,
-            database_path,
-            db,
-            events,
-        };
+        let platform = tinyiothub_storage::test_helpers::test_pool().await;
+        let db = Db::new(platform).with_workspace_store_root(root.join("data/agents"));
+        tinyiothub_storage::seed::seed_system(&db).await.expect("seed system");
+        sqlx::query(
+            "INSERT INTO workspaces (id, name, tenant_id, created_at, updated_at) \
+             VALUES (?, 'workspace', 'tenant-default-001', 'now', 'now')",
+        )
+        .bind(WS)
+        .execute(db.pool())
+        .await
+        .expect("insert workspace");
+        db.create_workspace_store(WS).await.expect("workspace store");
+        let workspace = open_workspace_db(&workspace_path(&root, WS)).await;
+
+        let fixture = Self { root, db, workspace };
         fixture
             .db
             .ensure_assistant_schedule(WS, "__assistant__ws-suppression", ts())
@@ -80,10 +84,10 @@ impl SuppressionFixture {
             .config_version
     }
 
-    /// Open a fresh connection to the same file, proving durable state rather
-    /// than an in-process cache.
+    /// Open a fresh workspace store connection from the same file, proving
+    /// durable state rather than an in-process cache.
     async fn reopen(&self) -> SuppressionState {
-        let reopened = open_platform_db(&self.database_path).await;
+        let reopened = Db::new(self.db.pool().clone()).with_workspace_store_root(self.root.join("data/agents"));
         reopened
             .load_suppression_state(WS, SESSION)
             .await
@@ -93,42 +97,33 @@ impl SuppressionFixture {
 
     async fn event_count(&self) -> i64 {
         sqlx::query_scalar("SELECT COUNT(*) FROM session_events")
-            .fetch_one(&self.events)
+            .fetch_one(&self.workspace)
             .await
             .expect("event count")
     }
 
     async fn close(self) {
+        let _ = self.db.close_workspace_store(WS).await;
         self.db.pool().close().await;
-        self.events.close().await;
+        self.workspace.close().await;
         let _ = tokio::fs::remove_dir_all(&self.root).await;
     }
 }
 
-async fn open_platform_db(path: &Path) -> Db {
-    let url = format!("sqlite://{}?mode=rwc", path.display());
-    let pool = SqlitePoolOptions::new()
-        .max_connections(1)
-        .connect(&url)
-        .await
-        .expect("open platform database");
-    tinyiothub_storage::migrations::run_migrations(&pool)
-        .await
-        .expect("platform migrations");
-    Db::new(pool)
+fn workspace_path(root: &Path, workspace_id: &str) -> PathBuf {
+    root.join("data/agents").join(workspace_id).join("harness/harness.db")
 }
 
-async fn event_pool() -> SqlitePool {
-    let pool = SqlitePoolOptions::new()
+async fn open_workspace_db(path: &Path) -> SqlitePool {
+    let options = SqliteConnectOptions::new()
+        .filename(path)
+        .create_if_missing(true)
+        .busy_timeout(Duration::from_secs(5));
+    SqlitePoolOptions::new()
         .max_connections(1)
-        .connect("sqlite::memory:")
+        .connect_with(options)
         .await
-        .expect("event pool");
-    sqlx::raw_sql(include_str!("../migrations/20261103000002_harness_events.sql"))
-        .execute(&pool)
-        .await
-        .expect("workspace event schema");
-    pool
+        .expect("workspace database")
 }
 
 fn ts() -> DateTime<Utc> {
@@ -173,6 +168,7 @@ async fn install_complete_baseline(fixture: &SuppressionFixture) -> SuppressionS
     let completed = fixture
         .db
         .complete_full_attempt(
+            WS,
             &attempt.attempt_id,
             &completion("state-1", fixture.config_version().await),
         )
@@ -232,7 +228,7 @@ async fn failed_full_attempt_makes_old_baseline_ineligible_across_restart() {
         .expect("begin full attempt");
     fixture
         .db
-        .fail_full_attempt(attempt.attempt_id, "provider_failed")
+        .fail_full_attempt(WS, attempt.attempt_id, "provider_failed")
         .await
         .expect("fail full attempt");
     let reloaded = fixture.reopen().await;
@@ -256,7 +252,7 @@ async fn cancelled_partial_degraded_and_timeout_full_attempts_all_write_full_fai
             .expect("begin full attempt");
         let failed = fixture
             .db
-            .fail_full_attempt(&attempt.attempt_id, reason)
+            .fail_full_attempt(WS, &attempt.attempt_id, reason)
             .await
             .expect("fail full attempt");
         assert_eq!(failed.latest_outcome(), "full_failed", "reason={reason}");
@@ -273,6 +269,7 @@ async fn cancelled_partial_degraded_and_timeout_full_attempts_all_write_full_fai
         fixture
             .db
             .complete_full_attempt(
+                WS,
                 &attempt.attempt_id,
                 &completion("state-recovered", fixture.config_version().await),
             )
@@ -328,14 +325,12 @@ async fn failed_skip_audit_keeps_audit_in_progress_fence() {
 
     let mut stale = attempt.clone();
     stale.expected_state_version += 1;
-    let mut tx = fixture.events.begin().await.expect("event tx");
     let error = fixture
         .db
-        .commit_skip(&mut tx, &stale, &skip_events())
+        .commit_skip(&stale, &skip_events())
         .await
         .expect_err("stale audit state must not commit");
     assert!(matches!(error, DbError::CasConflict { .. }));
-    drop(tx);
 
     let fenced = fixture.current().await;
     assert_eq!(fenced.latest_outcome(), "skip_in_progress");
@@ -356,17 +351,54 @@ async fn failed_skip_audit_keeps_audit_in_progress_fence() {
 }
 
 #[tokio::test]
+async fn event_write_failure_rolls_back_skipped_outcome_and_keeps_audit_fence() {
+    let fixture = SuppressionFixture::create().await;
+    install_complete_baseline(&fixture).await;
+    let (_state, attempt) = begin_skip(&fixture).await;
+
+    let mut events = skip_events();
+    // The first event is written before this invalid one is rejected, proving
+    // the whole workspace transaction rolls back.
+    events.push(event("skip:invalid", "step.text", json!({"text": "   "})));
+    let error = fixture
+        .db
+        .commit_skip(&attempt, &events)
+        .await
+        .expect_err("an event write failure must roll back the skip");
+    assert!(matches!(error, DbError::Validation { .. }));
+
+    let fenced = fixture.current().await;
+    assert_eq!(fenced.latest_outcome(), "skip_in_progress");
+    assert!(fenced.audit_in_progress);
+    assert!(!fenced.schedule_sync_pending);
+    assert!(!fenced.projection_sync_pending);
+    assert!(!fenced.notification_pending);
+    assert!(!fenced.baseline_is_eligible());
+    assert_eq!(
+        fixture.event_count().await,
+        0,
+        "no partial skipped lifecycle is visible"
+    );
+
+    let error = fixture
+        .db
+        .begin_skip_attempt(SESSION, &fenced)
+        .await
+        .expect_err("the durable audit fence still forbids another skip");
+    assert!(matches!(error, DbError::CasConflict { .. }));
+    fixture.close().await;
+}
+
+#[tokio::test]
 async fn schedule_projection_notification_pending_flags_clear_independently() {
     let fixture = SuppressionFixture::create().await;
     install_complete_baseline(&fixture).await;
     let (_state, attempt) = begin_skip(&fixture).await;
-    let mut tx = fixture.events.begin().await.expect("event tx");
     let committed = fixture
         .db
-        .commit_skip(&mut tx, &attempt, &skip_events())
+        .commit_skip(&attempt, &skip_events())
         .await
         .expect("commit skip");
-    tx.commit().await.expect("commit events");
 
     assert_eq!(committed.state.latest_outcome(), "skipped");
     assert!(committed.state.schedule_sync_pending);
@@ -418,12 +450,12 @@ async fn unknown_outcome_full_attempt_reconciliation_is_idempotent() {
         .expect("begin full attempt");
     let first = fixture
         .db
-        .fail_full_attempt(&attempt.attempt_id, "commit_unknown")
+        .fail_full_attempt(WS, &attempt.attempt_id, "commit_unknown")
         .await
         .expect("first reconciliation");
     let second = fixture
         .db
-        .fail_full_attempt(&attempt.attempt_id, "commit_unknown")
+        .fail_full_attempt(WS, &attempt.attempt_id, "commit_unknown")
         .await
         .expect("retried reconciliation");
     assert_eq!(
@@ -440,7 +472,7 @@ async fn append_session_event_tx_preserves_event_id_and_digest_conflict_semantic
     let fixture = SuppressionFixture::create().await;
     let original = event("event-1", "step.tool_result", json!({"result": {"ok": true}}));
 
-    let mut tx = fixture.events.begin().await.expect("event tx");
+    let mut tx = fixture.workspace.begin().await.expect("event tx");
     let first = append_session_event_tx(&mut tx, &original).await.expect("append event");
     assert_eq!(first.seq, 1);
     assert_eq!(first.event_id, "event-1");
@@ -452,7 +484,7 @@ async fn append_session_event_tx_preserves_event_id_and_digest_conflict_semantic
 
     let mut conflicting = original.clone();
     conflicting.payload_digest = "another-digest".to_string();
-    let mut tx = fixture.events.begin().await.expect("event tx");
+    let mut tx = fixture.workspace.begin().await.expect("event tx");
     let error = append_session_event_tx(&mut tx, &conflicting)
         .await
         .expect_err("same id with another digest conflicts");
@@ -467,13 +499,11 @@ async fn commit_skip_commits_skipped_events_and_pending_flags() {
     let fixture = SuppressionFixture::create().await;
     install_complete_baseline(&fixture).await;
     let (_state, attempt) = begin_skip(&fixture).await;
-    let mut tx = fixture.events.begin().await.expect("event tx");
     let committed = fixture
         .db
-        .commit_skip(&mut tx, &attempt, &skip_events())
+        .commit_skip(&attempt, &skip_events())
         .await
         .expect("commit skip");
-    tx.commit().await.expect("commit events");
 
     assert_eq!(committed.events.len(), 3);
     assert_eq!(committed.events[0].seq, 1);
@@ -497,18 +527,16 @@ async fn commit_skip_rejects_changed_state_version() {
     )
     .bind(WS)
     .bind(SESSION)
-    .execute(fixture.db.pool())
+    .execute(&fixture.workspace)
     .await
     .expect("advance state version");
 
-    let mut tx = fixture.events.begin().await.expect("event tx");
     let error = fixture
         .db
-        .commit_skip(&mut tx, &attempt, &skip_events())
+        .commit_skip(&attempt, &skip_events())
         .await
         .expect_err("changed stateVersion must reject the skip");
     assert!(matches!(error, DbError::CasConflict { .. }));
-    drop(tx);
     assert!(!fixture.current().await.baseline_is_eligible());
     assert_eq!(fixture.event_count().await, 0);
     fixture.close().await;
@@ -526,14 +554,12 @@ async fn commit_skip_rejects_changed_config_version() {
         .expect("change reconciliation config")
         .expect("schedule row");
 
-    let mut tx = fixture.events.begin().await.expect("event tx");
     let error = fixture
         .db
-        .commit_skip(&mut tx, &attempt, &skip_events())
+        .commit_skip(&attempt, &skip_events())
         .await
         .expect_err("changed configVersion must reject the skip");
     assert!(matches!(error, DbError::CasConflict { .. }));
-    drop(tx);
     assert_eq!(fixture.event_count().await, 0);
     fixture.close().await;
 }
@@ -547,18 +573,16 @@ async fn commit_skip_rejects_changed_registry_version() {
         .bind(OTHER_REGISTRY_VERSION)
         .bind(WS)
         .bind(SESSION)
-        .execute(fixture.db.pool())
+        .execute(&fixture.workspace)
         .await
         .expect("change registry version");
 
-    let mut tx = fixture.events.begin().await.expect("event tx");
     let error = fixture
         .db
-        .commit_skip(&mut tx, &attempt, &skip_events())
+        .commit_skip(&attempt, &skip_events())
         .await
         .expect_err("changed registryVersion must reject the skip");
     assert!(matches!(error, DbError::CasConflict { .. }));
-    drop(tx);
     assert_eq!(fixture.event_count().await, 0);
     fixture.close().await;
 }
@@ -568,7 +592,7 @@ async fn commit_skip_rejects_changed_cursor() {
     let fixture = SuppressionFixture::create().await;
     install_complete_baseline(&fixture).await;
     let (_state, attempt) = begin_skip(&fixture).await;
-    let mut tx = fixture.events.begin().await.expect("event tx");
+    let mut tx = fixture.workspace.begin().await.expect("event tx");
     append_session_event_tx(
         &mut tx,
         &event(
@@ -581,14 +605,12 @@ async fn commit_skip_rejects_changed_cursor() {
     .expect("append new user input");
     tx.commit().await.expect("commit user input");
 
-    let mut tx = fixture.events.begin().await.expect("event tx");
     let error = fixture
         .db
-        .commit_skip(&mut tx, &attempt, &skip_events())
+        .commit_skip(&attempt, &skip_events())
         .await
         .expect_err("a new user message must reject the skip");
     assert!(matches!(error, DbError::CasConflict { .. }));
-    drop(tx);
     assert_eq!(fixture.event_count().await, 1, "only the user message remains");
     fixture.close().await;
 }
@@ -601,36 +623,33 @@ async fn commit_skip_rejects_changed_fence() {
     sqlx::query("UPDATE suppression_state SET full_failed = 1 WHERE workspace_id = ? AND session_id = ?")
         .bind(WS)
         .bind(SESSION)
-        .execute(fixture.db.pool())
+        .execute(&fixture.workspace)
         .await
         .expect("set another fence");
 
-    let mut tx = fixture.events.begin().await.expect("event tx");
     let error = fixture
         .db
-        .commit_skip(&mut tx, &attempt, &skip_events())
+        .commit_skip(&attempt, &skip_events())
         .await
         .expect_err("another durable fence must reject the skip");
     assert!(matches!(error, DbError::CasConflict { .. }));
-    drop(tx);
     assert_eq!(fixture.event_count().await, 0);
     fixture.close().await;
 }
 
 #[tokio::test]
-async fn suppression_schema_has_state_idempotency_and_gate_tables() {
+async fn suppression_schema_splits_workspace_tables_from_platform_config() {
     let fixture = SuppressionFixture::create().await;
-    let pool = fixture.db.pool();
-    let mut tables: Vec<String> = sqlx::query_scalar(
+    let workspace_tables: Vec<String> = sqlx::query_scalar(
         "SELECT name FROM sqlite_master WHERE type = 'table' \
-         AND name IN ('suppression_state', 'suppression_idempotency', 'suppression_gate_evaluations') ORDER BY name",
+         AND name IN ('suppression_state', 'suppression_idempotency', 'suppression_gate_evaluations') \
+         ORDER BY name",
     )
-    .fetch_all(pool)
+    .fetch_all(&fixture.workspace)
     .await
-    .expect("suppression tables");
-    tables.sort();
+    .expect("workspace suppression tables");
     assert_eq!(
-        tables,
+        workspace_tables,
         [
             "suppression_gate_evaluations",
             "suppression_idempotency",
@@ -638,8 +657,20 @@ async fn suppression_schema_has_state_idempotency_and_gate_tables() {
         ]
     );
 
+    let platform_suppression_tables: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' \
+         AND name IN ('suppression_state', 'suppression_idempotency', 'suppression_gate_evaluations')",
+    )
+    .fetch_one(fixture.db.pool())
+    .await
+    .expect("platform tables");
+    assert_eq!(
+        platform_suppression_tables, 0,
+        "suppression state must live only in the workspace DB"
+    );
+
     let schedule_columns: Vec<String> = sqlx::query_scalar("SELECT name FROM pragma_table_info('assistant_schedules')")
-        .fetch_all(pool)
+        .fetch_all(fixture.db.pool())
         .await
         .expect("schedule columns");
     for column in [
@@ -656,7 +687,7 @@ async fn suppression_schema_has_state_idempotency_and_gate_tables() {
          VALUES (?, 'wake', 'key-1', 'fingerprint-1', 'now', 'now')",
     )
     .bind(WS)
-    .execute(pool)
+    .execute(&fixture.workspace)
     .await
     .expect("idempotency row");
     let duplicate = sqlx::query(
@@ -665,7 +696,7 @@ async fn suppression_schema_has_state_idempotency_and_gate_tables() {
          VALUES (?, 'wake', 'key-1', 'fingerprint-2', 'now', 'now')",
     )
     .bind(WS)
-    .execute(pool)
+    .execute(&fixture.workspace)
     .await;
     assert!(duplicate.is_err(), "UNIQUE(workspace_id, operation, key) must hold");
     sqlx::query(
@@ -674,7 +705,7 @@ async fn suppression_schema_has_state_idempotency_and_gate_tables() {
          VALUES (?, 'reconcile', 'key-1', 'fingerprint-2', 'now', 'now')",
     )
     .bind(WS)
-    .execute(pool)
+    .execute(&fixture.workspace)
     .await
     .expect("another operation may reuse the key");
 
