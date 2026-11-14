@@ -9,6 +9,26 @@ use tracing::{error, info, warn};
 
 use crate::shared::error::Error;
 
+/// `WorkspaceSnapshotProvider` over the existing thing-agent manager. It only
+/// forwards to the manager's current `workspace_snapshot`; `None` stays `None`
+/// so the Source degrades to `source_unavailable` instead of faking an empty
+/// workspace.
+struct LiveWorkspaceSnapshotProvider {
+    manager: Arc<crate::domains::agent::thing_agent::ThingAgentManager>,
+}
+
+#[async_trait::async_trait]
+impl crate::domains::agent::session::suppression::registry::WorkspaceSnapshotProvider
+    for LiveWorkspaceSnapshotProvider
+{
+    async fn workspace_snapshot(
+        &self,
+        workspace_id: &str,
+    ) -> Option<tinyiothub_runtime::watch::live_state::WorkspaceSnapshot> {
+        self.manager.workspace_snapshot(workspace_id).await
+    }
+}
+
 /// 服务状态枚举
 #[derive(Debug, Clone, PartialEq)]
 pub enum ServiceStatus {
@@ -653,11 +673,16 @@ impl ServiceManager {
                 .map_err(|error| Error::Internal(format!("Task runtime startup failed: {error}")))?;
             // Plan 2/4A：schedule、报警与 watch 唤醒统一经 TriggerRouter 进入
             // Session Loop；先建路由并注入 manager，再启动各工作区 watch。
-            let wake_runner = Arc::new(crate::domains::agent::session::WakeRunner::from_runtime(
-                app_state.db.clone(),
-                app_state.agent_pool.clone(),
-                &app_state.session_runtime,
-            ));
+            let wake_runner = Arc::new(
+                crate::domains::agent::session::WakeRunner::from_runtime(
+                    app_state.db.clone(),
+                    app_state.agent_pool.clone(),
+                    &app_state.session_runtime,
+                )
+                .with_snapshot_provider(Arc::new(LiveWorkspaceSnapshotProvider {
+                    manager: thing_agent_manager.clone(),
+                })),
+            );
             let trigger_router = Arc::new(crate::domains::agent::session::TriggerRouter::new_with_event_bus(
                 app_state.db.clone(),
                 wake_runner,
