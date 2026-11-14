@@ -226,9 +226,14 @@ pub(crate) async fn get_suppression_config(
     row.as_ref().map(map_suppression_config).transpose()
 }
 
-/// Persist suppression config. `config_version` advances only when a field's
-/// effective value changes, so no-op writes keep every in-flight preflight
-/// comparison valid. Invalid values are rejected before any write.
+/// Persist suppression config.
+///
+/// Only the supplied fields are written, in one atomic UPDATE. A concurrent
+/// update of the other field (for example `off` beside a reconciliation
+/// change) therefore cannot resurrect the stale value. `config_version`
+/// advances when at least one effective value changes, so no-op writes keep
+/// every in-flight preflight comparison valid. Invalid values are rejected
+/// before any write.
 pub(crate) async fn update_suppression_config(
     pool: &sqlx::SqlitePool,
     workspace_id: &str,
@@ -244,21 +249,24 @@ pub(crate) async fn update_suppression_config(
             ),
         });
     }
-    let Some(current) = get_suppression_config(pool, workspace_id).await? else {
-        return Ok(None);
-    };
-    let next_mode = mode.unwrap_or(current.mode);
-    let next_seconds = reconciliation_seconds.unwrap_or(current.reconciliation_seconds);
-    let changed = next_mode != current.mode || next_seconds != current.reconciliation_seconds;
+    let mode = mode.map(|mode| mode.as_str().to_string());
+    let seconds = reconciliation_seconds.map(i64::from);
     sqlx::query(
         "UPDATE assistant_schedules SET \
-         suppression_mode = ?, reconciliation_seconds = ?, \
-         suppression_config_version = suppression_config_version + ?, updated_at = ? \
+         suppression_mode = COALESCE(?, suppression_mode), \
+         reconciliation_seconds = COALESCE(?, reconciliation_seconds), \
+         suppression_config_version = suppression_config_version + ( \
+             CASE WHEN COALESCE(?, suppression_mode) <> suppression_mode \
+                    OR COALESCE(?, reconciliation_seconds) <> reconciliation_seconds \
+                  THEN 1 ELSE 0 END \
+         ), \
+         updated_at = ? \
          WHERE workspace_id = ?",
     )
-    .bind(next_mode.as_str())
-    .bind(i64::from(next_seconds))
-    .bind(if changed { 1i64 } else { 0i64 })
+    .bind(mode.as_deref())
+    .bind(seconds)
+    .bind(mode.as_deref())
+    .bind(seconds)
     .bind(format_ts(Utc::now()))
     .bind(workspace_id)
     .execute(pool)

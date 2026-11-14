@@ -638,6 +638,193 @@ async fn commit_skip_rejects_changed_fence() {
 }
 
 #[tokio::test]
+async fn concurrent_suppression_config_updates_do_not_lose_fields() {
+    let fixture = SuppressionFixture::create().await;
+    let before = fixture
+        .db
+        .get_suppression_config(WS)
+        .await
+        .expect("config")
+        .expect("schedule row");
+    let (mode_update, reconciliation_update) = tokio::join!(
+        fixture
+            .db
+            .update_suppression_config(WS, Some(SuppressionMode::Canary), None),
+        fixture.db.update_suppression_config(WS, None, Some(600)),
+    );
+    mode_update.expect("mode update").expect("schedule row");
+    reconciliation_update
+        .expect("reconciliation update")
+        .expect("schedule row");
+
+    let after = fixture
+        .db
+        .get_suppression_config(WS)
+        .await
+        .expect("config")
+        .expect("schedule row");
+    assert_eq!(
+        after.mode,
+        SuppressionMode::Canary,
+        "a concurrent field write must not revert mode"
+    );
+    assert_eq!(
+        after.reconciliation_seconds, 600,
+        "a concurrent field write must not revert reconciliation"
+    );
+    assert_eq!(
+        after.config_version,
+        before.config_version + 2,
+        "each effective change advances the config generation once"
+    );
+    fixture.close().await;
+}
+
+#[tokio::test]
+async fn cursor_rejected_skip_can_be_settled_and_followed_by_a_successful_full_attempt() {
+    let fixture = SuppressionFixture::create().await;
+    install_complete_baseline(&fixture).await;
+    let (_state, attempt) = begin_skip(&fixture).await;
+    let mut tx = fixture.workspace.begin().await.expect("event tx");
+    append_session_event_tx(
+        &mut tx,
+        &event(
+            "user:message",
+            "message.created",
+            json!({"messageId": "m-1", "role": "user", "text": "new input"}),
+        ),
+    )
+    .await
+    .expect("append new user input");
+    tx.commit().await.expect("commit user input");
+
+    let error = fixture
+        .db
+        .commit_skip(&attempt, &skip_events())
+        .await
+        .expect_err("new user input rejects the skip");
+    assert!(matches!(error, DbError::CasConflict { .. }));
+
+    let settled = fixture
+        .db
+        .fail_skip_attempt(WS, SESSION, &attempt.attempt_id, "cursor_changed")
+        .await
+        .expect("settle the rejected audit");
+    assert_eq!(settled.latest_outcome(), "audit_failed");
+    assert_eq!(settled.last_error.as_deref(), Some("cursor_changed"));
+    assert!(!settled.audit_in_progress);
+    assert!(!settled.baseline_is_eligible());
+
+    let full = fixture
+        .db
+        .begin_full_attempt(SESSION, &settled)
+        .await
+        .expect("full execution must remain reachable after a settled audit");
+    let mut completion = completion("state-2", fixture.config_version().await);
+    completion.control_cursor = 1;
+    let completed = fixture
+        .db
+        .complete_full_attempt(WS, &full.attempt_id, &completion)
+        .await
+        .expect("successful full attempt");
+    assert_eq!(completed.latest_outcome(), "full_completed");
+    assert_eq!(completed.control_cursor, 1);
+    assert!(!completed.audit_in_progress);
+    assert!(completed.baseline_is_eligible());
+    fixture.close().await;
+}
+
+#[tokio::test]
+async fn successful_full_attempt_clears_an_existing_audit_fence() {
+    let fixture = SuppressionFixture::create().await;
+    install_complete_baseline(&fixture).await;
+    let (_state, _attempt) = begin_skip(&fixture).await;
+    let fenced = fixture.current().await;
+    assert!(fenced.audit_in_progress);
+
+    let full = fixture
+        .db
+        .begin_full_attempt(SESSION, &fenced)
+        .await
+        .expect("an unresolved audit must not block a full attempt");
+    let completed = fixture
+        .db
+        .complete_full_attempt(
+            WS,
+            &full.attempt_id,
+            &completion("state-2", fixture.config_version().await),
+        )
+        .await
+        .expect("successful full attempt");
+    assert!(
+        !completed.audit_in_progress,
+        "a full success supersedes the audit fence"
+    );
+    assert_eq!(completed.latest_outcome(), "full_completed");
+    assert!(completed.baseline_is_eligible());
+    fixture.close().await;
+}
+
+#[tokio::test]
+async fn failed_full_attempt_leaves_the_audit_fence_blocking_skips() {
+    let fixture = SuppressionFixture::create().await;
+    install_complete_baseline(&fixture).await;
+    let (_state, _attempt) = begin_skip(&fixture).await;
+    let fenced = fixture.current().await;
+    assert!(fenced.audit_in_progress);
+
+    let full = fixture
+        .db
+        .begin_full_attempt(SESSION, &fenced)
+        .await
+        .expect("full attempt during audit");
+    let failed = fixture
+        .db
+        .fail_full_attempt(WS, &full.attempt_id, "provider_failed")
+        .await
+        .expect("failed full attempt");
+    assert!(
+        failed.audit_in_progress,
+        "a failed full attempt must not clear the audit fence"
+    );
+    assert!(failed.full_failed);
+    assert!(!failed.baseline_is_eligible());
+
+    let error = fixture
+        .db
+        .begin_skip_attempt(SESSION, &failed)
+        .await
+        .expect_err("the audit fence still blocks skips");
+    assert!(matches!(error, DbError::CasConflict { .. }));
+    fixture.close().await;
+}
+
+#[tokio::test]
+async fn fail_skip_attempt_is_idempotent_for_unknown_outcome_reconciliation() {
+    let fixture = SuppressionFixture::create().await;
+    install_complete_baseline(&fixture).await;
+    let (_state, attempt) = begin_skip(&fixture).await;
+
+    let first = fixture
+        .db
+        .fail_skip_attempt(WS, SESSION, &attempt.attempt_id, "audit_write_failed")
+        .await
+        .expect("settle audit");
+    let second = fixture
+        .db
+        .fail_skip_attempt(WS, SESSION, &attempt.attempt_id, "audit_write_failed")
+        .await
+        .expect("retried settlement");
+    assert_eq!(
+        first.state_version, second.state_version,
+        "retry must not advance state"
+    );
+    assert_eq!(second.latest_outcome(), "audit_failed");
+    assert!(!second.audit_in_progress);
+    fixture.close().await;
+}
+
+#[tokio::test]
 async fn suppression_schema_splits_workspace_tables_from_platform_config() {
     let fixture = SuppressionFixture::create().await;
     let workspace_tables: Vec<String> = sqlx::query_scalar(

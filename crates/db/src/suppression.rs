@@ -36,6 +36,7 @@ pub const OUTCOME_FULL_COMPLETED: &str = "full_completed";
 pub const OUTCOME_FULL_FAILED: &str = "full_failed";
 pub const OUTCOME_SKIP_IN_PROGRESS: &str = "skip_in_progress";
 pub const OUTCOME_SKIPPED: &str = "skipped";
+pub const OUTCOME_AUDIT_FAILED: &str = "audit_failed";
 
 /// Workspace-level suppression gate mode. The HTTP DTO lives elsewhere; this
 /// enum is the persistence-level value used by schedule updates and commit
@@ -330,6 +331,9 @@ impl Db {
     /// Durably fence a full Turn before any model work. The old baseline is
     /// immediately ineligible; a crashed attempt stays in progress until a
     /// recovery path settles it.
+    ///
+    /// An unresolved `audit_in_progress` fence never blocks full execution:
+    /// only another full attempt (or a live audit settlement) does.
     pub async fn begin_full_attempt(&self, session_id: &str, baseline: &SuppressionState) -> Result<FullAttempt> {
         if baseline.session_id != session_id {
             return Err(DbError::Validation {
@@ -358,7 +362,7 @@ impl Db {
              full_attempt_in_progress = 1, full_failed = 0, last_error = NULL, \
              state_version = state_version + 1, updated_at = ? \
              WHERE workspace_id = ? AND session_id = ? AND state_version = ? \
-               AND full_attempt_in_progress = 0 AND audit_in_progress = 0",
+               AND full_attempt_in_progress = 0",
         )
         .bind(attempt_no)
         .bind(&attempt_id)
@@ -371,7 +375,7 @@ impl Db {
         .rows_affected();
         if updated != 1 {
             return Err(DbError::CasConflict {
-                message: format!("session {session_id} already has a full or audit attempt in progress"),
+                message: format!("session {session_id} already has a full attempt in progress"),
             });
         }
         Ok(FullAttempt {
@@ -385,6 +389,10 @@ impl Db {
 
     /// Install the only baseline that may be skipped against. Every other
     /// terminal outcome uses [`Db::fail_full_attempt`] instead.
+    ///
+    /// A successful full Turn supersedes an unresolved skip audit, so this
+    /// clears `full_attempt_in_progress`, `full_failed` and
+    /// `audit_in_progress` in the same CAS update.
     pub async fn complete_full_attempt(
         &self,
         workspace_id: &str,
@@ -417,7 +425,8 @@ impl Db {
             "UPDATE suppression_state SET \
              baseline_state_id = ?, baseline_turn_state_json = ?, baseline_observed_at = ?, \
              baseline_installed_at = ?, control_cursor = ?, registry_version = ?, config_version = ?, \
-             full_attempt_in_progress = 0, full_failed = 0, latest_outcome = 'full_completed', \
+             full_attempt_in_progress = 0, full_failed = 0, audit_in_progress = 0, \
+             latest_outcome = 'full_completed', \
              last_error = NULL, state_version = state_version + 1, updated_at = ? \
              WHERE workspace_id = ? AND session_id = ? AND latest_attempt_id = ? \
                AND full_attempt_in_progress = 1",
@@ -499,6 +508,80 @@ impl Db {
             });
         }
         self.load_suppression_state(&current.workspace_id, &current.session_id)
+            .await?
+            .ok_or_else(|| DbError::Internal("committed suppression row disappeared".to_string()))
+    }
+
+    /// Settle a rejected or rolled-back skip audit.
+    ///
+    /// This is the durable `audit_failed` barrier from lifecycle point 3: the
+    /// old baseline stays ineligible until another fully successful full Turn.
+    /// Repeating the same settlement after an unknown commit result is a
+    /// no-op.
+    pub async fn fail_skip_attempt(
+        &self,
+        workspace_id: &str,
+        session_id: &str,
+        attempt_id: impl AsRef<str>,
+        reason: &str,
+    ) -> Result<SuppressionState> {
+        let attempt_id = attempt_id.as_ref();
+        let reason = reason.trim();
+        if reason.is_empty() {
+            return Err(DbError::Validation {
+                message: "skip audit failure reason must not be empty".to_string(),
+            });
+        }
+        let current = self
+            .load_suppression_state(workspace_id, session_id)
+            .await?
+            .ok_or_else(|| DbError::NotFound {
+                id: format!("{workspace_id}/{session_id}"),
+            })?;
+        if !current.audit_in_progress {
+            if current.latest_outcome == OUTCOME_AUDIT_FAILED
+                && current.latest_attempt_id.as_deref() == Some(attempt_id)
+            {
+                return Ok(current);
+            }
+            return Err(DbError::CasConflict {
+                message: format!("skip audit attempt {attempt_id} is not in progress"),
+            });
+        }
+        let pool = self.workspace_pool(workspace_id).await?;
+        let updated = sqlx::query(
+            "UPDATE suppression_state SET \
+             audit_in_progress = 0, latest_outcome = 'audit_failed', last_error = ?, \
+             state_version = state_version + 1, updated_at = ? \
+             WHERE workspace_id = ? AND session_id = ? AND latest_attempt_id = ? \
+               AND audit_in_progress = 1",
+        )
+        .bind(reason)
+        .bind(format_ts(Utc::now()))
+        .bind(workspace_id)
+        .bind(session_id)
+        .bind(attempt_id)
+        .execute(&pool)
+        .await?
+        .rows_affected();
+        if updated != 1 {
+            let current = self
+                .load_suppression_state(workspace_id, session_id)
+                .await?
+                .ok_or_else(|| DbError::NotFound {
+                    id: format!("{workspace_id}/{session_id}"),
+                })?;
+            if !current.audit_in_progress
+                && current.latest_outcome == OUTCOME_AUDIT_FAILED
+                && current.latest_attempt_id.as_deref() == Some(attempt_id)
+            {
+                return Ok(current);
+            }
+            return Err(DbError::CasConflict {
+                message: format!("skip audit attempt {attempt_id} lost its settlement CAS"),
+            });
+        }
+        self.load_suppression_state(workspace_id, session_id)
             .await?
             .ok_or_else(|| DbError::Internal("committed suppression row disappeared".to_string()))
     }
