@@ -22,7 +22,9 @@ use tinyiothub_storage::suppression::{OUTCOME_AUDIT_FAILED, SyncPending};
 
 use crate::domains::agent::event::types::AiEvent;
 use crate::domains::agent::orchestrator::callbacks::extract_payload;
-use crate::domains::agent::session::wake::{WakeExecutor, WakeOutcome, assistant_agent_id};
+use crate::domains::agent::session::wake::{
+    ManualOperation, ManualPreflight, ManualStartError, ManualTurnStart, WakeExecutor, WakeOutcome, assistant_agent_id,
+};
 
 pub const TRIGGER_TICK_INTERVAL: Duration = Duration::from_secs(30);
 const DUE_BATCH_LIMIT: i64 = 100;
@@ -285,6 +287,79 @@ impl TriggerRouter {
     /// 生命周期一致。
     pub fn shutdown_token(&self) -> CancellationToken {
         self.shutdown.clone()
+    }
+}
+
+/// Read/write manual suppression operations exposed to HTTP handlers.
+///
+/// The TriggerRouter stays the only Schedule outcome writer. Manual operations
+/// allocate their durable attempt before the 202 response and then execute
+/// asynchronously through the same full-Turn/skip implementations; they never
+/// advance `next_wake_at` or `last_outcome`.
+#[async_trait::async_trait]
+pub trait SuppressionOps: Send + Sync {
+    async fn manual_preflight(&self, workspace_id: &str) -> Result<ManualPreflight, ManualStartError>;
+
+    /// Allocate the durable attempt synchronously, then spawn execution.
+    async fn start_manual(
+        &self,
+        workspace_id: &str,
+        operation: ManualOperation,
+    ) -> Result<ManualTurnStart, ManualStartError>;
+}
+
+#[async_trait::async_trait]
+impl SuppressionOps for TriggerRouter {
+    async fn manual_preflight(&self, workspace_id: &str) -> Result<ManualPreflight, ManualStartError> {
+        self.executor.manual_preflight(workspace_id).await
+    }
+
+    async fn start_manual(
+        &self,
+        workspace_id: &str,
+        operation: ManualOperation,
+    ) -> Result<ManualTurnStart, ManualStartError> {
+        let schedule = self
+            .db
+            .ensure_assistant_schedule(workspace_id, &assistant_agent_id(workspace_id), Utc::now())
+            .await
+            .map_err(|error| ManualStartError::Unavailable(error.to_string()))?;
+        // One workspace-wide in-flight slot shared with scheduled and event
+        // wakes. The guard is released when the spawned execution finishes
+        // (including panics or cancellation).
+        if !self.in_flight.insert(workspace_id.to_string()) {
+            return Err(ManualStartError::InFlight);
+        }
+        let guard = InFlightGuard {
+            set: Arc::clone(&self.in_flight),
+            key: workspace_id.to_string(),
+        };
+        let prepared = match self.executor.prepare_manual(&schedule, operation).await {
+            Ok(prepared) => prepared,
+            Err(error) => {
+                drop(guard);
+                return Err(error);
+            }
+        };
+        let start = ManualTurnStart {
+            session_key: prepared.session_key().to_string(),
+            turn_id: prepared.turn_id().to_string(),
+        };
+        let executor = self.executor.clone();
+        let cancel = self.shutdown.clone();
+        let workspace = workspace_id.to_string();
+        tokio::spawn(async move {
+            let _guard = guard;
+            let report = executor.execute_manual(prepared, cancel).await;
+            tracing::info!(
+                workspace_id = %workspace,
+                operation = operation.as_str(),
+                session_key = %report.session_key,
+                outcome = report.outcome.as_str(),
+                "manual suppression operation finished"
+            );
+        });
+        Ok(start)
     }
 }
 

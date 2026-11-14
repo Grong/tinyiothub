@@ -42,6 +42,19 @@ pub struct SuppressionConfig {
     pub config_version: i64,
 }
 
+impl SuppressionConfig {
+    /// Fail-safe shape for a workspace that has no schedule row yet: the kill
+    /// switch is off and the default reconciliation window applies.
+    pub fn off(workspace_id: impl Into<String>) -> Self {
+        Self {
+            workspace_id: workspace_id.into(),
+            mode: SuppressionMode::Off,
+            reconciliation_seconds: crate::suppression::DEFAULT_RECONCILIATION_SECONDS,
+            config_version: crate::suppression::DEFAULT_SUPPRESSION_CONFIG_VERSION,
+        }
+    }
+}
+
 fn map_suppression_config(row: &SqliteRow) -> Result<SuppressionConfig> {
     let mode: String = row.try_get("suppression_mode")?;
     Ok(SuppressionConfig {

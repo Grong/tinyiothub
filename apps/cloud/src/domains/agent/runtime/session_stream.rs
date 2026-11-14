@@ -300,6 +300,15 @@ impl HarnessConnection {
         }
     }
 
+    /// Advance the public cursors over an event the public tail must not see
+    /// (raw `turn.state`). The row is still acknowledged so the tail never
+    /// re-reads it.
+    fn skip_event(&mut self, event: &HarnessEvent) {
+        self.last_cursor = self.last_cursor.max(event.seq);
+        self.high_watermark = self.high_watermark.max(event.seq);
+        self.seen.insert(event.event_id.clone());
+    }
+
     async fn page(&self, after: i64) -> Result<Vec<HarnessEvent>, String> {
         self.db
             .harness_task_events_after(&self.workspace_id, &self.task_id, after, TAIL_PAGE)
@@ -353,6 +362,10 @@ impl HarnessConnection {
                 return Some(frame);
             }
             if let Some(event) = self.replay_page.pop_front() {
+                if !crate::domains::agent::session::is_public_session_event(&event.event_type) {
+                    self.skip_event(&event);
+                    continue;
+                }
                 // Replay starts after the caller cursor, which may be older than
                 // the snapshot high-watermark. Only an id already emitted on
                 // this connection is a duplicate.

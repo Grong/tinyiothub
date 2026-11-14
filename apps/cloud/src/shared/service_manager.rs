@@ -689,6 +689,12 @@ impl ServiceManager {
                 Some(app_state.event_bus.clone()),
             ));
             thing_agent_manager.set_session_router(trigger_router.clone());
+            // Manual suppression API (preflight/wake/reconcile) shares the
+            // same TriggerRouter in-flight slot and WakeRunner. Durable
+            // attempts are allocated before the HTTP 202; execution is async.
+            let suppression_ops: Arc<dyn crate::domains::agent::session::trigger::SuppressionOps> =
+                trigger_router.clone();
+            app_state.suppression_ops = Some(suppression_ops);
             *self.trigger_router.write().await = Some(trigger_router.clone());
             let trigger_handle = trigger_router.clone().start();
             self.service_handles.write().await.push(trigger_handle);

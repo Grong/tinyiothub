@@ -986,4 +986,336 @@ impl Db {
             .await?
             .ok_or_else(|| DbError::Internal("committed suppression row disappeared".to_string()))
     }
+
+    /// Settle a full attempt that must not install a baseline.
+    ///
+    /// Manual operations in `off` mode still allocate a durable attempt (the
+    /// HTTP response must name a real executed `turnId`), but no pre-turn
+    /// Source capture exists. The old baseline is deliberately kept
+    /// ineligible: only a later fully successful, all-Source-available Turn
+    /// may clear `full_failed` and install the next baseline.
+    pub async fn settle_full_attempt_without_baseline(
+        &self,
+        workspace_id: &str,
+        attempt_id: impl AsRef<str>,
+        outcome: &str,
+    ) -> Result<SuppressionState> {
+        let outcome = outcome.trim();
+        if !matches!(outcome, OUTCOME_FULL_COMPLETED | OUTCOME_FULL_FAILED | OUTCOME_SKIPPED) {
+            return Err(DbError::Validation {
+                message: format!("unsupported baseline-less settlement outcome: {outcome}"),
+            });
+        }
+        let pool = self.workspace_pool(workspace_id).await?;
+        let attempt_id = attempt_id.as_ref();
+        let current = state_by_attempt(self, workspace_id, attempt_id)
+            .await?
+            .ok_or_else(|| DbError::NotFound {
+                id: attempt_id.to_string(),
+            })?;
+        if !current.full_attempt_in_progress {
+            // Replaying the settlement after an unknown commit result is a
+            // no-op, as long as it names this attempt.
+            if current.latest_attempt_id.as_deref() == Some(attempt_id) {
+                return Ok(current);
+            }
+            return Err(DbError::CasConflict {
+                message: format!("full attempt {attempt_id} is no longer in progress"),
+            });
+        }
+        let now = Utc::now();
+        let updated = sqlx::query(
+            "UPDATE suppression_state SET \
+             full_attempt_in_progress = 0, full_failed = 1, latest_outcome = ?, \
+             last_error = NULL, state_version = state_version + 1, updated_at = ? \
+             WHERE workspace_id = ? AND session_id = ? AND latest_attempt_id = ? \
+               AND full_attempt_in_progress = 1",
+        )
+        .bind(outcome)
+        .bind(format_ts(now))
+        .bind(&current.workspace_id)
+        .bind(&current.session_id)
+        .bind(attempt_id)
+        .execute(&pool)
+        .await?
+        .rows_affected();
+        if updated != 1 {
+            return Err(DbError::CasConflict {
+                message: format!("full attempt {attempt_id} lost its baseline-less settlement CAS"),
+            });
+        }
+        self.load_suppression_state(&current.workspace_id, &current.session_id)
+            .await?
+            .ok_or_else(|| DbError::Internal("committed suppression row disappeared".to_string()))
+    }
+
+    /// One idempotency reservation, as persisted for HTTP replay.
+    pub async fn find_suppression_idempotency(
+        &self,
+        workspace_id: &str,
+        key: &str,
+    ) -> Result<Option<SuppressionIdempotency>> {
+        if key.trim().is_empty() {
+            return Err(DbError::Validation {
+                message: "idempotency key must not be empty".to_string(),
+            });
+        }
+        let pool = self.workspace_pool(workspace_id).await?;
+        let row = sqlx::query(
+            "SELECT workspace_id, operation, key, request_fingerprint, planned_wake_at, \
+             attempt_id, result_json, state_version, created_at, updated_at \
+             FROM suppression_idempotency WHERE workspace_id = ? AND key = ? \
+             ORDER BY created_at ASC LIMIT 1",
+        )
+        .bind(workspace_id)
+        .bind(key)
+        .fetch_optional(&pool)
+        .await?;
+        row.as_ref().map(map_idempotency_row).transpose()
+    }
+
+    /// Reserve `(workspace, operation, key)` before any Turn work.
+    ///
+    /// Returns `true` only for the database winner of a concurrent burst; the
+    /// others must read the winner's recorded result. The unique constraint is
+    /// the single arbiter.
+    pub async fn try_insert_suppression_idempotency(
+        &self,
+        workspace_id: &str,
+        operation: &str,
+        key: &str,
+        request_fingerprint: &str,
+        planned_wake_at: Option<DateTime<Utc>>,
+    ) -> Result<bool> {
+        if operation.trim().is_empty() || key.trim().is_empty() || request_fingerprint.trim().is_empty() {
+            return Err(DbError::Validation {
+                message: "operation, key and request fingerprint must not be empty".to_string(),
+            });
+        }
+        let pool = self.workspace_pool(workspace_id).await?;
+        let now = format_ts(Utc::now());
+        let inserted = sqlx::query(
+            "INSERT OR IGNORE INTO suppression_idempotency \
+             (workspace_id, operation, key, request_fingerprint, planned_wake_at, created_at, updated_at) \
+             VALUES (?, ?, ?, ?, ?, ?, ?)",
+        )
+        .bind(workspace_id)
+        .bind(operation)
+        .bind(key)
+        .bind(request_fingerprint)
+        .bind(planned_wake_at.map(format_ts))
+        .bind(&now)
+        .bind(&now)
+        .execute(&pool)
+        .await?
+        .rows_affected();
+        Ok(inserted == 1)
+    }
+
+    /// Record the durable attempt and replayable result for one reservation.
+    pub async fn record_suppression_idempotency(
+        &self,
+        workspace_id: &str,
+        operation: &str,
+        key: &str,
+        attempt_id: &str,
+        result: &Value,
+    ) -> Result<()> {
+        let pool = self.workspace_pool(workspace_id).await?;
+        let result_json = serde_json::to_string(result)?;
+        let updated = sqlx::query(
+            "UPDATE suppression_idempotency \
+             SET attempt_id = ?, result_json = ?, state_version = state_version + 1, updated_at = ? \
+             WHERE workspace_id = ? AND operation = ? AND key = ?",
+        )
+        .bind(attempt_id)
+        .bind(result_json)
+        .bind(format_ts(Utc::now()))
+        .bind(workspace_id)
+        .bind(operation)
+        .bind(key)
+        .execute(&pool)
+        .await?
+        .rows_affected();
+        if updated != 1 {
+            return Err(DbError::NotFound {
+                id: format!("{workspace_id}/{operation}/{key}"),
+            });
+        }
+        Ok(())
+    }
+
+    /// Drop a reservation whose Turn was never accepted (in-flight conflict,
+    /// backpressure or preparation failure). A later retry with the same key
+    /// must be able to reserve again.
+    pub async fn delete_suppression_idempotency(&self, workspace_id: &str, operation: &str, key: &str) -> Result<()> {
+        let pool = self.workspace_pool(workspace_id).await?;
+        sqlx::query("DELETE FROM suppression_idempotency WHERE workspace_id = ? AND operation = ? AND key = ?")
+            .bind(workspace_id)
+            .bind(operation)
+            .bind(key)
+            .execute(&pool)
+            .await?;
+        Ok(())
+    }
+
+    /// Recent terminal Turn outcomes for the public report projection.
+    pub async fn recent_suppression_outcomes(
+        &self,
+        workspace_id: &str,
+        session_id: &str,
+        limit: i64,
+    ) -> Result<Vec<SuppressionOutcome>> {
+        let limit = limit.clamp(1, 50);
+        let pool = self.workspace_pool(workspace_id).await?;
+        let rows = sqlx::query(
+            "SELECT occurred_at, payload_json FROM session_events \
+             WHERE execution_mode = 'production' AND session_id = ? AND type = 'turn.completed' \
+             ORDER BY seq DESC LIMIT ?",
+        )
+        .bind(session_id)
+        .bind(limit)
+        .fetch_all(&pool)
+        .await?;
+        rows.iter()
+            .map(|row| -> Result<SuppressionOutcome> {
+                let payload_json: String = row.try_get("payload_json")?;
+                let payload: Value = serde_json::from_str(&payload_json)?;
+                let occurred_at: String = row.try_get("occurred_at")?;
+                Ok(SuppressionOutcome {
+                    turn_id: payload.get("turnId").and_then(Value::as_str).map(str::to_string),
+                    outcome: payload
+                        .get("outcome")
+                        .and_then(Value::as_str)
+                        .unwrap_or("unknown")
+                        .to_string(),
+                    occurred_at: parse_ts(&occurred_at)?,
+                })
+            })
+            .collect()
+    }
+
+    /// Terminal projection for one `turnId`, without exposing event payloads.
+    ///
+    /// `Ok(None)` means the workspace has no event naming this turn at all.
+    /// A started-but-not-terminal turn reports `in_progress`; counts stay
+    /// absent until a terminal event exists, so nothing is fabricated.
+    pub async fn suppression_turn_terminal(
+        &self,
+        workspace_id: &str,
+        session_id: &str,
+        turn_id: &str,
+    ) -> Result<Option<SuppressionTurnTerminal>> {
+        let pool = self.workspace_pool(workspace_id).await?;
+        let rows = sqlx::query(
+            "SELECT type, occurred_at, payload_json FROM session_events \
+             WHERE execution_mode = 'production' AND session_id = ? \
+               AND (run_id = ? OR json_extract(payload_json, '$.turnId') = ?) \
+             ORDER BY seq ASC LIMIT 500",
+        )
+        .bind(session_id)
+        .bind(turn_id)
+        .bind(turn_id)
+        .fetch_all(&pool)
+        .await?;
+        if rows.is_empty() {
+            return Ok(None);
+        }
+        let mut started = false;
+        let mut terminal: Option<SuppressionTurnTerminal> = None;
+        for row in &rows {
+            let event_type: String = row.try_get("type")?;
+            match event_type.as_str() {
+                "turn.started" => started = true,
+                "turn.completed" => {
+                    let payload_json: String = row.try_get("payload_json")?;
+                    let payload: Value = serde_json::from_str(&payload_json)?;
+                    let outcome = payload
+                        .get("outcome")
+                        .and_then(Value::as_str)
+                        .unwrap_or("unknown")
+                        .to_string();
+                    let occurred_at: String = row.try_get("occurred_at")?;
+                    terminal = Some(SuppressionTurnTerminal {
+                        turn_id: turn_id.to_string(),
+                        outcome: outcome.clone(),
+                        // A skip never calls a model or executes a tool.
+                        tool_calls: if outcome == "skipped" {
+                            Some(0)
+                        } else {
+                            payload.get("toolCalls").and_then(Value::as_u64)
+                        },
+                        model_calls: (outcome == "skipped").then_some(0),
+                        occurred_at: Some(parse_ts(&occurred_at)?),
+                        started: true,
+                    });
+                }
+                _ => {}
+            }
+        }
+        if let Some(terminal) = terminal {
+            return Ok(Some(terminal));
+        }
+        Ok(started.then(|| SuppressionTurnTerminal {
+            turn_id: turn_id.to_string(),
+            outcome: "in_progress".to_string(),
+            tool_calls: None,
+            model_calls: None,
+            occurred_at: None,
+            started: true,
+        }))
+    }
+}
+
+/// One HTTP idempotency reservation.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SuppressionIdempotency {
+    pub workspace_id: String,
+    pub operation: String,
+    pub key: String,
+    pub request_fingerprint: String,
+    pub planned_wake_at: Option<DateTime<Utc>>,
+    pub attempt_id: Option<String>,
+    pub result: Option<Value>,
+    pub state_version: i64,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
+fn map_idempotency_row(row: &SqliteRow) -> Result<SuppressionIdempotency> {
+    let planned_wake_at: Option<String> = row.try_get("planned_wake_at")?;
+    let result_json: Option<String> = row.try_get("result_json")?;
+    let created_at: String = row.try_get("created_at")?;
+    let updated_at: String = row.try_get("updated_at")?;
+    Ok(SuppressionIdempotency {
+        workspace_id: row.try_get("workspace_id")?,
+        operation: row.try_get("operation")?,
+        key: row.try_get("key")?,
+        request_fingerprint: row.try_get("request_fingerprint")?,
+        planned_wake_at: planned_wake_at.as_deref().map(parse_ts).transpose()?,
+        attempt_id: row.try_get("attempt_id")?,
+        result: result_json.as_deref().map(serde_json::from_str).transpose()?,
+        state_version: row.try_get("state_version")?,
+        created_at: parse_ts(&created_at)?,
+        updated_at: parse_ts(&updated_at)?,
+    })
+}
+
+/// One recent terminal Turn outcome in the public report.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SuppressionOutcome {
+    pub turn_id: Option<String>,
+    pub outcome: String,
+    pub occurred_at: DateTime<Utc>,
+}
+
+/// Public-safe terminal status for one Turn.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SuppressionTurnTerminal {
+    pub turn_id: String,
+    pub outcome: String,
+    pub tool_calls: Option<u64>,
+    pub model_calls: Option<u64>,
+    pub occurred_at: Option<DateTime<Utc>>,
+    pub started: bool,
 }

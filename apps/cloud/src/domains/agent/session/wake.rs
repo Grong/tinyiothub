@@ -14,10 +14,10 @@ use tinyiothub_agent::port::runtime::AgentLoopHandle;
 use tinyiothub_core::heartbeat::HeartbeatTask;
 use tinyiothub_skills::LoadedSkill;
 use tinyiothub_storage::Db;
-use tinyiothub_storage::assistant_schedule::AssistantSchedule;
+use tinyiothub_storage::assistant_schedule::{AssistantSchedule, SuppressionConfig};
 use tinyiothub_storage::session::Session;
 use tinyiothub_storage::suppression::{
-    FullAttempt, FullAttemptCompletion, SuppressionState, SyncPending, TURN_STATE_VERSION,
+    FullAttempt, FullAttemptCompletion, SkipAttempt, SuppressionState, SyncPending, TURN_STATE_VERSION,
 };
 
 use super::trigger::EventWake;
@@ -31,6 +31,7 @@ use crate::domains::agent::session::suppression::SuppressionMode;
 use crate::domains::agent::session::suppression::audit::{
     AtomicSkipAudit, PlannedWake, SkipAuditRequest, WakeAttempt, attempt_event,
 };
+use crate::domains::agent::session::suppression::contract::SourceDescriptor;
 use crate::domains::agent::session::suppression::error::SuppressionError;
 use crate::domains::agent::session::suppression::preflight::{PreflightDecision, SkipVeto, SuppressionService};
 use crate::domains::agent::session::suppression::registry::{
@@ -106,6 +107,10 @@ pub(crate) struct SuppressionObservation {
     /// True when the user cursor could not be read. The Turn may still install
     /// a baseline from the pre-turn capture, but it must never skip.
     skip_disabled: bool,
+    /// A manual operation in `off` mode has no Source capture, so it settles
+    /// its durable attempt without installing a baseline (and keeps the old
+    /// baseline ineligible).
+    settle_without_baseline: bool,
 }
 
 struct CapturedPreflight {
@@ -135,6 +140,7 @@ fn fencing_observation(state: SuppressionState, observed_at: DateTime<Utc>, reas
         observed_at,
         unavailable_reason: Some(reason.to_string()),
         skip_disabled: true,
+        settle_without_baseline: false,
     }
 }
 
@@ -231,6 +237,24 @@ impl WakeRunner {
                 ));
             }
         };
+        Some(
+            self.observe_with(workspace_id, session_key, &config, state, current_user_seq)
+                .await,
+        )
+    }
+
+    /// Build one preflight capture over an already-read config/state.
+    ///
+    /// Any capture failure produces a fencing-only observation: the Turn may
+    /// run but can never skip or install a baseline from incomplete evidence.
+    async fn observe_with(
+        &self,
+        workspace_id: &str,
+        session_key: &str,
+        config: &SuppressionConfig,
+        state: SuppressionState,
+        current_user_seq: Option<i64>,
+    ) -> SuppressionObservation {
         let registry = match registry::default_sources(
             self.system_prompts.clone(),
             self.db.clone(),
@@ -244,7 +268,7 @@ impl WakeRunner {
                     %workspace_id,
                     "suppression preflight: registry build failed"
                 );
-                return Some(fencing_observation(state, chrono::Utc::now(), "registry_build_failed"));
+                return fencing_observation(state, chrono::Utc::now(), "registry_build_failed");
             }
         };
         let observed_at = chrono::Utc::now();
@@ -257,7 +281,7 @@ impl WakeRunner {
         };
         let service = SuppressionService::new(registry.clone());
         let mut decision = match service
-            .evaluate(context, Some(&state), &config, current_user_seq.unwrap_or(0))
+            .evaluate(context, Some(&state), config, current_user_seq.unwrap_or(0))
             .await
         {
             Ok(decision) => decision,
@@ -267,7 +291,7 @@ impl WakeRunner {
                     %workspace_id,
                     "suppression preflight failed; fenced full turn"
                 );
-                return Some(fencing_observation(state, observed_at, "preflight_capture_failed"));
+                return fencing_observation(state, observed_at, "preflight_capture_failed");
             }
         };
         // An unknown cursor must never authorize a skip; the pre-turn capture
@@ -291,14 +315,373 @@ impl WakeRunner {
             skip_disabled,
             "suppression preflight observed"
         );
-        Some(SuppressionObservation {
+        SuppressionObservation {
             state,
             captured: Some(CapturedPreflight { registry, decision }),
             control_cursor: current_user_seq.unwrap_or(0),
             observed_at,
             unavailable_reason: None,
             skip_disabled,
+            settle_without_baseline: config.mode == SuppressionMode::Off,
+        }
+    }
+
+    /// Read-only public preflight used by the GET endpoints.
+    ///
+    /// Unlike a scheduled wake this never creates a schedule row, state row or
+    /// event. It reports `off` as an ordinary decision so operators can see
+    /// the kill-switch state and the registered Source IDs.
+    pub async fn manual_preflight(&self, workspace_id: &str) -> Result<ManualPreflight, ManualStartError> {
+        let session_key = format!("agent:{}:{}/main", workspace_id, assistant_agent_id(workspace_id));
+        let control_cursor = match self.load_wake_session_events(workspace_id, &session_key).await {
+            Ok(capture) => Some(capture.control_cursor),
+            Err(error) => {
+                tracing::warn!(
+                    code = %error.code,
+                    workspace_id = %workspace_id,
+                    "manual preflight: session events read failed"
+                );
+                None
+            }
+        };
+        let config = self
+            .db
+            .get_suppression_config(workspace_id)
+            .await
+            .map_err(|error| ManualStartError::Unavailable(error.to_string()))?
+            .unwrap_or_else(|| SuppressionConfig::off(workspace_id));
+        let state = self
+            .db
+            .load_suppression_state(workspace_id, &session_key)
+            .await
+            .map_err(|error| ManualStartError::Unavailable(error.to_string()))?
+            .unwrap_or_else(|| SuppressionState::initial(workspace_id, &session_key));
+        let observation = self
+            .observe_with(workspace_id, &session_key, &config, state, control_cursor)
+            .await;
+        let (registry_version, descriptors) = match &observation.captured {
+            Some(captured) => (captured.registry.registry_version(), captured.registry.descriptors()),
+            None => {
+                // A capture failure must stay visible; still name the
+                // registered Sources and registry version.
+                let registry = registry::default_sources(
+                    self.system_prompts.clone(),
+                    self.db.clone(),
+                    self.memory_source.clone(),
+                    self.snapshot_provider.clone(),
+                )
+                .map_err(|error| ManualStartError::Unavailable(error.what.clone()))?;
+                (registry.registry_version(), registry.descriptors())
+            }
+        };
+        let decision = observation.decision().cloned().unwrap_or_else(|| PreflightDecision {
+            would_skip: false,
+            mode: config.mode,
+            vetoes: vec![SkipVeto::Disabled],
+            snapshot: Vec::new(),
+            baseline_state_id: None,
+            config_version: config.config_version,
+            fence: String::new(),
+        });
+        Ok(ManualPreflight {
+            session_key,
+            mode: config.mode,
+            reconciliation_seconds: config.reconciliation_seconds,
+            config_version: config.config_version,
+            registry_version,
+            descriptors,
+            decision,
         })
+    }
+
+    /// Allocate the durable attempt for a manual wake/reconcile.
+    ///
+    /// This runs before the HTTP 202: the returned `turnId` is the executed
+    /// attempt's identity, never a predicted one. Reconcile forces the full
+    /// path with the one shared Turn implementation; wake may allocate a skip
+    /// attempt when the normal scheduled-wake decision allows it.
+    pub async fn prepare_manual(
+        &self,
+        schedule: &AssistantSchedule,
+        operation: ManualOperation,
+    ) -> Result<PreparedManual, ManualStartError> {
+        let workspace_id = schedule.workspace_id.as_str();
+        let session_key = format!("agent:{}:{}/main", workspace_id, schedule.assistant_id);
+        let (semantic_events, control_cursor) = match self.load_wake_session_events(workspace_id, &session_key).await {
+            Ok(capture) => (capture.events, Some(capture.control_cursor)),
+            Err(error) => {
+                tracing::warn!(
+                    code = %error.code,
+                    workspace_id = %workspace_id,
+                    "manual operation: session events read failed; fenced full turn"
+                );
+                (Vec::new(), None)
+            }
+        };
+        let config = self
+            .db
+            .get_suppression_config(workspace_id)
+            .await
+            .map_err(|error| ManualStartError::Unavailable(error.to_string()))?
+            .unwrap_or_else(|| SuppressionConfig::off(workspace_id));
+        let state = self
+            .db
+            .load_suppression_state(workspace_id, &session_key)
+            .await
+            .map_err(|error| ManualStartError::Unavailable(error.to_string()))?
+            .unwrap_or_else(|| SuppressionState::initial(workspace_id, &session_key));
+        let observation = self
+            .observe_with(workspace_id, &session_key, &config, state, control_cursor)
+            .await;
+        let wake = PlannedWake::unplanned(workspace_id, session_key.clone());
+
+        let wants_skip = operation == ManualOperation::Wake
+            && !observation.skip_disabled
+            && observation
+                .decision()
+                .is_some_and(|decision| decision.would_skip && decision.mode.allows_skip());
+        if wants_skip {
+            match self.db.begin_skip_attempt(&session_key, &observation.state).await {
+                Ok(skip) => {
+                    let attempt = wake.attempt(skip.attempt_no);
+                    return Ok(PreparedManual {
+                        schedule: schedule.to_owned(),
+                        session_key,
+                        semantic_events,
+                        observation,
+                        wake,
+                        attempt,
+                        kind: PreparedManualKind::Skip(skip),
+                        force_full_reason: None,
+                    });
+                }
+                Err(error) => {
+                    // A concurrent change (mode, config, baseline or fence)
+                    // falls back to the shared full path.
+                    tracing::warn!(%error, %session_key, "manual wake: skip allocation rejected; running a full Turn");
+                }
+            }
+        }
+
+        let durable = match self.db.begin_full_attempt(&session_key, &observation.state).await {
+            Ok(durable) => durable,
+            Err(tinyiothub_storage::error::DbError::CasConflict { .. }) => {
+                return Err(ManualStartError::InFlight);
+            }
+            Err(error) => return Err(ManualStartError::Unavailable(error.to_string())),
+        };
+        let attempt = wake.attempt(durable.attempt_no);
+        Ok(PreparedManual {
+            schedule: schedule.to_owned(),
+            session_key,
+            semantic_events,
+            observation,
+            wake,
+            attempt,
+            kind: PreparedManualKind::Full(durable),
+            force_full_reason: (operation == ManualOperation::Reconcile).then_some(FORCE_FULL_REASON_RECONCILE),
+        })
+    }
+
+    /// Execute a prepared manual attempt. The 202 has already been returned.
+    pub async fn execute_manual(&self, prepared: PreparedManual, cancel: CancellationToken) -> WakeReport {
+        let PreparedManual {
+            schedule,
+            session_key,
+            semantic_events,
+            observation,
+            wake,
+            attempt,
+            kind,
+            force_full_reason,
+        } = prepared;
+        let assistant_id = assistant_agent_id(&schedule.workspace_id);
+
+        // A prepared skip commits without building a prompt or starting the
+        // shared agent loop.
+        if let PreparedManualKind::Skip(skip) = &kind {
+            if let Err(error) = self
+                .db
+                .ensure_session(&session_key, &schedule.workspace_id, &assistant_id)
+                .await
+            {
+                return WakeReport {
+                    session_key,
+                    outcome: WakeOutcome::Failed {
+                        error: error.to_string(),
+                    },
+                };
+            }
+            let Some(decision) = observation.decision() else {
+                return WakeReport {
+                    session_key,
+                    outcome: WakeOutcome::AuditFailed,
+                };
+            };
+            let audit = AtomicSkipAudit::new(self.db.clone());
+            match audit
+                .commit(SkipAuditRequest {
+                    wake: &wake,
+                    attempt: skip,
+                    decision,
+                    checked_at: chrono::Utc::now(),
+                })
+                .await
+            {
+                Ok(_) => {
+                    // Manual operations do not advance the Schedule; commit
+                    // of the skip lifecycle is the whole reconciliation.
+                    if let Err(error) = self
+                        .db
+                        .clear_sync_pending(&schedule.workspace_id, &session_key, SyncPending::Schedule)
+                        .await
+                    {
+                        tracing::warn!(%error, %session_key, "manual wake: schedule barrier clear failed");
+                    }
+                    let session = match self.db.get_session(&session_key).await {
+                        Ok(Some(session)) => session,
+                        Ok(None) => {
+                            Session::new(session_key.clone(), schedule.workspace_id.clone(), assistant_id.clone())
+                        }
+                        Err(error) => {
+                            return WakeReport {
+                                session_key,
+                                outcome: WakeOutcome::Failed {
+                                    error: error.to_string(),
+                                },
+                            };
+                        }
+                    };
+                    self.reconcile_committed_skip(&session, decision).await;
+                    WakeReport {
+                        session_key,
+                        outcome: WakeOutcome::Skipped,
+                    }
+                }
+                Err(error) => {
+                    tracing::warn!(%error, %session_key, "manual wake: prepared skip commit failed");
+                    WakeReport {
+                        session_key,
+                        outcome: WakeOutcome::AuditFailed,
+                    }
+                }
+            }
+        } else {
+            let tasks = self
+                .db
+                .list_heartbeat_tasks(&schedule.workspace_id)
+                .await
+                .unwrap_or_default();
+            let ws_dir = crate::domains::agent::prompt::paths::workspace_dir(&schedule.workspace_id);
+            let skills = crate::domains::agent::pool::load_workspace_skills(&ws_dir);
+            let inspection = skills.iter().find(|skill| skill.name == "inspection");
+            let Some(message) = build_wake_message(&schedule, inspection, &tasks) else {
+                // Nothing to run: settle the durable attempt without a
+                // baseline so it never blocks later work.
+                let PreparedManualKind::Full(durable) = &kind else {
+                    unreachable!("skip kind handled above");
+                };
+                if let Err(error) = self
+                    .db
+                    .settle_full_attempt_without_baseline(&schedule.workspace_id, &durable.attempt_id, "skipped")
+                    .await
+                {
+                    tracing::warn!(%error, %durable.attempt_id, "manual wake: empty-message settlement failed");
+                }
+                return WakeReport {
+                    session_key,
+                    outcome: WakeOutcome::Skipped,
+                };
+            };
+            let prompt = match self
+                .wake_prompt(
+                    &schedule.workspace_id,
+                    &schedule.assistant_id,
+                    message,
+                    &semantic_events,
+                )
+                .await
+            {
+                Ok(prompt) => prompt,
+                Err(error) => {
+                    let PreparedManualKind::Full(durable) = &kind else {
+                        unreachable!("skip kind handled above");
+                    };
+                    self.fail_full_attempt(&schedule.workspace_id, durable, "prompt_build_failed")
+                        .await;
+                    return WakeReport {
+                        session_key,
+                        outcome: WakeOutcome::Failed {
+                            error: error.to_string(),
+                        },
+                    };
+                }
+            };
+            let agent = match ensure_agent(
+                &self.pool,
+                &schedule.assistant_id,
+                &schedule.workspace_id,
+                &AgentRuntimeConfig::default(),
+                true,
+                &prompt,
+            )
+            .await
+            {
+                Ok(agent) => agent,
+                Err(error) => {
+                    let PreparedManualKind::Full(durable) = &kind else {
+                        unreachable!("skip kind handled above");
+                    };
+                    self.fail_full_attempt(&schedule.workspace_id, durable, "agent_start_failed")
+                        .await;
+                    return WakeReport {
+                        session_key,
+                        outcome: WakeOutcome::Failed {
+                            error: error.to_string(),
+                        },
+                    };
+                }
+            };
+            let PreparedManualKind::Full(durable) = &kind else {
+                unreachable!("skip kind handled above");
+            };
+            let prepared_ref = PreparedAttemptRef {
+                attempt: durable,
+                wake_attempt: &attempt,
+            };
+            let report = self
+                .run_session_with_agent(
+                    SessionOrigin {
+                        workspace_id: &schedule.workspace_id,
+                        assistant_id: &schedule.assistant_id,
+                        kind: "scheduled",
+                        trigger: "schedule",
+                        source_id: None,
+                        planned_wake_at: None,
+                        suppression: Some(&observation),
+                        force_full_reason,
+                        prepared: Some(prepared_ref),
+                    },
+                    agent,
+                    &prompt.turn_input,
+                    schedule.permission_mode,
+                    cancel,
+                )
+                .await;
+            // The manual attempt was allocated before the 202. A Session
+            // lifecycle failure can return before the shared settlement, so
+            // never leave that durable fence in progress. Repeating the
+            // settlement after the normal failure path is idempotent.
+            if matches!(&report.outcome, WakeOutcome::Failed { .. })
+                && let Err(error) = self
+                    .db
+                    .fail_full_attempt(&schedule.workspace_id, &durable.attempt_id, "manual_turn_failed")
+                    .await
+            {
+                tracing::warn!(%error, %durable.attempt_id, "manual turn: fence settlement failed");
+            }
+            report
+        }
     }
 }
 
@@ -336,6 +719,91 @@ pub struct WakeReport {
     pub outcome: WakeOutcome,
 }
 
+/// Operator-triggered suppression operation.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ManualOperation {
+    /// Normal scheduled-wake semantics: preflight may decide to skip.
+    Wake,
+    /// Force one full Turn, ignoring `wouldSkip`.
+    Reconcile,
+}
+
+impl ManualOperation {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Wake => "wake",
+            Self::Reconcile => "reconcile",
+        }
+    }
+}
+
+/// Why a manual operation could not be accepted.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ManualStartError {
+    /// A scheduled or manual Turn is already in flight for this workspace.
+    InFlight,
+    /// Global preflight capacity is saturated (Task 9 owns the semaphore).
+    Backpressure { retry_after_ms: u64 },
+    /// The operation is not wired or an internal step failed.
+    Unavailable(String),
+}
+
+/// Read-only preflight projection for the public GET endpoints.
+#[derive(Clone, Debug)]
+pub struct ManualPreflight {
+    pub session_key: String,
+    pub mode: SuppressionMode,
+    pub reconciliation_seconds: u32,
+    pub config_version: i64,
+    pub registry_version: String,
+    pub descriptors: Vec<SourceDescriptor>,
+    pub decision: PreflightDecision,
+}
+
+/// The already-durable attempt named by a 202 response.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ManualTurnStart {
+    pub session_key: String,
+    pub turn_id: String,
+}
+
+/// A manual Turn whose durable attempt was allocated before the 202 response.
+///
+/// Fields stay private so callers cannot forge an attempt identity; the HTTP
+/// layer may only read the session key and turn id it must return.
+pub struct PreparedManual {
+    schedule: AssistantSchedule,
+    session_key: String,
+    semantic_events: Vec<SemanticSessionEvent>,
+    observation: SuppressionObservation,
+    wake: PlannedWake,
+    attempt: WakeAttempt,
+    kind: PreparedManualKind,
+    force_full_reason: Option<&'static str>,
+}
+
+enum PreparedManualKind {
+    Skip(SkipAttempt),
+    Full(FullAttempt),
+}
+
+impl PreparedManual {
+    pub fn session_key(&self) -> &str {
+        &self.session_key
+    }
+
+    pub fn turn_id(&self) -> &str {
+        &self.attempt.turn_id
+    }
+}
+
+/// A manual full attempt that is already durably allocated.
+#[derive(Clone, Copy)]
+pub(crate) struct PreparedAttemptRef<'a> {
+    attempt: &'a FullAttempt,
+    wake_attempt: &'a WakeAttempt,
+}
+
 #[async_trait::async_trait]
 pub trait WakeExecutor: Send + Sync {
     async fn execute(&self, schedule: AssistantSchedule, cancel: CancellationToken) -> WakeReport;
@@ -345,6 +813,34 @@ pub trait WakeExecutor: Send + Sync {
         WakeReport {
             session_key: String::new(),
             outcome: WakeOutcome::Skipped,
+        }
+    }
+
+    /// Read-only public preflight. Default: manual operations are unwired.
+    async fn manual_preflight(&self, _workspace_id: &str) -> Result<ManualPreflight, ManualStartError> {
+        Err(ManualStartError::Unavailable(
+            "suppression manual operations are unavailable".to_string(),
+        ))
+    }
+
+    /// Allocate the durable attempt synchronously. Default: unwired.
+    async fn prepare_manual(
+        &self,
+        _schedule: &AssistantSchedule,
+        _operation: ManualOperation,
+    ) -> Result<PreparedManual, ManualStartError> {
+        Err(ManualStartError::Unavailable(
+            "suppression manual operations are unavailable".to_string(),
+        ))
+    }
+
+    /// Execute a prepared manual attempt asynchronously.
+    async fn execute_manual(&self, _prepared: PreparedManual, _cancel: CancellationToken) -> WakeReport {
+        WakeReport {
+            session_key: String::new(),
+            outcome: WakeOutcome::Failed {
+                error: "suppression manual operations are unavailable".to_string(),
+            },
         }
     }
 }
@@ -393,6 +889,9 @@ struct SessionOrigin<'a> {
     /// `forceFullReason`: set by reconcile to bypass the skip path. Ordinary
     /// scheduled wakes leave it `None`; the full-Turn path is identical.
     force_full_reason: Option<&'a str>,
+    /// A manual attempt allocated before the HTTP 202 response. Ordinary
+    /// scheduled/event wakes leave it `None`.
+    prepared: Option<PreparedAttemptRef<'a>>,
 }
 
 impl WakeRunner {
@@ -597,6 +1096,7 @@ impl WakeRunner {
                 planned_wake_at: schedule.next_wake_at,
                 suppression,
                 force_full_reason,
+                prepared: None,
             },
             agent,
             message,
@@ -717,6 +1217,7 @@ impl WakeRunner {
                 planned_wake_at: None,
                 suppression: None,
                 force_full_reason: None,
+                prepared: None,
             },
             agent,
             message,
@@ -841,6 +1342,7 @@ impl WakeRunner {
         let mut replay_link: Option<ReplayLink> = None;
         if let (Some(wake), Some(observation)) = (planned_wake.as_ref(), origin.suppression)
             && origin.force_full_reason.is_none()
+            && origin.prepared.is_none()
             && !observation.skip_disabled
             && let Some(decision) = observation.decision()
             && let Some(report) = self
@@ -854,30 +1356,36 @@ impl WakeRunner {
         // Only a completely persisted, all-Source-available successful Turn
         // may clear it.
         let mut full_attempt: Option<FullAttempt> = None;
-        let attempt = match (planned_wake.as_ref(), origin.suppression) {
-            (Some(wake), Some(observation)) => {
-                match self.db.begin_full_attempt(&session_key, &observation.state).await {
-                    Ok(durable) => {
-                        let attempt = wake.attempt(durable.attempt_no);
-                        full_attempt = Some(durable);
-                        Some(attempt)
-                    }
-                    Err(error) => {
-                        tracing::warn!(%error, %session_key, "suppression: begin full attempt failed");
-                        return WakeReport {
-                            session_key,
-                            outcome: WakeOutcome::Failed {
-                                error: error.to_string(),
-                            },
-                        };
+        let attempt = match origin.prepared {
+            Some(prepared) => {
+                full_attempt = Some((*prepared.attempt).clone());
+                Some((*prepared.wake_attempt).clone())
+            }
+            None => match (planned_wake.as_ref(), origin.suppression) {
+                (Some(wake), Some(observation)) => {
+                    match self.db.begin_full_attempt(&session_key, &observation.state).await {
+                        Ok(durable) => {
+                            let attempt = wake.attempt(durable.attempt_no);
+                            full_attempt = Some(durable);
+                            Some(attempt)
+                        }
+                        Err(error) => {
+                            tracing::warn!(%error, %session_key, "suppression: begin full attempt failed");
+                            return WakeReport {
+                                session_key,
+                                outcome: WakeOutcome::Failed {
+                                    error: error.to_string(),
+                                },
+                            };
+                        }
                     }
                 }
-            }
-            // Only a genuinely unconfigured/off wake uses the predicted
-            // identity: configured workspaces always have an observation and
-            // therefore a durable allocation.
-            (Some(wake), None) => Some(wake.attempt(self.next_attempt_no(origin.workspace_id, &session_key).await)),
-            (None, _) => None,
+                // Only a genuinely unconfigured/off wake uses the predicted
+                // identity: configured workspaces always have an observation
+                // and therefore a durable allocation.
+                (Some(wake), None) => Some(wake.attempt(self.next_attempt_no(origin.workspace_id, &session_key).await)),
+                (None, _) => None,
+            },
         };
         if let Some(reason) = origin.force_full_reason {
             tracing::info!(%session_key, reason, "suppression: forced full Turn");
@@ -1137,6 +1645,25 @@ impl WakeRunner {
         outcome: WakeOutcome,
         events_ok: bool,
     ) -> WakeOutcome {
+        // Off-mode manual turns have no Source capture by design. They still
+        // allocated a durable attempt for the HTTP turnId, so settle it without
+        // a baseline and keep the old baseline ineligible.
+        if observation.settle_without_baseline {
+            let settled = match &outcome {
+                WakeOutcome::Completed => "full_completed",
+                WakeOutcome::Skipped => "skipped",
+                WakeOutcome::Partial | WakeOutcome::Cancelled | WakeOutcome::Failed { .. } => "full_failed",
+                WakeOutcome::AuditFailed => "full_failed",
+            };
+            if let Err(error) = self
+                .db
+                .settle_full_attempt_without_baseline(workspace_id, &durable.attempt_id, settled)
+                .await
+            {
+                tracing::warn!(%error, %durable.attempt_id, "suppression: baseline-less settlement failed");
+            }
+            return outcome;
+        }
         let captured = observation.captured.as_ref();
         let all_sources_available = captured.is_some_and(|captured| {
             !captured.decision.snapshot.is_empty()
@@ -1294,6 +1821,22 @@ impl WakeExecutor for WakeRunner {
 
     async fn execute_event(&self, wake: EventWake, cancel: CancellationToken) -> WakeReport {
         self.run_event(&wake, cancel).await
+    }
+
+    async fn manual_preflight(&self, workspace_id: &str) -> Result<ManualPreflight, ManualStartError> {
+        WakeRunner::manual_preflight(self, workspace_id).await
+    }
+
+    async fn prepare_manual(
+        &self,
+        schedule: &AssistantSchedule,
+        operation: ManualOperation,
+    ) -> Result<PreparedManual, ManualStartError> {
+        WakeRunner::prepare_manual(self, schedule, operation).await
+    }
+
+    async fn execute_manual(&self, prepared: PreparedManual, cancel: CancellationToken) -> WakeReport {
+        WakeRunner::execute_manual(self, prepared, cancel).await
     }
 }
 
@@ -1882,6 +2425,7 @@ mod tests {
             planned_wake_at: None,
             suppression: None,
             force_full_reason: None,
+            prepared: None,
         };
         let context = wake_context(&origin, "agent:ws:a/s".into(), PermissionMode::ReadOnly, None);
         assert_eq!(context.workspace_id, "ws");
@@ -2735,5 +3279,111 @@ mod tests {
             serde_json::json!(skip_attempt_id)
         );
         assert_eq!(dispatched.payload_json["supersedes"], serde_json::json!(true));
+    }
+
+    #[tokio::test]
+    async fn manual_operation_allocates_the_durable_attempt_before_execution() {
+        let fixture = lifecycle_fixture(SuppressionMode::Enforce, None, true).await;
+        assert_eq!(fixture.run().await.outcome, WakeOutcome::Completed);
+
+        let prepared = fixture
+            .wake
+            .prepare_manual(&fixture.schedule, ManualOperation::Reconcile)
+            .await
+            .expect("manual reconcile prepared");
+        let turn_id = prepared.turn_id().to_string();
+        assert!(turn_id.starts_with("turn:"));
+        assert_eq!(prepared.session_key(), lifecycle_session_key().as_str());
+        // The 202 may only be sent after this durable fence exists.
+        assert!(fixture.state().await.full_attempt_in_progress);
+
+        let report = fixture.wake.execute_manual(prepared, CancellationToken::new()).await;
+        assert_eq!(report.outcome, WakeOutcome::Completed);
+        assert_eq!(report.session_key, lifecycle_session_key());
+
+        // The executed Turn's lifecycle events use the exact preallocated
+        // turnId (the fixture sink records them in memory; committed skip
+        // events go directly to the workspace DB).
+        let events = fixture.sink.events.lock().await;
+        assert!(
+            events.iter().any(|event| {
+                event.event_type == "turn.completed" && event.run_id.as_deref() == Some(turn_id.as_str())
+            }),
+            "the executed Turn must carry the preallocated turnId {turn_id}"
+        );
+        let state = fixture.state().await;
+        assert!(!state.full_attempt_in_progress);
+        assert!(
+            state.baseline_is_eligible(),
+            "a successful reconcile installs a baseline"
+        );
+    }
+
+    #[tokio::test]
+    async fn manual_wake_uses_the_shared_skip_path_and_reconcile_forces_full() {
+        let fixture = lifecycle_fixture(SuppressionMode::Enforce, None, true).await;
+        assert_eq!(fixture.run().await.outcome, WakeOutcome::Completed);
+        assert_eq!(fixture.skipped_turn_count().await, 0);
+
+        let wake = fixture
+            .wake
+            .prepare_manual(&fixture.schedule, ManualOperation::Wake)
+            .await
+            .expect("manual wake prepared");
+        assert_eq!(
+            fixture
+                .wake
+                .execute_manual(wake, CancellationToken::new())
+                .await
+                .outcome,
+            WakeOutcome::Skipped,
+            "unchanged Sources in enforce mode must skip"
+        );
+        assert_eq!(fixture.skipped_turn_count().await, 1);
+
+        // Reconcile ignores wouldSkip and runs the same full-Turn function.
+        let reconcile = fixture
+            .wake
+            .prepare_manual(&fixture.schedule, ManualOperation::Reconcile)
+            .await
+            .expect("manual reconcile prepared");
+        assert_eq!(
+            fixture
+                .wake
+                .execute_manual(reconcile, CancellationToken::new())
+                .await
+                .outcome,
+            WakeOutcome::Completed
+        );
+        assert_eq!(fixture.skipped_turn_count().await, 1, "reconcile must never skip");
+    }
+
+    #[tokio::test]
+    async fn manual_reconcile_in_off_mode_settles_without_a_baseline() {
+        let fixture = lifecycle_fixture(SuppressionMode::Off, None, true).await;
+        let prepared = fixture
+            .wake
+            .prepare_manual(&fixture.schedule, ManualOperation::Reconcile)
+            .await
+            .expect("manual reconcile prepared");
+        assert!(fixture.state().await.full_attempt_in_progress);
+        assert_eq!(
+            fixture
+                .wake
+                .execute_manual(prepared, CancellationToken::new())
+                .await
+                .outcome,
+            WakeOutcome::Completed
+        );
+        let state = fixture.state().await;
+        assert!(!state.full_attempt_in_progress);
+        assert!(
+            state.baseline_state_id.is_none(),
+            "off mode must not install a baseline"
+        );
+        assert!(
+            state.full_failed,
+            "the old baseline stays ineligible until a full Turn installs one"
+        );
     }
 }

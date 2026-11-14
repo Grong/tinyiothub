@@ -93,6 +93,10 @@ pub struct AgentState {
     pub runtime_recorder: runtime::stream::RuntimeRecorder,
     /// 统一 Session 运行时（事件、Todo、待答问题、子代理槽）。
     pub session_runtime: Arc<crate::domains::agent::session::SessionRuntime>,
+    /// Manual suppression operations (preflight/wake/reconcile). Wired by the
+    /// composition layer to the live TriggerRouter/WakeRunner; `None` in unit
+    /// tests and unfinished compositions (endpoints then return 503).
+    pub suppression_ops: Option<Arc<dyn crate::domains::agent::session::trigger::SuppressionOps>>,
 }
 
 impl AgentState {
