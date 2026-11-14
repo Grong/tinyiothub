@@ -6,14 +6,16 @@
 //! else. Arrays keep their order except `workItems`, which sort by
 //! `(workKey, revision)`.
 //!
-//! Strings are normalized to Unicode NFC before escaping, so canonically
-//! equivalent inputs produce identical bytes and hashes.
+//! Object keys and string values are normalized to Unicode NFC at the input
+//! boundary, so ordering, duplicate detection and emission all use the same
+//! form and canonically equivalent inputs produce identical bytes and hashes.
 
 // The typed error is the public prevention contract; boxing it would change
 // every producer/consumer signature for a clippy size heuristic.
 #![allow(clippy::result_large_err)]
 
 use std::cmp::Ordering;
+use std::collections::HashSet;
 use std::fmt::Write as _;
 
 use serde::Deserialize;
@@ -36,10 +38,60 @@ const DUPLICATE_KEY_MARKER: &str = "__tinyiothub_duplicate_key__";
 const NON_FINITE_MARKER: &str = "__tinyiothub_non_finite__";
 
 /// Canonicalize an already validated JSON value into JCS bytes.
+///
+/// Strings and object keys are normalized to NFC first so that ordering,
+/// duplicate detection and emission all operate on the same form.
 pub fn canonical_bytes(value: &Value) -> Result<Vec<u8>, SuppressionError> {
+    let value = normalize_value(value, None)?;
     let mut out = String::new();
-    write_value(&mut out, value, None)?;
+    write_value(&mut out, &value, None)?;
     Ok(out.into_bytes())
+}
+
+fn normalize_value(value: &Value, key: Option<&str>) -> Result<Value, SuppressionError> {
+    Ok(match value {
+        Value::String(string) => Value::String(string.nfc().collect()),
+        Value::Array(items) => {
+            let items: Vec<Value> = items
+                .iter()
+                .map(|item| normalize_value(item, None))
+                .collect::<Result<_, _>>()?;
+            if key == Some("workItems") {
+                reject_duplicate_work_keys(&items)?;
+            }
+            Value::Array(items)
+        }
+        Value::Object(object) => {
+            let mut normalized = Map::with_capacity(object.len());
+            for (key, value) in object {
+                let key: String = key.nfc().collect();
+                let value = normalize_value(value, Some(&key))?;
+                if normalized.insert(key, value).is_some() {
+                    return Err(canonical_error(
+                        "canonical_duplicate_key",
+                        "canonicalize object keys that collide after NFC normalization",
+                    ));
+                }
+            }
+            Value::Object(normalized)
+        }
+        other => other.clone(),
+    })
+}
+
+fn reject_duplicate_work_keys(items: &[Value]) -> Result<(), SuppressionError> {
+    let mut seen = HashSet::new();
+    for item in items {
+        if let Some(work_key) = work_item_field(item, "workKey")
+            && !seen.insert(work_key)
+        {
+            return Err(canonical_error(
+                "duplicate_work_key",
+                "canonicalize workItems with canonically equivalent workKey values",
+            ));
+        }
+    }
+    Ok(())
 }
 
 /// Parse raw JSON with duplicate-key detection, then canonicalize it.

@@ -11,6 +11,7 @@
 use std::collections::HashSet;
 
 use serde::{Deserialize, Serialize};
+use unicode_normalization::UnicodeNormalization;
 
 use super::canonical::{hash_payload, hash_state};
 use super::error::SuppressionError;
@@ -201,10 +202,11 @@ impl SourceSnapshot {
         }
         let mut seen = HashSet::new();
         for item in &self.work_items {
-            if !seen.insert(item.work_key.as_str()) {
+            let normalized_key: String = item.work_key.nfc().collect();
+            if !seen.insert(normalized_key) {
                 return Err(contract_error(
                     "duplicate_work_key",
-                    "snapshot contains duplicate workKey values",
+                    "snapshot contains canonically equivalent workKey values",
                 ));
             }
             item.validate()?;
@@ -464,6 +466,33 @@ mod contract {
         assert_eq!(composed_bytes, decomposed_bytes);
         assert_eq!(hash_state(&composed_bytes), hash_state(&decomposed_bytes));
         assert_eq!(composed_bytes, r#"{"s":"é"}"#.as_bytes());
+    }
+
+    #[test]
+    fn canonically_equivalent_object_keys_share_bytes_and_hash() {
+        let composed = json!({"é": 1, "z": 2});
+        let decomposed = json!({"e\u{0301}": 1, "z": 2});
+        let composed_bytes = canonical_bytes(&composed).unwrap();
+        let decomposed_bytes = canonical_bytes(&decomposed).unwrap();
+        assert_eq!(composed_bytes, decomposed_bytes);
+        assert_eq!(hash_state(&composed_bytes), hash_state(&decomposed_bytes));
+        assert_eq!(composed_bytes, r#"{"z":2,"é":1}"#.as_bytes());
+    }
+
+    #[test]
+    fn normalized_object_key_collision_is_rejected() {
+        let value = json!({"é": 1, "e\u{0301}": 2});
+        assert_eq!(canonical_bytes(&value).unwrap_err().code, "canonical_duplicate_key");
+        let error = canonicalize_json(r#"{"é":1,"é":2}"#.as_bytes()).unwrap_err();
+        assert_eq!(error.code, "canonical_duplicate_key");
+    }
+
+    #[test]
+    fn canonically_equivalent_work_keys_are_rejected_as_duplicates() {
+        let snapshot = available_snapshot(vec![work_item("é", "r1"), work_item("e\u{0301}", "r2")]);
+        assert_eq!(snapshot.validate(&descriptor()).unwrap_err().code, "duplicate_work_key");
+        let value = serde_json::to_value(&snapshot).unwrap();
+        assert_eq!(canonical_bytes(&value).unwrap_err().code, "duplicate_work_key");
     }
 
     #[test]
