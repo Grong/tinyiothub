@@ -344,6 +344,7 @@ impl SuppressionOps for TriggerRouter {
         let start = ManualTurnStart {
             session_key: prepared.session_key().to_string(),
             turn_id: prepared.turn_id().to_string(),
+            attempt_id: prepared.attempt_id().to_string(),
         };
         let executor = self.executor.clone();
         let cancel = self.shutdown.clone();

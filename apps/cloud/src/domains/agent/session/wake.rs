@@ -765,6 +765,10 @@ pub struct ManualPreflight {
 pub struct ManualTurnStart {
     pub session_key: String,
     pub turn_id: String,
+    /// Durable suppression attempt id (`{workspace}:{session}:attempt:{n}`).
+    /// Kept separate from `turn_id` so recovery can join
+    /// `suppression_state.latest_attempt_id`.
+    pub attempt_id: String,
 }
 
 /// A manual Turn whose durable attempt was allocated before the 202 response.
@@ -794,6 +798,14 @@ impl PreparedManual {
 
     pub fn turn_id(&self) -> &str {
         &self.attempt.turn_id
+    }
+
+    /// Durable attempt id allocated by the storage layer.
+    pub fn attempt_id(&self) -> &str {
+        match &self.kind {
+            PreparedManualKind::Skip(skip) => &skip.attempt_id,
+            PreparedManualKind::Full(full) => &full.attempt_id,
+        }
     }
 }
 
@@ -3294,8 +3306,17 @@ mod tests {
         let turn_id = prepared.turn_id().to_string();
         assert!(turn_id.starts_with("turn:"));
         assert_eq!(prepared.session_key(), lifecycle_session_key().as_str());
-        // The 202 may only be sent after this durable fence exists.
-        assert!(fixture.state().await.full_attempt_in_progress);
+        let attempt_id = prepared.attempt_id().to_string();
+        assert_ne!(attempt_id, turn_id, "the durable attempt id is not the turn id");
+        // The 202 may only be sent after this durable fence exists, and the
+        // idempotency record must be joinable against this exact attempt id.
+        let state = fixture.state().await;
+        assert!(state.full_attempt_in_progress);
+        assert_eq!(
+            state.latest_attempt_id.as_deref(),
+            Some(attempt_id.as_str()),
+            "prepared attempt id must match suppression_state.latest_attempt_id"
+        );
 
         let report = fixture.wake.execute_manual(prepared, CancellationToken::new()).await;
         assert_eq!(report.outcome, WakeOutcome::Completed);

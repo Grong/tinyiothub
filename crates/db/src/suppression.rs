@@ -1113,6 +1113,11 @@ impl Db {
     }
 
     /// Record the durable attempt and replayable result for one reservation.
+    ///
+    /// `attempt_id` is the durable suppression attempt id
+    /// (`{workspace}:{session}:attempt:{n}`), not the turn id. Recovery joins
+    /// this column against `suppression_state.latest_attempt_id`; the turn id
+    /// lives in the recorded result JSON (`turnId`).
     pub async fn record_suppression_idempotency(
         &self,
         workspace_id: &str,
@@ -1143,6 +1148,37 @@ impl Db {
             });
         }
         Ok(())
+    }
+
+    /// Reclaim a reservation whose preparation never recorded a result.
+    ///
+    /// A crash (or a failed result write) between the reservation and the
+    /// recorded 202 leaves `result_json` NULL. Once the server-owned
+    /// `updated_at` is older than the bounded preparation deadline, a retry
+    /// may delete that exact row so the normal unique-constraint race can pick
+    /// a new winner. The comparison is done in SQL against the persisted
+    /// timestamp, never against a client-supplied value.
+    pub async fn reclaim_stale_suppression_idempotency(
+        &self,
+        workspace_id: &str,
+        operation: &str,
+        key: &str,
+        stale_before: DateTime<Utc>,
+    ) -> Result<bool> {
+        let pool = self.workspace_pool(workspace_id).await?;
+        let deleted = sqlx::query(
+            "DELETE FROM suppression_idempotency \
+             WHERE workspace_id = ? AND operation = ? AND key = ? \
+               AND result_json IS NULL AND updated_at <= ?",
+        )
+        .bind(workspace_id)
+        .bind(operation)
+        .bind(key)
+        .bind(format_ts(stale_before))
+        .execute(&pool)
+        .await?
+        .rows_affected();
+        Ok(deleted == 1)
     }
 
     /// Drop a reservation whose Turn was never accepted (in-flight conflict,
@@ -1274,7 +1310,10 @@ pub struct SuppressionIdempotency {
     pub operation: String,
     pub key: String,
     pub request_fingerprint: String,
+    /// Diagnostics only; never a conflict key.
     pub planned_wake_at: Option<DateTime<Utc>>,
+    /// Durable suppression attempt id (`{workspace}:{session}:attempt:{n}`)
+    /// used by Task 8/9 recovery. The executed turn id is in `result.turnId`.
     pub attempt_id: Option<String>,
     pub result: Option<Value>,
     pub state_version: i64,

@@ -9,7 +9,7 @@ use axum::http::{HeaderMap, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router};
-use chrono::{SecondsFormat, Utc};
+use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
@@ -180,6 +180,7 @@ pub struct UpdateScheduleRequest {
 }
 
 /// Parse and validate the suppression fields before any write.
+#[allow(clippy::result_large_err)] // axum response is the error channel by design
 fn parse_suppression_update(
     request: &UpdateScheduleRequest,
 ) -> Result<(Option<SuppressionMode>, Option<u32>), Response> {
@@ -208,6 +209,7 @@ fn parse_suppression_update(
 /// Task 10 owns the canary/enforce gate-artifact validation. The seam is
 /// explicit here so this task never invents or bypasses an artifact: today it
 /// only recognises the intent to leave the shadow-only modes.
+#[allow(clippy::result_large_err)] // axum response is the error channel by design
 fn validate_gate_artifact_seam(_workspace_id: &str, _mode: SuppressionMode) -> Result<(), Response> {
     // TODO(Task 10): reject canary without a valid shadow artifact and enforce
     // without a valid canary-measured artifact, with a 409
@@ -300,14 +302,13 @@ pub async fn update_schedule(
     // in the workspace DB. A skip whose commit is already in flight cannot be
     // rolled back by this write; Task 8/9 own the alert/reconciliation for
     // that residual window. This handler does not claim cross-DB atomicity.
-    if mode.is_some() || reconciliation_seconds.is_some() {
-        if let Err(error) = state
+    if (mode.is_some() || reconciliation_seconds.is_some())
+        && let Err(error) = state
             .db
             .update_suppression_config(&workspace_id, mode, reconciliation_seconds)
             .await
-        {
-            return internal(error);
-        }
+    {
+        return internal(error);
     }
 
     let recompute = request.enabled == Some(true) || request.interval_seconds.is_some();
@@ -834,6 +835,7 @@ pub async fn post_suppression_reconcile(
     manual_operation(state, claims, workspace_id, headers, ManualOperation::Reconcile).await
 }
 
+#[allow(clippy::result_large_err)] // axum response is the error channel by design
 fn idempotency_key(headers: &HeaderMap) -> Result<String, Response> {
     headers
         .get("Idempotency-Key")
@@ -850,24 +852,19 @@ fn idempotency_key(headers: &HeaderMap) -> Result<String, Response> {
         })
 }
 
-/// Intent fingerprint: operation + workspace + the planned wake the request
-/// would run. Source contents are deliberately excluded so a retry after
-/// Source changes still replays the recorded result.
-fn request_fingerprint(
-    operation: ManualOperation,
-    workspace_id: &str,
-    planned_wake_at: Option<chrono::DateTime<Utc>>,
-) -> String {
-    let planned = planned_wake_at
-        .map(|at| at.to_rfc3339_opts(SecondsFormat::Secs, true))
-        .unwrap_or_default();
+/// Request-derived intent fingerprint.
+///
+/// POST wake/reconcile carry no body, so the whole intent is operation +
+/// workspace. Mutable server state (for example the schedule's `nextWakeAt`)
+/// is stored for diagnostics but is never a conflict key: a scheduled wake
+/// ticking between a request and its retry must still replay the recorded
+/// result. Source contents are likewise excluded.
+pub(crate) fn request_fingerprint(operation: ManualOperation, workspace_id: &str) -> String {
     let mut hasher = Sha256::new();
     hasher.update(b"tinyiothub:suppression-http-idempotency:v1\0");
     hasher.update(operation.as_str().as_bytes());
     hasher.update(b"\0");
     hasher.update(workspace_id.as_bytes());
-    hasher.update(b"\0");
-    hasher.update(planned.as_bytes());
     format!("sha256:{:x}", hasher.finalize())
 }
 
@@ -883,6 +880,11 @@ fn accepted_body(session_key: &str, turn_id: &str, workspace_id: &str) -> Value 
         "reportUrl": report_url(workspace_id, turn_id),
     })
 }
+
+/// Reservation preparation deadline (server-owned timestamp). A reservation
+/// that never recorded a result older than this is reclaimable by a retry, so
+/// a crash or a failed result write cannot wedge the key permanently.
+const IDEMPOTENCY_PREPARATION_DEADLINE_SECS: i64 = 30;
 
 fn replay_or_conflict(
     record: tinyiothub_storage::suppression::SuppressionIdempotency,
@@ -936,10 +938,37 @@ async fn manual_operation(
         Ok(schedule) => schedule,
         Err(error) => return internal(error),
     };
-    let fingerprint = request_fingerprint(operation, &workspace_id, schedule.next_wake_at);
+    let fingerprint = request_fingerprint(operation, &workspace_id);
+    let stale_before = Utc::now() - chrono::Duration::seconds(IDEMPOTENCY_PREPARATION_DEADLINE_SECS);
 
     match state.db.find_suppression_idempotency(&workspace_id, &key).await {
-        Ok(Some(record)) => return replay_or_conflict(record, operation, &fingerprint),
+        Ok(Some(record)) => {
+            // A key already attached to a different intent keeps its 409.
+            if record.operation != operation.as_str() || record.request_fingerprint != fingerprint {
+                return replay_or_conflict(record, operation, &fingerprint);
+            }
+            if record.result.is_some() {
+                return replay_or_conflict(record, operation, &fingerprint);
+            }
+            // Preparation crashed or its result write failed. Once the
+            // server-owned timestamp passes the deadline, this retry may
+            // reclaim the reservation instead of returning 409 forever.
+            if record.updated_at <= stale_before {
+                if let Err(error) = state
+                    .db
+                    .reclaim_stale_suppression_idempotency(&workspace_id, operation.as_str(), &key, stale_before)
+                    .await
+                {
+                    return internal(error);
+                }
+            } else {
+                return problem(
+                    StatusCode::CONFLICT,
+                    "wake_in_flight",
+                    "相同请求正在准备中，请稍后使用同一 Idempotency-Key 重试",
+                );
+            }
+        }
         Ok(None) => {}
         Err(error) => return internal(error),
     }
@@ -958,9 +987,11 @@ async fn manual_operation(
         Ok(true) => {}
         Ok(false) => {
             // A concurrent identical request won the unique constraint. Read
-            // its recorded result; the winner writes it immediately after the
-            // synchronous attempt allocation (bounded by the 4s preflight
-            // deadline, so wait up to 10s before reporting in-flight).
+            // its recorded result. The winner records it after the synchronous
+            // attempt allocation (bounded by the 4s preflight deadline, so
+            // wait up to 10s). A winner that crashed leaves a null-result row;
+            // that row is reclaimed by a later retry once the server-owned
+            // preparation deadline passes.
             for _ in 0..500 {
                 match state.db.find_suppression_idempotency(&workspace_id, &key).await {
                     Ok(Some(record)) => {
@@ -985,12 +1016,40 @@ async fn manual_operation(
     match ops.start_manual(&workspace_id, operation).await {
         Ok(start) => {
             let result = accepted_body(&start.session_key, &start.turn_id, &workspace_id);
-            if let Err(error) = state
-                .db
-                .record_suppression_idempotency(&workspace_id, operation.as_str(), &key, &start.turn_id, &result)
-                .await
-            {
-                tracing::warn!(%workspace_id, %error, "record suppression idempotency failed");
+            // Persist the durable attempt id (recovery joins this against
+            // suppression_state.latest_attempt_id); the executed turn id stays
+            // in the recorded result. Retry transient write failures; if all
+            // attempts fail the null-result reservation is reclaimable after
+            // the preparation deadline instead of wedging the key forever.
+            let mut recorded = false;
+            for attempt_no in 0..3 {
+                match state
+                    .db
+                    .record_suppression_idempotency(&workspace_id, operation.as_str(), &key, &start.attempt_id, &result)
+                    .await
+                {
+                    Ok(()) => {
+                        recorded = true;
+                        break;
+                    }
+                    Err(error) => {
+                        tracing::warn!(
+                            %workspace_id,
+                            attempt_no,
+                            %error,
+                            "record suppression idempotency failed"
+                        );
+                        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+                    }
+                }
+            }
+            if !recorded {
+                tracing::error!(
+                    %workspace_id,
+                    turn_id = %start.turn_id,
+                    attempt_id = %start.attempt_id,
+                    "suppression idempotency result could not be recorded; stale reservation is reclaimable after the preparation deadline"
+                );
             }
             (StatusCode::ACCEPTED, Json(result)).into_response()
         }

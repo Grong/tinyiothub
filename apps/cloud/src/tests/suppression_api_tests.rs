@@ -37,6 +37,12 @@ fn session_key(workspace_id: &str) -> String {
     format!("agent:{workspace_id}:__assistant__{workspace_id}/main")
 }
 
+/// Durable attempt id shape (`{workspace}:{session}:attempt:{n}`), distinct
+/// from the turn id (`turn:{hash}`).
+fn fake_attempt_id() -> String {
+    format!("{WS}:{}:attempt:1", session_key(WS))
+}
+
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum StartBehavior {
     Accept,
@@ -103,6 +109,7 @@ impl SuppressionOps for FakeOps {
             StartBehavior::Accept => Ok(ManualTurnStart {
                 session_key: self.preflight.session_key.clone(),
                 turn_id: "turn:fake-0001".to_string(),
+                attempt_id: fake_attempt_id(),
             }),
             StartBehavior::InFlight => Err(ManualStartError::InFlight),
             StartBehavior::Backpressure => Err(ManualStartError::Backpressure { retry_after_ms: 250 }),
@@ -587,14 +594,14 @@ async fn post_requires_idempotency_key() {
 }
 
 // Value card
-// - Covers: same key/intent replays the recorded result; same key for another
-//   operation or a changed planned-wake fingerprint conflicts.
-// - Real regression: a retry starts a second Turn, or a reused key silently
-//   changes intent.
-// - Failure signal: different turnId on replay, second start, or 202 on
-//   conflict.
+// - Covers: same key/intent replays the recorded result even after scheduled
+//   state advances; same key for another operation conflicts.
+// - Real regression: a scheduled tick changes `nextWakeAt`, and a legitimate
+//   retry is rejected as a fingerprint conflict instead of replaying.
+// - Failure signal: different turnId on replay, second start, or 409 on the
+//   post-tick retry.
 #[tokio::test]
-async fn idempotency_replays_recorded_result_and_rejects_changed_intent() {
+async fn idempotency_survives_schedule_advance_and_rejects_changed_operation() {
     let ops = FakeOps::new(StartBehavior::Accept);
     let (app, pool, db) = app_with_ops(ops.clone()).await;
     let token = admin(&pool).await;
@@ -602,25 +609,9 @@ async fn idempotency_replays_recorded_result_and_rejects_changed_intent() {
 
     let first = send(&app, "POST", &uri, &token, Some("stable-key"), None).await;
     assert_eq!(first.0, axum::http::StatusCode::ACCEPTED, "{:?}", first.2);
-    let second = send(&app, "POST", &uri, &token, Some("stable-key"), None).await;
-    assert_eq!(second.0, axum::http::StatusCode::ACCEPTED, "{:?}", second.2);
-    assert_eq!(first.2, second.2, "identical intent must replay the recorded result");
-    assert_eq!(ops.starts(), 1, "replay must not start a second Turn");
 
-    // Same key, different operation: the unique intent is (operation, key).
-    let conflict = send(
-        &app,
-        "POST",
-        &format!("/api/v1/workspaces/{WS}/agent/suppression/reconcile"),
-        &token,
-        Some("stable-key"),
-        None,
-    )
-    .await;
-    assert_problem(&conflict, 409, "idempotency_conflict");
-
-    // Same key/operation but a changed planned wake fingerprint is a new
-    // intent and must use a new key.
+    // Simulate a scheduled wake advancing the platform schedule between the
+    // original request and its retry. The request intent is unchanged.
     db.ensure_assistant_schedule(
         WS,
         &crate::domains::agent::session::wake::assistant_agent_id(WS),
@@ -638,10 +629,30 @@ async fn idempotency_replays_recorded_result_and_rejects_changed_intent() {
     )
     .await
     .expect("advance planned wake");
-    let fingerprint_conflict = send(&app, "POST", &uri, &token, Some("stable-key"), None).await;
-    assert_problem(&fingerprint_conflict, 409, "idempotency_conflict");
 
-    // Persisted reservation: operation/key/fingerprint/attempt/result.
+    let retry = send(&app, "POST", &uri, &token, Some("stable-key"), None).await;
+    assert_eq!(
+        retry.0,
+        axum::http::StatusCode::ACCEPTED,
+        "a scheduled tick must not invalidate a legitimate retry: {:?}",
+        retry.2
+    );
+    assert_eq!(first.2, retry.2, "identical intent must replay the recorded result");
+    assert_eq!(ops.starts(), 1, "replay must not start a second Turn");
+
+    // Same key, different operation is a different intent.
+    let conflict = send(
+        &app,
+        "POST",
+        &format!("/api/v1/workspaces/{WS}/agent/suppression/reconcile"),
+        &token,
+        Some("stable-key"),
+        None,
+    )
+    .await;
+    assert_problem(&conflict, 409, "idempotency_conflict");
+
+    // Persisted reservation: durable attempt id is separate from the turn id.
     let record = db
         .find_suppression_idempotency(WS, "stable-key")
         .await
@@ -649,8 +660,74 @@ async fn idempotency_replays_recorded_result_and_rejects_changed_intent() {
         .expect("idempotency row");
     assert_eq!(record.operation, "wake");
     assert!(!record.request_fingerprint.is_empty());
-    assert_eq!(record.attempt_id.as_deref(), Some("turn:fake-0001"));
+    assert_eq!(record.attempt_id.as_deref(), Some(fake_attempt_id().as_str()));
+    assert_ne!(record.attempt_id.as_deref(), Some("turn:fake-0001"));
+    assert_eq!(record.result.as_ref().unwrap()["turnId"], "turn:fake-0001");
     assert_eq!(record.result.as_ref().unwrap()["outcome"], "accepted");
+    assert!(record.planned_wake_at.is_some(), "plannedWakeAt kept for diagnostics");
+}
+
+// Value card
+// - Covers: a reservation left result-less by a failed result write stays
+//   bounded (409) while it is fresh.
+// - Real regression: the handler starts a second Turn while the first result
+//   is still being recorded.
+// - Failure signal: 202 + start_manual while the reservation is fresh.
+#[tokio::test]
+async fn fresh_null_result_reservation_is_bounded_in_flight() {
+    let ops = FakeOps::new(StartBehavior::Accept);
+    let (app, pool, db) = app_with_ops(ops.clone()).await;
+    let token = admin(&pool).await;
+    let uri = format!("/api/v1/workspaces/{WS}/agent/suppression/wake");
+    let key = "failed-record-key";
+    let fingerprint = crate::domains::agent::session::workspace_api::request_fingerprint(ManualOperation::Wake, WS);
+    db.try_insert_suppression_idempotency(WS, "wake", key, &fingerprint, None)
+        .await
+        .expect("reserve");
+
+    let response = send(&app, "POST", &uri, &token, Some(key), None).await;
+    assert_problem(&response, 409, "wake_in_flight");
+    assert_eq!(ops.starts(), 0, "a fresh result-less reservation must not start a Turn");
+}
+
+// Value card
+// - Covers: a result-less reservation (crash or failed result write) is
+//   reclaimed after the bounded server-owned preparation deadline.
+// - Real regression: the key is wedged forever and every retry returns 409.
+// - Failure signal: non-202 retry, no start, or no recorded result.
+#[tokio::test]
+async fn stale_null_result_reservation_is_reclaimed_after_deadline() {
+    let ops = FakeOps::new(StartBehavior::Accept);
+    let (app, pool, db) = app_with_ops(ops.clone()).await;
+    let token = admin(&pool).await;
+    let uri = format!("/api/v1/workspaces/{WS}/agent/suppression/wake");
+    let key = "stale-key";
+    let fingerprint = crate::domains::agent::session::workspace_api::request_fingerprint(ManualOperation::Wake, WS);
+    db.try_insert_suppression_idempotency(WS, "wake", key, &fingerprint, None)
+        .await
+        .expect("reserve");
+    let workspace_pool = db.workspace_pool_for_testing(WS).await.expect("workspace pool");
+    sqlx::query(
+        "UPDATE suppression_idempotency SET updated_at = ? \
+         WHERE workspace_id = ? AND operation = 'wake' AND key = ?",
+    )
+    .bind("2000-01-01T00:00:00Z")
+    .bind(WS)
+    .bind(key)
+    .execute(&workspace_pool)
+    .await
+    .expect("age reservation");
+
+    let response = send(&app, "POST", &uri, &token, Some(key), None).await;
+    assert_eq!(response.0, axum::http::StatusCode::ACCEPTED, "{:?}", response.2);
+    assert_eq!(ops.starts(), 1, "the reclaimed key admits a new winner");
+    let record = db
+        .find_suppression_idempotency(WS, key)
+        .await
+        .expect("idempotency read")
+        .expect("idempotency row");
+    assert_eq!(record.result.as_ref().unwrap()["turnId"], "turn:fake-0001");
+    assert_eq!(record.attempt_id.as_deref(), Some(fake_attempt_id().as_str()));
 }
 
 // Value card
