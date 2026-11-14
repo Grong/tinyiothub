@@ -18,7 +18,7 @@ use tinyiothub_core::models::event::{Event, EventType};
 use tinyiothub_runtime::event_bus::EventBus;
 use tinyiothub_storage::Db;
 use tinyiothub_storage::assistant_schedule::AssistantSchedule;
-use tinyiothub_storage::suppression::OUTCOME_AUDIT_FAILED;
+use tinyiothub_storage::suppression::{OUTCOME_AUDIT_FAILED, SyncPending};
 
 use crate::domains::agent::event::types::AiEvent;
 use crate::domains::agent::orchestrator::callbacks::extract_payload;
@@ -184,12 +184,32 @@ impl TriggerRouter {
         let report = self.executor.execute(schedule.clone(), self.shutdown.clone()).await;
         let next_wake_at = now + ChronoDuration::seconds(i64::from(schedule.interval_seconds));
         let outcome = persisted_outcome(schedule.last_outcome.as_deref(), &report.outcome);
-        if let Err(error) = self
+        match self
             .db
             .mark_assistant_wake(&schedule.workspace_id, next_wake_at, now, &outcome)
             .await
         {
-            tracing::warn!(%error, workspace_id = %schedule.workspace_id, "assistant schedule: mark wake failed");
+            Ok(()) => {
+                // A committed skip leaves `SyncPending::Schedule` set until
+                // this writer succeeds; only then may the durable barrier be
+                // cleared. A failed write keeps it for every worker to see.
+                if report.outcome == WakeOutcome::Skipped
+                    && !report.session_key.is_empty()
+                    && let Err(error) = self
+                        .db
+                        .clear_sync_pending(&schedule.workspace_id, &report.session_key, SyncPending::Schedule)
+                        .await
+                {
+                    tracing::warn!(
+                        %error,
+                        workspace_id = %schedule.workspace_id,
+                        "assistant schedule: clear skip schedule barrier failed"
+                    );
+                }
+            }
+            Err(error) => {
+                tracing::warn!(%error, workspace_id = %schedule.workspace_id, "assistant schedule: mark wake failed");
+            }
         }
     }
 
@@ -925,5 +945,165 @@ mod tests {
         executor.release.notify_one();
         tokio::time::sleep(std::time::Duration::from_millis(50)).await;
         assert_eq!(executor.calls.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn committed_skip_reconciles_schedule_and_advances_from_the_tick() {
+        use crate::domains::agent::pool::AgentPool;
+        use crate::domains::agent::prompt::PromptMemorySource;
+        use crate::domains::agent::session::context::TurnContextRegistry;
+        use crate::domains::agent::session::events::test_support::RecordingSink;
+        use crate::domains::agent::session::runner::SessionRunner;
+        use crate::domains::agent::session::suppression::SuppressionMode;
+        use crate::domains::agent::session::suppression::registry::SnapshotProviderSlot;
+        use crate::domains::agent::session::todos::TodoStore;
+        use crate::domains::agent::session::wake::{WakeRunner, assistant_agent_id};
+        use tinyiothub_agent::port::attribution::{Attributable, ModelProviderKind, ProviderKind, Role};
+        use tinyiothub_agent::port::memory::NoopMemory;
+        use tinyiothub_agent::port::observer::NoopObserver;
+        use tinyiothub_agent::port::provider::{ChatRequest, ChatResponse, ModelProvider};
+        use tinyiothub_core::harness::{ExecutionMode, HarnessEvent};
+        use tinyiothub_core::memory::AgentMemory;
+
+        struct ScriptedProvider;
+
+        #[async_trait::async_trait]
+        impl ModelProvider for ScriptedProvider {
+            async fn chat(
+                &self,
+                _request: ChatRequest<'_>,
+                _model: &str,
+                _temperature: Option<f64>,
+            ) -> anyhow::Result<ChatResponse> {
+                Ok(ChatResponse {
+                    text: Some("ok".into()),
+                    tool_calls: vec![],
+                    usage: None,
+                    reasoning_content: None,
+                })
+            }
+        }
+
+        impl Attributable for ScriptedProvider {
+            fn role(&self) -> Role {
+                Role::Provider(ProviderKind::Model(ModelProviderKind::Custom))
+            }
+
+            fn alias(&self) -> &str {
+                "ScriptedProvider"
+            }
+        }
+
+        struct EmptyMemory;
+
+        #[async_trait::async_trait]
+        impl PromptMemorySource for EmptyMemory {
+            async fn list_active(&self, _workspace_id: &str, _agent_id: &str) -> anyhow::Result<Vec<AgentMemory>> {
+                Ok(Vec::new())
+            }
+
+            async fn record_load(&self, _id: &str) -> anyhow::Result<()> {
+                Ok(())
+            }
+        }
+
+        const WS: &str = "ws-skip-e2e";
+        let root = tempfile::tempdir().unwrap();
+        let db = Arc::new(
+            Db::new(tinyiothub_storage::test_helpers::test_pool().await)
+                .with_workspace_store_root(root.path().join("stores")),
+        );
+        tinyiothub_storage::seed::seed_system(&db).await.unwrap();
+        sqlx::query(
+            "INSERT INTO workspaces (id, name, tenant_id, created_at, updated_at) \
+             VALUES (?, 'workspace', 'tenant-default-001', 'now', 'now')",
+        )
+        .bind(WS)
+        .execute(db.pool())
+        .await
+        .unwrap();
+        db.create_workspace_store(WS).await.unwrap();
+        let now = ts(1_800_000_000);
+        db.ensure_assistant_schedule(WS, &assistant_agent_id(WS), now)
+            .await
+            .unwrap();
+        db.update_suppression_config(WS, Some(SuppressionMode::Enforce), None)
+            .await
+            .unwrap()
+            .expect("schedule row");
+
+        let agent_pool = Arc::new(
+            AgentPool::new(
+                &tinyiothub_core::config::AgentSettings::default(),
+                Arc::new(NoopMemory),
+                Arc::new(NoopObserver),
+                Arc::new(|| Ok(Box::new(ScriptedProvider))),
+            )
+            .unwrap(),
+        );
+        let sessions: Arc<dyn crate::domains::agent::session::events::SessionEventSink> =
+            Arc::new(RecordingSink::default());
+        let runner = Arc::new(SessionRunner::new(
+            sessions.clone(),
+            Arc::new(TurnContextRegistry::default()),
+        ));
+        let wake = Arc::new(
+            WakeRunner::from_parts(db.clone(), agent_pool, sessions, Arc::new(TodoStore::default()), runner)
+                .with_memory_source(Arc::new(EmptyMemory))
+                .with_snapshot_provider(Arc::new(SnapshotProviderSlot::with(
+                    tinyiothub_runtime::watch::live_state::WorkspaceSnapshot {
+                        v: 1,
+                        devices: vec![],
+                        total: 0,
+                    },
+                ))),
+        );
+        let router = Arc::new(TriggerRouter::new(db.clone(), wake));
+
+        for handle in router.tick(now).await {
+            handle.await.unwrap();
+        }
+        let first = db.get_assistant_schedule(WS).await.unwrap().unwrap();
+        assert_eq!(first.last_outcome.as_deref(), Some("completed"));
+
+        let second_at = now + chrono::Duration::seconds(300);
+        for handle in router.tick(second_at).await {
+            handle.await.unwrap();
+        }
+
+        let row = db.get_assistant_schedule(WS).await.unwrap().unwrap();
+        assert_eq!(row.last_outcome.as_deref(), Some("skipped"));
+        assert_eq!(
+            row.next_wake_at,
+            Some(second_at + chrono::Duration::seconds(300)),
+            "the schedule still advances from the tick with the configured interval"
+        );
+
+        let session_key = format!("agent:{WS}:{}/main", assistant_agent_id(WS));
+        let state = db
+            .load_suppression_state(WS, &session_key)
+            .await
+            .unwrap()
+            .expect("suppression row");
+        assert_eq!(state.latest_outcome, "skipped");
+        assert!(!state.schedule_sync_pending, "TriggerRouter reconciled Schedule");
+        assert!(!state.projection_sync_pending);
+        assert!(!state.notification_pending);
+        assert!(state.baseline_is_eligible());
+
+        let filter = tinyiothub_storage::harness_event::EventFilter {
+            session_id: Some(session_key.clone()),
+            run_id: None,
+            task_id: None,
+            execution_mode: ExecutionMode::Production,
+        };
+        let events: Vec<HarnessEvent> = db.session_event_page(WS, &filter, 0, 256).await.unwrap().events;
+        assert_eq!(
+            events
+                .iter()
+                .filter(|event| { event.event_type == "turn.completed" && event.payload_json["outcome"] == "skipped" })
+                .count(),
+            1
+        );
     }
 }
