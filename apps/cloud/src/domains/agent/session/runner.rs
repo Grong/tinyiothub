@@ -134,7 +134,7 @@ impl SessionRunner {
         observer: Option<Arc<dyn TurnObserver>>,
         cancel: Option<TurnCancellation>,
     ) -> TurnOutcome {
-        self.run_turn_tracked(agent, context, message, observer, cancel, None)
+        self.run_turn_tracked(agent, context, message, observer, cancel, None, None)
             .await
             .0
     }
@@ -143,9 +143,10 @@ impl SessionRunner {
     ///
     /// Planned-wake callers pass the durably allocated attempt so
     /// `turn.started`/`turn.completed` share the attempt-derived ids used by
-    /// the skip audit. The health evidence lets those callers refuse to install
-    /// a baseline when any event (in particular the terminal) was not
-    /// persisted.
+    /// the skip audit. `previous_attempt_id` links a changed-source replay's
+    /// new attempt to the committed skip it supersedes. The health evidence
+    /// lets those callers refuse to install a baseline when any event (in
+    /// particular the terminal) was not persisted.
     pub async fn run_turn_tracked(
         &self,
         agent: &dyn AgentLoop,
@@ -154,13 +155,16 @@ impl SessionRunner {
         observer: Option<Arc<dyn TurnObserver>>,
         cancel: Option<TurnCancellation>,
         attempt: Option<&WakeAttempt>,
+        previous_attempt_id: Option<&str>,
     ) -> (TurnOutcome, TurnEventHealth) {
         let _guard = self.contexts.set(context.clone());
         let mut health = TurnEventHealth::default();
-        if !self
-            .emit_turn_event(context, attempt, "turn.started", json!({ "turnId": &context.turn_id }))
-            .await
-        {
+        let mut started = json!({ "turnId": &context.turn_id });
+        if let Some(previous) = previous_attempt_id {
+            started["previousAttemptId"] = json!(previous);
+            started["supersedes"] = json!(true);
+        }
+        if !self.emit_turn_event(context, attempt, "turn.started", started).await {
             health.failed += 1;
         }
 

@@ -31,10 +31,10 @@ use crate::domains::agent::session::suppression::SuppressionMode;
 use crate::domains::agent::session::suppression::audit::{
     AtomicSkipAudit, PlannedWake, SkipAuditRequest, WakeAttempt, attempt_event,
 };
-use crate::domains::agent::session::suppression::contract::SourceSnapshot;
-use crate::domains::agent::session::suppression::preflight::{PreflightDecision, SuppressionService};
+use crate::domains::agent::session::suppression::error::SuppressionError;
+use crate::domains::agent::session::suppression::preflight::{PreflightDecision, SkipVeto, SuppressionService};
 use crate::domains::agent::session::suppression::registry::{
-    self, SemanticSessionEvent, SourceContext, SourceRegistry, WorkspaceSnapshotProvider,
+    self, SemanticSessionEvent, SessionEventsCapture, SourceContext, SourceRegistry, WorkspaceSnapshotProvider,
 };
 use crate::domains::agent::session::todos::TodoStore;
 use crate::domains::agent::session::types::{PermissionMode, Todo, TodoStatus};
@@ -92,14 +92,50 @@ pub const FORCE_FULL_REASON_RECONCILE: &str = "reconcile_requested";
 /// baseline and the skip audit. Rebuilding it between decision and commit is
 /// forbidden.
 pub(crate) struct SuppressionObservation {
-    registry: Arc<SourceRegistry>,
-    decision: PreflightDecision,
     /// The durable state row this decision was computed from (or its initial
     /// in-memory shape). `begin_full_attempt`/`begin_skip_attempt` CAS against
     /// this row.
     state: SuppressionState,
+    /// Present only when the pre-turn capture and decision could be built.
+    captured: Option<CapturedPreflight>,
     control_cursor: i64,
     observed_at: DateTime<Utc>,
+    /// Why the decision is unavailable. The Turn is still durably fenced but
+    /// it can never skip or install a baseline.
+    unavailable_reason: Option<String>,
+    /// True when the user cursor could not be read. The Turn may still install
+    /// a baseline from the pre-turn capture, but it must never skip.
+    skip_disabled: bool,
+}
+
+struct CapturedPreflight {
+    registry: Arc<SourceRegistry>,
+    decision: PreflightDecision,
+}
+
+/// Durable link from a replayed full attempt to the committed skip it
+/// supersedes (`previousAttemptId` / `supersedes` in the event stream).
+#[derive(Clone, Debug)]
+struct ReplayLink {
+    previous_attempt_id: String,
+    supersedes: bool,
+}
+
+impl SuppressionObservation {
+    fn decision(&self) -> Option<&PreflightDecision> {
+        self.captured.as_ref().map(|captured| &captured.decision)
+    }
+}
+
+fn fencing_observation(state: SuppressionState, observed_at: DateTime<Utc>, reason: &str) -> SuppressionObservation {
+    SuppressionObservation {
+        state,
+        captured: None,
+        control_cursor: 0,
+        observed_at,
+        unavailable_reason: Some(reason.to_string()),
+        skip_disabled: true,
+    }
 }
 
 impl WakeRunner {
@@ -129,33 +165,70 @@ impl WakeRunner {
         .await
     }
 
+    /// The wake-level Session Events read. Test-only fault injection lets the
+    /// lifecycle tests exercise a transient read failure without breaking the
+    /// `session.events` Source adapter (which has its own read).
+    async fn load_wake_session_events(
+        &self,
+        workspace_id: &str,
+        session_key: &str,
+    ) -> Result<SessionEventsCapture, SuppressionError> {
+        #[cfg(test)]
+        if self.fail_session_events_read.load(std::sync::atomic::Ordering::SeqCst) {
+            return Err(SuppressionError::new(
+                "source_unavailable",
+                "injected session events read failure",
+                "retry the wake",
+            ));
+        }
+        registry::load_session_events(&self.db, workspace_id, session_key).await
+    }
+
     /// Read-only suppression preflight observation.
     ///
     /// Exactly one registry and capture is built per wake. The caller supplies
     /// the user cursor from the same Session Events read used to build the
     /// full prompt, so preflight adds no second Session Events pass.
+    ///
+    /// Returns `None` only when no suppression config exists or the mode is
+    /// `off`. Whenever suppression is configured, *some* observation is
+    /// returned: even an unreadable config/state/capture produces a
+    /// fencing-only observation, so a failed preflight can never leave the old
+    /// baseline eligible for the next skip.
     async fn observe_suppression(
         &self,
         workspace_id: &str,
         session_key: &str,
-        current_user_seq: i64,
+        current_user_seq: Option<i64>,
     ) -> Option<SuppressionObservation> {
         let config = match self.db.get_suppression_config(workspace_id).await {
             Ok(Some(config)) => config,
             Ok(None) => return None,
             Err(error) => {
                 tracing::warn!(%error, %workspace_id, "suppression preflight: config read failed");
-                return None;
+                let state = self
+                    .db
+                    .load_suppression_state(workspace_id, session_key)
+                    .await
+                    .ok()
+                    .flatten()
+                    .unwrap_or_else(|| SuppressionState::initial(workspace_id, session_key));
+                return Some(fencing_observation(state, chrono::Utc::now(), "config_read_failed"));
             }
         };
         if config.mode == SuppressionMode::Off {
             return None;
         }
         let state = match self.db.load_suppression_state(workspace_id, session_key).await {
-            Ok(state) => state,
+            Ok(Some(state)) => state,
+            Ok(None) => SuppressionState::initial(workspace_id, session_key),
             Err(error) => {
                 tracing::warn!(%error, %workspace_id, "suppression preflight: state read failed");
-                return None;
+                return Some(fencing_observation(
+                    SuppressionState::initial(workspace_id, session_key),
+                    chrono::Utc::now(),
+                    "state_read_failed",
+                ));
             }
         };
         let registry = match registry::default_sources(
@@ -171,7 +244,7 @@ impl WakeRunner {
                     %workspace_id,
                     "suppression preflight: registry build failed"
                 );
-                return None;
+                return Some(fencing_observation(state, chrono::Utc::now(), "registry_build_failed"));
             }
         };
         let observed_at = chrono::Utc::now();
@@ -183,38 +256,49 @@ impl WakeRunner {
             mode: config.mode.into(),
         };
         let service = SuppressionService::new(registry.clone());
-        match service
-            .evaluate(context, state.as_ref(), &config, current_user_seq)
+        let mut decision = match service
+            .evaluate(context, Some(&state), &config, current_user_seq.unwrap_or(0))
             .await
         {
-            Ok(decision) => {
-                tracing::info!(
-                    workspace_id = %workspace_id,
-                    would_skip = decision.would_skip,
-                    vetoes = ?decision.vetoes,
-                    fence = %decision.fence,
-                    baseline_state_id = decision.baseline_state_id.as_deref().unwrap_or(""),
-                    config_version = decision.config_version,
-                    mode = %config.mode.as_str(),
-                    "suppression preflight observed"
-                );
-                Some(SuppressionObservation {
-                    registry,
-                    decision,
-                    state: state.unwrap_or_else(|| SuppressionState::initial(workspace_id, session_key)),
-                    control_cursor: current_user_seq,
-                    observed_at,
-                })
-            }
+            Ok(decision) => decision,
             Err(error) => {
                 tracing::warn!(
                     code = %error.code,
                     %workspace_id,
-                    "suppression preflight failed; full turn unchanged"
+                    "suppression preflight failed; fenced full turn"
                 );
-                None
+                return Some(fencing_observation(state, observed_at, "preflight_capture_failed"));
+            }
+        };
+        // An unknown cursor must never authorize a skip; the pre-turn capture
+        // is still valid baseline evidence, but its control cursor is unknown,
+        // so record 0 (the conservative preflight answer).
+        let skip_disabled = current_user_seq.is_none();
+        if skip_disabled {
+            decision.would_skip = false;
+            if !decision.vetoes.contains(&SkipVeto::NewUserInput) {
+                decision.vetoes.push(SkipVeto::NewUserInput);
             }
         }
+        tracing::info!(
+            workspace_id = %workspace_id,
+            would_skip = decision.would_skip,
+            vetoes = ?decision.vetoes,
+            fence = %decision.fence,
+            baseline_state_id = decision.baseline_state_id.as_deref().unwrap_or(""),
+            config_version = decision.config_version,
+            mode = %config.mode.as_str(),
+            skip_disabled,
+            "suppression preflight observed"
+        );
+        Some(SuppressionObservation {
+            state,
+            captured: Some(CapturedPreflight { registry, decision }),
+            control_cursor: current_user_seq.unwrap_or(0),
+            observed_at,
+            unavailable_reason: None,
+            skip_disabled,
+        })
     }
 }
 
@@ -276,6 +360,9 @@ pub struct WakeRunner {
     memory_source: Option<Arc<dyn PromptMemorySource>>,
     /// Existing live workspace snapshot; injected by the composition layer.
     snapshot_provider: Option<Arc<dyn WorkspaceSnapshotProvider>>,
+    /// Test-only fault injection for the wake-level Session Events read.
+    #[cfg(test)]
+    fail_session_events_read: std::sync::atomic::AtomicBool,
 }
 
 /// Build the memory port over the platform database, matching the chat
@@ -324,6 +411,8 @@ impl WakeRunner {
             system_prompts: runtime.system_prompts.clone(),
             memory_source,
             snapshot_provider: None,
+            #[cfg(test)]
+            fail_session_events_read: std::sync::atomic::AtomicBool::new(false),
         }
     }
 
@@ -344,6 +433,8 @@ impl WakeRunner {
             system_prompts: Arc::new(tinyiothub_core::config::SystemPromptsConfig::default()),
             memory_source,
             snapshot_provider: None,
+            #[cfg(test)]
+            fail_session_events_read: std::sync::atomic::AtomicBool::new(false),
         }
     }
 
@@ -403,29 +494,28 @@ impl WakeRunner {
         // One Session Events read per wake: the same capture supplies the
         // preflight user cursor and the prompt's semantic events.
         let session_key = format!("agent:{}:{}/main", schedule.workspace_id, schedule.assistant_id);
-        let (semantic_events, control_cursor) =
-            match registry::load_session_events(&self.db, &schedule.workspace_id, &session_key).await {
-                Ok(capture) => (capture.events, Some(capture.control_cursor)),
-                Err(error) => {
-                    tracing::warn!(
-                        code = %error.code,
-                        what = %error.what,
-                        workspace_id = %schedule.workspace_id,
-                        "failed to load semantic session events for full turn"
-                    );
-                    (Vec::new(), None)
-                }
-            };
+        let (semantic_events, control_cursor) = match self
+            .load_wake_session_events(&schedule.workspace_id, &session_key)
+            .await
+        {
+            Ok(capture) => (capture.events, Some(capture.control_cursor)),
+            Err(error) => {
+                tracing::warn!(
+                    code = %error.code,
+                    what = %error.what,
+                    workspace_id = %schedule.workspace_id,
+                    "failed to load semantic session events; fenced full turn"
+                );
+                (Vec::new(), None)
+            }
+        };
         // One shared registry/capture per wake survives until the Turn ends;
         // the same decision serves the durable skip audit and the full-Turn
-        // baseline.
-        let observation = match control_cursor {
-            Some(cursor) => {
-                self.observe_suppression(&schedule.workspace_id, &session_key, cursor)
-                    .await
-            }
-            None => None,
-        };
+        // baseline. A configured workspace always yields an observation, even
+        // when the cursor/capture failed, so the Turn is fenced.
+        let observation = self
+            .observe_suppression(&schedule.workspace_id, &session_key, control_cursor)
+            .await;
         let prompt = match self
             .wake_prompt(
                 &schedule.workspace_id,
@@ -558,7 +648,7 @@ impl WakeRunner {
         };
         let assistant_id = assistant_agent_id(&wake.workspace_id);
         let session_key = format!("agent:{}:{assistant_id}/main", wake.workspace_id);
-        let semantic_events = match registry::load_session_events(&self.db, &wake.workspace_id, &session_key).await {
+        let semantic_events = match self.load_wake_session_events(&wake.workspace_id, &session_key).await {
             Ok(capture) => capture.events,
             Err(error) => {
                 tracing::warn!(
@@ -745,9 +835,17 @@ impl WakeRunner {
         // The skip/replay decision happens before any lifecycle write: the
         // committed skip writes the complete six-event lifecycle atomically, so
         // the wake must not append its first three events separately.
+        //
+        // A fenced observation (capture/cursor unavailable) never attempts a
+        // skip. A changed-source replay carries its linkage into the full Turn.
+        let mut replay_link: Option<ReplayLink> = None;
         if let (Some(wake), Some(observation)) = (planned_wake.as_ref(), origin.suppression)
             && origin.force_full_reason.is_none()
-            && let Some(report) = self.try_suppression_skip(&session, wake, observation).await
+            && !observation.skip_disabled
+            && let Some(decision) = observation.decision()
+            && let Some(report) = self
+                .try_suppression_skip(&session, wake, observation, decision, &mut replay_link)
+                .await
         {
             return report;
         }
@@ -775,8 +873,9 @@ impl WakeRunner {
                     }
                 }
             }
-            // A planned wake without an observation (off mode or a failed
-            // preflight) still keeps its attempt-derived lifecycle identity.
+            // Only a genuinely unconfigured/off wake uses the predicted
+            // identity: configured workspaces always have an observation and
+            // therefore a durable allocation.
             (Some(wake), None) => Some(wake.attempt(self.next_attempt_no(origin.workspace_id, &session_key).await)),
             (None, _) => None,
         };
@@ -805,13 +904,13 @@ impl WakeRunner {
                 json!({ "trigger": origin.trigger, "sourceId": trigger_source_id }),
             )
             .await;
+        let mut dispatched = json!({ "wakeEventId": &wake_event_id });
+        if let Some(link) = &replay_link {
+            dispatched["previousAttemptId"] = json!(&link.previous_attempt_id);
+            dispatched["supersedes"] = json!(link.supersedes);
+        }
         events_healthy &= self
-            .emit_lifecycle(
-                &context,
-                attempt.as_ref(),
-                "wake.dispatched",
-                json!({ "wakeEventId": &wake_event_id }),
-            )
+            .emit_lifecycle(&context, attempt.as_ref(), "wake.dispatched", dispatched)
             .await;
         events_healthy &= self
             .emit_lifecycle(
@@ -850,6 +949,7 @@ impl WakeRunner {
                         None,
                         Some(TurnCancellation::schedule(cancel.clone())),
                         attempt.as_ref(),
+                        replay_link.as_ref().map(|link| link.previous_attempt_id.as_str()),
                     )
                     .await,
             );
@@ -913,49 +1013,54 @@ impl WakeRunner {
     /// run. A shadow decision never reaches the skip path: the session-event
     /// capture is reused and `ensure_skip_allowed`/`begin_skip_attempt` are the
     /// durable gates.
+    ///
+    /// A changed-source replay fills `replay_link` so the new full attempt's
+    /// event stream names the committed skip it supersedes.
     async fn try_suppression_skip(
         &self,
         session: &Session,
         wake: &PlannedWake,
         observation: &SuppressionObservation,
+        decision: &PreflightDecision,
+        replay_link: &mut Option<ReplayLink>,
     ) -> Option<WakeReport> {
         let session_key = session.session_key.clone();
         let audit = AtomicSkipAudit::new(self.db.clone());
         // Replay first: an unchanged crash replay returns the committed skip
         // without a second Turn; a changed replay links a new full attempt.
-        let replayed_skip = match audit.replay(wake, &observation.decision).await {
-            Ok(result) if result.outcome() == "skipped" => result.committed_skip().cloned(),
-            Ok(_) => return None,
+        let replay = match audit.replay(wake, decision).await {
+            Ok(result) => result,
             Err(error) => {
                 tracing::warn!(%error, %session_key, "suppression: skip replay failed; running a full Turn");
                 return None;
             }
         };
-        if replayed_skip.is_none() {
-            if let Err(error) = AtomicSkipAudit::ensure_skip_allowed(&observation.decision) {
-                tracing::warn!(%error, %session_key, "suppression: decision is not skip-eligible");
-                return None;
-            }
-            let skip_attempt = match self.db.begin_skip_attempt(&session_key, &observation.state).await {
-                Ok(attempt) => attempt,
-                Err(error) => {
-                    // No durable audit fence was written: a concurrent change
-                    // (off/shadow/config/baseline) falls back to a full Turn.
-                    tracing::warn!(%error, %session_key, "suppression: begin skip attempt rejected; running a full Turn");
+        if replay.outcome() == "skipped" {
+            if replay.committed_skip().is_none() {
+                // Skip-eligible: allocate the durable audit fence and commit.
+                if let Err(error) = AtomicSkipAudit::ensure_skip_allowed(decision) {
+                    tracing::warn!(%error, %session_key, "suppression: decision is not skip-eligible");
                     return None;
                 }
-            };
-            match audit
-                .commit(SkipAuditRequest {
-                    wake,
-                    attempt: &skip_attempt,
-                    decision: &observation.decision,
-                    checked_at: chrono::Utc::now(),
-                })
-                .await
-            {
-                Ok(_) => {}
-                Err(error) => {
+                let skip_attempt = match self.db.begin_skip_attempt(&session_key, &observation.state).await {
+                    Ok(attempt) => attempt,
+                    Err(error) => {
+                        // No durable audit fence was written: a concurrent
+                        // change (off/shadow/config/baseline) falls back to a
+                        // full Turn.
+                        tracing::warn!(%error, %session_key, "suppression: begin skip attempt rejected; running a full Turn");
+                        return None;
+                    }
+                };
+                if let Err(error) = audit
+                    .commit(SkipAuditRequest {
+                        wake,
+                        attempt: &skip_attempt,
+                        decision,
+                        checked_at: chrono::Utc::now(),
+                    })
+                    .await
+                {
                     // The durable `audit_in_progress` fence stays visible for
                     // typed recovery; TriggerRouter persists `audit_failed`.
                     tracing::warn!(%error, %session_key, "suppression: atomic skip commit failed");
@@ -965,12 +1070,20 @@ impl WakeRunner {
                     });
                 }
             }
+            self.reconcile_committed_skip(session, decision).await;
+            return Some(WakeReport {
+                session_key,
+                outcome: WakeOutcome::Skipped,
+            });
         }
-        self.reconcile_committed_skip(session, observation).await;
-        Some(WakeReport {
-            session_key,
-            outcome: WakeOutcome::Skipped,
-        })
+        // Changed replay: the new full attempt must name the committed skip.
+        if let Some(previous) = replay.previous_attempt_id() {
+            *replay_link = Some(ReplayLink {
+                previous_attempt_id: previous.to_string(),
+                supersedes: replay.supersedes,
+            });
+        }
+        None
     }
 
     /// Reconcile the non-Schedule side effects of a committed skip.
@@ -980,7 +1093,7 @@ impl WakeRunner {
     /// with the session key from this wake's report. A failed projection write
     /// keeps its fence; the committed workspace events are the SSE source of
     /// truth (clients resume from the DB high watermark).
-    async fn reconcile_committed_skip(&self, session: &Session, observation: &SuppressionObservation) {
+    async fn reconcile_committed_skip(&self, session: &Session, decision: &PreflightDecision) {
         let session_key = &session.session_key;
         let workspace_id = &session.workspace_id;
         let mut ended = session.clone();
@@ -1007,8 +1120,8 @@ impl WakeRunner {
         }
         tracing::info!(
             %session_key,
-            baseline_state_id = observation.decision.baseline_state_id.as_deref().unwrap_or(""),
-            config_version = observation.decision.config_version,
+            baseline_state_id = decision.baseline_state_id.as_deref().unwrap_or(""),
+            config_version = decision.config_version,
             "suppression: committed skip reconciled"
         );
     }
@@ -1024,18 +1137,25 @@ impl WakeRunner {
         outcome: WakeOutcome,
         events_ok: bool,
     ) -> WakeOutcome {
-        let all_sources_available = !observation.decision.snapshot.is_empty()
-            && observation.decision.snapshot.iter().all(|snapshot| snapshot.available);
-        if events_ok && all_sources_available && matches!(outcome, WakeOutcome::Completed) {
+        let captured = observation.captured.as_ref();
+        let all_sources_available = captured.is_some_and(|captured| {
+            !captured.decision.snapshot.is_empty()
+                && captured.decision.snapshot.iter().all(|snapshot| snapshot.available)
+        });
+        if events_ok
+            && all_sources_available
+            && matches!(outcome, WakeOutcome::Completed)
+            && let Some(captured) = captured
+        {
             let state_id = format!("state:{}", durable.attempt_id);
             let turn_id = attempt.map_or("", |attempt| attempt.turn_id.as_str());
             let completion = FullAttemptCompletion {
                 state_id: state_id.clone(),
                 state_version: TURN_STATE_VERSION,
-                registry_version: observation.registry.registry_version(),
-                config_version: observation.decision.config_version,
+                registry_version: captured.registry.registry_version(),
+                config_version: captured.decision.config_version,
                 control_cursor: observation.control_cursor,
-                turn_state: baseline_turn_state(&state_id, turn_id, observation, &observation.decision.snapshot),
+                turn_state: baseline_turn_state(&state_id, turn_id, observation, captured),
                 observed_at: observation.observed_at,
             };
             match self
@@ -1054,7 +1174,12 @@ impl WakeRunner {
                 }
             }
         } else {
-            let reason = if !events_ok {
+            let reason = if captured.is_none() {
+                observation
+                    .unavailable_reason
+                    .as_deref()
+                    .unwrap_or("preflight_unavailable")
+            } else if !events_ok {
                 "event_write_failed"
             } else if !all_sources_available {
                 "source_unavailable"
@@ -1133,14 +1258,16 @@ fn baseline_turn_state(
     state_id: &str,
     turn_id: &str,
     observation: &SuppressionObservation,
-    snapshot: &[SourceSnapshot],
+    captured: &CapturedPreflight,
 ) -> Value {
     json!({
         "stateId": state_id,
         "stateVersion": TURN_STATE_VERSION,
         "turnId": turn_id,
         "observedAt": observation.observed_at.to_rfc3339_opts(chrono::SecondsFormat::Secs, true),
-        "sources": snapshot
+        "sources": captured
+            .decision
+            .snapshot
             .iter()
             .map(|source| {
                 json!({
@@ -1154,8 +1281,8 @@ fn baseline_turn_state(
             })
             .collect::<Vec<_>>(),
         "controlCursor": observation.control_cursor,
-        "registryVersion": observation.registry.registry_version(),
-        "mode": observation.decision.mode.as_str(),
+        "registryVersion": captured.registry.registry_version(),
+        "mode": captured.decision.mode.as_str(),
     })
 }
 
@@ -2219,6 +2346,12 @@ mod tests {
                 .count()
         }
 
+        fn write_workspace_source(&self, name: &str, content: &str) {
+            let dir = self._prompts.path().join("ws");
+            std::fs::create_dir_all(&dir).expect("workspace source dir");
+            std::fs::write(dir.join(name), content).expect("workspace source write");
+        }
+
         fn restarted_wake(&self) -> Arc<WakeRunner> {
             let sessions: Arc<dyn SessionEventSink> = self.sink.clone();
             let runner = Arc::new(SessionRunner::new(
@@ -2483,5 +2616,124 @@ mod tests {
         assert_eq!(fixture.requests.lock().await.len(), 2);
         assert_eq!(fixture.skipped_turn_count().await, 0);
         assert_eq!(fixture.state().await.latest_outcome, "full_completed");
+    }
+
+    #[tokio::test]
+    async fn preflight_read_failure_fences_a_failed_full_turn() {
+        let fixture = lifecycle_fixture(SuppressionMode::Enforce, None, true).await;
+        assert_eq!(fixture.run().await.outcome, WakeOutcome::Completed);
+        assert!(fixture.state().await.baseline_is_eligible());
+
+        // The wake-level Session Events read fails, so no decision/cursor can
+        // be built. The Turn must still be durably fenced and settled.
+        fixture.wake.fail_session_events_read.store(true, Ordering::SeqCst);
+        fixture.fail_provider.store(true, Ordering::SeqCst);
+        let report = fixture.run().await;
+        assert!(matches!(report.outcome, WakeOutcome::Failed { .. }));
+
+        fixture.wake.fail_session_events_read.store(false, Ordering::SeqCst);
+        let state = fixture.state().await;
+        assert_eq!(state.latest_outcome, "full_failed");
+        assert!(!state.full_attempt_in_progress);
+        assert!(!state.baseline_is_eligible());
+
+        let decision = fixture.preflight().await;
+        assert!(!decision.would_skip);
+        assert_eq!(decision.fence, "full_failed");
+    }
+
+    #[tokio::test]
+    async fn successful_turn_with_preflight_read_failure_installs_a_durable_baseline() {
+        let fixture = lifecycle_fixture(SuppressionMode::Enforce, None, true).await;
+        assert_eq!(fixture.run().await.outcome, WakeOutcome::Completed);
+        assert_eq!(fixture.state().await.attempt_no, 1);
+
+        // Session-events read failure only affects the wake-level cursor, not
+        // the `session.events` Source capture; the pre-turn snapshot is still
+        // valid baseline evidence.
+        fixture.wake.fail_session_events_read.store(true, Ordering::SeqCst);
+        assert_eq!(fixture.run().await.outcome, WakeOutcome::Completed);
+        fixture.wake.fail_session_events_read.store(false, Ordering::SeqCst);
+
+        let state = fixture.state().await;
+        assert_eq!(
+            state.attempt_no, 2,
+            "a configured workspace must use the durable allocation, never a predicted attempt"
+        );
+        assert_eq!(state.latest_outcome, "full_completed");
+        assert!(state.baseline_state_id.is_some());
+        assert!(state.baseline_is_eligible());
+    }
+
+    #[tokio::test]
+    async fn fencing_only_observation_settles_the_full_attempt_without_a_baseline() {
+        let fixture = lifecycle_fixture(SuppressionMode::Enforce, None, true).await;
+        let session_key = lifecycle_session_key();
+        let baseline = fixture
+            .db
+            .load_suppression_state("ws", &session_key)
+            .await
+            .expect("state")
+            .unwrap_or_else(|| tinyiothub_storage::suppression::SuppressionState::initial("ws", &session_key));
+        let durable = fixture
+            .db
+            .begin_full_attempt(&session_key, &baseline)
+            .await
+            .expect("full attempt");
+
+        let observation = super::fencing_observation(baseline, chrono::Utc::now(), "preflight_capture_failed");
+        let outcome = fixture
+            .wake
+            .settle_full_attempt("ws", &durable, &observation, None, WakeOutcome::Completed, true)
+            .await;
+
+        assert_eq!(outcome, WakeOutcome::Completed, "the model Turn itself completed");
+        let state = fixture.state().await;
+        assert_eq!(state.latest_outcome, "full_failed");
+        assert_eq!(state.last_error.as_deref(), Some("preflight_capture_failed"));
+        assert!(state.baseline_state_id.is_none());
+        assert!(!state.full_attempt_in_progress);
+        assert!(!state.baseline_is_eligible());
+    }
+
+    #[tokio::test]
+    async fn changed_replay_links_the_new_full_attempt_to_the_committed_skip() {
+        let fixture = lifecycle_fixture(SuppressionMode::Enforce, None, true).await;
+        assert_eq!(fixture.run().await.outcome, WakeOutcome::Completed);
+        assert_eq!(fixture.run().await.outcome, WakeOutcome::Skipped);
+        let skip_attempt_id = fixture
+            .state()
+            .await
+            .latest_attempt_id
+            .expect("committed skip attempt id");
+        assert_eq!(fixture.skipped_turn_count().await, 1);
+
+        // Change a Source after the committed skip: replay must run a full
+        // Turn linked to the same planned wake.
+        fixture.write_workspace_source("TURN_BRIEF.md", "changed after the committed skip");
+        assert_eq!(fixture.run().await.outcome, WakeOutcome::Completed);
+
+        let events = fixture.sink.events.lock().await;
+        let started = events
+            .iter()
+            .rev()
+            .find(|event| event.event_type == "turn.started")
+            .expect("turn.started");
+        assert_eq!(
+            started.payload_json["previousAttemptId"],
+            serde_json::json!(skip_attempt_id)
+        );
+        assert_eq!(started.payload_json["supersedes"], serde_json::json!(true));
+
+        let dispatched = events
+            .iter()
+            .rev()
+            .find(|event| event.event_type == "wake.dispatched")
+            .expect("wake.dispatched");
+        assert_eq!(
+            dispatched.payload_json["previousAttemptId"],
+            serde_json::json!(skip_attempt_id)
+        );
+        assert_eq!(dispatched.payload_json["supersedes"], serde_json::json!(true));
     }
 }
