@@ -385,10 +385,16 @@ impl SessionRunner {
                     "usage": &usage
                 });
                 if let Some(cancellation) = cancellation {
-                    payload["error"] = json!(&cancellation.reason);
+                    let reason = super::suppression::error::sanitize_public_text(&cancellation.reason);
+                    payload["error"] = json!(&reason);
+                    payload["errorMessage"] = json!(&reason);
                     payload["source"] = json!(&cancellation.source);
                 } else {
-                    payload["error"] = json!(&error);
+                    // Async failures carry the safe summary the existing
+                    // frontend renders, without payloads, paths or credentials.
+                    let message = super::suppression::error::sanitize_public_text(&error);
+                    payload["error"] = json!(&message);
+                    payload["errorMessage"] = json!(&message);
                     payload["source"] = json!("system");
                 }
                 health.terminal_written = self.emit_turn_event(context, attempt, "turn.completed", payload).await;

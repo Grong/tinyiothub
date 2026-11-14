@@ -226,7 +226,42 @@ impl TriggerRouter {
         );
     }
 
+    /// Startup/restart recovery (ruling R16).
+    ///
+    /// Settle stale full/audit fences and reconcile committed skip barriers
+    /// before the first schedule tick. Run independently per workspace so one
+    /// corrupt store cannot block the others.
+    pub async fn recover_suppression(self: &Arc<Self>) {
+        let workspaces = match self.db.find_all_workspace_ids().await {
+            Ok(workspaces) => workspaces,
+            Err(error) => {
+                tracing::warn!(%error, "suppression startup recovery: list workspaces failed");
+                return;
+            }
+        };
+        for workspace_id in workspaces {
+            let reports = self.executor.recover_suppression(&workspace_id).await;
+            for report in reports {
+                tracing::info!(
+                    workspace_id = %report.workspace_id,
+                    replayed_committed_skip = report.replayed_committed_skip,
+                    settled_full_attempt = report.settled_full_attempt.as_deref().unwrap_or(""),
+                    settled_audit_attempt = report.settled_audit_attempt.as_deref().unwrap_or(""),
+                    cleared = ?report.cleared,
+                    alerts = report.alerts.len(),
+                    "suppression startup recovery settled a workspace"
+                );
+            }
+        }
+    }
+
     pub fn start(self: Arc<Self>) -> tokio::task::JoinHandle<Result<(), crate::shared::error::Error>> {
+        // R16: settle fences left by a previous process as soon as the router
+        // starts. A racing scheduled tick still hits the durable CAS gates.
+        let recovery_router = Arc::clone(&self);
+        tokio::spawn(async move {
+            recovery_router.recover_suppression().await;
+        });
         // 先同步订阅再 spawn，保证 `start` 返回时新订阅已存在——调用方随后
         // 关闭旧的报警桥，窗口内不丢告警（broadcast 会为已订阅 receiver 缓冲）。
         if let Some(bus) = self.event_bus.clone() {
@@ -524,6 +559,8 @@ mod tests {
         calls: AtomicUsize,
         workspaces: Mutex<Vec<String>>,
         events: Mutex<Vec<EventWake>>,
+        recoveries: AtomicUsize,
+        recovered_workspaces: Mutex<Vec<String>>,
     }
 
     #[async_trait::async_trait]
@@ -543,6 +580,15 @@ mod tests {
                 session_key: String::new(),
                 outcome: crate::domains::agent::session::wake::WakeOutcome::Completed,
             }
+        }
+
+        async fn recover_suppression(
+            &self,
+            workspace_id: &str,
+        ) -> Vec<crate::domains::agent::session::suppression::audit::RecoveryReport> {
+            self.recoveries.fetch_add(1, Ordering::SeqCst);
+            self.recovered_workspaces.lock().await.push(workspace_id.to_string());
+            Vec::new()
         }
     }
 
@@ -649,6 +695,37 @@ mod tests {
 
     fn ts(secs: i64) -> DateTime<Utc> {
         Utc.timestamp_opt(secs, 0).single().unwrap()
+    }
+
+    #[tokio::test]
+    async fn startup_recovery_runs_for_every_workspace() {
+        let db = Arc::new(test_db().await);
+        tinyiothub_storage::seed::seed_system(&db)
+            .await
+            .expect("seed system tenant before inserting the workspace");
+        sqlx::query(
+            "INSERT INTO workspaces (id, name, tenant_id, created_at, updated_at) \
+             VALUES ('ws-recover', 'workspace', 'tenant-default-001', 'now', 'now')",
+        )
+        .execute(db.pool())
+        .await
+        .unwrap();
+        let expected = db.find_all_workspace_ids().await.expect("workspaces");
+        let executor = Arc::new(RecordingExecutor::default());
+        let router = Arc::new(TriggerRouter::new(db.clone(), executor.clone()));
+
+        router.recover_suppression().await;
+
+        assert_eq!(
+            executor.recoveries.load(Ordering::SeqCst),
+            expected.len(),
+            "startup recovery must inspect every persisted workspace"
+        );
+        let recovered = executor.recovered_workspaces.lock().await;
+        for workspace_id in expected {
+            assert!(recovered.contains(&workspace_id), "missing {workspace_id}");
+        }
+        assert!(recovered.iter().any(|workspace| workspace == "ws-recover"));
     }
 
     fn alarm(severity: &str) -> AiEvent {

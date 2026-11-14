@@ -664,20 +664,6 @@ pub struct SuppressionReportDto {
     pub turn: Option<SuppressionTurnDto>,
 }
 
-/// Only a bare snake_case token may leave the backend as an alert code.
-fn safe_error_code(value: Option<&str>) -> Option<String> {
-    let value = value?.trim();
-    if !value.is_empty()
-        && value
-            .chars()
-            .all(|character| character.is_ascii_lowercase() || character.is_ascii_digit() || character == '_')
-    {
-        Some(value.to_string())
-    } else {
-        None
-    }
-}
-
 pub async fn get_suppression_preflight(
     State(state): State<AgentState>,
     Extension(claims): Extension<Claims>,
@@ -805,9 +791,15 @@ pub async fn get_suppression_report(
             })
             .collect(),
         metrics: SuppressionMetricsDto { last_turn },
-        alerts: SuppressionAlertDto {
-            active: state_row.last_error.is_some() || state_row.full_failed || state_row.audit_in_progress,
-            code: safe_error_code(state_row.last_error.as_deref()),
+        alerts: {
+            // Real errors and audit fences only: `full_failed` alone is the
+            // baseline-ineligibility marker, not an alert (a deliberate
+            // off-mode reconcile keeps it set with no active alert).
+            let activity = crate::domains::agent::session::suppression::error::alert_activity(&state_row);
+            SuppressionAlertDto {
+                active: activity.active,
+                code: activity.code,
+            }
         },
         notifications: SuppressionNotificationDto {
             pending: state_row.notification_pending,

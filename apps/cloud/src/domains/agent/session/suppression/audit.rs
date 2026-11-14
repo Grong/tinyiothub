@@ -20,9 +20,13 @@ use sha2::{Digest, Sha256};
 use tinyiothub_core::harness::{ExecutionMode, HarnessEventInput};
 use tinyiothub_storage::Db;
 use tinyiothub_storage::error::{DbError, Result};
-use tinyiothub_storage::suppression::{CommittedSkip, OUTCOME_SKIPPED, SkipAttempt, SuppressionState};
+use tinyiothub_storage::suppression::{
+    CommittedSkip, OUTCOME_FULL_IN_PROGRESS, OUTCOME_SKIP_IN_PROGRESS, OUTCOME_SKIPPED, SkipAttempt, SuppressionState,
+    SyncPending,
+};
 use uuid::Uuid;
 
+use super::error::{Attempt, ErrorCode, Reconcile, RecoveryOutcome, SuppressionAlert, recover};
 use super::preflight::{FENCE_SYNC_PENDING, PreflightDecision};
 use crate::domains::agent::session::context::TurnContext;
 use crate::domains::agent::session::events::{SESSION_EVENT_SCHEMA_V, session_started_payload};
@@ -473,10 +477,579 @@ fn committed_turn_id(skip: &CommittedSkip) -> Option<String> {
         .map(ToString::to_string)
 }
 
+/// Post-commit notification consumer.
+///
+/// Production notifies the SSE hub. Tests inject failures to prove a committed
+/// skip is never rolled back: the barrier stays set and clients resume from
+/// the high watermark.
+#[async_trait::async_trait]
+pub trait SuppressionNotifier: Send + Sync {
+    async fn notify(&self, workspace_id: &str, session_id: &str) -> std::result::Result<(), String>;
+}
+
+/// Notification consumer that always succeeds (read-only tests/recovery units).
+pub struct NoopSuppressionNotifier;
+
+#[async_trait::async_trait]
+impl SuppressionNotifier for NoopSuppressionNotifier {
+    async fn notify(&self, _workspace_id: &str, _session_id: &str) -> std::result::Result<(), String> {
+        Ok(())
+    }
+}
+
+/// What startup/restart recovery settled. Safe identifiers only.
+#[derive(Clone, Debug, PartialEq)]
+pub struct RecoveryReport {
+    pub workspace_id: String,
+    pub session_key: String,
+    /// A committed skip was found and its sync barriers were reconciled.
+    pub replayed_committed_skip: bool,
+    /// A stale full attempt was settled to `full_failed`.
+    pub settled_full_attempt: Option<String>,
+    /// A stale audit fence was settled to `audit_failed`.
+    pub settled_audit_attempt: Option<String>,
+    /// Barriers whose consumer succeeded and were cleared.
+    pub cleared: Vec<String>,
+    /// Alerts to emit through Session Events + tracing + report.
+    pub alerts: Vec<SuppressionAlert>,
+}
+
+impl RecoveryReport {
+    fn new(workspace_id: &str, session_key: &str) -> Self {
+        Self {
+            workspace_id: workspace_id.to_string(),
+            session_key: session_key.to_string(),
+            replayed_committed_skip: false,
+            settled_full_attempt: None,
+            settled_audit_attempt: None,
+            cleared: Vec::new(),
+            alerts: Vec::new(),
+        }
+    }
+}
+
+/// Startup/restart recovery for durable suppression fences (ruling R16).
+///
+/// Every settlement is idempotent and bounded by the global three-total-attempt
+/// recovery: an unknown commit result is reconciled by attempt/event identity
+/// before any retry. A sync barrier is cleared only after its consumer
+/// succeeded, so a crash between commit and reconciliation never hides work.
+pub struct SuppressionRecovery {
+    db: Arc<Db>,
+    notifier: Arc<dyn SuppressionNotifier>,
+}
+
+impl SuppressionRecovery {
+    pub fn new(db: Arc<Db>, notifier: Arc<dyn SuppressionNotifier>) -> Self {
+        Self { db, notifier }
+    }
+
+    pub fn with_noop_notifier(db: Arc<Db>) -> Self {
+        Self::new(db, Arc::new(NoopSuppressionNotifier))
+    }
+
+    /// Settle the fences of one Assistant session.
+    pub async fn recover_session(&self, workspace_id: &str, session_key: &str) -> Result<RecoveryReport> {
+        let mut report = RecoveryReport::new(workspace_id, session_key);
+        let Some(mut state) = self.db.load_suppression_state(workspace_id, session_key).await? else {
+            return Ok(report);
+        };
+
+        // A full attempt left in progress by a previous process has no live
+        // worker. Inspect its terminal evidence, then settle it so the next
+        // wake is allowed to run a full Turn.
+        if state.full_attempt_in_progress || state.latest_outcome == OUTCOME_FULL_IN_PROGRESS {
+            if let Some(attempt_id) = state.latest_attempt_id.clone() {
+                let reason = self
+                    .inspect_stale_full_attempt(workspace_id, session_key, &state)
+                    .await?;
+                if self
+                    .settle_full_attempt(workspace_id, session_key, &attempt_id, &reason)
+                    .await
+                {
+                    report.settled_full_attempt = Some(attempt_id);
+                } else {
+                    report.alerts.push(self.alert(
+                        &state,
+                        ErrorCode::AuditWriteFailed,
+                        json!({ "fence": "full_attempt_in_progress" }),
+                    ));
+                }
+            }
+            state = self
+                .db
+                .load_suppression_state(workspace_id, session_key)
+                .await?
+                .unwrap_or(state);
+        }
+
+        // A stale audit fence never owns a committed skip: the skip state and
+        // its six events commit together. Settle it to `audit_failed`, which
+        // keeps the old baseline ineligible and vetoes the next skip.
+        if state.audit_in_progress || state.latest_outcome == OUTCOME_SKIP_IN_PROGRESS {
+            if let Some(attempt_id) = state.latest_attempt_id.clone() {
+                if self
+                    .settle_skip_attempt(workspace_id, session_key, &attempt_id, "audit_write_failed")
+                    .await
+                {
+                    report.settled_audit_attempt = Some(attempt_id);
+                } else {
+                    report.alerts.push(self.alert(
+                        &state,
+                        ErrorCode::AuditWriteFailed,
+                        json!({ "fence": "audit_in_progress" }),
+                    ));
+                }
+            }
+            state = self
+                .db
+                .load_suppression_state(workspace_id, session_key)
+                .await?
+                .unwrap_or(state);
+        }
+
+        // A committed skip is replayed from its immutable events; only the
+        // non-Schedule side effects are reconciled here. Schedule stays the
+        // TriggerRouter's exclusive write.
+        if state.latest_outcome == OUTCOME_SKIPPED {
+            let committed = self.committed_skip_present(workspace_id, session_key).await?;
+            if committed {
+                report.replayed_committed_skip = true;
+                if state.projection_sync_pending {
+                    match self.reconcile_projection(workspace_id, session_key, &state).await {
+                        None => report.cleared.push("projection".to_string()),
+                        Some(alert) => report.alerts.push(alert),
+                    }
+                }
+                if state.notification_pending {
+                    match self.reconcile_notification(workspace_id, session_key, &state).await {
+                        None => report.cleared.push("notification".to_string()),
+                        Some(alert) => report.alerts.push(alert),
+                    }
+                }
+                if state.schedule_sync_pending {
+                    match self.reconcile_schedule(workspace_id, session_key, &state).await {
+                        None => report.cleared.push("schedule".to_string()),
+                        Some(alert) => report.alerts.push(alert),
+                    }
+                }
+            } else if state.schedule_sync_pending || state.projection_sync_pending || state.notification_pending {
+                report.alerts.push(self.alert(
+                    &state,
+                    ErrorCode::AuditWriteFailed,
+                    json!({ "cause": "committed_skip_events_missing" }),
+                ));
+            }
+        }
+        Ok(report)
+    }
+
+    /// Reconcile the non-Schedule side effects of an already committed skip.
+    ///
+    /// Used by the live wake immediately after `commit_skip` and by recovery.
+    /// Schedule stays the TriggerRouter's exclusive responsibility, so this
+    /// never writes it and never raises `schedule_barrier_failed`.
+    pub async fn reconcile_committed_consumers(&self, workspace_id: &str, session_key: &str) -> Vec<SuppressionAlert> {
+        let mut alerts = Vec::new();
+        let state = match self.db.load_suppression_state(workspace_id, session_key).await {
+            Ok(Some(state)) if state.latest_outcome == OUTCOME_SKIPPED => state,
+            Ok(_) => return alerts,
+            Err(error) => {
+                tracing::warn!(%error, %workspace_id, "suppression recovery: state read failed");
+                return alerts;
+            }
+        };
+        if state.projection_sync_pending
+            && let Some(alert) = self.reconcile_projection(workspace_id, session_key, &state).await
+        {
+            alerts.push(alert);
+        }
+        if state.notification_pending
+            && let Some(alert) = self.reconcile_notification(workspace_id, session_key, &state).await
+        {
+            alerts.push(alert);
+        }
+        alerts
+    }
+
+    /// Settle a failed atomic skip audit within the bounded recovery.
+    pub async fn settle_skip_failure(
+        &self,
+        workspace_id: &str,
+        session_key: &str,
+        attempt_id: &str,
+        reason: &str,
+    ) -> bool {
+        self.settle_skip_attempt(workspace_id, session_key, attempt_id, reason)
+            .await
+    }
+
+    /// Settle a failed full attempt within the bounded recovery.
+    pub async fn settle_full_failure(
+        &self,
+        workspace_id: &str,
+        session_key: &str,
+        attempt_id: &str,
+        reason: &str,
+    ) -> bool {
+        self.settle_full_attempt(workspace_id, session_key, attempt_id, reason)
+            .await
+    }
+
+    /// Only a terminal event newer than the fence tells us what the stale
+    /// attempt was doing; otherwise it simply died in progress.
+    async fn inspect_stale_full_attempt(
+        &self,
+        workspace_id: &str,
+        session_key: &str,
+        state: &SuppressionState,
+    ) -> Result<String> {
+        let latest = self
+            .db
+            .recent_suppression_outcomes(workspace_id, session_key, 1)
+            .await?;
+        Ok(match latest.first() {
+            Some(outcome) if outcome.occurred_at >= state.updated_at && outcome.outcome == "completed" => {
+                "stale_completed_attempt_recovered"
+            }
+            Some(outcome) if outcome.occurred_at >= state.updated_at && outcome.outcome == "cancelled" => {
+                "stale_cancelled_attempt_recovered"
+            }
+            _ => "stale_in_progress_attempt_recovered",
+        }
+        .to_string())
+    }
+
+    /// The committed skip is proven by its latest immutable `turn.completed`.
+    async fn committed_skip_present(&self, workspace_id: &str, session_key: &str) -> Result<bool> {
+        let latest = self
+            .db
+            .recent_suppression_outcomes(workspace_id, session_key, 1)
+            .await?;
+        Ok(latest.first().is_some_and(|outcome| outcome.outcome == OUTCOME_SKIPPED))
+    }
+
+    async fn settle_full_attempt(&self, workspace_id: &str, session_key: &str, attempt_id: &str, reason: &str) -> bool {
+        let db = self.db.clone();
+        let workspace = workspace_id.to_string();
+        let session = session_key.to_string();
+        let attempt = attempt_id.to_string();
+        let reason = reason.to_string();
+        let reconcile_session = session.clone();
+        let reconcile_db = db.clone();
+        let reconcile_attempt = attempt.clone();
+        matches!(
+            recover(
+                move |_attempt| {
+                    let db = db.clone();
+                    let workspace = workspace.clone();
+                    let attempt = attempt.clone();
+                    let reason = reason.clone();
+                    async move {
+                        match db.fail_full_attempt(&workspace, &attempt, &reason).await {
+                            Ok(_) => Attempt::Succeeded(()),
+                            Err(error) => db_attempt(error),
+                        }
+                    }
+                },
+                move |_attempt| {
+                    let db = reconcile_db.clone();
+                    let workspace = workspace_id.to_string();
+                    let session = reconcile_session.clone();
+                    let attempt = reconcile_attempt.clone();
+                    async move {
+                        match db.load_suppression_state(&workspace, &session).await {
+                            Ok(Some(current))
+                                if !current.full_attempt_in_progress
+                                    || current.latest_attempt_id.as_deref() != Some(attempt.as_str()) =>
+                            {
+                                // Settled elsewhere or superseded by a newer attempt.
+                                Reconcile::Settled(())
+                            }
+                            _ => Reconcile::RetryAllowed,
+                        }
+                    }
+                },
+            )
+            .await,
+            RecoveryOutcome::Succeeded { .. }
+        )
+    }
+
+    async fn settle_skip_attempt(&self, workspace_id: &str, session_key: &str, attempt_id: &str, reason: &str) -> bool {
+        let db = self.db.clone();
+        let workspace = workspace_id.to_string();
+        let session = session_key.to_string();
+        let attempt = attempt_id.to_string();
+        let reason = reason.to_string();
+        let reconcile_session = session.clone();
+        let reconcile_db = db.clone();
+        let reconcile_attempt = attempt.clone();
+        matches!(
+            recover(
+                move |_attempt| {
+                    let db = db.clone();
+                    let workspace = workspace.clone();
+                    let session = session.clone();
+                    let attempt = attempt.clone();
+                    let reason = reason.clone();
+                    async move {
+                        match db.fail_skip_attempt(&workspace, &session, &attempt, &reason).await {
+                            Ok(_) => Attempt::Succeeded(()),
+                            Err(error) => db_attempt(error),
+                        }
+                    }
+                },
+                move |_attempt| {
+                    let db = reconcile_db.clone();
+                    let workspace = workspace_id.to_string();
+                    let session = reconcile_session.clone();
+                    let attempt = reconcile_attempt.clone();
+                    async move {
+                        match db.load_suppression_state(&workspace, &session).await {
+                            Ok(Some(current))
+                                if !current.audit_in_progress
+                                    || current.latest_attempt_id.as_deref() != Some(attempt.as_str()) =>
+                            {
+                                Reconcile::Settled(())
+                            }
+                            _ => Reconcile::RetryAllowed,
+                        }
+                    }
+                },
+            )
+            .await,
+            RecoveryOutcome::Succeeded { .. }
+        )
+    }
+
+    /// Projection is an independent, non-atomic projection of committed
+    /// events. Update or confirm it, then clear the barrier.
+    async fn reconcile_projection(
+        &self,
+        workspace_id: &str,
+        session_key: &str,
+        state: &SuppressionState,
+    ) -> Option<SuppressionAlert> {
+        let consumer_db = self.db.clone();
+        let consumer_session = session_key.to_string();
+        let outcome = recover(
+            move |_attempt| {
+                let db = consumer_db.clone();
+                let session = consumer_session.clone();
+                async move {
+                    match db.get_session(&session).await {
+                        Ok(Some(row)) if row.status == "ended" => Attempt::Succeeded(()),
+                        Ok(Some(mut row)) => {
+                            row.status = "ended".to_string();
+                            row.touch();
+                            match db.update_session(&row).await {
+                                Ok(()) => Attempt::Succeeded(()),
+                                // Projection is an independent recovery surface:
+                                // a write failure is bounded-retryable.
+                                Err(_) => Attempt::Transient("projection_write_failed".to_string()),
+                            }
+                        }
+                        // No row to update: committed events remain the truth.
+                        Ok(None) => Attempt::Succeeded(()),
+                        Err(_) => Attempt::Transient("projection_read_failed".to_string()),
+                    }
+                }
+            },
+            |_attempt| async { Reconcile::RetryAllowed },
+        )
+        .await;
+        if !matches!(outcome, RecoveryOutcome::Succeeded { .. }) {
+            return Some(self.alert(
+                state,
+                ErrorCode::ProjectionReconcileFailed,
+                json!({ "consumer": "projection" }),
+            ));
+        }
+        if self
+            .clear_barrier(workspace_id, session_key, SyncPending::Projection)
+            .await
+        {
+            None
+        } else {
+            Some(self.alert(
+                state,
+                ErrorCode::ProjectionReconcileFailed,
+                json!({ "barrier": "projection" }),
+            ))
+        }
+    }
+
+    /// Post-commit SSE notification never rolls back committed events. It is
+    /// retried three total times; persistent failure keeps the barrier and
+    /// alerts so clients resume from the high watermark.
+    async fn reconcile_notification(
+        &self,
+        workspace_id: &str,
+        session_key: &str,
+        state: &SuppressionState,
+    ) -> Option<SuppressionAlert> {
+        let notifier = self.notifier.clone();
+        let workspace = workspace_id.to_string();
+        let session = session_key.to_string();
+        let outcome = recover(
+            move |_attempt| {
+                let notifier = notifier.clone();
+                let workspace = workspace.clone();
+                let session = session.clone();
+                async move {
+                    match notifier.notify(&workspace, &session).await {
+                        Ok(()) => Attempt::Succeeded(()),
+                        Err(error) => Attempt::Transient(error),
+                    }
+                }
+            },
+            |_attempt| async { Reconcile::RetryAllowed },
+        )
+        .await;
+        if !matches!(outcome, RecoveryOutcome::Succeeded { .. }) {
+            return Some(self.alert(
+                state,
+                ErrorCode::NotificationFailed,
+                json!({ "notificationFailed": true }),
+            ));
+        }
+        if self
+            .clear_barrier(workspace_id, session_key, SyncPending::Notification)
+            .await
+        {
+            None
+        } else {
+            Some(self.alert(
+                state,
+                ErrorCode::NotificationFailed,
+                json!({ "barrier": "notification" }),
+            ))
+        }
+    }
+
+    /// Schedule is written exclusively by TriggerRouter. Recovery clears the
+    /// barrier only after the schedule already records the skip; otherwise it
+    /// stays a visible `committed_partial` and alerts.
+    async fn reconcile_schedule(
+        &self,
+        workspace_id: &str,
+        session_key: &str,
+        state: &SuppressionState,
+    ) -> Option<SuppressionAlert> {
+        // The Schedule write must be the one for this committed skip: its
+        // `lastWakeAt` cannot predate the skip's terminal event.
+        let skip_occurred_at = self
+            .db
+            .recent_suppression_outcomes(workspace_id, session_key, 1)
+            .await
+            .ok()
+            .and_then(|outcomes| {
+                outcomes
+                    .first()
+                    .filter(|outcome| outcome.outcome == OUTCOME_SKIPPED)
+                    .map(|outcome| outcome.occurred_at)
+            });
+        let confirmed = match self.db.get_assistant_schedule(workspace_id).await {
+            Ok(Some(schedule)) => {
+                schedule.last_outcome.as_deref() == Some(OUTCOME_SKIPPED)
+                    && matches!(
+                        (schedule.last_wake_at, skip_occurred_at),
+                        (Some(written_at), Some(skip_at)) if written_at >= skip_at
+                    )
+            }
+            Ok(None) => false,
+            Err(error) => {
+                tracing::warn!(%error, %workspace_id, "suppression recovery: schedule read failed");
+                false
+            }
+        };
+        if confirmed
+            && self
+                .clear_barrier(workspace_id, session_key, SyncPending::Schedule)
+                .await
+        {
+            return None;
+        }
+        Some(self.alert(
+            state,
+            ErrorCode::ScheduleBarrierFailed,
+            json!({ "committedPartial": true, "scheduleConfirmed": confirmed }),
+        ))
+    }
+
+    async fn clear_barrier(&self, workspace_id: &str, session_key: &str, pending: SyncPending) -> bool {
+        let db = self.db.clone();
+        let workspace = workspace_id.to_string();
+        let session = session_key.to_string();
+        matches!(
+            recover(
+                move |_attempt| {
+                    let db = db.clone();
+                    let workspace = workspace.clone();
+                    let session = session.clone();
+                    async move {
+                        match db.clear_sync_pending(&workspace, &session, pending).await {
+                            Ok(_) => Attempt::Succeeded(()),
+                            Err(error) => db_attempt(error),
+                        }
+                    }
+                },
+                |_attempt| async { Reconcile::RetryAllowed },
+            )
+            .await,
+            RecoveryOutcome::Succeeded { .. }
+        )
+    }
+
+    fn alert(&self, state: &SuppressionState, code: ErrorCode, metrics: Value) -> SuppressionAlert {
+        SuppressionAlert {
+            code: code.as_str().to_string(),
+            workspace_id: state.workspace_id.clone(),
+            turn_id: state
+                .baseline_turn_state
+                .as_ref()
+                .and_then(|value| value.get("turnId"))
+                .and_then(Value::as_str)
+                .map(ToString::to_string),
+            baseline_state_id: state.baseline_state_id.clone(),
+            current_registry_version: state.registry_version.clone(),
+            baseline_registry_version: state.registry_version.clone(),
+            vetoes: Vec::new(),
+            consecutive_failures: 1,
+            metrics,
+            trace_id: state
+                .latest_attempt_id
+                .clone()
+                .unwrap_or_else(|| Uuid::new_v4().to_string()),
+        }
+    }
+}
+
+/// Classify a storage failure for the bounded recovery loop.
+fn db_attempt<T>(error: DbError) -> Attempt<T, DbError> {
+    let class = match &error {
+        // Unknown or superseded outcomes reconcile by attempt/state identity
+        // before any retry.
+        DbError::CommitUnknown { .. }
+        | DbError::StorageLocked { .. }
+        | DbError::CasConflict { .. }
+        | DbError::NotFound { .. } => 2,
+        DbError::Sqlx(_) => 1,
+        _ => 0,
+    };
+    match class {
+        2 => Attempt::Unknown(error),
+        1 => Attempt::Transient(error),
+        _ => Attempt::Permanent(error),
+    }
+}
+
 #[cfg(test)]
 #[allow(clippy::module_inception)] // the test path must contain `suppression::audit`
 mod audit {
     use std::path::PathBuf;
+    use std::sync::atomic::{AtomicU32, Ordering};
     use std::sync::{Arc, Mutex};
 
     use chrono::{DateTime, Duration, TimeZone, Utc};
@@ -1365,5 +1938,277 @@ mod audit {
         assert_eq!(ReplayOutcome::Skipped.as_str(), "skipped");
         assert_eq!(ReplayOutcome::Completed.as_str(), "completed");
         let _: WakeAttempt = PlannedWake::planned(WS, SESSION, ts()).attempt(7);
+    }
+
+    struct FailingNotifier {
+        calls: Arc<AtomicU32>,
+    }
+
+    #[async_trait::async_trait]
+    impl super::SuppressionNotifier for FailingNotifier {
+        async fn notify(&self, _workspace_id: &str, _session_id: &str) -> std::result::Result<(), String> {
+            self.calls.fetch_add(1, Ordering::SeqCst);
+            Err("sse notify failed".to_string())
+        }
+    }
+
+    fn notifier_calls() -> (Arc<AtomicU32>, Arc<FailingNotifier>) {
+        let calls = Arc::new(AtomicU32::new(0));
+        (calls.clone(), Arc::new(FailingNotifier { calls }))
+    }
+
+    #[tokio::test]
+    async fn startup_recovery_settles_a_stale_full_attempt_and_permits_the_next_full_turn() {
+        let fixture = AuditFixture::create().await;
+        let state = fixture.state().await;
+        let attempt = fixture
+            .db
+            .begin_full_attempt(SESSION, &state)
+            .await
+            .expect("stale full attempt");
+
+        let report = super::SuppressionRecovery::with_noop_notifier(fixture.db.clone())
+            .recover_session(WS, SESSION)
+            .await
+            .expect("recovery");
+
+        assert_eq!(
+            report.settled_full_attempt.as_deref(),
+            Some(attempt.attempt_id.as_str())
+        );
+        assert!(report.alerts.is_empty(), "alerts={:?}", report.alerts);
+        let recovered = fixture.state().await;
+        assert!(!recovered.full_attempt_in_progress);
+        assert!(recovered.full_failed);
+        assert_eq!(recovered.latest_outcome, "full_failed");
+        assert_eq!(
+            recovered.attempt_no, attempt.attempt_no,
+            "recovery settles the stale attempt instead of inventing a new one"
+        );
+        assert!(!recovered.baseline_is_eligible());
+        // A stale attempt must not block the next full Turn.
+        let next = fixture
+            .db
+            .begin_full_attempt(SESSION, &recovered)
+            .await
+            .expect("next full attempt");
+        assert_eq!(next.attempt_no, attempt.attempt_no + 1);
+    }
+
+    #[tokio::test]
+    async fn startup_recovery_settles_a_stale_audit_fence_to_audit_failed() {
+        let fixture = AuditFixture::create().await;
+        let state = fixture.state().await;
+        let skip = fixture
+            .db
+            .begin_skip_attempt(SESSION, &state)
+            .await
+            .expect("stale audit fence");
+
+        let report = super::SuppressionRecovery::with_noop_notifier(fixture.db.clone())
+            .recover_session(WS, SESSION)
+            .await
+            .expect("recovery");
+
+        assert_eq!(report.settled_audit_attempt.as_deref(), Some(skip.attempt_id.as_str()));
+        let recovered = fixture.state().await;
+        assert!(!recovered.audit_in_progress);
+        assert_eq!(recovered.latest_outcome, "audit_failed");
+        assert_eq!(recovered.last_error.as_deref(), Some("audit_write_failed"));
+        assert!(!recovered.baseline_is_eligible());
+        assert_eq!(fixture.event_count().await, 0, "recovery never writes a partial skip");
+
+        let decision = fixture.decision(60).await;
+        assert!(!decision.would_skip);
+        assert!(
+            decision
+                .vetoes
+                .contains(&crate::domains::agent::session::suppression::preflight::SkipVeto::AuditFailed)
+        );
+    }
+
+    #[tokio::test]
+    async fn startup_recovery_replays_a_committed_skip_and_clears_consumers() {
+        let fixture = AuditFixture::create().await;
+        let skip = fixture.commit_skip().await;
+        let before = fixture.event_count().await;
+        fixture
+            .db
+            .mark_assistant_wake(WS, fixture.checked_at(), fixture.checked_at(), "skipped")
+            .await
+            .expect("schedule already acknowledged the skip");
+
+        let report = super::SuppressionRecovery::with_noop_notifier(fixture.db.clone())
+            .recover_session(WS, SESSION)
+            .await
+            .expect("recovery");
+
+        assert!(report.replayed_committed_skip);
+        assert!(report.cleared.contains(&"schedule".to_string()), "{:?}", report.cleared);
+        assert!(
+            report.cleared.contains(&"projection".to_string()),
+            "{:?}",
+            report.cleared
+        );
+        assert!(
+            report.cleared.contains(&"notification".to_string()),
+            "{:?}",
+            report.cleared
+        );
+        assert!(report.alerts.is_empty(), "alerts={:?}", report.alerts);
+        let recovered = fixture.state().await;
+        assert!(!recovered.schedule_sync_pending);
+        assert!(!recovered.projection_sync_pending);
+        assert!(!recovered.notification_pending);
+        assert_eq!(fixture.event_count().await, before, "replay writes no new events");
+
+        // The committed skip still replays unchanged and never creates a Turn.
+        let replay = fixture.replay().await;
+        assert_eq!(replay.outcome(), "skipped");
+        assert_eq!(
+            replay.committed_skip().map(|skip| skip.attempt_id.as_str()),
+            Some(skip.attempt_id.as_str())
+        );
+        assert_eq!(fixture.event_count().await, before);
+    }
+
+    #[tokio::test]
+    async fn startup_recovery_keeps_schedule_committed_partial_until_the_writer_succeeds() {
+        let fixture = AuditFixture::create().await;
+        fixture.commit_skip().await;
+
+        let report = super::SuppressionRecovery::with_noop_notifier(fixture.db.clone())
+            .recover_session(WS, SESSION)
+            .await
+            .expect("recovery");
+        assert!(report.replayed_committed_skip);
+        assert!(
+            report
+                .alerts
+                .iter()
+                .any(|alert| alert.code == "schedule_barrier_failed"),
+            "alerts={:?}",
+            report.alerts
+        );
+        let partial = fixture.state().await;
+        assert!(
+            partial.schedule_sync_pending,
+            "Schedule stays committed_partial until its exclusive writer succeeds"
+        );
+        assert!(!partial.projection_sync_pending);
+        assert!(!partial.notification_pending);
+
+        // The TriggerRouter writer confirms the skip; the next recovery clears
+        // the remaining barrier without creating any new Turn.
+        fixture
+            .db
+            .mark_assistant_wake(WS, fixture.checked_at(), fixture.checked_at(), "skipped")
+            .await
+            .expect("schedule writer");
+        let settled = super::SuppressionRecovery::with_noop_notifier(fixture.db.clone())
+            .recover_session(WS, SESSION)
+            .await
+            .expect("second recovery");
+        assert!(settled.cleared.contains(&"schedule".to_string()));
+        assert!(
+            !settled
+                .alerts
+                .iter()
+                .any(|alert| alert.code == "schedule_barrier_failed")
+        );
+        assert!(!fixture.state().await.schedule_sync_pending);
+    }
+
+    // Real time is intentional: SQLx pool acquisition uses timers, and a
+    // paused clock makes an in-memory connection acquisition time out before
+    // it can complete. The exact 1s/2s bound is proven without a DB in
+    // `suppression::error`.
+    #[tokio::test]
+    async fn post_commit_notification_failure_never_rolls_back_events_and_alerts() {
+        let fixture = AuditFixture::create().await;
+        fixture.commit_skip().await;
+        let before = fixture.event_count().await;
+        let (calls, notifier) = notifier_calls();
+
+        let report = super::SuppressionRecovery::new(fixture.db.clone(), notifier)
+            .recover_session(WS, SESSION)
+            .await
+            .expect("recovery");
+
+        assert_eq!(
+            calls.load(Ordering::SeqCst),
+            3,
+            "notification recovery uses the three-total-attempt bound"
+        );
+        assert_eq!(
+            fixture.event_count().await,
+            before,
+            "committed events are never rolled back by an SSE notification failure"
+        );
+        assert!(
+            fixture.state().await.notification_pending,
+            "client resumes from high watermark"
+        );
+        assert!(
+            report.alerts.iter().any(|alert| alert.code == "notification_failed"),
+            "alerts={:?}",
+            report.alerts
+        );
+    }
+
+    #[tokio::test]
+    async fn off_mode_reconcile_does_not_leave_an_active_alert() {
+        let fixture = AuditFixture::create().await;
+        fixture.commit_skip().await;
+        // Normal consumers have caught up; only the deliberate off-mode
+        // reconcile follows.
+        for pending in [
+            tinyiothub_storage::suppression::SyncPending::Schedule,
+            tinyiothub_storage::suppression::SyncPending::Projection,
+            tinyiothub_storage::suppression::SyncPending::Notification,
+        ] {
+            fixture
+                .db
+                .clear_sync_pending(WS, SESSION, pending)
+                .await
+                .expect("consumer settled");
+        }
+        fixture
+            .db
+            .update_suppression_config(WS, Some(SuppressionMode::Off), None)
+            .await
+            .expect("off before reconcile")
+            .expect("schedule row");
+
+        // A deliberate off-mode reconcile allocates a durable attempt and
+        // settles it without installing a baseline.
+        let state = fixture.state().await;
+        let attempt = fixture
+            .db
+            .begin_full_attempt(SESSION, &state)
+            .await
+            .expect("off-mode attempt");
+        let settled = fixture
+            .db
+            .settle_full_attempt_without_baseline(WS, &attempt.attempt_id, "full_completed")
+            .await
+            .expect("settlement");
+
+        assert!(settled.full_failed, "the old baseline stays ineligible");
+        assert!(settled.last_error.is_none());
+        let activity = crate::domains::agent::session::suppression::error::alert_activity(&settled);
+        assert!(
+            !activity.active,
+            "a deliberate off-mode reconcile must not leave alerts.active true"
+        );
+        assert!(activity.code.is_none());
+
+        let decision = fixture.decision(60).await;
+        assert!(!decision.would_skip, "off keeps the kill switch immediate");
+        assert!(
+            decision
+                .vetoes
+                .contains(&crate::domains::agent::session::suppression::preflight::SkipVeto::Disabled)
+        );
     }
 }

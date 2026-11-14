@@ -29,10 +29,13 @@ use crate::domains::agent::session::events::{SessionEventSink, session_event, se
 use crate::domains::agent::session::runner::{SessionRunner, TurnCancellation, TurnOutcome};
 use crate::domains::agent::session::suppression::SuppressionMode;
 use crate::domains::agent::session::suppression::audit::{
-    AtomicSkipAudit, PlannedWake, SkipAuditRequest, WakeAttempt, attempt_event,
+    AtomicSkipAudit, PlannedWake, RecoveryReport, SkipAuditRequest, SuppressionNotifier, SuppressionRecovery,
+    WakeAttempt, attempt_event,
 };
 use crate::domains::agent::session::suppression::contract::SourceDescriptor;
-use crate::domains::agent::session::suppression::error::SuppressionError;
+use crate::domains::agent::session::suppression::error::{
+    ALERT_EVENT_TYPE, ErrorCode, SuppressionAlert, SuppressionError,
+};
 use crate::domains::agent::session::suppression::preflight::{PreflightDecision, SkipVeto, SuppressionService};
 use crate::domains::agent::session::suppression::registry::{
     self, SemanticSessionEvent, SessionEventsCapture, SourceContext, SourceRegistry, WorkspaceSnapshotProvider,
@@ -144,7 +147,128 @@ fn fencing_observation(state: SuppressionState, observed_at: DateTime<Utc>, reas
     }
 }
 
+/// Post-commit notification consumer backed by the Session Events sink.
+struct SessionEventNotifier {
+    events: Arc<dyn SessionEventSink>,
+}
+
+#[async_trait::async_trait]
+impl SuppressionNotifier for SessionEventNotifier {
+    async fn notify(&self, workspace_id: &str, session_id: &str) -> std::result::Result<(), String> {
+        self.events
+            .notify(workspace_id, session_id)
+            .await
+            .map_err(|error| error.to_string())
+    }
+}
+
 impl WakeRunner {
+    fn suppression_recovery(&self) -> SuppressionRecovery {
+        SuppressionRecovery::new(
+            self.db.clone(),
+            Arc::new(SessionEventNotifier {
+                events: self.events.clone(),
+            }),
+        )
+    }
+
+    /// Startup/restart recovery entry point (ruling R16).
+    ///
+    /// The Assistant session key is deterministic per workspace, so recovery
+    /// inspects exactly the durable suppression state that scheduled and
+    /// manual Turns share.
+    pub async fn recover_suppression(&self, workspace_id: &str) -> Vec<RecoveryReport> {
+        let session_key = format!("agent:{}:{}/main", workspace_id, assistant_agent_id(workspace_id));
+        match self
+            .suppression_recovery()
+            .recover_session(workspace_id, &session_key)
+            .await
+        {
+            Ok(report) => {
+                for alert in &report.alerts {
+                    self.emit_suppression_alert(&session_key, alert).await;
+                }
+                tracing::info!(
+                    %workspace_id,
+                    %session_key,
+                    replayed_committed_skip = report.replayed_committed_skip,
+                    settled_full_attempt = report.settled_full_attempt.as_deref().unwrap_or(""),
+                    settled_audit_attempt = report.settled_audit_attempt.as_deref().unwrap_or(""),
+                    cleared = ?report.cleared,
+                    alerts = report.alerts.len(),
+                    "suppression startup recovery finished"
+                );
+                vec![report]
+            }
+            Err(error) => {
+                tracing::warn!(%error, %workspace_id, "suppression startup recovery failed");
+                Vec::new()
+            }
+        }
+    }
+
+    /// Emit an alert through Session Events, tracing and the report projection
+    /// (`assistant.suppression.alert` is excluded from semantic work).
+    async fn emit_suppression_alert(&self, session_key: &str, alert: &SuppressionAlert) {
+        tracing::error!(
+            event_type = ALERT_EVENT_TYPE,
+            alert_code = %alert.code,
+            workspace_id = %alert.workspace_id,
+            turn_id = alert.turn_id.as_deref().unwrap_or(""),
+            baseline_state_id = alert.baseline_state_id.as_deref().unwrap_or(""),
+            current_registry_version = alert.current_registry_version.as_deref().unwrap_or(""),
+            baseline_registry_version = alert.baseline_registry_version.as_deref().unwrap_or(""),
+            vetoes = ?alert.vetoes,
+            consecutive_failures = alert.consecutive_failures,
+            trace_id = %alert.trace_id,
+            "assistant suppression alert"
+        );
+        let context = TurnContext::new(
+            alert.workspace_id.clone(),
+            assistant_agent_id(&alert.workspace_id),
+            session_key.to_string(),
+            alert.trace_id.clone(),
+            0,
+        );
+        let input = session_event(&context, ALERT_EVENT_TYPE, alert.payload());
+        if let Err(error) = self.events.emit(input).await {
+            tracing::warn!(%error, alert_code = %alert.code, "failed to persist suppression alert event");
+        }
+    }
+
+    async fn preflight_alert(
+        &self,
+        workspace_id: &str,
+        session_key: &str,
+        state: &SuppressionState,
+        cause: &str,
+    ) -> SuppressionAlert {
+        SuppressionAlert {
+            code: ErrorCode::PreflightTimeout.as_str().to_string(),
+            workspace_id: workspace_id.to_string(),
+            turn_id: None,
+            baseline_state_id: state.baseline_state_id.clone(),
+            current_registry_version: None,
+            baseline_registry_version: state.registry_version.clone(),
+            vetoes: Vec::new(),
+            consecutive_failures: self.consecutive_failures(workspace_id, session_key).await,
+            metrics: json!({ "cause": cause }),
+            trace_id: Uuid::new_v4().to_string(),
+        }
+    }
+
+    /// Trailing failed outcomes plus this failure. Safe counts only.
+    async fn consecutive_failures(&self, workspace_id: &str, session_key: &str) -> u32 {
+        let prior = match self.db.recent_suppression_outcomes(workspace_id, session_key, 10).await {
+            Ok(outcomes) => outcomes
+                .iter()
+                .take_while(|outcome| !matches!(outcome.outcome.as_str(), "completed" | "skipped"))
+                .count() as u32,
+            Err(_) => 0,
+        };
+        prior.saturating_add(1)
+    }
+
     /// The one full-input prompt builder used by scheduled wake, reconcile and
     /// event wake. The caller passes the single Session Events capture so the
     /// user cursor and the semantic events come from the same read.
@@ -219,6 +343,10 @@ impl WakeRunner {
                     .ok()
                     .flatten()
                     .unwrap_or_else(|| SuppressionState::initial(workspace_id, session_key));
+                let alert = self
+                    .preflight_alert(workspace_id, session_key, &state, "config_read_failed")
+                    .await;
+                self.emit_suppression_alert(session_key, &alert).await;
                 return Some(fencing_observation(state, chrono::Utc::now(), "config_read_failed"));
             }
         };
@@ -230,15 +358,16 @@ impl WakeRunner {
             Ok(None) => SuppressionState::initial(workspace_id, session_key),
             Err(error) => {
                 tracing::warn!(%error, %workspace_id, "suppression preflight: state read failed");
-                return Some(fencing_observation(
-                    SuppressionState::initial(workspace_id, session_key),
-                    chrono::Utc::now(),
-                    "state_read_failed",
-                ));
+                let state = SuppressionState::initial(workspace_id, session_key);
+                let alert = self
+                    .preflight_alert(workspace_id, session_key, &state, "state_read_failed")
+                    .await;
+                self.emit_suppression_alert(session_key, &alert).await;
+                return Some(fencing_observation(state, chrono::Utc::now(), "state_read_failed"));
             }
         };
         Some(
-            self.observe_with(workspace_id, session_key, &config, state, current_user_seq)
+            self.observe_with(workspace_id, session_key, &config, state, current_user_seq, true)
                 .await,
         )
     }
@@ -247,6 +376,7 @@ impl WakeRunner {
     ///
     /// Any capture failure produces a fencing-only observation: the Turn may
     /// run but can never skip or install a baseline from incomplete evidence.
+    /// `alert_on_failure` is false for read-only manual preflight.
     async fn observe_with(
         &self,
         workspace_id: &str,
@@ -254,6 +384,7 @@ impl WakeRunner {
         config: &SuppressionConfig,
         state: SuppressionState,
         current_user_seq: Option<i64>,
+        alert_on_failure: bool,
     ) -> SuppressionObservation {
         let registry = match registry::default_sources(
             self.system_prompts.clone(),
@@ -268,6 +399,21 @@ impl WakeRunner {
                     %workspace_id,
                     "suppression preflight: registry build failed"
                 );
+                if alert_on_failure {
+                    let alert = SuppressionAlert {
+                        code: ErrorCode::SourceContractInvalid.as_str().to_string(),
+                        workspace_id: workspace_id.to_string(),
+                        turn_id: None,
+                        baseline_state_id: state.baseline_state_id.clone(),
+                        current_registry_version: None,
+                        baseline_registry_version: state.registry_version.clone(),
+                        vetoes: Vec::new(),
+                        consecutive_failures: self.consecutive_failures(workspace_id, session_key).await,
+                        metrics: json!({ "cause": "registry_build_failed" }),
+                        trace_id: Uuid::new_v4().to_string(),
+                    };
+                    self.emit_suppression_alert(session_key, &alert).await;
+                }
                 return fencing_observation(state, chrono::Utc::now(), "registry_build_failed");
             }
         };
@@ -291,6 +437,26 @@ impl WakeRunner {
                     %workspace_id,
                     "suppression preflight failed; fenced full turn"
                 );
+                if alert_on_failure {
+                    let code = ErrorCode::parse(&error.code).unwrap_or(ErrorCode::PreflightTimeout);
+                    let alert = SuppressionAlert {
+                        code: code.as_str().to_string(),
+                        workspace_id: workspace_id.to_string(),
+                        turn_id: None,
+                        baseline_state_id: state.baseline_state_id.clone(),
+                        current_registry_version: None,
+                        baseline_registry_version: state.registry_version.clone(),
+                        vetoes: Vec::new(),
+                        consecutive_failures: self.consecutive_failures(workspace_id, session_key).await,
+                        metrics: json!({ "cause": "preflight_capture_failed" }),
+                        trace_id: if error.trace.trace_id.is_empty() {
+                            Uuid::new_v4().to_string()
+                        } else {
+                            error.trace.trace_id.clone()
+                        },
+                    };
+                    self.emit_suppression_alert(session_key, &alert).await;
+                }
                 return fencing_observation(state, observed_at, "preflight_capture_failed");
             }
         };
@@ -357,7 +523,7 @@ impl WakeRunner {
             .map_err(|error| ManualStartError::Unavailable(error.to_string()))?
             .unwrap_or_else(|| SuppressionState::initial(workspace_id, &session_key));
         let observation = self
-            .observe_with(workspace_id, &session_key, &config, state, control_cursor)
+            .observe_with(workspace_id, &session_key, &config, state, control_cursor, false)
             .await;
         let (registry_version, descriptors) = match &observation.captured {
             Some(captured) => (captured.registry.registry_version(), captured.registry.descriptors()),
@@ -431,7 +597,7 @@ impl WakeRunner {
             .map_err(|error| ManualStartError::Unavailable(error.to_string()))?
             .unwrap_or_else(|| SuppressionState::initial(workspace_id, &session_key));
         let observation = self
-            .observe_with(workspace_id, &session_key, &config, state, control_cursor)
+            .observe_with(workspace_id, &session_key, &config, state, control_cursor, true)
             .await;
         let wake = PlannedWake::unplanned(workspace_id, session_key.clone());
 
@@ -826,6 +992,12 @@ pub trait WakeExecutor: Send + Sync {
             session_key: String::new(),
             outcome: WakeOutcome::Skipped,
         }
+    }
+
+    /// Startup/restart recovery for durable suppression fences. The default is
+    /// a no-op so existing test executors keep compiling.
+    async fn recover_suppression(&self, _workspace_id: &str) -> Vec<RecoveryReport> {
+        Vec::new()
     }
 
     /// Read-only public preflight. Default: manual operations are unwired.
@@ -1581,9 +1753,47 @@ impl WakeRunner {
                     })
                     .await
                 {
-                    // The durable `audit_in_progress` fence stays visible for
-                    // typed recovery; TriggerRouter persists `audit_failed`.
+                    // The durable audit fence must stay visible for every
+                    // worker. Settle it to `audit_failed` within the bounded
+                    // recovery; if even that fails, `audit_in_progress`
+                    // remains and the alert still fires. TriggerRouter remains
+                    // the only Schedule writer.
                     tracing::warn!(%error, %session_key, "suppression: atomic skip commit failed");
+                    let settled = self
+                        .suppression_recovery()
+                        .settle_skip_failure(
+                            &session.workspace_id,
+                            &session_key,
+                            &skip_attempt.attempt_id,
+                            "audit_write_failed",
+                        )
+                        .await;
+                    if !settled {
+                        tracing::warn!(
+                            attempt_id = %skip_attempt.attempt_id,
+                            "suppression: audit failure settlement failed; the fence remains visible"
+                        );
+                    }
+                    let alert = SuppressionAlert {
+                        code: ErrorCode::AuditWriteFailed.as_str().to_string(),
+                        workspace_id: session.workspace_id.clone(),
+                        turn_id: Some(wake.attempt(skip_attempt.attempt_no).turn_id.clone()),
+                        baseline_state_id: decision.baseline_state_id.clone(),
+                        current_registry_version: observation
+                            .captured
+                            .as_ref()
+                            .map(|captured| captured.registry.registry_version()),
+                        baseline_registry_version: observation.state.registry_version.clone(),
+                        vetoes: decision.vetoes.iter().map(|veto| veto.as_str().to_string()).collect(),
+                        consecutive_failures: self.consecutive_failures(&session.workspace_id, &session_key).await,
+                        metrics: json!({
+                            "attemptNo": skip_attempt.attempt_no,
+                            "fence": if settled { "audit_failed" } else { "audit_in_progress" },
+                            "cause": "audit_commit_failed",
+                        }),
+                        trace_id: skip_attempt.attempt_id.clone(),
+                    };
+                    self.emit_suppression_alert(&session_key, &alert).await;
                     return Some(WakeReport {
                         session_key,
                         outcome: WakeOutcome::AuditFailed,
@@ -1615,33 +1825,21 @@ impl WakeRunner {
     /// truth (clients resume from the DB high watermark).
     async fn reconcile_committed_skip(&self, session: &Session, decision: &PreflightDecision) {
         let session_key = &session.session_key;
-        let workspace_id = &session.workspace_id;
-        let mut ended = session.clone();
-        ended.status = "ended".to_string();
-        ended.touch();
-        match self.db.update_session(&ended).await {
-            Ok(()) => {
-                if let Err(error) = self
-                    .db
-                    .clear_sync_pending(workspace_id, session_key, SyncPending::Projection)
-                    .await
-                {
-                    tracing::warn!(%error, %session_key, "suppression: projection reconcile failed");
-                }
-            }
-            Err(error) => tracing::warn!(%error, %session_key, "suppression: session projection write failed"),
-        }
-        if let Err(error) = self
-            .db
-            .clear_sync_pending(workspace_id, session_key, SyncPending::Notification)
-            .await
-        {
-            tracing::warn!(%error, %session_key, "suppression: notification reconcile failed");
+        // Schedule stays the TriggerRouter's exclusive write. Projection and
+        // notification are reconciled here; a persistent notification failure
+        // keeps its barrier and alerts instead of rolling anything back.
+        let alerts = self
+            .suppression_recovery()
+            .reconcile_committed_consumers(&session.workspace_id, session_key)
+            .await;
+        for alert in &alerts {
+            self.emit_suppression_alert(session_key, alert).await;
         }
         tracing::info!(
             %session_key,
             baseline_state_id = decision.baseline_state_id.as_deref().unwrap_or(""),
             config_version = decision.config_version,
+            alerts = alerts.len(),
             "suppression: committed skip reconciled"
         );
     }
@@ -1707,6 +1905,24 @@ impl WakeRunner {
                     tracing::warn!(%error, %durable.attempt_id, "suppression: baseline installation failed");
                     self.fail_full_attempt(workspace_id, durable, "baseline_write_failed")
                         .await;
+                    let alert = SuppressionAlert {
+                        code: ErrorCode::BaselineCorrupt.as_str().to_string(),
+                        workspace_id: workspace_id.to_string(),
+                        turn_id: attempt.map(|attempt| attempt.turn_id.clone()),
+                        baseline_state_id: captured.decision.baseline_state_id.clone(),
+                        current_registry_version: Some(captured.registry.registry_version()),
+                        baseline_registry_version: observation.state.registry_version.clone(),
+                        vetoes: captured
+                            .decision
+                            .vetoes
+                            .iter()
+                            .map(|veto| veto.as_str().to_string())
+                            .collect(),
+                        consecutive_failures: self.consecutive_failures(workspace_id, &durable.session_id).await,
+                        metrics: json!({ "fence": "baseline_write_failed" }),
+                        trace_id: durable.attempt_id.clone(),
+                    };
+                    self.emit_suppression_alert(&durable.session_id, &alert).await;
                     WakeOutcome::Failed {
                         error: format!("baseline installation failed: {error}"),
                     }
@@ -1833,6 +2049,10 @@ impl WakeExecutor for WakeRunner {
 
     async fn execute_event(&self, wake: EventWake, cancel: CancellationToken) -> WakeReport {
         self.run_event(&wake, cancel).await
+    }
+
+    async fn recover_suppression(&self, workspace_id: &str) -> Vec<RecoveryReport> {
+        WakeRunner::recover_suppression(self, workspace_id).await
     }
 
     async fn manual_preflight(&self, workspace_id: &str) -> Result<ManualPreflight, ManualStartError> {
