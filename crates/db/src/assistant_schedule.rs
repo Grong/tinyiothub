@@ -10,6 +10,7 @@ use sqlx::sqlite::SqliteRow;
 use crate::Db;
 use crate::error::{DbError, Result};
 use crate::policy::PermissionMode;
+use crate::suppression::{MAX_RECONCILIATION_SECONDS, MIN_RECONCILIATION_SECONDS, SuppressionMode};
 
 pub const DEFAULT_ASSISTANT_INTERVAL_SECONDS: u32 = 300;
 pub const MIN_ASSISTANT_INTERVAL_SECONDS: u32 = 60;
@@ -26,6 +27,30 @@ pub struct AssistantSchedule {
     pub next_wake_at: Option<DateTime<Utc>>,
     pub last_wake_at: Option<DateTime<Utc>>,
     pub last_outcome: Option<String>,
+}
+
+/// Suppression configuration stored alongside one Assistant schedule.
+///
+/// Kept separate from [`AssistantSchedule`] so the existing schedule surface
+/// (and its call sites) stays backward-compatible before the HTTP DTO task
+/// wires these fields in.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SuppressionConfig {
+    pub workspace_id: String,
+    pub mode: SuppressionMode,
+    pub reconciliation_seconds: u32,
+    pub config_version: i64,
+}
+
+fn map_suppression_config(row: &SqliteRow) -> Result<SuppressionConfig> {
+    let mode: String = row.try_get("suppression_mode")?;
+    Ok(SuppressionConfig {
+        workspace_id: row.try_get("workspace_id")?,
+        // Unknown/corrupt values fail closed to off.
+        mode: SuppressionMode::parse(&mode).unwrap_or(SuppressionMode::Off),
+        reconciliation_seconds: row.try_get::<i64, _>("reconciliation_seconds")?.max(0) as u32,
+        config_version: row.try_get("suppression_config_version")?,
+    })
 }
 
 fn format_ts(ts: DateTime<Utc>) -> String {
@@ -187,6 +212,60 @@ pub(crate) async fn update(
     get_row(pool, workspace_id).await
 }
 
+pub(crate) async fn get_suppression_config(
+    pool: &sqlx::SqlitePool,
+    workspace_id: &str,
+) -> Result<Option<SuppressionConfig>> {
+    let row = sqlx::query(
+        "SELECT workspace_id, suppression_mode, reconciliation_seconds, suppression_config_version \
+         FROM assistant_schedules WHERE workspace_id = ?",
+    )
+    .bind(workspace_id)
+    .fetch_optional(pool)
+    .await?;
+    row.as_ref().map(map_suppression_config).transpose()
+}
+
+/// Persist suppression config. `config_version` advances only when a field's
+/// effective value changes, so no-op writes keep every in-flight preflight
+/// comparison valid. Invalid values are rejected before any write.
+pub(crate) async fn update_suppression_config(
+    pool: &sqlx::SqlitePool,
+    workspace_id: &str,
+    mode: Option<SuppressionMode>,
+    reconciliation_seconds: Option<u32>,
+) -> Result<Option<SuppressionConfig>> {
+    if let Some(seconds) = reconciliation_seconds
+        && !(MIN_RECONCILIATION_SECONDS..=MAX_RECONCILIATION_SECONDS).contains(&seconds)
+    {
+        return Err(DbError::Validation {
+            message: format!(
+                "reconciliation_seconds must be within {MIN_RECONCILIATION_SECONDS}..={MAX_RECONCILIATION_SECONDS}"
+            ),
+        });
+    }
+    let Some(current) = get_suppression_config(pool, workspace_id).await? else {
+        return Ok(None);
+    };
+    let next_mode = mode.unwrap_or(current.mode);
+    let next_seconds = reconciliation_seconds.unwrap_or(current.reconciliation_seconds);
+    let changed = next_mode != current.mode || next_seconds != current.reconciliation_seconds;
+    sqlx::query(
+        "UPDATE assistant_schedules SET \
+         suppression_mode = ?, reconciliation_seconds = ?, \
+         suppression_config_version = suppression_config_version + ?, updated_at = ? \
+         WHERE workspace_id = ?",
+    )
+    .bind(next_mode.as_str())
+    .bind(i64::from(next_seconds))
+    .bind(if changed { 1i64 } else { 0i64 })
+    .bind(format_ts(Utc::now()))
+    .bind(workspace_id)
+    .execute(pool)
+    .await?;
+    get_suppression_config(pool, workspace_id).await
+}
+
 pub(crate) async fn mark_wake(
     pool: &sqlx::SqlitePool,
     workspace_id: &str,
@@ -245,6 +324,19 @@ impl Db {
             permission_mode,
         )
         .await
+    }
+
+    pub async fn get_suppression_config(&self, workspace_id: &str) -> Result<Option<SuppressionConfig>> {
+        get_suppression_config(self.pool(), workspace_id).await
+    }
+
+    pub async fn update_suppression_config(
+        &self,
+        workspace_id: &str,
+        mode: Option<SuppressionMode>,
+        reconciliation_seconds: Option<u32>,
+    ) -> Result<Option<SuppressionConfig>> {
+        update_suppression_config(self.pool(), workspace_id, mode, reconciliation_seconds).await
     }
 
     pub async fn mark_assistant_wake(

@@ -208,74 +208,85 @@ pub(crate) fn migration() -> sqlx::migrate::Migration {
     )
 }
 
-impl Db {
-    pub async fn append_session_event(&self, input: &HarnessEventInput) -> Result<HarnessEvent> {
-        let pool = self.workspace_pool(&input.workspace_id).await?;
-        if let Some(row) = sqlx::query_as::<_, SessionEventRow>(EVENT_BY_ID_SQL)
-            .bind(&input.event_id)
-            .fetch_optional(&pool)
-            .await?
-        {
-            if row.payload_digest != input.payload_digest {
-                return Err(DbError::Conflict {
-                    message: format!("event {} already exists with another digest", input.event_id),
-                });
-            }
-            return row.into_event(&input.workspace_id);
-        }
-
-        validate_schema(input.schema_v)?;
-        validate_payload(&input.event_type, &input.payload_json)?;
-        let mut tx = pool.begin().await?;
-        let inserted = sqlx::query(
-            "INSERT INTO session_events (event_id, session_id, execution_mode, run_id, task_id, type, occurred_at, cause_id, schema_v, payload_digest, payload_json)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-             ON CONFLICT(event_id) DO NOTHING",
-        )
+/// Append one event inside an existing workspace transaction.
+///
+/// Identical identity semantics to [`Db::append_session_event`]: an existing
+/// `event_id` with the same digest returns the stored event without
+/// re-validating the incoming payload, while a different digest conflicts.
+/// The caller owns the transaction boundary.
+pub async fn append_session_event_tx(
+    tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+    input: &HarnessEventInput,
+) -> Result<HarnessEvent> {
+    if let Some(row) = sqlx::query_as::<_, SessionEventRow>(EVENT_BY_ID_SQL)
         .bind(&input.event_id)
-        .bind(&input.session_id)
-        .bind(input.execution_mode.as_str())
-        .bind(&input.run_id)
-        .bind(&input.task_id)
-        .bind(&input.event_type)
-        .bind(input.occurred_at.to_rfc3339())
-        .bind(input.cause_id)
-        .bind(input.schema_v)
-        .bind(&input.payload_digest)
-        .bind(serde_json::to_string(&input.payload_json)?)
-        .execute(&mut *tx)
-        .await?;
-
-        if inserted.rows_affected() == 1 {
-            let event = HarnessEvent {
-                seq: inserted.last_insert_rowid(),
-                event_id: input.event_id.clone(),
-                workspace_id: input.workspace_id.clone(),
-                session_id: input.session_id.clone(),
-                execution_mode: input.execution_mode,
-                run_id: input.run_id.clone(),
-                task_id: input.task_id.clone(),
-                event_type: input.event_type.clone(),
-                occurred_at: input.occurred_at,
-                cause_id: input.cause_id,
-                schema_v: input.schema_v,
-                payload_digest: input.payload_digest.clone(),
-                payload_json: input.payload_json.clone(),
-            };
-            tx.commit().await?;
-            return Ok(event);
-        }
-
-        let row = sqlx::query_as::<_, SessionEventRow>(EVENT_BY_ID_SQL)
-            .bind(&input.event_id)
-            .fetch_one(&mut *tx)
-            .await?;
+        .fetch_optional(&mut **tx)
+        .await?
+    {
         if row.payload_digest != input.payload_digest {
             return Err(DbError::Conflict {
                 message: format!("event {} already exists with another digest", input.event_id),
             });
         }
-        let event = row.into_event(&input.workspace_id)?;
+        return row.into_event(&input.workspace_id);
+    }
+
+    validate_schema(input.schema_v)?;
+    validate_payload(&input.event_type, &input.payload_json)?;
+    let inserted = sqlx::query(
+        "INSERT INTO session_events (event_id, session_id, execution_mode, run_id, task_id, type, occurred_at, cause_id, schema_v, payload_digest, payload_json)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT(event_id) DO NOTHING",
+    )
+    .bind(&input.event_id)
+    .bind(&input.session_id)
+    .bind(input.execution_mode.as_str())
+    .bind(&input.run_id)
+    .bind(&input.task_id)
+    .bind(&input.event_type)
+    .bind(input.occurred_at.to_rfc3339())
+    .bind(input.cause_id)
+    .bind(input.schema_v)
+    .bind(&input.payload_digest)
+    .bind(serde_json::to_string(&input.payload_json)?)
+    .execute(&mut **tx)
+    .await?;
+
+    if inserted.rows_affected() == 1 {
+        return Ok(HarnessEvent {
+            seq: inserted.last_insert_rowid(),
+            event_id: input.event_id.clone(),
+            workspace_id: input.workspace_id.clone(),
+            session_id: input.session_id.clone(),
+            execution_mode: input.execution_mode,
+            run_id: input.run_id.clone(),
+            task_id: input.task_id.clone(),
+            event_type: input.event_type.clone(),
+            occurred_at: input.occurred_at,
+            cause_id: input.cause_id,
+            schema_v: input.schema_v,
+            payload_digest: input.payload_digest.clone(),
+            payload_json: input.payload_json.clone(),
+        });
+    }
+
+    let row = sqlx::query_as::<_, SessionEventRow>(EVENT_BY_ID_SQL)
+        .bind(&input.event_id)
+        .fetch_one(&mut **tx)
+        .await?;
+    if row.payload_digest != input.payload_digest {
+        return Err(DbError::Conflict {
+            message: format!("event {} already exists with another digest", input.event_id),
+        });
+    }
+    row.into_event(&input.workspace_id)
+}
+
+impl Db {
+    pub async fn append_session_event(&self, input: &HarnessEventInput) -> Result<HarnessEvent> {
+        let pool = self.workspace_pool(&input.workspace_id).await?;
+        let mut tx = pool.begin().await?;
+        let event = append_session_event_tx(&mut tx, input).await?;
         tx.commit().await?;
         Ok(event)
     }
