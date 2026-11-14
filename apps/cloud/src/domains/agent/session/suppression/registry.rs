@@ -26,6 +26,7 @@ use tinyiothub_runtime::watch::live_state::WorkspaceSnapshot;
 use tinyiothub_skills::LoadedSkill;
 use tinyiothub_storage::Db;
 use tinyiothub_storage::harness_event::EventFilter;
+use unicode_normalization::UnicodeNormalization;
 
 use crate::domains::agent::prompt::{MEMORY_MAX_TOKENS, MemorySelection, PromptMemorySource, paths, select_memory};
 
@@ -375,6 +376,8 @@ fn is_external_semantic_event(event: &HarnessEvent) -> bool {
         "harness.",
         "capability.",
         "decision.",
+        "subagent.",
+        "skill.",
     ];
     !EXCLUDED_PREFIXES
         .iter()
@@ -406,9 +409,22 @@ impl SourceCache {
     /// and their last payload retained.
     fn merge(&self, current: Vec<(String, Vec<u8>, WorkItemDisposition)>) -> Result<Vec<WorkItem>, SuppressionError> {
         let mut entries = self.entries.lock().expect("source cache poisoned");
-        let current_keys: HashSet<String> = current.iter().map(|(key, _, _)| key.clone()).collect();
-
+        // Reject duplicate canonical identities instead of silently keeping
+        // the last item: work item identity is `(sourceId, workKey)`.
+        let mut current_keys = HashSet::with_capacity(current.len());
+        let mut normalized_current = Vec::with_capacity(current.len());
         for (work_key, bytes, disposition) in current {
+            let work_key: String = work_key.nfc().collect();
+            if !current_keys.insert(work_key.clone()) {
+                return Err(contract_error(
+                    "duplicate_work_key",
+                    "capture produced canonically equivalent workKey values",
+                ));
+            }
+            normalized_current.push((work_key, bytes, disposition));
+        }
+
+        for (work_key, bytes, disposition) in normalized_current {
             let payload_hash = hash_payload(&bytes);
             entries.insert(
                 work_key,
@@ -534,10 +550,16 @@ fn capture_items(
     source_id: &str,
     cache: &SourceCache,
     current: Vec<(String, Vec<u8>, WorkItemDisposition)>,
-) -> SourceSnapshot {
-    match cache.merge(current).and_then(|items| cache.snapshot(source_id, items)) {
-        Ok(snapshot) => snapshot,
-        Err(error) => unavailable_snapshot(source_id, error),
+) -> Result<SourceSnapshot, SuppressionError> {
+    match cache.merge(current) {
+        Ok(items) => match cache.snapshot(source_id, items) {
+            Ok(snapshot) => Ok(snapshot),
+            Err(error) => Ok(unavailable_snapshot(source_id, error)),
+        },
+        // A duplicate work key is a source contract violation: reject the
+        // capture instead of collapsing it or masking it as unavailable.
+        Err(error) if error.code == "duplicate_work_key" => Err(error),
+        Err(error) => Ok(unavailable_snapshot(source_id, error)),
     }
 }
 
@@ -708,7 +730,7 @@ impl AssistantSource for WorkspaceSnapshotSource {
             };
             current.push((device.thing_id.clone(), bytes, disposition));
         }
-        Ok(capture_items(WORKSPACE_SNAPSHOT_SOURCE, &self.cache, current))
+        capture_items(WORKSPACE_SNAPSHOT_SOURCE, &self.cache, current)
     }
 
     async fn resolve_state(&self, reference: &StateRef) -> Result<CanonicalBytes, SuppressionError> {
@@ -801,7 +823,7 @@ impl AssistantSource for SessionEventsSource {
                     let bytes = canonical_bytes(&payload)?;
                     current.push((event.event_id, bytes, WorkItemDisposition::Active));
                 }
-                Ok(capture_items(SESSION_EVENTS_SOURCE, &self.cache, current))
+                capture_items(SESSION_EVENTS_SOURCE, &self.cache, current)
             }
             Err(error) => Ok(unavailable_snapshot(SESSION_EVENTS_SOURCE, error)),
         }
@@ -844,13 +866,13 @@ impl AssistantSource for TurnBriefSource {
         match read_workspace_file(&workspace_dir, "TURN_BRIEF.md") {
             Ok(Some(content)) if !content.trim().is_empty() => {
                 let bytes = document_payload(&content)?;
-                Ok(capture_items(
+                capture_items(
                     TURN_BRIEF_SOURCE,
                     &self.cache,
                     vec![("document".to_string(), bytes, WorkItemDisposition::Active)],
-                ))
+                )
             }
-            Ok(_) => Ok(capture_items(TURN_BRIEF_SOURCE, &self.cache, vec![])),
+            Ok(_) => capture_items(TURN_BRIEF_SOURCE, &self.cache, vec![]),
             Err(error) => Ok(unavailable_snapshot(TURN_BRIEF_SOURCE, error)),
         }
     }
@@ -903,7 +925,7 @@ impl AssistantSource for SkillsSource {
             let bytes = canonical_bytes(&payload)?;
             current.push((skill.name, bytes, WorkItemDisposition::Active));
         }
-        Ok(capture_items(SKILLS_SOURCE, &self.cache, current))
+        capture_items(SKILLS_SOURCE, &self.cache, current)
     }
 
     async fn resolve_state(&self, reference: &StateRef) -> Result<CanonicalBytes, SuppressionError> {
@@ -942,13 +964,13 @@ impl AssistantSource for ShortTermSource {
         match read_workspace_file(&workspace_dir, "SHORT_TERM.md") {
             Ok(Some(content)) if !content.trim().is_empty() => {
                 let bytes = document_payload(&content)?;
-                Ok(capture_items(
+                capture_items(
                     SHORT_TERM_SOURCE,
                     &self.cache,
                     vec![("document".to_string(), bytes, WorkItemDisposition::Active)],
-                ))
+                )
             }
-            Ok(_) => Ok(capture_items(SHORT_TERM_SOURCE, &self.cache, vec![])),
+            Ok(_) => capture_items(SHORT_TERM_SOURCE, &self.cache, vec![]),
             Err(error) => Ok(unavailable_snapshot(SHORT_TERM_SOURCE, error)),
         }
     }
@@ -1007,11 +1029,11 @@ impl AssistantSource for MemorySourceAdapter {
         {
             Ok(MemorySelection::Profile(content)) => {
                 let bytes = document_payload(&content)?;
-                Ok(capture_items(
+                capture_items(
                     MEMORY_SOURCE,
                     &self.cache,
                     vec![("profile".to_string(), bytes, WorkItemDisposition::Active)],
-                ))
+                )
             }
             Ok(MemorySelection::Entries(entries)) => {
                 let mut current = Vec::with_capacity(entries.len());
@@ -1023,7 +1045,7 @@ impl AssistantSource for MemorySourceAdapter {
                     let bytes = canonical_bytes(&payload)?;
                     current.push((entry.id, bytes, WorkItemDisposition::Active));
                 }
-                Ok(capture_items(MEMORY_SOURCE, &self.cache, current))
+                capture_items(MEMORY_SOURCE, &self.cache, current)
             }
             Err(_) => Ok(unavailable_snapshot(
                 MEMORY_SOURCE,
@@ -1446,6 +1468,80 @@ mod registry {
         assert_eq!(error.code, "work_item_payload_missing");
     }
 
+    #[test]
+    fn duplicate_work_keys_are_rejected_not_collapsed() {
+        let cache = SourceCache::default();
+        let error = cache
+            .merge(vec![
+                ("same".to_string(), b"first".to_vec(), WorkItemDisposition::Active),
+                ("same".to_string(), b"second".to_vec(), WorkItemDisposition::Active),
+            ])
+            .unwrap_err();
+        assert_eq!(error.code, "duplicate_work_key");
+
+        // Canonically equivalent keys are the same identity as well.
+        let cache = SourceCache::default();
+        let error = cache
+            .merge(vec![
+                ("é".to_string(), b"first".to_vec(), WorkItemDisposition::Active),
+                ("e\u{0301}".to_string(), b"second".to_vec(), WorkItemDisposition::Active),
+            ])
+            .unwrap_err();
+        assert_eq!(error.code, "duplicate_work_key");
+    }
+
+    struct DuplicateWorkKeySource {
+        cache: SourceCache,
+    }
+
+    #[async_trait::async_trait]
+    impl AssistantSource for DuplicateWorkKeySource {
+        fn descriptor(&self) -> SourceDescriptor {
+            SourceDescriptor {
+                source_id: "test.duplicate".into(),
+                source_version: 1,
+            }
+        }
+
+        async fn capture(&self, _cx: &SourceContext) -> Result<SourceSnapshot, super::SuppressionError> {
+            super::capture_items(
+                "test.duplicate",
+                &self.cache,
+                vec![
+                    ("same".into(), b"first".to_vec(), WorkItemDisposition::Active),
+                    ("same".into(), b"second".to_vec(), WorkItemDisposition::Active),
+                ],
+            )
+        }
+
+        async fn resolve_state(
+            &self,
+            _reference: &super::StateRef,
+        ) -> Result<super::CanonicalBytes, super::SuppressionError> {
+            Err(super::SuppressionError::new("source_ref_mismatch", "unused", "unused"))
+        }
+
+        async fn resolve_payload(
+            &self,
+            _reference: &PayloadRef,
+        ) -> Result<super::CanonicalBytes, super::SuppressionError> {
+            Err(super::SuppressionError::new(
+                "work_item_payload_missing",
+                "unused",
+                "unused",
+            ))
+        }
+    }
+
+    #[tokio::test]
+    async fn capture_rejects_duplicate_work_keys() {
+        let source = DuplicateWorkKeySource {
+            cache: SourceCache::default(),
+        };
+        let error = source.capture(&context()).await.unwrap_err();
+        assert_eq!(error.code, "duplicate_work_key");
+    }
+
     #[tokio::test]
     async fn stale_refs_are_rejected() {
         let root = tempfile::tempdir().unwrap();
@@ -1555,6 +1651,15 @@ mod registry {
                 json!({"messageId": "assistant-2", "role": "assistant", "text": "another report"}),
             ),
             ("assistant.suppression.alert", json!({"code": "source_unavailable"})),
+            (
+                "subagent.started",
+                json!({"subagentId": "sub-2", "task": "inspect pump"}),
+            ),
+            (
+                "subagent.completed",
+                json!({"subagentId": "sub-2", "summary": "model-written subagent summary"}),
+            ),
+            ("skill.loaded", json!({"name": "inspection", "body": "skill body"})),
         ] {
             fixture
                 .db
