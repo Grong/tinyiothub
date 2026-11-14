@@ -23,6 +23,7 @@ pub mod questions;
 pub mod runner;
 pub mod skills_seed;
 pub mod subagent;
+pub mod suppression;
 pub mod todos;
 pub mod tool_guard;
 pub mod tools;
