@@ -93,6 +93,14 @@ pub struct SuppressionState {
     pub baseline_installed_at: Option<DateTime<Utc>>,
     pub attempt_no: i64,
     pub latest_attempt_id: Option<String>,
+    /// Attempt that owns the in-progress full fence. Survives an audit fence
+    /// and is independent of `latest_attempt_id` (which a later attempt
+    /// overwrites).
+    pub full_attempt_id: Option<String>,
+    pub full_attempt_started_at: Option<DateTime<Utc>>,
+    /// Attempt that owns the in-progress audit fence.
+    pub audit_attempt_id: Option<String>,
+    pub audit_attempt_started_at: Option<DateTime<Utc>>,
     pub latest_outcome: String,
     pub full_attempt_in_progress: bool,
     pub full_failed: bool,
@@ -122,6 +130,10 @@ impl SuppressionState {
             baseline_installed_at: None,
             attempt_no: 0,
             latest_attempt_id: None,
+            full_attempt_id: None,
+            full_attempt_started_at: None,
+            audit_attempt_id: None,
+            audit_attempt_started_at: None,
             latest_outcome: OUTCOME_BASELINE_MISSING.to_string(),
             full_attempt_in_progress: false,
             full_failed: false,
@@ -208,14 +220,18 @@ pub enum SyncPending {
 
 const STATE_BY_KEY_SQL: &str = "SELECT workspace_id, session_id, state_version, config_version, \
     registry_version, control_cursor, baseline_state_id, baseline_turn_state_json, \
-    baseline_observed_at, baseline_installed_at, attempt_no, latest_attempt_id, latest_outcome, \
+    baseline_observed_at, baseline_installed_at, attempt_no, latest_attempt_id, \
+    full_attempt_id, full_attempt_started_at, audit_attempt_id, audit_attempt_started_at, \
+    latest_outcome, \
     full_attempt_in_progress, full_failed, audit_in_progress, schedule_sync_pending, \
     projection_sync_pending, notification_pending, last_error, created_at, updated_at \
     FROM suppression_state WHERE workspace_id = ? AND session_id = ?";
 
 const STATE_BY_ATTEMPT_SQL: &str = "SELECT workspace_id, session_id, state_version, config_version, \
     registry_version, control_cursor, baseline_state_id, baseline_turn_state_json, \
-    baseline_observed_at, baseline_installed_at, attempt_no, latest_attempt_id, latest_outcome, \
+    baseline_observed_at, baseline_installed_at, attempt_no, latest_attempt_id, \
+    full_attempt_id, full_attempt_started_at, audit_attempt_id, audit_attempt_started_at, \
+    latest_outcome, \
     full_attempt_in_progress, full_failed, audit_in_progress, schedule_sync_pending, \
     projection_sync_pending, notification_pending, last_error, created_at, updated_at \
     FROM suppression_state WHERE latest_attempt_id = ?";
@@ -240,6 +256,8 @@ fn map_state_row(row: &SqliteRow) -> Result<SuppressionState> {
     let baseline_observed_at: Option<String> = row.try_get("baseline_observed_at")?;
     let baseline_installed_at: Option<String> = row.try_get("baseline_installed_at")?;
     let baseline_turn_state_json: Option<String> = row.try_get("baseline_turn_state_json")?;
+    let full_attempt_started_at: Option<String> = row.try_get("full_attempt_started_at")?;
+    let audit_attempt_started_at: Option<String> = row.try_get("audit_attempt_started_at")?;
     Ok(SuppressionState {
         workspace_id: row.try_get("workspace_id")?,
         session_id: row.try_get("session_id")?,
@@ -256,6 +274,10 @@ fn map_state_row(row: &SqliteRow) -> Result<SuppressionState> {
         baseline_installed_at: baseline_installed_at.as_deref().map(parse_ts).transpose()?,
         attempt_no: row.try_get("attempt_no")?,
         latest_attempt_id: row.try_get("latest_attempt_id")?,
+        full_attempt_id: row.try_get("full_attempt_id")?,
+        full_attempt_started_at: full_attempt_started_at.as_deref().map(parse_ts).transpose()?,
+        audit_attempt_id: row.try_get("audit_attempt_id")?,
+        audit_attempt_started_at: audit_attempt_started_at.as_deref().map(parse_ts).transpose()?,
         latest_outcome: row.try_get("latest_outcome")?,
         full_attempt_in_progress: row.try_get::<i64, _>("full_attempt_in_progress")? != 0,
         full_failed: row.try_get::<i64, _>("full_failed")? != 0,
@@ -366,12 +388,15 @@ impl Db {
             "UPDATE suppression_state SET \
              attempt_no = ?, latest_attempt_id = ?, latest_outcome = 'full_in_progress', \
              full_attempt_in_progress = 1, full_failed = 0, last_error = NULL, \
+             full_attempt_id = ?, full_attempt_started_at = ?, \
              state_version = state_version + 1, updated_at = ? \
              WHERE workspace_id = ? AND session_id = ? AND state_version = ? \
                AND full_attempt_in_progress = 0",
         )
         .bind(attempt_no)
         .bind(&attempt_id)
+        .bind(&attempt_id)
+        .bind(&stamp)
         .bind(&stamp)
         .bind(&baseline.workspace_id)
         .bind(session_id)
@@ -432,6 +457,8 @@ impl Db {
              baseline_state_id = ?, baseline_turn_state_json = ?, baseline_observed_at = ?, \
              baseline_installed_at = ?, control_cursor = ?, registry_version = ?, config_version = ?, \
              full_attempt_in_progress = 0, full_failed = 0, audit_in_progress = 0, \
+             full_attempt_id = NULL, full_attempt_started_at = NULL, \
+             audit_attempt_id = NULL, audit_attempt_started_at = NULL, \
              latest_outcome = 'full_completed', \
              last_error = NULL, state_version = state_version + 1, updated_at = ? \
              WHERE workspace_id = ? AND session_id = ? AND latest_attempt_id = ? \
@@ -496,6 +523,7 @@ impl Db {
         let updated = sqlx::query(
             "UPDATE suppression_state SET \
              full_attempt_in_progress = 0, full_failed = 1, latest_outcome = 'full_failed', \
+             full_attempt_id = NULL, full_attempt_started_at = NULL, \
              last_error = ?, state_version = state_version + 1, updated_at = ? \
              WHERE workspace_id = ? AND session_id = ? AND latest_attempt_id = ? \
                AND full_attempt_in_progress = 1",
@@ -558,14 +586,17 @@ impl Db {
         let updated = sqlx::query(
             "UPDATE suppression_state SET \
              audit_in_progress = 0, latest_outcome = 'audit_failed', last_error = ?, \
+             audit_attempt_id = NULL, audit_attempt_started_at = NULL, \
              state_version = state_version + 1, updated_at = ? \
-             WHERE workspace_id = ? AND session_id = ? AND latest_attempt_id = ? \
-               AND audit_in_progress = 1",
+             WHERE workspace_id = ? AND session_id = ? AND audit_in_progress = 1 \
+               AND (audit_attempt_id = ? OR \
+                    (audit_attempt_id IS NULL AND latest_outcome = 'skip_in_progress'))",
         )
         .bind(reason)
         .bind(format_ts(Utc::now()))
         .bind(workspace_id)
         .bind(session_id)
+        .bind(attempt_id)
         .bind(attempt_id)
         .execute(&pool)
         .await?
@@ -629,10 +660,12 @@ impl Db {
         let pool = self.workspace_pool(&baseline.workspace_id).await?;
         let attempt_no = baseline.attempt_no + 1;
         let attempt_id = attempt_id(&baseline.workspace_id, session_id, attempt_no);
+        let stamp = format_ts(Utc::now());
         let updated = sqlx::query(
             "UPDATE suppression_state SET \
              attempt_no = ?, latest_attempt_id = ?, latest_outcome = 'skip_in_progress', \
-             audit_in_progress = 1, state_version = state_version + 1, updated_at = ? \
+             audit_in_progress = 1, audit_attempt_id = ?, audit_attempt_started_at = ?, \
+             state_version = state_version + 1, updated_at = ? \
              WHERE workspace_id = ? AND session_id = ? AND state_version = ? \
                AND baseline_state_id IS NOT NULL AND full_attempt_in_progress = 0 \
                AND full_failed = 0 AND audit_in_progress = 0 \
@@ -641,7 +674,9 @@ impl Db {
         )
         .bind(attempt_no)
         .bind(&attempt_id)
-        .bind(format_ts(Utc::now()))
+        .bind(&attempt_id)
+        .bind(&stamp)
+        .bind(&stamp)
         .bind(&baseline.workspace_id)
         .bind(session_id)
         .bind(baseline.state_version)
@@ -806,6 +841,7 @@ impl Db {
         let updated = sqlx::query(
             "UPDATE suppression_state SET \
              latest_outcome = 'skipped', audit_in_progress = 0, \
+             audit_attempt_id = NULL, audit_attempt_started_at = NULL, \
              schedule_sync_pending = 1, projection_sync_pending = 1, notification_pending = 1, \
              last_error = NULL, state_version = state_version + 1, updated_at = ? \
              WHERE workspace_id = ? AND session_id = ? AND state_version = ? \
@@ -898,6 +934,44 @@ impl Db {
             attempt_no: state.attempt_no,
             events,
             state,
+        }))
+    }
+
+    /// Latest committed skip terminal for this session, independent of any
+    /// later full Turn.
+    ///
+    /// A committed skip owns its pending sync barriers forever. Later full
+    /// attempts may overwrite `latest_outcome`/`latest_attempt_id` without
+    /// clearing those flags, so recovery must identify the skip from its
+    /// immutable `turn.completed(outcome=skipped)` event.
+    pub async fn latest_committed_skip_terminal(
+        &self,
+        workspace_id: &str,
+        session_id: &str,
+    ) -> Result<Option<CommittedSkipTerminal>> {
+        let pool = self.workspace_pool(workspace_id).await?;
+        let row = sqlx::query(
+            "SELECT payload_json, occurred_at FROM session_events \
+             WHERE execution_mode = 'production' AND session_id = ? AND type = 'turn.completed' \
+               AND json_extract(payload_json, '$.outcome') = 'skipped' \
+             ORDER BY seq DESC LIMIT 1",
+        )
+        .bind(session_id)
+        .fetch_optional(&pool)
+        .await?;
+        let Some(row) = row else {
+            return Ok(None);
+        };
+        let payload_json: String = row.try_get("payload_json")?;
+        let payload: Value = serde_json::from_str(&payload_json)?;
+        let occurred_at: String = row.try_get("occurred_at")?;
+        Ok(Some(CommittedSkipTerminal {
+            turn_id: payload.get("turnId").and_then(Value::as_str).map(str::to_string),
+            baseline_state_id: payload
+                .get("baselineStateId")
+                .and_then(Value::as_str)
+                .map(str::to_string),
+            occurred_at: parse_ts(&occurred_at)?,
         }))
     }
 
@@ -1027,6 +1101,7 @@ impl Db {
         let updated = sqlx::query(
             "UPDATE suppression_state SET \
              full_attempt_in_progress = 0, full_failed = 1, latest_outcome = ?, \
+             full_attempt_id = NULL, full_attempt_started_at = NULL, \
              last_error = NULL, state_version = state_version + 1, updated_at = ? \
              WHERE workspace_id = ? AND session_id = ? AND latest_attempt_id = ? \
                AND full_attempt_in_progress = 1",
@@ -1338,6 +1413,14 @@ fn map_idempotency_row(row: &SqliteRow) -> Result<SuppressionIdempotency> {
         created_at: parse_ts(&created_at)?,
         updated_at: parse_ts(&updated_at)?,
     })
+}
+
+/// Immutable identity of the latest committed skip.
+#[derive(Clone, Debug, PartialEq)]
+pub struct CommittedSkipTerminal {
+    pub turn_id: Option<String>,
+    pub baseline_state_id: Option<String>,
+    pub occurred_at: DateTime<Utc>,
 }
 
 /// One recent terminal Turn outcome in the public report.

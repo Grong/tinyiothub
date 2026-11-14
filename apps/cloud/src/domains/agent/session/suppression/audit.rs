@@ -14,7 +14,7 @@
 
 use std::sync::Arc;
 
-use chrono::{DateTime, SecondsFormat, Utc};
+use chrono::{DateTime, Duration as ChronoDuration, SecondsFormat, Utc};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use tinyiothub_core::harness::{ExecutionMode, HarnessEventInput};
@@ -528,6 +528,11 @@ impl RecoveryReport {
     }
 }
 
+/// R17: a fence younger than this may belong to a live worker; startup
+/// recovery must not settle it. Multi-replica shared-store settlement needs a
+/// lease and is unsupported without one.
+pub const DEFAULT_STALE_ATTEMPT_AGE_SECS: i64 = 300;
+
 /// Startup/restart recovery for durable suppression fences (ruling R16).
 ///
 /// Every settlement is idempotent and bounded by the global three-total-attempt
@@ -537,15 +542,30 @@ impl RecoveryReport {
 pub struct SuppressionRecovery {
     db: Arc<Db>,
     notifier: Arc<dyn SuppressionNotifier>,
+    stale_after: ChronoDuration,
 }
 
 impl SuppressionRecovery {
     pub fn new(db: Arc<Db>, notifier: Arc<dyn SuppressionNotifier>) -> Self {
-        Self { db, notifier }
+        Self {
+            db,
+            notifier,
+            stale_after: ChronoDuration::seconds(DEFAULT_STALE_ATTEMPT_AGE_SECS),
+        }
     }
 
     pub fn with_noop_notifier(db: Arc<Db>) -> Self {
         Self::new(db, Arc::new(NoopSuppressionNotifier))
+    }
+
+    /// Test/operator override for the stale-fence age threshold.
+    pub fn with_stale_after(mut self, stale_after: ChronoDuration) -> Self {
+        self.stale_after = stale_after;
+        self
+    }
+
+    fn is_stale(&self, started_at: DateTime<Utc>, now: DateTime<Utc>) -> bool {
+        started_at <= now - self.stale_after
     }
 
     /// Settle the fences of one Assistant session.
@@ -554,27 +574,40 @@ impl SuppressionRecovery {
         let Some(mut state) = self.db.load_suppression_state(workspace_id, session_key).await? else {
             return Ok(report);
         };
+        let now = Utc::now();
 
-        // A full attempt left in progress by a previous process has no live
-        // worker. Inspect its terminal evidence, then settle it so the next
-        // wake is allowed to run a full Turn.
-        if state.full_attempt_in_progress || state.latest_outcome == OUTCOME_FULL_IN_PROGRESS {
-            if let Some(attempt_id) = state.latest_attempt_id.clone() {
-                let reason = self
-                    .inspect_stale_full_attempt(workspace_id, session_key, &state)
-                    .await?;
-                if self
-                    .settle_full_attempt(workspace_id, session_key, &attempt_id, &reason)
-                    .await
-                {
-                    report.settled_full_attempt = Some(attempt_id);
-                } else {
-                    report.alerts.push(self.alert(
-                        &state,
-                        ErrorCode::AuditWriteFailed,
-                        json!({ "fence": "full_attempt_in_progress" }),
-                    ));
-                }
+        // R17: settle only the fence's own attempt, and only when it is older
+        // than the stale threshold. A younger full attempt belongs to a live
+        // worker; do not touch the audit fence or barriers under it either.
+        if state.full_attempt_in_progress {
+            let attempt_id = state.full_attempt_id.clone().or_else(|| {
+                (state.latest_outcome == OUTCOME_FULL_IN_PROGRESS)
+                    .then(|| state.latest_attempt_id.clone())
+                    .flatten()
+            });
+            let started_at = state
+                .full_attempt_started_at
+                .or_else(|| (state.latest_outcome == OUTCOME_FULL_IN_PROGRESS).then_some(state.updated_at));
+            let (Some(attempt_id), Some(started_at)) = (attempt_id, started_at) else {
+                return Ok(report);
+            };
+            if !self.is_stale(started_at, now) {
+                return Ok(report);
+            }
+            let reason = self
+                .inspect_stale_full_attempt(workspace_id, session_key, &state)
+                .await?;
+            if self
+                .settle_full_attempt(workspace_id, session_key, &attempt_id, &reason)
+                .await
+            {
+                report.settled_full_attempt = Some(attempt_id);
+            } else {
+                report.alerts.push(self.alert(
+                    &state,
+                    ErrorCode::AuditWriteFailed,
+                    json!({ "fence": "full_attempt_in_progress" }),
+                ));
             }
             state = self
                 .db
@@ -585,21 +618,38 @@ impl SuppressionRecovery {
 
         // A stale audit fence never owns a committed skip: the skip state and
         // its six events commit together. Settle it to `audit_failed`, which
-        // keeps the old baseline ineligible and vetoes the next skip.
-        if state.audit_in_progress || state.latest_outcome == OUTCOME_SKIP_IN_PROGRESS {
-            if let Some(attempt_id) = state.latest_attempt_id.clone() {
-                if self
-                    .settle_skip_attempt(workspace_id, session_key, &attempt_id, "audit_write_failed")
-                    .await
-                {
-                    report.settled_audit_attempt = Some(attempt_id);
-                } else {
-                    report.alerts.push(self.alert(
-                        &state,
-                        ErrorCode::AuditWriteFailed,
-                        json!({ "fence": "audit_in_progress" }),
-                    ));
-                }
+        // keeps the old baseline ineligible and vetoes the next skip. The
+        // fence's own `audit_attempt_id` survives a later full attempt
+        // overwriting `latest_attempt_id`.
+        if state.audit_in_progress {
+            if state.full_attempt_in_progress {
+                return Ok(report);
+            }
+            let attempt_id = state.audit_attempt_id.clone().or_else(|| {
+                (state.latest_outcome == OUTCOME_SKIP_IN_PROGRESS)
+                    .then(|| state.latest_attempt_id.clone())
+                    .flatten()
+            });
+            let started_at = state
+                .audit_attempt_started_at
+                .or_else(|| (state.latest_outcome == OUTCOME_SKIP_IN_PROGRESS).then_some(state.updated_at));
+            let (Some(attempt_id), Some(started_at)) = (attempt_id, started_at) else {
+                return Ok(report);
+            };
+            if !self.is_stale(started_at, now) {
+                return Ok(report);
+            }
+            if self
+                .settle_skip_attempt(workspace_id, session_key, &attempt_id, "audit_write_failed")
+                .await
+            {
+                report.settled_audit_attempt = Some(attempt_id);
+            } else {
+                report.alerts.push(self.alert(
+                    &state,
+                    ErrorCode::AuditWriteFailed,
+                    json!({ "fence": "audit_in_progress" }),
+                ));
             }
             state = self
                 .db
@@ -608,37 +658,45 @@ impl SuppressionRecovery {
                 .unwrap_or(state);
         }
 
-        // A committed skip is replayed from its immutable events; only the
-        // non-Schedule side effects are reconciled here. Schedule stays the
-        // TriggerRouter's exclusive write.
-        if state.latest_outcome == OUTCOME_SKIPPED {
-            let committed = self.committed_skip_present(workspace_id, session_key).await?;
-            if committed {
-                report.replayed_committed_skip = true;
-                if state.projection_sync_pending {
-                    match self.reconcile_projection(workspace_id, session_key, &state).await {
-                        None => report.cleared.push("projection".to_string()),
-                        Some(alert) => report.alerts.push(alert),
+        // Sync barriers belong to the committed skip's immutable terminal, not
+        // to `latest_outcome`: a later full Turn overwrites the outcome but
+        // never clears these flags. Reconcile them regardless of the current
+        // outcome so a future skip is not blocked forever.
+        if state.schedule_sync_pending || state.projection_sync_pending || state.notification_pending {
+            match self
+                .db
+                .latest_committed_skip_terminal(workspace_id, session_key)
+                .await?
+            {
+                Some(skip) => {
+                    report.replayed_committed_skip = true;
+                    if state.projection_sync_pending {
+                        match self.reconcile_projection(workspace_id, session_key, &state).await {
+                            None => report.cleared.push("projection".to_string()),
+                            Some(alert) => report.alerts.push(alert),
+                        }
+                    }
+                    if state.notification_pending {
+                        match self.reconcile_notification(workspace_id, session_key, &state).await {
+                            None => report.cleared.push("notification".to_string()),
+                            Some(alert) => report.alerts.push(alert),
+                        }
+                    }
+                    if state.schedule_sync_pending {
+                        match self
+                            .reconcile_schedule(workspace_id, session_key, &state, skip.occurred_at)
+                            .await
+                        {
+                            None => report.cleared.push("schedule".to_string()),
+                            Some(alert) => report.alerts.push(alert),
+                        }
                     }
                 }
-                if state.notification_pending {
-                    match self.reconcile_notification(workspace_id, session_key, &state).await {
-                        None => report.cleared.push("notification".to_string()),
-                        Some(alert) => report.alerts.push(alert),
-                    }
-                }
-                if state.schedule_sync_pending {
-                    match self.reconcile_schedule(workspace_id, session_key, &state).await {
-                        None => report.cleared.push("schedule".to_string()),
-                        Some(alert) => report.alerts.push(alert),
-                    }
-                }
-            } else if state.schedule_sync_pending || state.projection_sync_pending || state.notification_pending {
-                report.alerts.push(self.alert(
+                None => report.alerts.push(self.alert(
                     &state,
                     ErrorCode::AuditWriteFailed,
                     json!({ "cause": "committed_skip_events_missing" }),
-                ));
+                )),
             }
         }
         Ok(report)
@@ -646,19 +704,39 @@ impl SuppressionRecovery {
 
     /// Reconcile the non-Schedule side effects of an already committed skip.
     ///
-    /// Used by the live wake immediately after `commit_skip` and by recovery.
-    /// Schedule stays the TriggerRouter's exclusive responsibility, so this
-    /// never writes it and never raises `schedule_barrier_failed`.
+    /// Used by the live wake immediately after `commit_skip`, after a full
+    /// Turn, and by recovery. It is independent of `latest_outcome`; the skip
+    /// is identified by its immutable terminal. Schedule stays the
+    /// TriggerRouter's exclusive responsibility, so this never writes it and
+    /// never raises `schedule_barrier_failed`.
     pub async fn reconcile_committed_consumers(&self, workspace_id: &str, session_key: &str) -> Vec<SuppressionAlert> {
         let mut alerts = Vec::new();
         let state = match self.db.load_suppression_state(workspace_id, session_key).await {
-            Ok(Some(state)) if state.latest_outcome == OUTCOME_SKIPPED => state,
-            Ok(_) => return alerts,
+            Ok(Some(state)) => state,
+            Ok(None) => return alerts,
             Err(error) => {
                 tracing::warn!(%error, %workspace_id, "suppression recovery: state read failed");
                 return alerts;
             }
         };
+        if !state.schedule_sync_pending && !state.projection_sync_pending && !state.notification_pending {
+            return alerts;
+        }
+        match self.db.latest_committed_skip_terminal(workspace_id, session_key).await {
+            Ok(Some(_)) => {}
+            Ok(None) => {
+                alerts.push(self.alert(
+                    &state,
+                    ErrorCode::AuditWriteFailed,
+                    json!({ "cause": "committed_skip_events_missing" }),
+                ));
+                return alerts;
+            }
+            Err(error) => {
+                tracing::warn!(%error, %workspace_id, "suppression recovery: skip terminal read failed");
+                return alerts;
+            }
+        }
         if state.projection_sync_pending
             && let Some(alert) = self.reconcile_projection(workspace_id, session_key, &state).await
         {
@@ -718,15 +796,6 @@ impl SuppressionRecovery {
             _ => "stale_in_progress_attempt_recovered",
         }
         .to_string())
-    }
-
-    /// The committed skip is proven by its latest immutable `turn.completed`.
-    async fn committed_skip_present(&self, workspace_id: &str, session_key: &str) -> Result<bool> {
-        let latest = self
-            .db
-            .recent_suppression_outcomes(workspace_id, session_key, 1)
-            .await?;
-        Ok(latest.first().is_some_and(|outcome| outcome.outcome == OUTCOME_SKIPPED))
     }
 
     async fn settle_full_attempt(&self, workspace_id: &str, session_key: &str, attempt_id: &str, reason: &str) -> bool {
@@ -936,27 +1005,16 @@ impl SuppressionRecovery {
         workspace_id: &str,
         session_key: &str,
         state: &SuppressionState,
+        skip_occurred_at: DateTime<Utc>,
     ) -> Option<SuppressionAlert> {
         // The Schedule write must be the one for this committed skip: its
-        // `lastWakeAt` cannot predate the skip's terminal event.
-        let skip_occurred_at = self
-            .db
-            .recent_suppression_outcomes(workspace_id, session_key, 1)
-            .await
-            .ok()
-            .and_then(|outcomes| {
-                outcomes
-                    .first()
-                    .filter(|outcome| outcome.outcome == OUTCOME_SKIPPED)
-                    .map(|outcome| outcome.occurred_at)
-            });
+        // `lastWakeAt` cannot predate the skip's immutable terminal event.
         let confirmed = match self.db.get_assistant_schedule(workspace_id).await {
             Ok(Some(schedule)) => {
                 schedule.last_outcome.as_deref() == Some(OUTCOME_SKIPPED)
-                    && matches!(
-                        (schedule.last_wake_at, skip_occurred_at),
-                        (Some(written_at), Some(skip_at)) if written_at >= skip_at
-                    )
+                    && schedule
+                        .last_wake_at
+                        .is_some_and(|written_at| written_at >= skip_occurred_at)
             }
             Ok(None) => false,
             Err(error) => {
@@ -1968,6 +2026,7 @@ mod audit {
             .expect("stale full attempt");
 
         let report = super::SuppressionRecovery::with_noop_notifier(fixture.db.clone())
+            .with_stale_after(Duration::zero())
             .recover_session(WS, SESSION)
             .await
             .expect("recovery");
@@ -2006,6 +2065,7 @@ mod audit {
             .expect("stale audit fence");
 
         let report = super::SuppressionRecovery::with_noop_notifier(fixture.db.clone())
+            .with_stale_after(Duration::zero())
             .recover_session(WS, SESSION)
             .await
             .expect("recovery");
@@ -2025,6 +2085,101 @@ mod audit {
                 .vetoes
                 .contains(&crate::domains::agent::session::suppression::preflight::SkipVeto::AuditFailed)
         );
+    }
+
+    #[tokio::test]
+    async fn a_live_full_attempt_is_not_settled_by_recovery() {
+        let fixture = AuditFixture::create().await;
+        let state = fixture.state().await;
+        let attempt = fixture
+            .db
+            .begin_full_attempt(SESSION, &state)
+            .await
+            .expect("live full attempt");
+
+        let report = super::SuppressionRecovery::with_noop_notifier(fixture.db.clone())
+            .recover_session(WS, SESSION)
+            .await
+            .expect("recovery");
+
+        assert!(report.settled_full_attempt.is_none(), "alerts={:?}", report.alerts);
+        assert!(report.alerts.is_empty(), "alerts={:?}", report.alerts);
+        let live = fixture.state().await;
+        assert!(live.full_attempt_in_progress, "a live attempt must not be settled");
+        assert_eq!(live.full_attempt_id.as_deref(), Some(attempt.attempt_id.as_str()));
+    }
+
+    #[tokio::test]
+    async fn recovery_clears_orphaned_skip_barriers_after_a_later_full_turn() {
+        let fixture = AuditFixture::create().await;
+        fixture.commit_skip().await;
+
+        // The next scheduled path runs a full Turn. It overwrites
+        // `latest_outcome` without clearing the skip's pending consumers.
+        let state = fixture.state().await;
+        let full = fixture
+            .db
+            .begin_full_attempt(SESSION, &state)
+            .await
+            .expect("full attempt");
+        let snapshots = fixture
+            .registry
+            .capture_all(&SourceContext::new(WS, SESSION))
+            .await
+            .expect("capture");
+        let config = fixture.config().await;
+        let state_id = format!("state-after-orphaned-skip-{}", full.attempt_no);
+        let completion = FullAttemptCompletion {
+            state_id: state_id.clone(),
+            state_version: TURN_STATE_VERSION,
+            registry_version: fixture.registry.registry_version(),
+            config_version: config.config_version,
+            control_cursor: 0,
+            turn_state: turn_state(&state_id, &snapshots, &fixture.registry.registry_version()),
+            observed_at: fixture.checked_at(),
+        };
+        fixture
+            .db
+            .complete_full_attempt(WS, &full.attempt_id, &completion)
+            .await
+            .expect("full completion");
+        let orphaned = fixture.state().await;
+        assert_eq!(orphaned.latest_outcome, "full_completed");
+        assert!(orphaned.projection_sync_pending);
+        assert!(orphaned.notification_pending);
+
+        // Later recovery must identify the committed skip from its immutable
+        // terminal, not from `latest_outcome`, and clear the orphaned barriers.
+        let report = super::SuppressionRecovery::with_noop_notifier(fixture.db.clone())
+            .recover_session(WS, SESSION)
+            .await
+            .expect("recovery");
+        assert!(report.replayed_committed_skip, "report={report:?}");
+        let healed = fixture.state().await;
+        assert!(!healed.projection_sync_pending);
+        assert!(!healed.notification_pending);
+        assert!(healed.schedule_sync_pending, "Schedule stays with the exclusive writer");
+
+        // The TriggerRouter clears the Schedule barrier after its successful
+        // Schedule write (covered by the trigger test); the skip must then be
+        // allowed again.
+        fixture
+            .db
+            .clear_sync_pending(WS, SESSION, tinyiothub_storage::suppression::SyncPending::Schedule)
+            .await
+            .expect("schedule writer");
+        let healed = fixture.state().await;
+        assert!(healed.baseline_is_eligible());
+        let next = fixture
+            .db
+            .begin_skip_attempt(SESSION, &healed)
+            .await
+            .expect("orphaned barriers no longer block skips");
+        fixture
+            .db
+            .fail_skip_attempt(WS, SESSION, &next.attempt_id, "test_cleanup")
+            .await
+            .expect("settle cleanup fence");
     }
 
     #[tokio::test]

@@ -136,38 +136,60 @@ baseline ineligible but is not an alert.
 
 ### 6.1 Automatic startup recovery (R16)
 
-At startup the TriggerRouter starts recovery for every workspace. A racing
+At startup the TriggerRouter awaits recovery for every workspace before its
+first tick, holding the workspace in-flight guard for the duration. A racing
 scheduled dispatch still hits the durable CAS gates:
 
 1. A stale `full_attempt_in_progress` is inspected by its terminal event and
-   settled to `full_failed`; the next wake may run a full Turn.
+   settled to `full_failed`; the next wake may run a full Turn. Fences are
+   identified by their own `fullAttemptId`/`auditAttemptId`, never by a
+   `latestAttemptId` that a later attempt overwrote, and are settled only when
+   older than the 5-minute stale threshold.
 2. A stale `audit_in_progress` (which can never own a committed skip, because
    the skip state and its six events commit atomically) is settled to
    `audit_failed`; the old baseline stays ineligible and the next skip is
    vetoed.
-3. A committed skip (`latestOutcome=skipped`) is replayed from its immutable
-   events. Projection and notification are reconciled; the Schedule barrier is
-   cleared only after the TriggerRouter already recorded `lastOutcome=skipped`.
+3. Every set sync barrier is reconciled from the latest immutable
+   `turn.completed(outcome=skipped)` terminal, independent of `latestOutcome`
+   (a later full Turn may have overwritten it). Projection and notification are
+   cleared when their consumers succeed; the Schedule barrier is cleared only
+   after a successful Schedule write for that workspace.
 
 Recovery is idempotent and uses at most three total attempts (initial + two
 retries, 1s/2s). Unknown commit results reconcile by attempt/event identity
 before any retry; permanent configuration/contract errors are not retried.
 
+**Multi-replica shared-store deployment:** settlement without a lease is
+unsupported. Run a single writer process per workspace DB, or disable automatic
+settlement until a lease is implemented. Two replicas must not both settle
+fences for the same workspace.
+
 ### 6.2 `committed_partial` Schedule barrier
 
-`schedule_sync_pending=true` with `latestOutcome=skipped` means "skip committed,
-Schedule unconfirmed". Do not replay blindly:
+`schedule_sync_pending=true` means "a skip committed, the Schedule write for it
+is unconfirmed". Do not replay blindly:
 
 ```bash
-# 1. Confirm the immutable skip outcome.
+# 1. Confirm the immutable skip terminal and the fences.
 curl --fail-with-body "$API/suppression/report" -H "$AUTH" \
-  | jq '{latestOutcome: .state.latestOutcome, fences: .state.fences}'
+  | jq '{latestOutcome: .state.latestOutcome, fences: .state.fences, alerts: .alerts}'
 
-# 2. Reconcile the committed skip through the one shared full-Turn path.
-curl --fail-with-body -X POST "$API/suppression/reconcile" \
-  -H "$AUTH" -H 'Idempotency-Key: runbook-committed-partial-001' | jq .
+# 2. Keep the workspace off while repairing the Schedule writer / workspace DB.
+curl --fail-with-body -X PUT "$API/schedule" -H "$AUTH" -H "$JSON" \
+  -d '{"suppressionMode":"off"}' | jq '{suppressionMode}'
+```
 
-# 3. Verify: the Schedule writer ran and the barrier is gone.
+`POST /suppression/reconcile` **does not clear sync barriers**: it forces a full
+Turn, and a full Turn overwrites `latestOutcome` without clearing the skip's
+flags. Barriers are cleared by the committed-skip consumer reconciliation that
+runs after any suppression-aware Turn, by startup recovery on restart (which
+identifies the committed skip from its immutable terminal), and — for Schedule
+only — by the TriggerRouter after its next successful Schedule write. Startup
+recovery defers while a live attempt is younger than 5 minutes; retry after the
+threshold.
+
+```bash
+# 3. Restart the service, then verify startup recovery cleared the barrier.
 curl --fail-with-body "$API/suppression/report" -H "$AUTH" \
   | jq '{fences: .state.fences, alerts: .alerts}'
 ```
@@ -194,9 +216,13 @@ curl --fail-with-body "$API/suppression/report" -H "$AUTH" \
   | jq '{fences: .state.fences, notificationPending: .notifications.pending, alerts: .alerts}'
 ```
 
-After the consumer succeeds, run one `POST reconcile` to reconcile, or restart
-the service and let startup recovery clear it. Recovery never emits a new
-skipped Turn for an already committed skip.
+After the consumer succeeds, the committed-skip consumer reconciliation after
+the next suppression-aware Turn (or a restart's startup recovery) clears the
+barrier. `POST /suppression/reconcile` does **not** clear
+projection/notification barriers: it forces a full Turn, which leaves the flags
+intact. Startup recovery defers while a live attempt is younger than 5 minutes;
+retry after the threshold. Recovery never emits a new skipped Turn for an
+already committed skip.
 
 ### 6.4 Audit rollback / `audit_failed`
 
@@ -211,8 +237,10 @@ curl --fail-with-body -X POST "$API/suppression/reconcile" \
   -H "$AUTH" -H 'Idempotency-Key: runbook-audit-failed-001' | jq .
 ```
 
-The next successful full Turn installs a fresh baseline. Re-enable only after
-two clean preflights.
+The next successful full Turn installs a fresh baseline and clears
+`audit_failed`. `POST reconcile` does not clear sync barriers; restart after
+repairing their consumers so startup recovery can reconcile them. Re-enable
+only after two clean preflights.
 
 ### 6.5 False skip
 
@@ -250,4 +278,15 @@ curl --fail-with-body "$API/suppression/report" -H "$AUTH" \
 ```
 
 Expected: `mode=off`, full Turns continue normally, and `alerts.active=false`
-unless a real error or audit fence exists.
+unless a real error, audit fence or sync barrier exists. If a sync barrier
+remains, restart the service so startup recovery reconciles it; `POST reconcile`
+does not clear barriers.
+
+### Verification
+
+The barrier-recovery sequence in §6.2/§6.3 is covered end to end by:
+
+```bash
+cargo test -p tinyiothub-cloud --lib recovery_clears_orphaned_skip_barriers_after_a_later_full_turn
+cargo test -p tinyiothub-cloud --lib successful_schedule_write_clears_the_skip_schedule_barrier
+```

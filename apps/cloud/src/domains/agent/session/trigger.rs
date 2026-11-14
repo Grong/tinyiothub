@@ -192,21 +192,38 @@ impl TriggerRouter {
             .await
         {
             Ok(()) => {
-                // A committed skip leaves `SyncPending::Schedule` set until
-                // this writer succeeds; only then may the durable barrier be
-                // cleared. A failed write keeps it for every worker to see.
-                if report.outcome == WakeOutcome::Skipped
-                    && !report.session_key.is_empty()
-                    && let Err(error) = self
+                // A committed skip leaves `SyncPending::Schedule` set until a
+                // Schedule write succeeds. That write may be a later full Turn
+                // (which overwrites `latest_outcome` without clearing the
+                // flag), so clear the durable barrier whenever it is still set
+                // and this workspace's Schedule write has succeeded. A failed
+                // write keeps it for every worker to see.
+                if !report.session_key.is_empty() {
+                    match self
                         .db
-                        .clear_sync_pending(&schedule.workspace_id, &report.session_key, SyncPending::Schedule)
+                        .load_suppression_state(&schedule.workspace_id, &report.session_key)
                         .await
-                {
-                    tracing::warn!(
-                        %error,
-                        workspace_id = %schedule.workspace_id,
-                        "assistant schedule: clear skip schedule barrier failed"
-                    );
+                    {
+                        Ok(Some(state)) if state.schedule_sync_pending => {
+                            if let Err(error) = self
+                                .db
+                                .clear_sync_pending(&schedule.workspace_id, &report.session_key, SyncPending::Schedule)
+                                .await
+                            {
+                                tracing::warn!(
+                                    %error,
+                                    workspace_id = %schedule.workspace_id,
+                                    "assistant schedule: clear schedule barrier failed"
+                                );
+                            }
+                        }
+                        Ok(_) => {}
+                        Err(error) => tracing::warn!(
+                            %error,
+                            workspace_id = %schedule.workspace_id,
+                            "assistant schedule: read schedule barrier failed"
+                        ),
+                    }
                 }
             }
             Err(error) => {
@@ -240,7 +257,21 @@ impl TriggerRouter {
             }
         };
         for workspace_id in workspaces {
+            // Recovery settles durable fences, so it must exclude every other
+            // dispatch for this workspace while it runs.
+            if !self.in_flight.insert(workspace_id.clone()) {
+                tracing::warn!(
+                    %workspace_id,
+                    "suppression startup recovery skipped: workspace wake is in flight"
+                );
+                continue;
+            }
+            let guard = InFlightGuard {
+                set: Arc::clone(&self.in_flight),
+                key: workspace_id.clone(),
+            };
             let reports = self.executor.recover_suppression(&workspace_id).await;
+            drop(guard);
             for report in reports {
                 tracing::info!(
                     workspace_id = %report.workspace_id,
@@ -256,12 +287,6 @@ impl TriggerRouter {
     }
 
     pub fn start(self: Arc<Self>) -> tokio::task::JoinHandle<Result<(), crate::shared::error::Error>> {
-        // R16: settle fences left by a previous process as soon as the router
-        // starts. A racing scheduled tick still hits the durable CAS gates.
-        let recovery_router = Arc::clone(&self);
-        tokio::spawn(async move {
-            recovery_router.recover_suppression().await;
-        });
         // 先同步订阅再 spawn，保证 `start` 返回时新订阅已存在——调用方随后
         // 关闭旧的报警桥，窗口内不丢告警（broadcast 会为已订阅 receiver 缓冲）。
         if let Some(bus) = self.event_bus.clone() {
@@ -301,6 +326,9 @@ impl TriggerRouter {
             });
         }
         tokio::spawn(async move {
+            // R17: settle stale fences before the first tick can dispatch a
+            // live Turn against them.
+            self.recover_suppression().await;
             let mut ticker = tokio::time::interval(TRIGGER_TICK_INTERVAL);
             ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
             loop {
@@ -590,6 +618,130 @@ mod tests {
             self.recovered_workspaces.lock().await.push(workspace_id.to_string());
             Vec::new()
         }
+    }
+
+    struct GuardedRecoveryExecutor {
+        first: AtomicUsize,
+        recovered_workspace: Mutex<Option<String>>,
+        started: Notify,
+        release: Notify,
+    }
+
+    #[async_trait::async_trait]
+    impl WakeExecutor for GuardedRecoveryExecutor {
+        async fn execute(&self, _schedule: AssistantSchedule, _cancel: CancellationToken) -> WakeReport {
+            WakeReport {
+                session_key: String::new(),
+                outcome: crate::domains::agent::session::wake::WakeOutcome::Skipped,
+            }
+        }
+
+        async fn recover_suppression(
+            &self,
+            workspace_id: &str,
+        ) -> Vec<crate::domains::agent::session::suppression::audit::RecoveryReport> {
+            if self.first.swap(1, Ordering::SeqCst) == 0 {
+                *self.recovered_workspace.lock().await = Some(workspace_id.to_string());
+                self.started.notify_one();
+                self.release.notified().await;
+            }
+            Vec::new()
+        }
+    }
+
+    #[tokio::test]
+    async fn startup_recovery_holds_the_in_flight_guard() {
+        let db = Arc::new(test_db().await);
+        tinyiothub_storage::seed::seed_system(&db)
+            .await
+            .expect("seed system tenant");
+        sqlx::query(
+            "INSERT INTO workspaces (id, name, tenant_id, created_at, updated_at) \
+             VALUES ('ws-guarded', 'workspace', 'tenant-default-001', 'now', 'now')",
+        )
+        .execute(db.pool())
+        .await
+        .unwrap();
+        let executor = Arc::new(GuardedRecoveryExecutor {
+            first: AtomicUsize::new(0),
+            recovered_workspace: Mutex::new(None),
+            started: Notify::new(),
+            release: Notify::new(),
+        });
+        let router = Arc::new(TriggerRouter::new(db, executor.clone()));
+
+        let recovery = tokio::spawn({
+            let router = router.clone();
+            async move { router.recover_suppression().await }
+        });
+        executor.started.notified().await;
+        let workspace_id = executor
+            .recovered_workspace
+            .lock()
+            .await
+            .clone()
+            .expect("recovery workspace");
+        assert!(
+            router.in_flight.contains(&workspace_id),
+            "recovery must hold the workspace in-flight guard"
+        );
+        executor.release.notify_one();
+        recovery.await.expect("recovery task");
+        assert!(
+            !router.in_flight.contains(&workspace_id),
+            "the guard is released after recovery"
+        );
+    }
+
+    #[tokio::test]
+    async fn successful_schedule_write_clears_the_skip_schedule_barrier() {
+        let root = tempfile::tempdir().expect("workspace store root");
+        let pool = sqlx::SqlitePool::connect("sqlite::memory:").await.unwrap();
+        tinyiothub_storage::test_helpers::run_all_migrations(&pool)
+            .await
+            .unwrap();
+        let db = Arc::new(tinyiothub_storage::Db::new(pool).with_workspace_store_root(root.path().join("data/agents")));
+        tinyiothub_storage::seed::seed_system(&db)
+            .await
+            .expect("seed system tenant");
+        sqlx::query(
+            "INSERT INTO workspaces (id, name, tenant_id, created_at, updated_at) \
+             VALUES ('ws-barrier', 'workspace', 'tenant-default-001', 'now', 'now')",
+        )
+        .execute(db.pool())
+        .await
+        .unwrap();
+        db.create_workspace_store("ws-barrier").await.unwrap();
+        let now = ts(1_800_000_000);
+        let schedule = db
+            .ensure_assistant_schedule("ws-barrier", &assistant_agent_id("ws-barrier"), now)
+            .await
+            .unwrap();
+        let pool = db.workspace_pool_for_testing("ws-barrier").await.unwrap();
+        sqlx::query(
+            "INSERT INTO suppression_state \
+             (workspace_id, session_id, created_at, updated_at, schedule_sync_pending) \
+             VALUES (?, ?, '2027-01-15T08:00:00Z', '2027-01-15T08:00:00Z', 1)",
+        )
+        .bind("ws-barrier")
+        .bind("s")
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let executor = Arc::new(RecordingExecutor::default());
+        let router = Arc::new(TriggerRouter::new(db.clone(), executor));
+        router.dispatch(schedule, now).await;
+
+        let state = db
+            .load_suppression_state("ws-barrier", "s")
+            .await
+            .unwrap()
+            .expect("suppression state");
+        assert!(
+            !state.schedule_sync_pending,
+            "a successful Schedule write must clear the skip's Schedule barrier"
+        );
     }
 
     fn thing_signal(actor: &str, level: i32, event_id: i64) -> tinyiothub_core::models::event::ThingEventSignal {

@@ -1695,6 +1695,19 @@ impl WakeRunner {
                 )
                 .await;
         }
+        // A previous committed skip may have left projection/notification
+        // barriers that no later skip can clear (begin_skip_attempt requires
+        // all flags clear). Full Turns do not clear them, so reconcile the
+        // committed skip's consumers after any suppression-aware Turn.
+        if origin.suppression.is_some() {
+            let alerts = self
+                .suppression_recovery()
+                .reconcile_committed_consumers(origin.workspace_id, &session_key)
+                .await;
+            for alert in &alerts {
+                self.emit_suppression_alert(&session_key, alert).await;
+            }
+        }
         WakeReport { session_key, outcome }
     }
 

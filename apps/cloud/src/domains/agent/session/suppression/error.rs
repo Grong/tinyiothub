@@ -525,24 +525,77 @@ fn sanitize_value(value: &Value) -> Value {
     }
 }
 
-/// Strip URL query strings, user-directory paths and bearer credentials from
+/// Strip URL query strings, user-directory paths and credential shapes from
 /// any text that can reach a public response.
+///
+/// Credentials are stateful: in `Authorization: Bearer <secret>` the secret is
+/// the token after the scheme, so redaction must continue past the scheme
+/// token. `api_key=`, `token=`, `access_token=`, `password=` and similar
+/// single-token shapes are redacted in place.
 pub fn sanitize_public_text(input: &str) -> String {
     let mut parts = Vec::new();
+    let mut redact_next = false;
     for token in input.split_whitespace() {
         let mut token = token.to_string();
         if let Some(position) = token.find('?') {
             token.truncate(position);
         }
+        let lower = token.to_ascii_lowercase();
+
+        if redact_next {
+            // Keep consuming scheme tokens so the real secret after `Bearer`
+            // is redacted too.
+            if matches!(
+                lower.as_str(),
+                "authorization" | "authorization:" | "bearer" | "bearer:" | "basic" | "basic:"
+            ) {
+                parts.push("<credentials>".to_string());
+                continue;
+            }
+            parts.push("<credentials>".to_string());
+            redact_next = false;
+            continue;
+        }
+
+        if matches!(
+            lower.as_str(),
+            "authorization" | "authorization:" | "bearer" | "bearer:" | "basic" | "basic:"
+        ) || lower.starts_with("authorization:")
+            || lower.starts_with("bearer:")
+        {
+            parts.push("<credentials>".to_string());
+            redact_next = true;
+            continue;
+        }
+
+        if let Some((key, value)) = token.split_once('=') {
+            let key_lower = key.to_ascii_lowercase();
+            if matches!(
+                key_lower.as_str(),
+                "api_key"
+                    | "apikey"
+                    | "token"
+                    | "access_token"
+                    | "refresh_token"
+                    | "password"
+                    | "secret"
+                    | "client_secret"
+                    | "authorization"
+            ) {
+                parts.push(format!("{key}=<credentials>"));
+                if matches!(value.to_ascii_lowercase().as_str(), "bearer" | "bearer:") {
+                    redact_next = true;
+                }
+                continue;
+            }
+        }
+
         for prefix in ["/Users/", "/home/", "/root/"] {
             if let Some(position) = token.find(prefix) {
                 token.truncate(position);
                 token.push_str("<local-path>");
                 break;
             }
-        }
-        if token.starts_with("Bearer") || token.to_ascii_lowercase().contains("authorization:") {
-            token = "<credentials>".to_string();
         }
         parts.push(token);
     }
@@ -988,6 +1041,37 @@ mod tests {
     }
 
     #[test]
+    fn redacts_authorization_bearer_and_key_value_credentials() {
+        let error = SuppressionError::new(
+            "input_build_failed",
+            "Authorization: Bearer synthetic-bearer-secret \
+             Bearer synthetic-standalone-secret \
+             Authorization: Basic synthetic-basic-secret",
+            "api_key=synthetic-api-key token=synthetic-token \
+             access_token=synthetic-access-token password=synthetic-password \
+             client_secret=synthetic-client-secret",
+        );
+        let public = error.to_public_json();
+        let async_public = error.async_failure_payload().to_string();
+        for secret in [
+            "synthetic-bearer-secret",
+            "synthetic-standalone-secret",
+            "synthetic-basic-secret",
+            "synthetic-api-key",
+            "synthetic-token",
+            "synthetic-access-token",
+            "synthetic-password",
+            "synthetic-client-secret",
+        ] {
+            assert!(!public.contains(secret), "public leaked {secret}: {public}");
+            assert!(
+                !async_public.contains(secret),
+                "async failure leaked {secret}: {async_public}"
+            );
+        }
+    }
+
+    #[test]
     fn async_failure_uses_typed_error_and_safe_error_message() {
         let error = context_too_large_fixture().with_context(json!({
             "workspaceId": "ws-1",
@@ -996,7 +1080,7 @@ mod tests {
         let payload = error.async_failure_payload();
         assert_eq!(payload["error"]["code"], "context_too_large");
         assert_eq!(payload["error"]["trace"]["traceId"], "trace-1");
-        assert!(!payload["error"].get("trace").unwrap().get("localPath").is_some());
+        assert!(payload["error"].get("trace").unwrap().get("localPath").is_none());
         let message = payload["errorMessage"].as_str().expect("safe summary");
         assert!(!message.contains("synthetic-secret"));
         assert!(message.contains("context_too_large"));
