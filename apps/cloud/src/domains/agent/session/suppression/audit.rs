@@ -220,8 +220,9 @@ pub fn skipped_lifecycle_events(
 /// Build one lifecycle event with this attempt's derived identity.
 ///
 /// Used by the wake integration for the events emitted outside
-/// `SessionRunner`; `run_id` stays the invocation's run id, while the event id
-/// is stable for the attempt.
+/// `SessionRunner`. Planned-wake lifecycle emissions share the attempt's
+/// `turn_id` as their run id, so replay sees one identity convention for the
+/// whole attempt. The event id is stable for the attempt.
 pub fn attempt_event(
     context: &TurnContext,
     attempt: &WakeAttempt,
@@ -233,7 +234,7 @@ pub fn attempt_event(
         workspace_id: context.workspace_id.clone(),
         session_id: context.session_key.clone(),
         execution_mode: ExecutionMode::Production,
-        run_id: Some(context.run_id.clone()),
+        run_id: Some(attempt.turn_id.clone()),
         task_id: None,
         event_type: event_type.to_string(),
         occurred_at: Utc::now(),
@@ -340,6 +341,15 @@ impl AtomicSkipAudit {
         Self { db }
     }
 
+    /// Pre-check a decision before any state is touched.
+    ///
+    /// Callers must invoke this (or rely on [`Db::begin_skip_attempt`]'s mode
+    /// gate) before allocating an attempt: shadow computes `would_skip` but
+    /// must never write a durable audit fence.
+    pub fn ensure_skip_allowed(decision: &PreflightDecision) -> Result<()> {
+        validate_skip_decision(decision)
+    }
+
     /// Commit the complete skipped lifecycle and all pending sync barriers in
     /// exactly one workspace transaction.
     pub async fn commit(&self, request: SkipAuditRequest<'_>) -> Result<CommittedSkip> {
@@ -399,7 +409,9 @@ impl AtomicSkipAudit {
 
         let next = next_attempt_no(state.as_ref());
         let attempt = wake.attempt(next);
-        if decision.would_skip {
+        // Shadow records wouldSkip but never skips; only canary/enforce expose
+        // the skip-eligible path.
+        if decision.would_skip && decision.mode.allows_skip() {
             return Ok(ReplayResult::skip_eligible(wake, attempt));
         }
         Ok(ReplayResult::full(wake, attempt, None))
@@ -422,18 +434,17 @@ impl AtomicSkipAudit {
             .map(|event_type| attempt.event_id(event_type))
             .collect();
         self.db
-            .load_committed_skip(
-                &wake.workspace_id,
-                &wake.session_id,
-                attempt_id,
-                &attempt.turn_id,
-                &event_ids,
-            )
+            .load_committed_skip(&wake.workspace_id, &wake.session_id, attempt_id, &event_ids)
             .await
     }
 }
 
 fn validate_skip_decision(decision: &PreflightDecision) -> Result<()> {
+    if !decision.mode.allows_skip() {
+        return Err(DbError::Validation {
+            message: format!("suppression mode {} does not allow a skip", decision.mode.as_str()),
+        });
+    }
     if !decision.would_skip || !decision.vetoes.is_empty() || !decision.fence.is_empty() {
         return Err(DbError::Validation {
             message: "preflight decision does not allow a skip".to_string(),
@@ -578,6 +589,10 @@ mod audit {
 
     impl AuditFixture {
         async fn create() -> Self {
+            Self::create_with_mode(SuppressionMode::Enforce).await
+        }
+
+        async fn create_with_mode(mode: SuppressionMode) -> Self {
             let root = tempfile::tempdir().expect("fixture root");
             let platform = tinyiothub_storage::test_helpers::test_pool().await;
             let db = Arc::new(Db::new(platform).with_workspace_store_root(root.path().join("data/agents")));
@@ -595,9 +610,9 @@ mod audit {
             db.ensure_assistant_schedule(WS, ASSISTANT, ts())
                 .await
                 .expect("assistant schedule");
-            db.update_suppression_config(WS, Some(SuppressionMode::Enforce), None)
+            db.update_suppression_config(WS, Some(mode), None)
                 .await
-                .expect("enable enforce")
+                .expect("configure suppression mode")
                 .expect("schedule row");
 
             let source = Arc::new(ChangingSource::new());
@@ -1226,6 +1241,123 @@ mod audit {
         assert_eq!(replay.attempt_no, fixture.state().await.attempt_no + 1);
         assert!(replay.turn_id().starts_with("turn:"));
         assert_eq!(fixture.event_count().await, 0);
+    }
+
+    #[tokio::test]
+    async fn shadow_would_skip_cannot_write_an_audit_fence() {
+        let fixture = AuditFixture::create_with_mode(SuppressionMode::Shadow).await;
+        let decision = fixture.decision(60).await;
+        assert!(decision.would_skip, "shadow computes wouldSkip");
+        assert_eq!(decision.mode, SuppressionMode::Shadow);
+        assert!(!decision.mode.allows_skip());
+
+        let error = AtomicSkipAudit::ensure_skip_allowed(&decision).expect_err("shadow may not skip");
+        assert!(matches!(error, tinyiothub_storage::DbError::Validation { .. }));
+
+        let before = fixture.state().await;
+        let error = fixture
+            .db
+            .begin_skip_attempt(SESSION, &before)
+            .await
+            .expect_err("shadow may not write the audit fence");
+        assert!(matches!(error, tinyiothub_storage::DbError::CasConflict { .. }));
+
+        let after = fixture.state().await;
+        assert!(!after.audit_in_progress, "no durable audit fence in shadow");
+        assert_eq!(after.attempt_no, before.attempt_no);
+        assert_eq!(after.latest_outcome, "full_completed");
+        assert_eq!(fixture.event_count().await, 0);
+    }
+
+    #[tokio::test]
+    async fn canary_and_enforce_commit_atomic_skips() {
+        for mode in [SuppressionMode::Canary, SuppressionMode::Enforce] {
+            let fixture = AuditFixture::create_with_mode(mode).await;
+            let decision = fixture.decision(60).await;
+            assert!(decision.would_skip, "mode={}", mode.as_str());
+            assert_eq!(decision.mode, mode);
+
+            let skip = fixture.commit_skip().await;
+            assert_eq!(skip.state.latest_outcome, OUTCOME_SKIPPED);
+            assert_eq!(fixture.skipped_event_count().await, 1, "mode={}", mode.as_str());
+        }
+    }
+
+    #[tokio::test]
+    async fn shadow_replay_is_a_full_turn_not_skip_eligible() {
+        let fixture = AuditFixture::create_with_mode(SuppressionMode::Shadow).await;
+        let replay = fixture.replay().await;
+        assert_eq!(replay.outcome(), "completed");
+        assert!(replay.committed_skip().is_none());
+        assert_eq!(fixture.event_count().await, 0);
+    }
+
+    #[tokio::test]
+    async fn commit_rejects_a_shadow_decision_before_touching_the_transaction() {
+        let fixture = AuditFixture::create().await;
+        let decision = fixture.decision(60).await;
+        let state = fixture.state().await;
+        let attempt = fixture
+            .db
+            .begin_skip_attempt(SESSION, &state)
+            .await
+            .expect("enforce attempt");
+
+        let mut shadow = decision.clone();
+        shadow.mode = SuppressionMode::Shadow;
+        let error = AtomicSkipAudit::new(fixture.db.clone())
+            .commit(SkipAuditRequest {
+                wake: &fixture.wake,
+                attempt: &attempt,
+                decision: &shadow,
+                checked_at: fixture.checked_at(),
+            })
+            .await
+            .expect_err("commit must reject shadow before any write");
+        assert!(matches!(error, tinyiothub_storage::DbError::Validation { .. }));
+        assert_eq!(fixture.event_count().await, 0);
+        assert!(fixture.state().await.audit_in_progress);
+    }
+
+    #[tokio::test]
+    async fn committed_skip_replays_when_lifecycle_events_have_a_foreign_run_id() {
+        let fixture = AuditFixture::create().await;
+        let state = fixture.state().await;
+        let predicted_attempt = state.attempt_no + 1;
+        let lifecycle =
+            super::skipped_lifecycle_events(&fixture.wake, predicted_attempt, "state-1", fixture.checked_at());
+        // Simulate pre-fix wake emissions: same deterministic event ids and
+        // payloads, but the previous per-invocation run id.
+        for event in lifecycle.iter().take(3) {
+            let mut legacy = event.clone();
+            legacy.run_id = Some("legacy-run-id".to_string());
+            fixture
+                .db
+                .append_session_event(&legacy)
+                .await
+                .expect("legacy lifecycle event");
+        }
+
+        let skip = fixture.commit_skip().await;
+        assert_eq!(
+            skip.events[0].run_id.as_deref(),
+            Some("legacy-run-id"),
+            "duplicate-id append keeps the pre-existing row"
+        );
+        assert_ne!(
+            skip.events[3].run_id.as_deref(),
+            Some("legacy-run-id"),
+            "newly appended events use the attempt run id"
+        );
+
+        let replay = fixture.replay().await;
+        assert_eq!(replay.outcome(), "skipped");
+        assert_eq!(
+            replay.committed_skip().map(|skip| skip.attempt_id.as_str()),
+            Some(skip.attempt_id.as_str())
+        );
+        assert_eq!(fixture.event_count().await, 6);
+        assert_eq!(fixture.skipped_event_count().await, 1);
     }
 
     #[test]

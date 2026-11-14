@@ -9,6 +9,7 @@
 //! across the platform and workspace databases.
 
 use chrono::{DateTime, SecondsFormat, Utc};
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sqlx::sqlite::SqliteRow;
 use sqlx::{Row, Sqlite, Transaction};
@@ -17,7 +18,6 @@ use tinyiothub_core::harness::{ExecutionMode, HarnessEvent, HarnessEventInput};
 use crate::{
     Db,
     error::{DbError, Result},
-    harness_event::EventFilter,
 };
 
 /// Version of the generic Harness turn-state envelope (Task 1 contract).
@@ -42,7 +42,8 @@ pub const OUTCOME_AUDIT_FAILED: &str = "audit_failed";
 /// Workspace-level suppression gate mode. The HTTP DTO lives elsewhere; this
 /// enum is the persistence-level value used by schedule updates and commit
 /// guards.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
 pub enum SuppressionMode {
     Off,
     Shadow,
@@ -218,6 +219,10 @@ const STATE_BY_ATTEMPT_SQL: &str = "SELECT workspace_id, session_id, state_versi
     full_attempt_in_progress, full_failed, audit_in_progress, schedule_sync_pending, \
     projection_sync_pending, notification_pending, last_error, created_at, updated_at \
     FROM suppression_state WHERE latest_attempt_id = ?";
+
+const SKIP_EVENT_BY_ID_SQL: &str = "SELECT seq, event_id, session_id, execution_mode, run_id, \
+    task_id, type, occurred_at, cause_id, schema_v, payload_digest, payload_json \
+    FROM session_events WHERE event_id = ? AND session_id = ?";
 
 fn format_ts(ts: DateTime<Utc>) -> String {
     ts.to_rfc3339_opts(SecondsFormat::Secs, true)
@@ -596,6 +601,26 @@ impl Db {
                 message: "baseline session does not match the skip attempt session".to_string(),
             });
         }
+        // Shadow/off must never write the durable audit fence. Check the
+        // platform mode before the workspace CAS so a caller that forgot the
+        // decision-level gate cannot fence the session.
+        let schedule_mode: Option<String> =
+            sqlx::query_scalar("SELECT suppression_mode FROM assistant_schedules WHERE workspace_id = ?")
+                .bind(&baseline.workspace_id)
+                .fetch_optional(self.pool())
+                .await?;
+        let Some(schedule_mode) = schedule_mode else {
+            return Err(DbError::CasConflict {
+                message: format!("workspace {} has no suppression schedule", baseline.workspace_id),
+            });
+        };
+        let schedule_mode = SuppressionMode::parse(&schedule_mode)
+            .ok_or_else(|| DbError::Internal(format!("unknown suppression mode: {schedule_mode}")))?;
+        if !schedule_mode.allows_skip() {
+            return Err(DbError::CasConflict {
+                message: format!("suppression mode {} does not allow a skip", schedule_mode.as_str()),
+            });
+        }
         if !baseline.baseline_is_eligible() {
             return Err(DbError::CasConflict {
                 message: format!("session {session_id} baseline is not eligible for a skip"),
@@ -818,16 +843,19 @@ impl Db {
     /// Load the committed skip owned by one attempt.
     ///
     /// Replay must be able to return the exact committed skipped lifecycle
-    /// without writing anything. `turn_id` is the attempt's reserved run id and
-    /// `expected_event_ids` are the deterministic ids derived from
-    /// `(wakeId, attemptNo)`; a partial or foreign event set returns `None`
-    /// instead of being mistaken for a committed skip.
+    /// without writing anything. `expected_event_ids` are the deterministic
+    /// ids derived from `(wakeId, attemptNo)`; a partial or foreign event set
+    /// returns `None` instead of being mistaken for a committed skip.
+    ///
+    /// Matching is by event id only. Older wake emissions may have stored the
+    /// same events under a different `run_id`, and duplicate-id appends return
+    /// the pre-existing row, so filtering by `run_id` would hide a committed
+    /// skip from replay.
     pub async fn load_committed_skip(
         &self,
         workspace_id: &str,
         session_id: &str,
         attempt_id: &str,
-        turn_id: &str,
         expected_event_ids: &[String],
     ) -> Result<Option<CommittedSkip>> {
         let Some(state) = self.load_suppression_state(workspace_id, session_id).await? else {
@@ -836,19 +864,24 @@ impl Db {
         if state.latest_outcome != OUTCOME_SKIPPED || state.latest_attempt_id.as_deref() != Some(attempt_id) {
             return Ok(None);
         }
-        let filter = EventFilter {
-            session_id: Some(session_id.to_string()),
-            run_id: Some(turn_id.to_string()),
-            task_id: None,
-            execution_mode: ExecutionMode::Production,
-        };
-        let page = self.session_event_page(workspace_id, &filter, 0, 256).await?;
-        let mut events = page.events;
+        let expected: std::collections::HashSet<&str> = expected_event_ids.iter().map(String::as_str).collect();
+        if expected.len() != expected_event_ids.len() {
+            return Ok(None);
+        }
+        let mut events = Vec::with_capacity(expected_event_ids.len());
+        for event_id in expected_event_ids {
+            let Some(event) = self
+                .load_session_event_by_id(workspace_id, session_id, event_id)
+                .await?
+            else {
+                return Ok(None);
+            };
+            events.push(event);
+        }
         events.sort_by_key(|event| event.seq);
         if events.len() != expected_event_ids.len() {
             return Ok(None);
         }
-        let expected: std::collections::HashSet<&str> = expected_event_ids.iter().map(String::as_str).collect();
         let actual: std::collections::HashSet<&str> = events.iter().map(|event| event.event_id.as_str()).collect();
         if actual != expected {
             return Ok(None);
@@ -865,6 +898,49 @@ impl Db {
             attempt_no: state.attempt_no,
             events,
             state,
+        }))
+    }
+
+    /// Load one session event by its stable event id, independent of run id.
+    async fn load_session_event_by_id(
+        &self,
+        workspace_id: &str,
+        session_id: &str,
+        event_id: &str,
+    ) -> Result<Option<HarnessEvent>> {
+        let pool = self.workspace_pool(workspace_id).await?;
+        let Some(row) = sqlx::query(SKIP_EVENT_BY_ID_SQL)
+            .bind(event_id)
+            .bind(session_id)
+            .fetch_optional(&pool)
+            .await?
+        else {
+            return Ok(None);
+        };
+        crate::harness_event::validate_schema(row.try_get("schema_v")?)?;
+        let execution_mode: String = row.try_get("execution_mode")?;
+        let execution_mode = ExecutionMode::from_db(&execution_mode).ok_or_else(|| DbError::Validation {
+            message: format!("unknown execution mode: {execution_mode}"),
+        })?;
+        let occurred_at: String = row.try_get("occurred_at")?;
+        let occurred_at = DateTime::parse_from_rfc3339(&occurred_at)
+            .map_err(|error| DbError::Internal(format!("invalid event occurred_at: {error}")))?
+            .with_timezone(&Utc);
+        let payload_json: Value = serde_json::from_str(&row.try_get::<String, _>("payload_json")?)?;
+        Ok(Some(HarnessEvent {
+            seq: row.try_get("seq")?,
+            event_id: row.try_get("event_id")?,
+            workspace_id: workspace_id.to_string(),
+            session_id: row.try_get("session_id")?,
+            execution_mode,
+            run_id: row.try_get("run_id")?,
+            task_id: row.try_get("task_id")?,
+            event_type: row.try_get("type")?,
+            occurred_at,
+            cause_id: row.try_get("cause_id")?,
+            schema_v: row.try_get("schema_v")?,
+            payload_digest: row.try_get("payload_digest")?,
+            payload_json,
         }))
     }
 

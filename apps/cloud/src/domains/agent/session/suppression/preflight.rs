@@ -77,6 +77,10 @@ impl SkipVeto {
 #[serde(rename_all = "camelCase")]
 pub struct PreflightDecision {
     pub would_skip: bool,
+    /// The configured mode this decision was evaluated under. Shadow computes
+    /// `would_skip` but `allows_skip()` is false, so callers must gate any
+    /// durable skip on this field.
+    pub mode: SuppressionMode,
     pub vetoes: Vec<SkipVeto>,
     /// Current Source snapshots at `observedAt`, in registry order.
     pub snapshot: Vec<SourceSnapshot>,
@@ -154,6 +158,7 @@ impl From<SuppressionMode> for SourceMode {
 fn evaluate_snapshots(input: PreflightInput<'_>) -> PreflightDecision {
     let mut decision = PreflightDecision {
         would_skip: false,
+        mode: input.config.mode,
         vetoes: Vec::new(),
         snapshot: input.snapshots.to_vec(),
         baseline_state_id: input.state.and_then(|state| state.baseline_state_id.clone()),
@@ -586,6 +591,7 @@ mod preflight {
             .not_due()
             .evaluate();
         assert!(result.would_skip);
+        assert_eq!(result.mode, SuppressionMode::Shadow);
         assert!(result.vetoes.is_empty());
         assert!(!SuppressionMode::Shadow.allows_skip());
     }
@@ -823,6 +829,7 @@ mod preflight {
             .evaluate();
         let value = serde_json::to_value(&decision).expect("decision json");
         assert!(value.get("wouldSkip").is_some());
+        assert_eq!(value["mode"], "enforce");
         assert!(value.get("vetoes").is_some());
         assert!(value.get("snapshot").is_some());
         assert!(value.get("baselineStateId").is_some());

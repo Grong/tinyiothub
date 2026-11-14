@@ -858,13 +858,15 @@ async fn load_committed_skip_returns_only_the_matching_attempt() {
     let fixture = SuppressionFixture::create().await;
     install_complete_baseline(&fixture).await;
     let (_state, attempt) = begin_skip(&fixture).await;
-    let events = skip_events_for_turn("turn-1");
+    // A pre-fix wake may have written these ids under a different run id;
+    // replay matches deterministic ids, not the run id.
+    let events = skip_events_for_turn("legacy-run-id");
     fixture.db.commit_skip(&attempt, &events).await.expect("commit skip");
     let expected: Vec<String> = events.iter().map(|event| event.event_id.clone()).collect();
 
     let loaded = fixture
         .db
-        .load_committed_skip(WS, SESSION, &attempt.attempt_id, "turn-1", &expected)
+        .load_committed_skip(WS, SESSION, &attempt.attempt_id, &expected)
         .await
         .expect("load committed skip")
         .expect("committed skip");
@@ -872,31 +874,30 @@ async fn load_committed_skip_returns_only_the_matching_attempt() {
     assert_eq!(loaded.attempt_no, attempt.attempt_no);
     assert_eq!(loaded.events.len(), events.len());
     assert_eq!(loaded.events.last().unwrap().event_type, "session.ended");
+    assert_eq!(
+        loaded.events[0].run_id.as_deref(),
+        Some("legacy-run-id"),
+        "matching is by event id, not run id"
+    );
 
     assert!(
         fixture
             .db
-            .load_committed_skip(WS, SESSION, &attempt.attempt_id, "turn-other", &expected)
-            .await
-            .expect("foreign turn")
-            .is_none(),
-        "a foreign turn id is not this attempt's skip"
-    );
-    assert!(
-        fixture
-            .db
-            .load_committed_skip(WS, SESSION, "other-attempt", "turn-1", &expected)
+            .load_committed_skip(WS, SESSION, "other-attempt", &expected)
             .await
             .expect("foreign attempt")
             .is_none(),
         "only the latest committed attempt may be replayed"
     );
-    let mut truncated = expected.clone();
-    truncated.pop();
+    sqlx::query("DELETE FROM session_events WHERE event_id = ?")
+        .bind("skip:session.ended")
+        .execute(&fixture.workspace)
+        .await
+        .expect("remove one lifecycle event");
     assert!(
         fixture
             .db
-            .load_committed_skip(WS, SESSION, &attempt.attempt_id, "turn-1", &truncated)
+            .load_committed_skip(WS, SESSION, &attempt.attempt_id, &expected)
             .await
             .expect("partial event set")
             .is_none(),
@@ -967,6 +968,55 @@ async fn commit_skip_rejects_mode_off_before_the_transaction() {
         .expect_err("off must reject a skipped lifecycle");
     assert!(matches!(error, DbError::CasConflict { .. }));
     assert_eq!(fixture.event_count().await, 0);
+    fixture.close().await;
+}
+
+#[tokio::test]
+async fn begin_skip_attempt_rejects_shadow_without_writing_the_fence() {
+    let fixture = SuppressionFixture::create().await;
+    fixture
+        .db
+        .update_suppression_config(WS, Some(SuppressionMode::Shadow), None)
+        .await
+        .expect("shadow")
+        .expect("schedule row");
+    install_complete_baseline(&fixture).await;
+    let before = fixture.current().await;
+
+    let error = fixture
+        .db
+        .begin_skip_attempt(SESSION, &before)
+        .await
+        .expect_err("shadow must not write the durable audit fence");
+    assert!(matches!(error, DbError::CasConflict { .. }));
+
+    let after = fixture.current().await;
+    assert!(!after.audit_in_progress, "no fence in shadow");
+    assert_eq!(after.attempt_no, before.attempt_no);
+    assert_eq!(after.latest_outcome(), "full_completed");
+    assert_eq!(fixture.event_count().await, 0);
+    fixture.close().await;
+}
+
+#[tokio::test]
+async fn begin_skip_attempt_allows_canary() {
+    let fixture = SuppressionFixture::create().await;
+    fixture
+        .db
+        .update_suppression_config(WS, Some(SuppressionMode::Canary), None)
+        .await
+        .expect("canary")
+        .expect("schedule row");
+    install_complete_baseline(&fixture).await;
+    let state = fixture.current().await;
+
+    let attempt = fixture
+        .db
+        .begin_skip_attempt(SESSION, &state)
+        .await
+        .expect("canary may allocate a skip attempt");
+    assert!(attempt.attempt_no > state.attempt_no);
+    assert!(fixture.current().await.audit_in_progress);
     fixture.close().await;
 }
 
