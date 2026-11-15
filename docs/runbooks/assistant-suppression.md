@@ -200,6 +200,34 @@ curl --fail-with-body -X POST "$API/suppression/false-skip" \
 curl --fail-with-body "$API/suppression/report" -H "$AUTH" | jq '.alerts'
 ```
 
+### 3.4 Gate authoring and false-skip in a real deployment versus the fixture
+
+The gate-authoring commands in §3.2 and the false-skip confirmation in §3.3 are
+**production operations**. They derive every non-human metric from the
+workspace observation table and require real recorded Turns; never point them
+at the loopback quickstart fixture as evidence of production benefit.
+
+The loopback fixture (`cargo run -p tinyiothub-cloud --example
+suppression_quickstart`, see `docs/dev/assistant-suppression.md` §6) pre-seals
+explicitly `synthetic=true` shadow and canary artifacts at startup from
+synthetic observations. It accepts them only because its server configuration
+sets `suppression_gate_allow_synthetic`; the production `PUT` path still rejects
+synthetic evidence and no request field can set the flag. The fixture adds no
+second gate-authoring path: §3.2 remains the only HTTP writer for artifacts and
+§3.3 remains the only confirmed-false-skip producer.
+
+To exercise the runbook against the fixture without real Turns:
+
+```bash
+cargo run -p tinyiothub-cloud --example suppression_quickstart
+# Other shell: synthetic values only, never production credentials.
+BASE=http://127.0.0.1:3109
+WS=ws-suppression-demo
+AUTH="Authorization: Bearer test-token"
+curl --fail-with-body "$BASE/api/v1/workspaces/$WS/agent/suppression/report" -H "$AUTH" \
+  | jq '{mode, state, sources, vetoes, alerts}'
+```
+
 ## 4. Wake and reconcile (write operations)
 
 Every `POST` requires a unique `Idempotency-Key`; the same key replays the

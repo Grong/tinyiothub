@@ -1,5 +1,57 @@
 # Changelog
 
+## [Unreleased]
+
+### Added
+
+- **Assistant suppression gate (additive, opt-in)**: workspace modes `off`
+  (default), `shadow`, `canary` and `enforce`; a `shadow` Turn still executes
+  fully while recording `wouldSkip`, and only `canary`/`enforce` may dispatch a
+  skip.
+- **Suppression HTTP API** under
+  `/api/v1/workspaces/{workspaceId}/agent`: `GET suppression/preflight`, `GET
+  suppression/report`, `POST suppression/wake`, `POST
+  suppression/reconcile`, `POST suppression/gate-artifacts` and `POST
+  suppression/false-skip`. Writes require workspace write plus an
+  `Idempotency-Key`; `PUT schedule` accepts `suppressionMode` and
+  `reconciliationSeconds`.
+- **Additive DDL only** (no destructive migration, no codemod): schedule
+  suppression columns, `suppression_state`, `suppression_idempotency`,
+  `suppression_observations` and append-only `suppression_gate_evaluations`.
+  Migrations `20261114000002` and `20261115000001`.
+- **Typed suppression errors** with stable `code`, safe `what`/`fix`,
+  recovery bounds, `codeAnchor`, allowlisted context, trace and redaction.
+  Catalog: `docs/dev/assistant-suppression.md` (one anchor per code).
+- **Loopback quickstart fixture**:
+  `cargo run -p tinyiothub-cloud --example suppression_quickstart` serves
+  synthetic Sources on `127.0.0.1:3109` with in-memory SQLite and synthetic
+  `test-token`; no provider, device or credential is contacted. Synthetic gate
+  evidence is enabled only by fixture server configuration.
+
+### Compatibility
+
+| Item | Version / rule |
+|---|---|
+| `TURN_STATE_VERSION` (`stateVersion`) | 1. Unknown envelope versions are rejected; additive fields inside v1 are allowed. |
+| `sourceVersion` | 1 (`SOURCE_VERSION`). Snapshots are compatible only with an equal registered descriptor version; a bump makes older gate artifacts stale via `registryVersion`. |
+| `registryVersion` | `sha256` of the canonical ordered `(sourceId, sourceVersion)` descriptor list. Any registration change invalidates existing gate artifacts. |
+| `suppressionConfigVersion` | Per workspace, starts at 1 and increments on every accepted suppression update. |
+| Gate artifact `contentSha256` | SHA-256 over canonical JCS bytes excluding the hash field; tampering is rejected. |
+
+Existing workspaces start in `off`; the feature is invisible until a mode is
+explicitly chosen, and `canary`/`enforce` require approved current evidence.
+
+### Rollback
+
+- Immediate kill switch: `PUT /api/v1/workspaces/{id}/agent/schedule` with
+  `{"suppressionMode":"off"}`. It needs no other fields or evidence.
+- Roll back the code without a data rollback: the suppression tables are
+  additive and ignored by older binaries. No codemod, destructive DDL or
+  backfill is required.
+- After a confirmed false skip, stay `off`, run `POST suppression/reconcile`,
+  and re-enable only after root-cause repair, two clean preflights and fresh
+  approved evidence. See `docs/runbooks/assistant-suppression.md`.
+
 ## [0.5.2.0] - 2026-09-14
 
 ### Added
