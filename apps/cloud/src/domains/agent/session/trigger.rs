@@ -422,6 +422,14 @@ impl TriggerRouter {
 pub trait SuppressionOps: Send + Sync {
     async fn manual_preflight(&self, workspace_id: &str) -> Result<ManualPreflight, ManualStartError>;
 
+    /// Current registry version, used to reject stale gate artifacts.
+    ///
+    /// Read-only; the default reuses the public preflight projection so a
+    /// composition that already implements it needs no extra wiring.
+    async fn registry_version(&self, workspace_id: &str) -> Result<String, ManualStartError> {
+        Ok(self.manual_preflight(workspace_id).await?.registry_version)
+    }
+
     /// Allocate the durable attempt synchronously, then spawn execution.
     async fn start_manual(
         &self,

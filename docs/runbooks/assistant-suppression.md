@@ -55,7 +55,7 @@ curl --fail-with-body -X PUT "$API/schedule" -H "$AUTH" -H "$JSON" \
 
 Rollout order is `off -> shadow -> canary -> enforce`. Shadow computes
 `wouldSkip` without skipping; canary requires approved shadow evidence; enforce
-requires canary evidence. An invalid payload returns HTTP 400
+requires approved canary evidence. An invalid payload returns HTTP 400
 `suppression_config_invalid` and leaves the previous configuration unchanged.
 
 ```bash
@@ -66,6 +66,62 @@ for MODE in shadow canary enforce; do
   curl --fail-with-body "$API/suppression/preflight" -H "$AUTH" | jq '{mode, wouldSkip, vetoes}'
 done
 ```
+
+A mode change that lacks valid evidence fails closed with HTTP 409
+`shadow_gate_not_met`; nothing is written. `off` never needs evidence and is
+always immediate.
+
+### 3.1 Gate evidence (canary and enforce)
+
+Evidence lives in the workspace table `suppression_gate_evaluations` as
+immutable, append-only artifacts. There is no update or delete path, and
+re-appending the same `artifactId` is rejected. Every artifact records:
+
+- `artifactId`, `workspaceId`, `mode` (`shadow` unlocks canary, `canary`
+  unlocks enforce), sample turn IDs and dates, `registryVersion`, and a
+  `synthetic` flag;
+- explicit denominators, the estimated or measured values, preflight latency
+  distribution (`p50/p95/p99`), the false-skip review (reviewer, conclusion,
+  every sample reviewed) and the approver;
+- `approvedAt` and `contentSha256` over the canonical artifact bytes (JCS,
+  excluding the hash field itself).
+
+Shadow numbers are **counterfactual estimates**, never realized savings:
+
+```text
+estimated model savings = model calls on wouldSkip Turns / all shadow model calls
+estimated tool savings  = model-driven tool calls on wouldSkip Turns / all shadow tool calls
+```
+
+Shadow artifacts also record `wouldSkip` ratio, per-Source veto distribution,
+longest consecutive wouldSkip run, unavailable-Source full executions,
+reconciliation full executions and preflight latency. Shadow evidence must
+cover at least 3 representative days and 100 scheduled Turns with a
+`wouldSkip` ratio of at least 50%.
+
+Canary evidence is **measured**: actual model-call reduction, actual tool-call
+reduction and the human-labelled duplicate-report reduction, each computed
+from baseline and canary denominators, plus the preflight latency distribution
+and the human false-skip review. Canary must cover at least 20 real Turns with
+model and tool reductions of at least 40%, duplicate-report reduction of at
+least 80%, preflight p95 at or below 250ms and no confirmed false skip after
+review. Every reviewed `wouldSkip` sample must be marked reviewed.
+
+`PUT suppressionMode=canary` validates the newest approved shadow artifact;
+`PUT suppressionMode=enforce` validates the newest approved canary artifact.
+Missing sample IDs, denominators or approver, unreviewed false-skip samples,
+below-threshold counts, a tampered `contentSha256` and stale artifacts are all
+rejected with 409 `shadow_gate_not_met`.
+
+Staleness follows ruling R18 only — there is no age window:
+
+1. the artifact's `registryVersion` differs from the current registered
+   Sources, or
+2. a confirmed `false_skip_detected` event exists after `approvedAt`.
+
+Synthetic evidence (`synthetic=true`) is valid only in the loopback
+quickstart fixture. Production validation always rejects it; there is no
+parameter that bypasses the artifact gate.
 
 ## 4. Wake and reconcile (write operations)
 
@@ -256,7 +312,11 @@ curl --fail-with-body "$API/suppression/preflight" -H "$AUTH" \
 ```
 
 Re-enable only after root-cause repair, two consecutive clean preflights and
-the existing shadow gate still passing. No parameter bypasses the gate.
+**fresh approved evidence**: the artifact that unlocked the previous mode is
+stale once a confirmed false-skip event exists after its `approvedAt`, and the
+newest artifact is the one validated. Publish a new approved artifact against
+the current `registryVersion`, then `canary` and `enforce` in order. No
+parameter bypasses the gate; `off` always remains available.
 
 ## 7. Rollback
 

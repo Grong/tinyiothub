@@ -13,13 +13,16 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, LazyLock};
 use std::time::Duration as StdDuration;
 
-use chrono::{DateTime, Duration, Utc};
+use chrono::{DateTime, Duration, TimeZone, Utc};
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use tinyiothub_storage::assistant_schedule::SuppressionConfig;
 use tinyiothub_storage::suppression::{
-    DEFAULT_RECONCILIATION_SECONDS, MAX_RECONCILIATION_SECONDS, MIN_RECONCILIATION_SECONDS, OUTCOME_AUDIT_FAILED,
+    CanaryDenominators, CanaryMeasured, DEFAULT_RECONCILIATION_SECONDS, FALSE_SKIP_CONCLUSION_NONE,
+    LatencyDistribution, MAX_RECONCILIATION_SECONDS, MIN_RECONCILIATION_SECONDS, OUTCOME_AUDIT_FAILED,
     OUTCOME_BASELINE_MISSING, OUTCOME_FULL_COMPLETED, OUTCOME_FULL_FAILED, OUTCOME_FULL_IN_PROGRESS,
-    OUTCOME_SKIP_IN_PROGRESS, OUTCOME_SKIPPED, SuppressionMode, SuppressionState,
+    OUTCOME_SKIP_IN_PROGRESS, OUTCOME_SKIPPED, ShadowDenominators, ShadowEstimates, SuppressionGateArtifact,
+    SuppressionGateMode, SuppressionMode, SuppressionState,
 };
 use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 use tokio_util::sync::CancellationToken;
@@ -535,6 +538,471 @@ fn parse_baseline(state: &SuppressionState) -> Result<BTreeMap<String, BaselineS
         }
     }
     Ok(sources)
+}
+
+// ── Rollout gate evidence (Task 10) ──
+//
+// Shadow produces counterfactual *estimated* numbers with explicit
+// denominators. Canary produces *measured* reductions and a human false-skip
+// review. An immutable, approved artifact is the only evidence that unlocks
+// the next mode; `off` is always allowed.
+
+/// Shadow evidence must cover at least three representative days.
+pub const GATE_MIN_SHADOW_DAYS: usize = 3;
+/// Shadow evidence must cover at least 100 scheduled Turns.
+pub const GATE_MIN_SHADOW_TURNS: u64 = 100;
+/// At least half of shadow Turns must have been wouldSkip.
+pub const GATE_MIN_WOULD_SKIP_RATIO: f64 = 0.5;
+/// The canary must observe at least 20 real Turns.
+pub const GATE_MIN_CANARY_TURNS: u64 = 20;
+/// Measured model and tool calls must each drop by at least 40%.
+pub const GATE_MIN_CANARY_REDUCTION: f64 = 0.4;
+/// Human-labelled duplicate reports must drop by at least 80%.
+pub const GATE_MIN_DUPLICATE_REPORT_REDUCTION: f64 = 0.8;
+/// Preflight p95 may not exceed 250ms.
+pub const GATE_MAX_PREFLIGHT_P95_MS: u64 = 250;
+
+const GATE_RATIO_EPSILON: f64 = 1e-6;
+
+/// One observed shadow Turn. Shadow never removes model or tool calls; these
+/// are the counts that actually ran while the decision was being recorded.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ShadowTurnObservation {
+    pub turn_id: String,
+    pub date: String,
+    pub would_skip: bool,
+    pub vetoes: Vec<String>,
+    pub model_calls: u64,
+    pub model_driven_tool_calls: u64,
+    pub unavailable_source_full_execution: bool,
+    pub reconciliation_full_execution: bool,
+    pub preflight_latency_ms: u64,
+}
+
+/// One measured canary Turn.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CanaryTurnObservation {
+    pub turn_id: String,
+    pub date: String,
+    pub model_calls: u64,
+    pub model_driven_tool_calls: u64,
+    pub duplicate_reports: u64,
+    pub preflight_latency_ms: u64,
+}
+
+/// The pre-canary baseline the measured canary Turns are compared against.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct CanaryBaseline {
+    pub model_calls: u64,
+    pub model_driven_tool_calls: u64,
+    pub duplicate_reports: u64,
+}
+
+fn ratio(numerator: u64, denominator: u64) -> f64 {
+    if denominator == 0 {
+        0.0
+    } else {
+        numerator as f64 / denominator as f64
+    }
+}
+
+fn reduction(baseline: u64, measured: u64) -> f64 {
+    if baseline == 0 {
+        0.0
+    } else {
+        1.0 - measured as f64 / baseline as f64
+    }
+}
+
+/// Nearest-rank percentile over an unsorted sample.
+pub fn latency_distribution(samples: &[u64]) -> LatencyDistribution {
+    let mut sorted = samples.to_vec();
+    sorted.sort_unstable();
+    LatencyDistribution {
+        sample_count: sorted.len() as u64,
+        p50_ms: percentile(&sorted, 50),
+        p95_ms: percentile(&sorted, 95),
+        p99_ms: percentile(&sorted, 99),
+    }
+}
+
+fn percentile(sorted: &[u64], percentile: usize) -> u64 {
+    if sorted.is_empty() {
+        return 0;
+    }
+    let rank = (sorted.len() * percentile).div_ceil(100).max(1);
+    sorted[rank - 1]
+}
+
+/// Estimated model savings = model calls on wouldSkip Turns / all shadow
+/// model calls. Estimated tool savings uses model-driven tool calls. Every
+/// value is counterfactual: shadow never claims an already-realized saving.
+pub fn compute_shadow_metrics(
+    observations: &[ShadowTurnObservation],
+) -> (ShadowDenominators, ShadowEstimates, LatencyDistribution) {
+    let mut would_skip_turns = 0;
+    let mut model_calls = 0;
+    let mut tool_calls = 0;
+    let mut model_calls_on_would_skip = 0;
+    let mut tool_calls_on_would_skip = 0;
+    let mut unavailable_source_full_executions = 0;
+    let mut reconciliation_full_executions = 0;
+    let mut veto_distribution: std::collections::BTreeMap<String, u64> = std::collections::BTreeMap::new();
+    let mut streak = 0;
+    let mut longest_consecutive_skips = 0;
+    let mut latencies = Vec::with_capacity(observations.len());
+
+    for observation in observations {
+        model_calls += observation.model_calls;
+        tool_calls += observation.model_driven_tool_calls;
+        if observation.would_skip {
+            would_skip_turns += 1;
+            model_calls_on_would_skip += observation.model_calls;
+            tool_calls_on_would_skip += observation.model_driven_tool_calls;
+            streak += 1;
+            longest_consecutive_skips = longest_consecutive_skips.max(streak);
+        } else {
+            streak = 0;
+        }
+        for veto in &observation.vetoes {
+            *veto_distribution.entry(veto.clone()).or_insert(0) += 1;
+        }
+        if observation.unavailable_source_full_execution {
+            unavailable_source_full_executions += 1;
+        }
+        if observation.reconciliation_full_execution {
+            reconciliation_full_executions += 1;
+        }
+        latencies.push(observation.preflight_latency_ms);
+    }
+
+    let denominators = ShadowDenominators {
+        turns: observations.len() as u64,
+        would_skip_turns,
+        model_calls,
+        model_driven_tool_calls: tool_calls,
+        model_calls_on_would_skip_turns: model_calls_on_would_skip,
+        tool_calls_on_would_skip_turns: tool_calls_on_would_skip,
+        unavailable_source_full_executions,
+        reconciliation_full_executions,
+    };
+    let estimates = ShadowEstimates {
+        estimated: true,
+        would_skip_ratio: ratio(would_skip_turns, denominators.turns),
+        estimated_model_savings: ratio(model_calls_on_would_skip, model_calls),
+        estimated_tool_savings: ratio(tool_calls_on_would_skip, tool_calls),
+        veto_distribution,
+        longest_consecutive_skips,
+    };
+    (denominators, estimates, latency_distribution(&latencies))
+}
+
+/// Measured canary reductions. `measured=true` marks the numbers as observed
+/// rather than estimated.
+pub fn compute_canary_metrics(
+    observations: &[CanaryTurnObservation],
+    baseline: &CanaryBaseline,
+) -> (CanaryDenominators, CanaryMeasured, LatencyDistribution) {
+    let mut model_calls = 0;
+    let mut tool_calls = 0;
+    let mut duplicate_reports = 0;
+    let mut latencies = Vec::with_capacity(observations.len());
+    for observation in observations {
+        model_calls += observation.model_calls;
+        tool_calls += observation.model_driven_tool_calls;
+        duplicate_reports += observation.duplicate_reports;
+        latencies.push(observation.preflight_latency_ms);
+    }
+    let denominators = CanaryDenominators {
+        turns: observations.len() as u64,
+        baseline_model_calls: baseline.model_calls,
+        model_calls,
+        baseline_model_driven_tool_calls: baseline.model_driven_tool_calls,
+        model_driven_tool_calls: tool_calls,
+        baseline_duplicate_reports: baseline.duplicate_reports,
+        duplicate_reports,
+    };
+    let measured = CanaryMeasured {
+        measured: true,
+        model_call_reduction: reduction(baseline.model_calls, model_calls),
+        tool_call_reduction: reduction(baseline.model_driven_tool_calls, tool_calls),
+        duplicate_report_reduction: reduction(baseline.duplicate_reports, duplicate_reports),
+    };
+    (denominators, measured, latency_distribution(&latencies))
+}
+
+fn truncate_to_seconds(timestamp: DateTime<Utc>) -> DateTime<Utc> {
+    Utc.timestamp_opt(timestamp.timestamp(), 0)
+        .single()
+        .unwrap_or(timestamp)
+}
+
+/// Fill the artifact's canonical SHA-256 after normalizing timestamps to the
+/// precision the append-only store round-trips.
+pub fn seal_gate_artifact(mut artifact: SuppressionGateArtifact) -> SuppressionGateArtifact {
+    artifact.approved_at = truncate_to_seconds(artifact.approved_at);
+    artifact.false_skip_review.reviewed_at = truncate_to_seconds(artifact.false_skip_review.reviewed_at);
+    artifact.content_sha256 = gate_artifact_sha256(&artifact);
+    artifact
+}
+
+/// SHA-256 over canonical (JCS) artifact bytes, excluding the hash field.
+pub fn gate_artifact_sha256(artifact: &SuppressionGateArtifact) -> String {
+    let content = tinyiothub_storage::suppression::gate_artifact_content_value(artifact);
+    let bytes = super::canonical::canonical_bytes(&content)
+        .unwrap_or_else(|error| panic!("gate artifact must canonicalize: {error:?}"));
+    format!("sha256:{:x}", Sha256::digest(&bytes))
+}
+
+/// Everything staleness and provenance validation depends on that is not
+/// stored inside the immutable artifact itself.
+#[derive(Clone, Copy, Debug)]
+pub struct GateValidationContext<'a> {
+    pub workspace_id: &'a str,
+    pub current_registry_version: &'a str,
+    /// Latest confirmed false-skip event for the workspace, if any (R18).
+    pub latest_confirmed_false_skip_at: Option<DateTime<Utc>>,
+    /// Only the loopback synthetic fixture may set this.
+    pub allow_synthetic: bool,
+}
+
+fn gate_not_met(reason: impl Into<String>) -> SuppressionError {
+    let mut error = SuppressionError::from_code(ErrorCode::ShadowGateNotMet);
+    error.what = reason.into();
+    error
+}
+
+fn close(left: f64, right: f64) -> bool {
+    (left - right).abs() <= GATE_RATIO_EPSILON
+}
+
+/// Validate a mode change against approved evidence.
+///
+/// `off` and `shadow` are always allowed (the kill switch and observation
+/// modes). `canary` requires a valid approved shadow artifact; `enforce`
+/// requires a valid approved canary-measured artifact. Every rejection is the
+/// stable `shadow_gate_not_met` error; there is no bypass parameter.
+pub fn validate_transition(
+    target: SuppressionMode,
+    artifact: &SuppressionGateArtifact,
+    context: &GateValidationContext<'_>,
+) -> Result<(), SuppressionError> {
+    if matches!(target, SuppressionMode::Off | SuppressionMode::Shadow) {
+        return Ok(());
+    }
+    if artifact.workspace_id != context.workspace_id {
+        return Err(gate_not_met("gate artifact belongs to a different workspace"));
+    }
+    if artifact.approver.trim().is_empty() {
+        return Err(gate_not_met("gate artifact has no approver"));
+    }
+    if artifact.sample.turn_ids.is_empty() || artifact.sample.dates.is_empty() {
+        return Err(gate_not_met("gate artifact has no sample turn ids or dates"));
+    }
+    if artifact.sample.registry_version != context.current_registry_version {
+        return Err(gate_not_met(
+            "gate artifact registryVersion does not match the current registry",
+        ));
+    }
+    if artifact.sample.synthetic && !context.allow_synthetic {
+        return Err(gate_not_met(
+            "synthetic fixture evidence is only valid in the loopback fixture",
+        ));
+    }
+    if artifact.content_sha256 != gate_artifact_sha256(artifact) {
+        return Err(gate_not_met("gate artifact SHA-256 does not cover its canonical bytes"));
+    }
+    if let Some(false_skip_at) = context.latest_confirmed_false_skip_at
+        && false_skip_at > artifact.approved_at
+    {
+        return Err(gate_not_met(
+            "a confirmed false skip after approval invalidates this artifact; fix the root cause and approve fresh evidence",
+        ));
+    }
+
+    match target {
+        SuppressionMode::Canary => validate_shadow_artifact(artifact),
+        SuppressionMode::Enforce => validate_canary_artifact(artifact),
+        SuppressionMode::Off | SuppressionMode::Shadow => Ok(()),
+    }
+}
+
+fn validate_shadow_artifact(artifact: &SuppressionGateArtifact) -> Result<(), SuppressionError> {
+    if artifact.mode != SuppressionGateMode::Shadow {
+        return Err(gate_not_met(
+            "canary requires an approved shadow artifact, not a canary artifact",
+        ));
+    }
+    let Some(denominators) = artifact.denominators.shadow.as_ref() else {
+        return Err(gate_not_met("shadow artifact is missing its denominators"));
+    };
+    if denominators.turns < GATE_MIN_SHADOW_TURNS {
+        return Err(gate_not_met(format!(
+            "shadow artifact covers {} Turns; at least {GATE_MIN_SHADOW_TURNS} are required",
+            denominators.turns
+        )));
+    }
+    let days = artifact.sample.dates.iter().collect::<HashSet<_>>().len();
+    if days < GATE_MIN_SHADOW_DAYS {
+        return Err(gate_not_met(format!(
+            "shadow artifact covers {days} representative days; at least {GATE_MIN_SHADOW_DAYS} are required"
+        )));
+    }
+    if !artifact.shadow_estimates.estimated {
+        return Err(gate_not_met("shadow metrics must be labelled estimated"));
+    }
+    if denominators.would_skip_turns > denominators.turns {
+        return Err(gate_not_met("shadow wouldSkip count exceeds the shadow Turn count"));
+    }
+    if denominators.model_calls == 0 || denominators.model_driven_tool_calls == 0 {
+        return Err(gate_not_met("shadow artifact is missing model or tool denominators"));
+    }
+    if denominators.model_calls_on_would_skip_turns > denominators.model_calls
+        || denominators.tool_calls_on_would_skip_turns > denominators.model_driven_tool_calls
+    {
+        return Err(gate_not_met("shadow wouldSkip numerators exceed their denominators"));
+    }
+    let derived_ratio = ratio(denominators.would_skip_turns, denominators.turns);
+    if !close(artifact.shadow_estimates.would_skip_ratio, derived_ratio) {
+        return Err(gate_not_met(
+            "shadow wouldSkip ratio does not match its denominator counts",
+        ));
+    }
+    if artifact.shadow_estimates.would_skip_ratio < GATE_MIN_WOULD_SKIP_RATIO {
+        return Err(gate_not_met(format!(
+            "shadow wouldSkip ratio {:.3} is below {GATE_MIN_WOULD_SKIP_RATIO}",
+            artifact.shadow_estimates.would_skip_ratio
+        )));
+    }
+    if !close(
+        artifact.shadow_estimates.estimated_model_savings,
+        ratio(denominators.model_calls_on_would_skip_turns, denominators.model_calls),
+    ) {
+        return Err(gate_not_met(
+            "estimated model savings do not match their denominator counts",
+        ));
+    }
+    if !close(
+        artifact.shadow_estimates.estimated_tool_savings,
+        ratio(
+            denominators.tool_calls_on_would_skip_turns,
+            denominators.model_driven_tool_calls,
+        ),
+    ) {
+        return Err(gate_not_met(
+            "estimated tool savings do not match their denominator counts",
+        ));
+    }
+    Ok(())
+}
+
+fn validate_canary_artifact(artifact: &SuppressionGateArtifact) -> Result<(), SuppressionError> {
+    if artifact.mode != SuppressionGateMode::Canary {
+        return Err(gate_not_met("enforce requires an approved canary-measured artifact"));
+    }
+    let Some(denominators) = artifact.denominators.canary.as_ref() else {
+        return Err(gate_not_met("canary artifact is missing its denominators"));
+    };
+    if denominators.turns < GATE_MIN_CANARY_TURNS {
+        return Err(gate_not_met(format!(
+            "canary artifact covers {} Turns; at least {GATE_MIN_CANARY_TURNS} are required",
+            denominators.turns
+        )));
+    }
+    if denominators.baseline_model_calls == 0
+        || denominators.baseline_model_driven_tool_calls == 0
+        || denominators.baseline_duplicate_reports == 0
+    {
+        return Err(gate_not_met("canary artifact is missing baseline denominators"));
+    }
+    if !artifact.canary_measured.measured {
+        return Err(gate_not_met("canary metrics must be labelled measured"));
+    }
+    if !zero_or_positive(artifact.canary_measured.model_call_reduction) {
+        return Err(gate_not_met("canary model reduction is not a finite number"));
+    }
+    if !close(
+        artifact.canary_measured.model_call_reduction,
+        reduction(denominators.baseline_model_calls, denominators.model_calls),
+    ) {
+        return Err(gate_not_met(
+            "canary model reduction does not match its denominator counts",
+        ));
+    }
+    if !close(
+        artifact.canary_measured.tool_call_reduction,
+        reduction(
+            denominators.baseline_model_driven_tool_calls,
+            denominators.model_driven_tool_calls,
+        ),
+    ) {
+        return Err(gate_not_met(
+            "canary tool reduction does not match its denominator counts",
+        ));
+    }
+    if !close(
+        artifact.canary_measured.duplicate_report_reduction,
+        reduction(denominators.baseline_duplicate_reports, denominators.duplicate_reports),
+    ) {
+        return Err(gate_not_met(
+            "duplicate-report reduction does not match its denominator counts",
+        ));
+    }
+    if artifact.canary_measured.model_call_reduction < GATE_MIN_CANARY_REDUCTION {
+        return Err(gate_not_met(format!(
+            "canary model reduction {:.3} is below {GATE_MIN_CANARY_REDUCTION}",
+            artifact.canary_measured.model_call_reduction
+        )));
+    }
+    if artifact.canary_measured.tool_call_reduction < GATE_MIN_CANARY_REDUCTION {
+        return Err(gate_not_met(format!(
+            "canary tool reduction {:.3} is below {GATE_MIN_CANARY_REDUCTION}",
+            artifact.canary_measured.tool_call_reduction
+        )));
+    }
+    if artifact.canary_measured.duplicate_report_reduction < GATE_MIN_DUPLICATE_REPORT_REDUCTION {
+        return Err(gate_not_met(format!(
+            "duplicate-report reduction {:.3} is below {GATE_MIN_DUPLICATE_REPORT_REDUCTION}",
+            artifact.canary_measured.duplicate_report_reduction
+        )));
+    }
+    if artifact.latency.sample_count == 0 || artifact.latency.p95_ms > GATE_MAX_PREFLIGHT_P95_MS {
+        return Err(gate_not_met(format!(
+            "preflight p95 {}ms exceeds {GATE_MAX_PREFLIGHT_P95_MS}ms or has no samples",
+            artifact.latency.p95_ms
+        )));
+    }
+
+    let review = &artifact.false_skip_review;
+    if review.reviewer.trim().is_empty() {
+        return Err(gate_not_met("false-skip review has no reviewer"));
+    }
+    if review.samples.is_empty() {
+        return Err(gate_not_met("false-skip review has no sample turn ids"));
+    }
+    if review.samples.iter().any(|sample| !sample.reviewed) {
+        return Err(gate_not_met("an unreviewed wouldSkip sample blocks enforce"));
+    }
+    let confirmed = review
+        .samples
+        .iter()
+        .filter(|sample| sample.confirmed_false_skip)
+        .count() as u64;
+    if confirmed > 0 || review.confirmed_false_skips > 0 || review.confirmed_false_skips != confirmed {
+        return Err(gate_not_met(
+            "a confirmed false skip blocks enforce until a fresh artifact is approved",
+        ));
+    }
+    if review.conclusion != FALSE_SKIP_CONCLUSION_NONE {
+        return Err(gate_not_met(
+            "false-skip review conclusion is not no_confirmed_false_skip",
+        ));
+    }
+    Ok(())
+}
+
+fn zero_or_positive(value: f64) -> bool {
+    value.is_finite() && value >= 0.0
 }
 
 #[cfg(test)]
@@ -1523,5 +1991,868 @@ mod suppression_overload {
     #[test]
     fn suppression_overload_retry_after_is_a_stable_wire_value() {
         assert_eq!(PREFLIGHT_BACKPRESSURE_RETRY_AFTER_MS, 1_000);
+    }
+}
+
+/// Task 10 gate evidence: estimated shadow metrics, measured canary metrics
+/// and evidence-gated `shadow -> canary -> enforce` transitions.
+///
+/// The module name is the `cargo test` filter (`suppression_gate`). Fixture
+/// builders are `pub(crate)` so the HTTP contract tests reuse the same sealed
+/// artifacts instead of hand-crafting bytes.
+#[cfg(test)]
+pub(crate) mod suppression_gate {
+    use std::collections::BTreeMap;
+    use std::ops::Deref;
+
+    use chrono::{DateTime, Duration, TimeZone, Utc};
+    use tinyiothub_storage::error::DbError;
+    use tinyiothub_storage::suppression::{
+        CanaryDenominators, CanaryMeasured, FALSE_SKIP_CONCLUSION_NONE, FalseSkipReview, FalseSkipSample,
+        GateDenominators, GateSample, LatencyDistribution, ShadowDenominators, ShadowEstimates,
+        SuppressionGateArtifact, SuppressionGateMode, SuppressionMode,
+    };
+
+    use super::{
+        CanaryBaseline, CanaryTurnObservation, GateValidationContext, ShadowTurnObservation, compute_canary_metrics,
+        compute_shadow_metrics, gate_artifact_sha256, seal_gate_artifact, validate_transition,
+    };
+    use crate::domains::agent::session::suppression::error::SuppressionError;
+
+    pub(crate) const GATE_WS: &str = "ws-gate-fixture";
+    pub(crate) const GATE_REGISTRY: &str = "sha256:gate-registry-v1";
+
+    fn ts(seconds: i64) -> DateTime<Utc> {
+        Utc.timestamp_opt(seconds, 0).single().expect("timestamp")
+    }
+
+    fn shadow_estimates_fixture() -> ShadowEstimates {
+        ShadowEstimates {
+            estimated: true,
+            would_skip_ratio: 0.6,
+            estimated_model_savings: 0.6,
+            estimated_tool_savings: 0.5,
+            veto_distribution: BTreeMap::from([
+                ("source_changed".to_string(), 30),
+                ("reconciliation_due".to_string(), 12),
+            ]),
+            longest_consecutive_skips: 4,
+        }
+    }
+
+    fn measured_fixture() -> CanaryMeasured {
+        CanaryMeasured {
+            measured: true,
+            model_call_reduction: 0.4,
+            tool_call_reduction: 0.4,
+            duplicate_report_reduction: 0.8,
+        }
+    }
+
+    /// A sealed artifact whose mutations always re-seal, so every builder
+    /// step produces bytes whose `contentSha256` still verifies.
+    pub(crate) struct GateFixture {
+        artifact: SuppressionGateArtifact,
+    }
+
+    impl Deref for GateFixture {
+        type Target = SuppressionGateArtifact;
+
+        fn deref(&self) -> &Self::Target {
+            &self.artifact
+        }
+    }
+
+    impl GateFixture {
+        /// Valid shadow evidence: 100 turns over 3 days with 60% wouldSkip.
+        pub(crate) fn shadow(workspace_id: &str) -> Self {
+            let turn_ids = (0..100).map(|index| format!("shadow-turn-{index:03}")).collect();
+            Self::seal(SuppressionGateArtifact {
+                artifact_id: format!("gate:shadow:{workspace_id}"),
+                workspace_id: workspace_id.to_string(),
+                mode: SuppressionGateMode::Shadow,
+                sample: GateSample {
+                    turn_ids,
+                    dates: vec![
+                        "2026-11-10".to_string(),
+                        "2026-11-11".to_string(),
+                        "2026-11-12".to_string(),
+                    ],
+                    registry_version: GATE_REGISTRY.to_string(),
+                    synthetic: false,
+                },
+                denominators: GateDenominators {
+                    shadow: Some(ShadowDenominators {
+                        turns: 100,
+                        would_skip_turns: 60,
+                        model_calls: 1_000,
+                        model_driven_tool_calls: 500,
+                        model_calls_on_would_skip_turns: 600,
+                        tool_calls_on_would_skip_turns: 250,
+                        unavailable_source_full_executions: 4,
+                        reconciliation_full_executions: 2,
+                    }),
+                    canary: None,
+                },
+                shadow_estimates: shadow_estimates_fixture(),
+                canary_measured: CanaryMeasured {
+                    measured: false,
+                    model_call_reduction: 0.0,
+                    tool_call_reduction: 0.0,
+                    duplicate_report_reduction: 0.0,
+                },
+                false_skip_review: FalseSkipReview {
+                    reviewer: "reviewer-1".to_string(),
+                    reviewed_at: ts(1_900_000_000),
+                    conclusion: FALSE_SKIP_CONCLUSION_NONE.to_string(),
+                    confirmed_false_skips: 0,
+                    samples: vec![],
+                },
+                latency: LatencyDistribution {
+                    sample_count: 100,
+                    p50_ms: 40,
+                    p95_ms: 120,
+                    p99_ms: 200,
+                },
+                approver: "approver-1".to_string(),
+                approved_at: ts(1_900_000_000),
+                content_sha256: String::new(),
+            })
+        }
+
+        /// Valid canary evidence: 20 turns, 40% model/tool reduction, 80%
+        /// duplicate-report reduction and p95 = 250ms.
+        pub(crate) fn canary(workspace_id: &str) -> Self {
+            let turn_ids = (0..20).map(|index| format!("canary-turn-{index:03}")).collect();
+            Self::seal(SuppressionGateArtifact {
+                artifact_id: format!("gate:canary:{workspace_id}"),
+                workspace_id: workspace_id.to_string(),
+                mode: SuppressionGateMode::Canary,
+                sample: GateSample {
+                    turn_ids,
+                    dates: vec![
+                        "2026-11-13".to_string(),
+                        "2026-11-14".to_string(),
+                        "2026-11-15".to_string(),
+                    ],
+                    registry_version: GATE_REGISTRY.to_string(),
+                    synthetic: false,
+                },
+                denominators: GateDenominators {
+                    shadow: Some(ShadowDenominators {
+                        turns: 100,
+                        would_skip_turns: 60,
+                        model_calls: 1_000,
+                        model_driven_tool_calls: 500,
+                        model_calls_on_would_skip_turns: 600,
+                        tool_calls_on_would_skip_turns: 250,
+                        unavailable_source_full_executions: 4,
+                        reconciliation_full_executions: 2,
+                    }),
+                    canary: Some(CanaryDenominators {
+                        turns: 20,
+                        baseline_model_calls: 1_000,
+                        model_calls: 600,
+                        baseline_model_driven_tool_calls: 1_000,
+                        model_driven_tool_calls: 600,
+                        baseline_duplicate_reports: 1_000,
+                        duplicate_reports: 200,
+                    }),
+                },
+                shadow_estimates: shadow_estimates_fixture(),
+                canary_measured: measured_fixture(),
+                false_skip_review: FalseSkipReview {
+                    reviewer: "reviewer-1".to_string(),
+                    reviewed_at: ts(1_900_000_001),
+                    conclusion: FALSE_SKIP_CONCLUSION_NONE.to_string(),
+                    confirmed_false_skips: 0,
+                    samples: vec![FalseSkipSample {
+                        turn_id: "canary-turn-000".to_string(),
+                        reviewed: true,
+                        confirmed_false_skip: false,
+                    }],
+                },
+                latency: LatencyDistribution {
+                    sample_count: 20,
+                    p50_ms: 40,
+                    p95_ms: 250,
+                    p99_ms: 300,
+                },
+                approver: "approver-1".to_string(),
+                approved_at: ts(1_900_000_001),
+                content_sha256: String::new(),
+            })
+        }
+
+        fn seal(artifact: SuppressionGateArtifact) -> Self {
+            Self {
+                artifact: seal_gate_artifact(artifact),
+            }
+        }
+
+        pub(crate) fn mutate(mut self, mutate: impl FnOnce(&mut SuppressionGateArtifact)) -> Self {
+            mutate(&mut self.artifact);
+            self.artifact = seal_gate_artifact(self.artifact);
+            self
+        }
+
+        pub(crate) fn with_shadow_only(self) -> Self {
+            self.mutate(|artifact| artifact.mode = SuppressionGateMode::Shadow)
+        }
+
+        pub(crate) fn with_would_skip(self, ratio: f64) -> Self {
+            self.mutate(|artifact| {
+                let Some(shadow) = artifact.denominators.shadow.as_mut() else {
+                    panic!("shadow fixture");
+                };
+                shadow.would_skip_turns = (shadow.turns as f64 * ratio).round() as u64;
+                artifact.shadow_estimates.would_skip_ratio = shadow.would_skip_turns as f64 / shadow.turns as f64;
+            })
+        }
+
+        pub(crate) fn with_approver(self, approver: &str) -> Self {
+            self.mutate(|artifact| artifact.approver = approver.to_string())
+        }
+
+        pub(crate) fn with_empty_sample_turn_ids(self) -> Self {
+            self.mutate(|artifact| artifact.sample.turn_ids.clear())
+        }
+
+        pub(crate) fn with_sample_dates(self, dates: &[&str]) -> Self {
+            self.mutate(|artifact| artifact.sample.dates = dates.iter().map(|date| date.to_string()).collect())
+        }
+
+        pub(crate) fn with_shadow_turns(self, turns: u64) -> Self {
+            self.mutate(|artifact| {
+                let Some(shadow) = artifact.denominators.shadow.as_mut() else {
+                    panic!("shadow fixture");
+                };
+                shadow.turns = turns;
+                shadow.would_skip_turns = shadow.would_skip_turns.min(turns);
+                artifact.shadow_estimates.would_skip_ratio =
+                    shadow.would_skip_turns as f64 / shadow.turns.max(1) as f64;
+            })
+        }
+
+        pub(crate) fn without_shadow_denominators(self) -> Self {
+            self.mutate(|artifact| artifact.denominators.shadow = None)
+        }
+
+        pub(crate) fn without_canary_denominators(self) -> Self {
+            self.mutate(|artifact| artifact.denominators.canary = None)
+        }
+
+        pub(crate) fn with_canary_turns(self, turns: u64) -> Self {
+            self.mutate(|artifact| {
+                let Some(canary) = artifact.denominators.canary.as_mut() else {
+                    panic!("canary fixture");
+                };
+                canary.turns = turns;
+            })
+        }
+
+        pub(crate) fn with_canary_model_reduction(self, reduction: f64) -> Self {
+            self.mutate(|artifact| {
+                let Some(canary) = artifact.denominators.canary.as_mut() else {
+                    panic!("canary fixture");
+                };
+                canary.model_calls = reduced(canary.baseline_model_calls, reduction);
+                artifact.canary_measured.model_call_reduction =
+                    measured_reduction(canary.baseline_model_calls, canary.model_calls);
+            })
+        }
+
+        pub(crate) fn with_canary_tool_reduction(self, reduction: f64) -> Self {
+            self.mutate(|artifact| {
+                let Some(canary) = artifact.denominators.canary.as_mut() else {
+                    panic!("canary fixture");
+                };
+                canary.model_driven_tool_calls = reduced(canary.baseline_model_driven_tool_calls, reduction);
+                artifact.canary_measured.tool_call_reduction =
+                    measured_reduction(canary.baseline_model_driven_tool_calls, canary.model_driven_tool_calls);
+            })
+        }
+
+        pub(crate) fn with_duplicate_report_reduction(self, reduction: f64) -> Self {
+            self.mutate(|artifact| {
+                let Some(canary) = artifact.denominators.canary.as_mut() else {
+                    panic!("canary fixture");
+                };
+                canary.duplicate_reports = reduced(canary.baseline_duplicate_reports, reduction);
+                artifact.canary_measured.duplicate_report_reduction =
+                    measured_reduction(canary.baseline_duplicate_reports, canary.duplicate_reports);
+            })
+        }
+
+        pub(crate) fn with_preflight_p95(self, p95_ms: u64) -> Self {
+            self.mutate(|artifact| artifact.latency.p95_ms = p95_ms)
+        }
+
+        pub(crate) fn with_registry_version(self, registry_version: &str) -> Self {
+            self.mutate(|artifact| artifact.sample.registry_version = registry_version.to_string())
+        }
+
+        pub(crate) fn with_synthetic(self, synthetic: bool) -> Self {
+            self.mutate(|artifact| artifact.sample.synthetic = synthetic)
+        }
+
+        pub(crate) fn with_approved_at(self, approved_at: DateTime<Utc>) -> Self {
+            self.mutate(|artifact| artifact.approved_at = approved_at)
+        }
+
+        pub(crate) fn with_review(self, mutate: impl FnOnce(&mut FalseSkipReview)) -> Self {
+            self.mutate(|artifact| mutate(&mut artifact.false_skip_review))
+        }
+
+        /// Deliberately tamper with the stored hash without re-sealing.
+        pub(crate) fn with_content_sha256(mut self, content_sha256: &str) -> Self {
+            self.artifact.content_sha256 = content_sha256.to_string();
+            self
+        }
+
+        pub(crate) fn artifact(&self) -> SuppressionGateArtifact {
+            self.artifact.clone()
+        }
+    }
+
+    fn reduced(baseline: u64, reduction: f64) -> u64 {
+        (baseline as f64 * (1.0 - reduction)).round() as u64
+    }
+
+    fn measured_reduction(baseline: u64, measured: u64) -> f64 {
+        if baseline == 0 {
+            0.0
+        } else {
+            1.0 - measured as f64 / baseline as f64
+        }
+    }
+
+    pub(crate) fn shadow_fixture(workspace_id: &str) -> GateFixture {
+        GateFixture::shadow(workspace_id)
+    }
+
+    pub(crate) fn canary_fixture(workspace_id: &str) -> GateFixture {
+        GateFixture::canary(workspace_id)
+    }
+
+    fn context() -> GateValidationContext<'static> {
+        GateValidationContext {
+            workspace_id: GATE_WS,
+            current_registry_version: GATE_REGISTRY,
+            latest_confirmed_false_skip_at: None,
+            allow_synthetic: false,
+        }
+    }
+
+    fn assert_gate_not_met(result: Result<(), SuppressionError>) {
+        match result {
+            Ok(()) => panic!("expected shadow_gate_not_met, but validation passed"),
+            Err(error) => assert_eq!(error.code, "shadow_gate_not_met"),
+        }
+    }
+
+    // ── Gate order ──
+
+    #[test]
+    fn suppression_gate_shadow_estimates_alone_cannot_enable_enforce() {
+        let artifact = shadow_fixture(GATE_WS).with_shadow_only().with_would_skip(0.8);
+        assert_gate_not_met(validate_transition(SuppressionMode::Enforce, &artifact, &context()));
+    }
+
+    #[test]
+    fn suppression_gate_canary_requires_an_approved_shadow_artifact() {
+        let canary = canary_fixture(GATE_WS);
+        assert_gate_not_met(validate_transition(SuppressionMode::Canary, &canary, &context()));
+
+        let shadow = shadow_fixture(GATE_WS);
+        assert!(validate_transition(SuppressionMode::Canary, &shadow, &context()).is_ok());
+    }
+
+    #[test]
+    fn suppression_gate_enforce_requires_an_approved_canary_artifact() {
+        let shadow = shadow_fixture(GATE_WS);
+        assert_gate_not_met(validate_transition(SuppressionMode::Enforce, &shadow, &context()));
+
+        let canary = canary_fixture(GATE_WS);
+        assert!(validate_transition(SuppressionMode::Enforce, &canary, &context()).is_ok());
+    }
+
+    #[test]
+    fn suppression_gate_off_and_shadow_need_no_artifact() {
+        let stale = canary_fixture(GATE_WS).with_registry_version("sha256:old-registry");
+        assert!(validate_transition(SuppressionMode::Off, &stale, &context()).is_ok());
+        assert!(validate_transition(SuppressionMode::Shadow, &stale, &context()).is_ok());
+    }
+
+    // ── Missing evidence ──
+
+    #[test]
+    fn suppression_gate_missing_sample_denominator_or_approver_is_rejected() {
+        for artifact in [
+            shadow_fixture(GATE_WS).with_empty_sample_turn_ids(),
+            shadow_fixture(GATE_WS).with_sample_dates(&[]),
+            shadow_fixture(GATE_WS).with_approver(""),
+            shadow_fixture(GATE_WS).without_shadow_denominators(),
+        ] {
+            assert_gate_not_met(validate_transition(SuppressionMode::Canary, &artifact, &context()));
+        }
+
+        for artifact in [
+            canary_fixture(GATE_WS).with_empty_sample_turn_ids(),
+            canary_fixture(GATE_WS).with_approver(""),
+            canary_fixture(GATE_WS).without_canary_denominators(),
+        ] {
+            assert_gate_not_met(validate_transition(SuppressionMode::Enforce, &artifact, &context()));
+        }
+    }
+
+    #[test]
+    fn suppression_gate_shadow_threshold_boundaries_are_exact() {
+        // 99 shadow Turns is not enough; 100 is.
+        assert_gate_not_met(validate_transition(
+            SuppressionMode::Canary,
+            &shadow_fixture(GATE_WS).with_shadow_turns(99),
+            &context(),
+        ));
+        assert!(
+            validate_transition(
+                SuppressionMode::Canary,
+                &shadow_fixture(GATE_WS).with_shadow_turns(100),
+                &context()
+            )
+            .is_ok()
+        );
+
+        // Two representative days are not enough; three are.
+        assert_gate_not_met(validate_transition(
+            SuppressionMode::Canary,
+            &shadow_fixture(GATE_WS).with_sample_dates(&["2026-11-10", "2026-11-11"]),
+            &context(),
+        ));
+        assert!(
+            validate_transition(
+                SuppressionMode::Canary,
+                &shadow_fixture(GATE_WS).with_sample_dates(&["2026-11-10", "2026-11-11", "2026-11-12"]),
+                &context()
+            )
+            .is_ok()
+        );
+
+        // wouldSkip must reach 50%.
+        assert_gate_not_met(validate_transition(
+            SuppressionMode::Canary,
+            &shadow_fixture(GATE_WS).with_would_skip(0.49),
+            &context(),
+        ));
+        assert!(
+            validate_transition(
+                SuppressionMode::Canary,
+                &shadow_fixture(GATE_WS).with_would_skip(0.50),
+                &context()
+            )
+            .is_ok()
+        );
+    }
+
+    #[test]
+    fn suppression_gate_canary_threshold_boundaries_are_exact() {
+        // 19 canary Turns is not enough; 20 is.
+        assert_gate_not_met(validate_transition(
+            SuppressionMode::Enforce,
+            &canary_fixture(GATE_WS).with_canary_turns(19),
+            &context(),
+        ));
+        assert!(
+            validate_transition(
+                SuppressionMode::Enforce,
+                &canary_fixture(GATE_WS).with_canary_turns(20),
+                &context()
+            )
+            .is_ok()
+        );
+
+        // Model and tool reductions must each reach 40%.
+        assert_gate_not_met(validate_transition(
+            SuppressionMode::Enforce,
+            &canary_fixture(GATE_WS).with_canary_model_reduction(0.399),
+            &context(),
+        ));
+        assert_gate_not_met(validate_transition(
+            SuppressionMode::Enforce,
+            &canary_fixture(GATE_WS).with_canary_tool_reduction(0.399),
+            &context(),
+        ));
+        assert!(
+            validate_transition(
+                SuppressionMode::Enforce,
+                &canary_fixture(GATE_WS).with_canary_model_reduction(0.4),
+                &context()
+            )
+            .is_ok()
+        );
+
+        // Duplicate-report reduction must reach 80%.
+        assert_gate_not_met(validate_transition(
+            SuppressionMode::Enforce,
+            &canary_fixture(GATE_WS).with_duplicate_report_reduction(0.799),
+            &context(),
+        ));
+        assert!(
+            validate_transition(
+                SuppressionMode::Enforce,
+                &canary_fixture(GATE_WS).with_duplicate_report_reduction(0.8),
+                &context()
+            )
+            .is_ok()
+        );
+
+        // Preflight p95 must stay at or below 250ms.
+        assert_gate_not_met(validate_transition(
+            SuppressionMode::Enforce,
+            &canary_fixture(GATE_WS).with_preflight_p95(251),
+            &context(),
+        ));
+        assert!(
+            validate_transition(
+                SuppressionMode::Enforce,
+                &canary_fixture(GATE_WS).with_preflight_p95(250),
+                &context()
+            )
+            .is_ok()
+        );
+    }
+
+    #[test]
+    fn suppression_gate_unreviewed_or_confirmed_false_skip_samples_are_rejected() {
+        let unreviewed = canary_fixture(GATE_WS).with_review(|review| {
+            review.samples = vec![FalseSkipSample {
+                turn_id: "canary-turn-000".to_string(),
+                reviewed: false,
+                confirmed_false_skip: false,
+            }];
+        });
+        assert_gate_not_met(validate_transition(SuppressionMode::Enforce, &unreviewed, &context()));
+
+        let confirmed_sample = canary_fixture(GATE_WS).with_review(|review| {
+            review.samples = vec![FalseSkipSample {
+                turn_id: "canary-turn-000".to_string(),
+                reviewed: true,
+                confirmed_false_skip: true,
+            }];
+        });
+        assert_gate_not_met(validate_transition(
+            SuppressionMode::Enforce,
+            &confirmed_sample,
+            &context(),
+        ));
+
+        let counted = canary_fixture(GATE_WS).with_review(|review| review.confirmed_false_skips = 1);
+        assert_gate_not_met(validate_transition(SuppressionMode::Enforce, &counted, &context()));
+
+        let missing_reviewer = canary_fixture(GATE_WS).with_review(|review| review.reviewer.clear());
+        assert_gate_not_met(validate_transition(
+            SuppressionMode::Enforce,
+            &missing_reviewer,
+            &context(),
+        ));
+
+        let wrong_conclusion =
+            canary_fixture(GATE_WS).with_review(|review| review.conclusion = "confirmed_false_skip".to_string());
+        assert_gate_not_met(validate_transition(
+            SuppressionMode::Enforce,
+            &wrong_conclusion,
+            &context(),
+        ));
+
+        let no_samples = canary_fixture(GATE_WS).with_review(|review| review.samples.clear());
+        assert_gate_not_met(validate_transition(SuppressionMode::Enforce, &no_samples, &context()));
+    }
+
+    // ── Staleness (ruling R18) ──
+
+    #[test]
+    fn suppression_gate_stale_registry_artifact_is_rejected() {
+        let artifact = shadow_fixture(GATE_WS).with_registry_version("sha256:previous-registry");
+        assert_gate_not_met(validate_transition(SuppressionMode::Canary, &artifact, &context()));
+    }
+
+    #[test]
+    fn suppression_gate_confirmed_false_skip_after_approval_is_stale() {
+        let artifact = canary_fixture(GATE_WS);
+        let approved_at = artifact.approved_at;
+        let after = GateValidationContext {
+            latest_confirmed_false_skip_at: Some(approved_at + Duration::seconds(1)),
+            ..context()
+        };
+        assert_gate_not_met(validate_transition(SuppressionMode::Enforce, &artifact, &after));
+
+        let before = GateValidationContext {
+            latest_confirmed_false_skip_at: Some(approved_at - Duration::seconds(1)),
+            ..context()
+        };
+        assert!(
+            validate_transition(SuppressionMode::Enforce, &artifact, &before).is_ok(),
+            "a fixed root cause before approval leaves a fresh artifact valid"
+        );
+    }
+
+    #[test]
+    fn suppression_gate_has_no_invented_age_window() {
+        let ancient = canary_fixture(GATE_WS).with_approved_at(ts(1_000_000_000));
+        assert!(
+            validate_transition(SuppressionMode::Enforce, &ancient, &context()).is_ok(),
+            "R18: age alone never invalidates an artifact"
+        );
+    }
+
+    #[test]
+    fn suppression_gate_rejects_a_tampered_artifact_hash() {
+        let artifact = canary_fixture(GATE_WS).with_content_sha256("sha256:not-the-real-hash");
+        assert_gate_not_met(validate_transition(SuppressionMode::Enforce, &artifact, &context()));
+
+        let mut mutated = canary_fixture(GATE_WS).artifact();
+        mutated.approver = "someone-else".to_string();
+        assert_gate_not_met(validate_transition(SuppressionMode::Enforce, &mutated, &context()));
+    }
+
+    #[test]
+    fn suppression_gate_synthetic_fixture_artifact_is_loopback_only() {
+        let synthetic = shadow_fixture(GATE_WS).with_synthetic(true);
+        assert_gate_not_met(validate_transition(SuppressionMode::Canary, &synthetic, &context()));
+
+        let loopback = GateValidationContext {
+            allow_synthetic: true,
+            ..context()
+        };
+        assert!(
+            validate_transition(SuppressionMode::Canary, &synthetic, &loopback).is_ok(),
+            "the loopback fixture may use synthetic evidence"
+        );
+    }
+
+    // ── Metrics ──
+
+    fn shadow_observation(
+        turn_id: &str,
+        would_skip: bool,
+        vetoes: &[&str],
+        model_calls: u64,
+        tool_calls: u64,
+        latency_ms: u64,
+        unavailable: bool,
+        reconciliation: bool,
+    ) -> ShadowTurnObservation {
+        ShadowTurnObservation {
+            turn_id: turn_id.to_string(),
+            date: "2026-11-10".to_string(),
+            would_skip,
+            vetoes: vetoes.iter().map(|veto| veto.to_string()).collect(),
+            model_calls,
+            model_driven_tool_calls: tool_calls,
+            unavailable_source_full_execution: unavailable,
+            reconciliation_full_execution: reconciliation,
+            preflight_latency_ms: latency_ms,
+        }
+    }
+
+    #[test]
+    fn suppression_gate_shadow_metrics_use_explicit_denominators_and_estimates() {
+        let observations = vec![
+            shadow_observation("t1", true, &[], 5, 2, 30, false, false),
+            shadow_observation("t2", false, &["source_changed"], 7, 3, 50, false, false),
+            shadow_observation("t3", true, &[], 3, 1, 20, false, false),
+            shadow_observation(
+                "t4",
+                false,
+                &["source_unavailable", "reconciliation_due"],
+                5,
+                4,
+                100,
+                true,
+                true,
+            ),
+        ];
+        let before = observations.clone();
+        let (denominators, estimates, latency) = compute_shadow_metrics(&observations);
+
+        assert_eq!(observations, before, "shadow metrics are pure estimates");
+        assert!(estimates.estimated, "shadow numbers must be labelled estimated");
+        assert_eq!(denominators.turns, 4);
+        assert_eq!(denominators.would_skip_turns, 2);
+        assert_eq!(denominators.model_calls, 20);
+        assert_eq!(denominators.model_calls_on_would_skip_turns, 8);
+        assert_eq!(denominators.model_driven_tool_calls, 10);
+        assert_eq!(denominators.tool_calls_on_would_skip_turns, 3);
+        assert_eq!(denominators.unavailable_source_full_executions, 1);
+        assert_eq!(denominators.reconciliation_full_executions, 1);
+        assert_eq!(estimates.would_skip_ratio, 0.5);
+        assert_eq!(estimates.estimated_model_savings, 0.4);
+        assert_eq!(estimates.estimated_tool_savings, 0.3);
+        assert_eq!(estimates.longest_consecutive_skips, 1);
+        assert_eq!(estimates.veto_distribution.get("source_changed"), Some(&1));
+        assert_eq!(estimates.veto_distribution.get("source_unavailable"), Some(&1));
+        assert_eq!(estimates.veto_distribution.get("reconciliation_due"), Some(&1));
+        assert_eq!(latency.sample_count, 4);
+        assert_eq!(latency.p50_ms, 30);
+        assert_eq!(latency.p95_ms, 100);
+        assert_eq!(latency.p99_ms, 100);
+
+        // No field claims shadow has already saved calls.
+        let value = serde_json::to_value(&estimates).expect("estimates json");
+        assert_eq!(value["estimated"], true);
+        assert!(value.get("savedModelCalls").is_none());
+        assert!(value.get("actualModelCallsSaved").is_none());
+        assert_eq!(value["estimatedModelSavings"], 0.4);
+        assert_eq!(value["estimatedToolSavings"], 0.3);
+    }
+
+    #[test]
+    fn suppression_gate_shadow_metrics_do_not_change_execution_behavior() {
+        let observations = vec![
+            shadow_observation("t1", true, &[], 5, 2, 30, false, false),
+            shadow_observation("t2", true, &[], 4, 1, 40, false, false),
+        ];
+        let model_calls_before: u64 = observations.iter().map(|turn| turn.model_calls).sum();
+        let tool_calls_before: u64 = observations.iter().map(|turn| turn.model_driven_tool_calls).sum();
+        let (_denominators, _estimates, _latency) = compute_shadow_metrics(&observations);
+
+        assert_eq!(
+            observations.iter().map(|turn| turn.model_calls).sum::<u64>(),
+            model_calls_before,
+            "shadow mode must not remove model calls"
+        );
+        assert_eq!(
+            observations
+                .iter()
+                .map(|turn| turn.model_driven_tool_calls)
+                .sum::<u64>(),
+            tool_calls_before,
+            "shadow mode must not remove tool calls"
+        );
+        assert!(
+            !SuppressionMode::Shadow.allows_skip(),
+            "shadow only observes; it never executes a skip"
+        );
+    }
+
+    #[test]
+    fn suppression_gate_consecutive_would_skip_streak_is_the_longest_run() {
+        let observations = vec![
+            shadow_observation("t1", true, &[], 1, 1, 10, false, false),
+            shadow_observation("t2", true, &[], 1, 1, 10, false, false),
+            shadow_observation("t3", true, &[], 1, 1, 10, false, false),
+            shadow_observation("t4", false, &[], 1, 1, 10, false, false),
+            shadow_observation("t5", true, &[], 1, 1, 10, false, false),
+        ];
+        let (_denominators, estimates, _latency) = compute_shadow_metrics(&observations);
+        assert_eq!(estimates.longest_consecutive_skips, 3);
+        assert_eq!(estimates.would_skip_ratio, 0.8);
+    }
+
+    #[test]
+    fn suppression_gate_canary_metrics_are_measured_from_denominators() {
+        let baseline = CanaryBaseline {
+            model_calls: 30,
+            model_driven_tool_calls: 20,
+            duplicate_reports: 10,
+        };
+        let observations = vec![
+            canary_observation("c1", 4, 2, 1, 100),
+            canary_observation("c2", 3, 2, 0, 200),
+            canary_observation("c3", 5, 3, 1, 300),
+            canary_observation("c4", 6, 3, 0, 400),
+        ];
+        let (denominators, measured, latency) = compute_canary_metrics(&observations, &baseline);
+
+        assert!(measured.measured, "canary numbers are measured, not estimated");
+        assert_eq!(denominators.turns, 4);
+        assert_eq!(denominators.baseline_model_calls, 30);
+        assert_eq!(denominators.model_calls, 18);
+        assert_eq!(denominators.baseline_model_driven_tool_calls, 20);
+        assert_eq!(denominators.model_driven_tool_calls, 10);
+        assert_eq!(denominators.baseline_duplicate_reports, 10);
+        assert_eq!(denominators.duplicate_reports, 2);
+        assert_eq!(measured.model_call_reduction, 0.4);
+        assert_eq!(measured.tool_call_reduction, 0.5);
+        assert_eq!(measured.duplicate_report_reduction, 0.8);
+        assert_eq!(latency.sample_count, 4);
+        assert_eq!(latency.p95_ms, 400);
+    }
+
+    fn canary_observation(
+        turn_id: &str,
+        model_calls: u64,
+        tool_calls: u64,
+        duplicate_reports: u64,
+        latency_ms: u64,
+    ) -> CanaryTurnObservation {
+        CanaryTurnObservation {
+            turn_id: turn_id.to_string(),
+            date: "2026-11-13".to_string(),
+            model_calls,
+            model_driven_tool_calls: tool_calls,
+            duplicate_reports,
+            preflight_latency_ms: latency_ms,
+        }
+    }
+
+    // ── Immutable persistence ──
+
+    #[tokio::test]
+    async fn suppression_gate_artifacts_are_immutable_append_only_records() {
+        let fixture = tinyiothub_storage::test_helpers::fixture_workspace("ws-gate-db").await;
+        let artifact = shadow_fixture("ws-gate-db").artifact();
+        fixture
+            .db
+            .insert_suppression_gate_artifact(&artifact)
+            .await
+            .expect("append the first artifact");
+
+        let loaded = fixture
+            .db
+            .load_suppression_gate_artifact("ws-gate-db", &artifact.artifact_id)
+            .await
+            .expect("load artifact")
+            .expect("artifact row");
+        assert_eq!(loaded, artifact, "artifact round-trips without mutation");
+        assert_eq!(
+            gate_artifact_sha256(&loaded),
+            loaded.content_sha256,
+            "stored SHA-256 still covers the canonical artifact bytes"
+        );
+
+        let latest = fixture
+            .db
+            .latest_suppression_gate_artifact("ws-gate-db", SuppressionGateMode::Shadow)
+            .await
+            .expect("latest artifact")
+            .expect("shadow artifact");
+        assert_eq!(latest.artifact_id, artifact.artifact_id);
+
+        let duplicate = fixture
+            .db
+            .insert_suppression_gate_artifact(&artifact)
+            .await
+            .expect_err("a repeated artifactId is rejected");
+        assert!(matches!(duplicate, DbError::Conflict { .. }));
+
+        let canary = canary_fixture("ws-gate-db").artifact();
+        fixture
+            .db
+            .insert_suppression_gate_artifact(&canary)
+            .await
+            .expect("append the canary artifact");
+        let workspace_pool = fixture
+            .db
+            .workspace_pool_for_testing("ws-gate-db")
+            .await
+            .expect("workspace pool");
+        let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM suppression_gate_evaluations")
+            .fetch_one(&workspace_pool)
+            .await
+            .expect("count artifacts");
+        assert_eq!(count, 2, "artifacts are only ever appended");
+
+        fixture.close().await;
     }
 }

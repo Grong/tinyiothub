@@ -16,7 +16,8 @@ use sha2::{Digest, Sha256};
 use tinyiothub_storage::alarm::{AlarmLevel, AlarmQueryCriteria, AlarmStatus};
 use tinyiothub_storage::assistant_schedule::{AssistantSchedule, SuppressionConfig};
 use tinyiothub_storage::suppression::{
-    MAX_RECONCILIATION_SECONDS, MIN_RECONCILIATION_SECONDS, SuppressionMode, SuppressionTurnTerminal,
+    MAX_RECONCILIATION_SECONDS, MIN_RECONCILIATION_SECONDS, SuppressionGateMode, SuppressionMode,
+    SuppressionTurnTerminal,
 };
 use tinyiothub_web::security::Claims;
 
@@ -27,7 +28,9 @@ use crate::domains::agent::session::hud::{
     MAX_RECENT_EVENTS, assistant_status,
 };
 use crate::domains::agent::session::suppression::contract::{SourceDescriptor, SourceSnapshot};
-use crate::domains::agent::session::suppression::preflight::PreflightDecision;
+use crate::domains::agent::session::suppression::preflight::{
+    GateValidationContext, PreflightDecision, validate_transition,
+};
 use crate::domains::agent::session::wake::{ManualOperation, ManualPreflight, ManualStartError, assistant_agent_id};
 
 pub fn create_workspace_router<S>() -> Router<S>
@@ -206,15 +209,74 @@ fn parse_suppression_update(
     Ok((mode, request.reconciliation_seconds))
 }
 
-/// Task 10 owns the canary/enforce gate-artifact validation. The seam is
-/// explicit here so this task never invents or bypasses an artifact: today it
-/// only recognises the intent to leave the shadow-only modes.
+fn gate_problem(detail: impl Into<String>) -> Response {
+    problem(StatusCode::CONFLICT, "shadow_gate_not_met", detail)
+}
+
+/// Task 10: `canary` requires an approved shadow artifact and `enforce`
+/// requires an approved canary-measured artifact. `off` is the kill switch and
+/// `shadow` is observational, so both are always allowed. There is no bypass
+/// parameter, and a stale/absent artifact fails closed with a 409
+/// `shadow_gate_not_met` problem.
 #[allow(clippy::result_large_err)] // axum response is the error channel by design
-fn validate_gate_artifact_seam(_workspace_id: &str, _mode: SuppressionMode) -> Result<(), Response> {
-    // TODO(Task 10): reject canary without a valid shadow artifact and enforce
-    // without a valid canary-measured artifact, with a 409
-    // `shadow_gate_not_met` problem.
-    Ok(())
+async fn validate_gate_artifact_seam(
+    state: &AgentState,
+    workspace_id: &str,
+    mode: SuppressionMode,
+) -> Result<(), Response> {
+    let artifact_mode = match mode {
+        SuppressionMode::Off | SuppressionMode::Shadow => return Ok(()),
+        SuppressionMode::Canary => SuppressionGateMode::Shadow,
+        SuppressionMode::Enforce => SuppressionGateMode::Canary,
+    };
+    let Some(ops) = state.suppression_ops.as_ref() else {
+        return Err(problem(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "suppression_unavailable",
+            "suppression operations are not wired; gate evidence cannot be verified",
+        ));
+    };
+    let current_registry_version = ops.registry_version(workspace_id).await.map_err(|error| {
+        tracing::warn!(%workspace_id, ?error, "gate validation: registry version unavailable");
+        problem(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "suppression_unavailable",
+            "无法验证当前 registryVersion",
+        )
+    })?;
+    let artifact = match state
+        .db
+        .latest_suppression_gate_artifact(workspace_id, artifact_mode)
+        .await
+    {
+        Ok(Some(artifact)) => artifact,
+        Ok(None) => {
+            return Err(gate_problem(match artifact_mode {
+                SuppressionGateMode::Shadow => "canary 需要已批准的 shadow gate artifact",
+                SuppressionGateMode::Canary => "enforce 需要已批准的 canary 实测 gate artifact",
+            }));
+        }
+        Err(error) => return Err(internal(error)),
+    };
+    let latest_confirmed_false_skip_at = match state.db.latest_confirmed_false_skip_at(workspace_id).await {
+        Ok(value) => value,
+        Err(error) => return Err(internal(error)),
+    };
+    let context = GateValidationContext {
+        workspace_id,
+        current_registry_version: &current_registry_version,
+        latest_confirmed_false_skip_at,
+        allow_synthetic: false,
+    };
+    validate_transition(mode, &artifact, &context).map_err(|error| {
+        tracing::warn!(
+            %workspace_id,
+            code = %error.code,
+            reason = %error.what,
+            "gate validation rejected a mode change"
+        );
+        gate_problem(error.what)
+    })
 }
 
 pub async fn get_schedule(
@@ -261,7 +323,7 @@ pub async fn update_schedule(
         Err(response) => return response,
     };
     if let Some(mode) = mode
-        && let Err(response) = validate_gate_artifact_seam(&workspace_id, mode)
+        && let Err(response) = validate_gate_artifact_seam(&state, &workspace_id, mode).await
     {
         return response;
     }

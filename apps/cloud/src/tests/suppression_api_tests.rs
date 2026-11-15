@@ -936,3 +936,188 @@ async fn unauthenticated_suppression_routes_are_rejected() {
         .unwrap();
     assert_eq!(response.status(), axum::http::StatusCode::UNAUTHORIZED);
 }
+
+// ── Task 10: evidence-gated canary/enforce transitions ──
+
+const FAKE_REGISTRY_VERSION: &str = "sha256:registry-v1";
+
+async fn seed_schedule(db: &tinyiothub_storage::Db) {
+    db.ensure_assistant_schedule(
+        WS,
+        &crate::domains::agent::session::wake::assistant_agent_id(WS),
+        chrono::Utc::now(),
+    )
+    .await
+    .expect("schedule");
+}
+
+async fn put_mode(
+    app: &axum::Router,
+    token: &str,
+    mode: &str,
+) -> (axum::http::StatusCode, axum::http::HeaderMap, Value) {
+    send(
+        app,
+        "PUT",
+        &format!("/api/v1/workspaces/{WS}/agent/schedule"),
+        token,
+        None,
+        Some(json!({ "suppressionMode": mode })),
+    )
+    .await
+}
+
+// Value card
+// - Covers: canary/enforce without approved evidence.
+// - Real regression: a PUT skips the shadow/canary gate and enables skips.
+// - Failure signal: non-409 response or a changed mode.
+#[tokio::test]
+async fn canary_and_enforce_without_gate_artifacts_are_rejected() {
+    use crate::domains::agent::session::suppression::preflight::suppression_gate::canary_fixture;
+    use crate::domains::agent::session::suppression::preflight::suppression_gate::shadow_fixture;
+
+    let ops = FakeOps::new(StartBehavior::Accept);
+    let (app, pool, db) = app_with_ops(ops).await;
+    let token = admin(&pool).await;
+    seed_schedule(&db).await;
+
+    assert_problem(&put_mode(&app, &token, "canary").await, 409, "shadow_gate_not_met");
+    assert_problem(&put_mode(&app, &token, "enforce").await, 409, "shadow_gate_not_met");
+
+    // A shadow artifact unlocks canary but never enforce.
+    let shadow = shadow_fixture(WS)
+        .with_registry_version(FAKE_REGISTRY_VERSION)
+        .artifact();
+    db.insert_suppression_gate_artifact(&shadow)
+        .await
+        .expect("insert shadow artifact");
+    assert_problem(&put_mode(&app, &token, "enforce").await, 409, "shadow_gate_not_met");
+
+    // A canary artifact unlocks enforce.
+    let canary = canary_fixture(WS)
+        .with_registry_version(FAKE_REGISTRY_VERSION)
+        .artifact();
+    db.insert_suppression_gate_artifact(&canary)
+        .await
+        .expect("insert canary artifact");
+    let accepted = put_mode(&app, &token, "enforce").await;
+    assert_eq!(accepted.0, axum::http::StatusCode::OK, "{:?}", accepted.2);
+    assert_eq!(accepted.2["suppressionMode"], "enforce");
+}
+
+// Value card
+// - Covers: a valid shadow artifact allows canary; synthetic evidence does not.
+// - Real regression: loopback fixture evidence enables a production workspace.
+// - Failure signal: canary accepted with synthetic=true, or rejected with real evidence.
+#[tokio::test]
+async fn canary_requires_non_synthetic_approved_shadow_evidence() {
+    use crate::domains::agent::session::suppression::preflight::suppression_gate::shadow_fixture;
+
+    let ops = FakeOps::new(StartBehavior::Accept);
+    let (app, pool, db) = app_with_ops(ops).await;
+    let token = admin(&pool).await;
+    seed_schedule(&db).await;
+
+    let synthetic = shadow_fixture(WS)
+        .with_registry_version(FAKE_REGISTRY_VERSION)
+        .with_synthetic(true)
+        .artifact();
+    db.insert_suppression_gate_artifact(&synthetic)
+        .await
+        .expect("insert synthetic artifact");
+    assert_problem(&put_mode(&app, &token, "canary").await, 409, "shadow_gate_not_met");
+
+    // A new artifact id must be used because the synthetic row is immutable,
+    // and its approval must be later than the synthetic row's.
+    let real = shadow_fixture(WS)
+        .with_registry_version(FAKE_REGISTRY_VERSION)
+        .with_approved_at(chrono::DateTime::from_timestamp(1_900_000_100, 0).expect("timestamp"))
+        .mutate(|artifact| artifact.artifact_id = "gate:shadow:real".to_string())
+        .artifact();
+    db.insert_suppression_gate_artifact(&real)
+        .await
+        .expect("insert real artifact");
+    let accepted = put_mode(&app, &token, "canary").await;
+    assert_eq!(accepted.0, axum::http::StatusCode::OK, "{:?}", accepted.2);
+    assert_eq!(accepted.2["suppressionMode"], "canary");
+}
+
+// Value card
+// - Covers: off is always allowed (kill switch, no bypass parameter) even with
+//   stale/absent evidence; a confirmed false skip stale-dates an old artifact.
+// - Real regression: an operator cannot disable skips, or a pre-false-skip
+//   artifact still unlocks enforce.
+// - Failure signal: PUT off non-200, or enforce accepted after the false skip.
+#[tokio::test]
+async fn off_is_always_allowed_and_false_skip_requires_fresh_evidence() {
+    use crate::domains::agent::session::suppression::preflight::suppression_gate::canary_fixture;
+
+    let ops = FakeOps::new(StartBehavior::Accept);
+    let (app, pool, db) = app_with_ops(ops).await;
+    let token = admin(&pool).await;
+    seed_schedule(&db).await;
+
+    // No artifact at all: off still succeeds immediately.
+    let off = put_mode(&app, &token, "off").await;
+    assert_eq!(off.0, axum::http::StatusCode::OK, "{:?}", off.2);
+    assert_eq!(off.2["suppressionMode"], "off");
+
+    // An artifact approved before a confirmed false-skip event is stale.
+    let old = canary_fixture(WS)
+        .with_registry_version(FAKE_REGISTRY_VERSION)
+        .with_approved_at(chrono::Utc::now() - chrono::Duration::seconds(3_600))
+        .artifact();
+    db.insert_suppression_gate_artifact(&old)
+        .await
+        .expect("insert old canary artifact");
+    append_event(
+        &db,
+        WS,
+        "event-false-skip",
+        &session_key(WS),
+        "assistant.suppression.alert",
+        json!({"code": "false_skip_detected"}),
+    )
+    .await;
+    assert_problem(&put_mode(&app, &token, "enforce").await, 409, "shadow_gate_not_met");
+
+    // The kill switch still wins while remediation is in progress.
+    let off_after = put_mode(&app, &token, "off").await;
+    assert_eq!(off_after.0, axum::http::StatusCode::OK, "{:?}", off_after.2);
+
+    // Root-cause fix + a fresh approved artifact unlocks enforce again.
+    let fresh = canary_fixture(WS)
+        .with_registry_version(FAKE_REGISTRY_VERSION)
+        .with_approved_at(chrono::Utc::now() + chrono::Duration::seconds(1))
+        .mutate(|artifact| artifact.artifact_id = "gate:canary:fresh".to_string())
+        .artifact();
+    db.insert_suppression_gate_artifact(&fresh)
+        .await
+        .expect("insert fresh canary artifact");
+    let accepted = put_mode(&app, &token, "enforce").await;
+    assert_eq!(accepted.0, axum::http::StatusCode::OK, "{:?}", accepted.2);
+    assert_eq!(accepted.2["suppressionMode"], "enforce");
+}
+
+// Value card
+// - Covers: a stale registry version rejects an otherwise valid artifact.
+// - Real regression: an artifact approved against an old registry unlocks a
+//   mode after Sources changed.
+// - Failure signal: 200 for the stale artifact.
+#[tokio::test]
+async fn stale_registry_artifact_is_rejected_by_put() {
+    use crate::domains::agent::session::suppression::preflight::suppression_gate::shadow_fixture;
+
+    let ops = FakeOps::new(StartBehavior::Accept);
+    let (app, pool, db) = app_with_ops(ops).await;
+    let token = admin(&pool).await;
+    seed_schedule(&db).await;
+
+    let stale = shadow_fixture(WS)
+        .with_registry_version("sha256:previous-registry")
+        .artifact();
+    db.insert_suppression_gate_artifact(&stale)
+        .await
+        .expect("insert stale artifact");
+    assert_problem(&put_mode(&app, &token, "canary").await, 409, "shadow_gate_not_met");
+}

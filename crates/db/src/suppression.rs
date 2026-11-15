@@ -1441,3 +1441,315 @@ pub struct SuppressionTurnTerminal {
     pub occurred_at: Option<DateTime<Utc>>,
     pub started: bool,
 }
+
+/// Wire label of an approved shadow-evidence artifact (`shadow -> canary`).
+pub const GATE_MODE_SHADOW: &str = "shadow";
+/// Wire label of an approved canary-measured artifact (`canary -> enforce`).
+pub const GATE_MODE_CANARY: &str = "canary";
+/// The only false-skip review conclusion that may gate enforce.
+pub const FALSE_SKIP_CONCLUSION_NONE: &str = "no_confirmed_false_skip";
+
+/// Which rollout step a gate artifact unlocks.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum SuppressionGateMode {
+    /// Shadow estimates unlock canary.
+    Shadow,
+    /// Canary measured evidence unlocks enforce.
+    Canary,
+}
+
+impl SuppressionGateMode {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Shadow => GATE_MODE_SHADOW,
+            Self::Canary => GATE_MODE_CANARY,
+        }
+    }
+
+    pub fn parse(value: &str) -> Option<Self> {
+        Some(match value {
+            GATE_MODE_SHADOW => Self::Shadow,
+            GATE_MODE_CANARY => Self::Canary,
+            _ => return None,
+        })
+    }
+}
+
+/// Samples the artifact is built from. `registry_version` is part of the
+/// sample so R18 staleness can be evaluated without a schema change.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GateSample {
+    pub turn_ids: Vec<String>,
+    pub dates: Vec<String>,
+    pub registry_version: String,
+    /// True only for the loopback synthetic fixture. Production validation
+    /// rejects synthetic evidence.
+    #[serde(default)]
+    pub synthetic: bool,
+}
+
+/// Explicit denominators for every ratio in the artifact.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct GateDenominators {
+    /// Present for a shadow artifact.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub shadow: Option<ShadowDenominators>,
+    /// Present for a canary artifact.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub canary: Option<CanaryDenominators>,
+}
+
+/// Shadow counters. Every estimated ratio divides two of these counts.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ShadowDenominators {
+    pub turns: u64,
+    pub would_skip_turns: u64,
+    pub model_calls: u64,
+    pub model_driven_tool_calls: u64,
+    pub model_calls_on_would_skip_turns: u64,
+    pub tool_calls_on_would_skip_turns: u64,
+    pub unavailable_source_full_executions: u64,
+    pub reconciliation_full_executions: u64,
+}
+
+/// Canary counters: baseline versus actually measured canary Turns.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CanaryDenominators {
+    pub turns: u64,
+    pub baseline_model_calls: u64,
+    pub model_calls: u64,
+    pub baseline_model_driven_tool_calls: u64,
+    pub model_driven_tool_calls: u64,
+    pub baseline_duplicate_reports: u64,
+    pub duplicate_reports: u64,
+}
+
+/// Counterfactual shadow estimates. `estimated` is always `true`; shadow mode
+/// never claims it has already saved a call.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ShadowEstimates {
+    pub estimated: bool,
+    pub would_skip_ratio: f64,
+    pub estimated_model_savings: f64,
+    pub estimated_tool_savings: f64,
+    pub veto_distribution: std::collections::BTreeMap<String, u64>,
+    pub longest_consecutive_skips: u64,
+}
+
+/// Measured canary reductions and the human-labelled duplicate-report drop.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CanaryMeasured {
+    pub measured: bool,
+    pub model_call_reduction: f64,
+    pub tool_call_reduction: f64,
+    pub duplicate_report_reduction: f64,
+}
+
+/// One reviewed wouldSkip sample. `reviewed=false` blocks the gate.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FalseSkipSample {
+    pub turn_id: String,
+    pub reviewed: bool,
+    pub confirmed_false_skip: bool,
+}
+
+/// Human review record for the canary gate.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FalseSkipReview {
+    pub reviewer: String,
+    pub reviewed_at: DateTime<Utc>,
+    /// [`FALSE_SKIP_CONCLUSION_NONE`] is the only enforcing conclusion.
+    pub conclusion: String,
+    pub confirmed_false_skips: u64,
+    pub samples: Vec<FalseSkipSample>,
+}
+
+/// Preflight latency distribution recorded alongside the evidence.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LatencyDistribution {
+    pub sample_count: u64,
+    pub p50_ms: u64,
+    pub p95_ms: u64,
+    pub p99_ms: u64,
+}
+
+/// Immutable, append-only rollout evidence row.
+///
+/// `content_sha256` covers the canonical bytes of this artifact without the
+/// hash field itself. There is deliberately no update or delete method.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SuppressionGateArtifact {
+    pub artifact_id: String,
+    pub workspace_id: String,
+    pub mode: SuppressionGateMode,
+    pub sample: GateSample,
+    pub denominators: GateDenominators,
+    pub shadow_estimates: ShadowEstimates,
+    pub canary_measured: CanaryMeasured,
+    pub false_skip_review: FalseSkipReview,
+    pub latency: LatencyDistribution,
+    pub approver: String,
+    pub approved_at: DateTime<Utc>,
+    pub content_sha256: String,
+}
+
+/// Canonical content value an artifact hash covers: the artifact with its own
+/// `contentSha256` field removed.
+pub fn gate_artifact_content_value(artifact: &SuppressionGateArtifact) -> Value {
+    let mut value =
+        serde_json::to_value(artifact).unwrap_or_else(|error| panic!("gate artifact must serialize: {error}"));
+    if let Some(object) = value.as_object_mut() {
+        object.remove("contentSha256");
+    }
+    value
+}
+
+const GATE_ARTIFACT_COLUMNS: &str = "artifact_id, workspace_id, mode, sample_json, denominators_json, \
+    shadow_estimates_json, canary_measured_json, false_skip_review_json, latency_json, \
+    approver, content_sha256, approved_at, created_at";
+
+fn map_gate_artifact_row(row: &SqliteRow) -> Result<SuppressionGateArtifact> {
+    let mode: String = row.try_get("mode")?;
+    let mode = SuppressionGateMode::parse(&mode).ok_or_else(|| DbError::Validation {
+        message: format!("unknown gate artifact mode: {mode}"),
+    })?;
+    let approved_at: String = row.try_get("approved_at")?;
+    Ok(SuppressionGateArtifact {
+        artifact_id: row.try_get("artifact_id")?,
+        workspace_id: row.try_get("workspace_id")?,
+        mode,
+        sample: serde_json::from_str(&row.try_get::<String, _>("sample_json")?)?,
+        denominators: serde_json::from_str(&row.try_get::<String, _>("denominators_json")?)?,
+        shadow_estimates: serde_json::from_str(&row.try_get::<String, _>("shadow_estimates_json")?)?,
+        canary_measured: serde_json::from_str(&row.try_get::<String, _>("canary_measured_json")?)?,
+        false_skip_review: serde_json::from_str(&row.try_get::<String, _>("false_skip_review_json")?)?,
+        latency: serde_json::from_str(&row.try_get::<String, _>("latency_json")?)?,
+        approver: row.try_get("approver")?,
+        content_sha256: row.try_get("content_sha256")?,
+        approved_at: parse_ts(&approved_at)?,
+    })
+}
+
+impl Db {
+    /// Append one gate artifact.
+    ///
+    /// This is the only gate-artifact write in the crate: there is no update
+    /// or delete path, and a repeated `artifactId` is rejected.
+    pub async fn insert_suppression_gate_artifact(&self, artifact: &SuppressionGateArtifact) -> Result<()> {
+        if artifact.artifact_id.trim().is_empty() {
+            return Err(DbError::Validation {
+                message: "gate artifactId must not be empty".to_string(),
+            });
+        }
+        if artifact.workspace_id.trim().is_empty() {
+            return Err(DbError::Validation {
+                message: "gate artifact workspaceId must not be empty".to_string(),
+            });
+        }
+        if artifact.approver.trim().is_empty() {
+            return Err(DbError::Validation {
+                message: "gate artifact approver must not be empty".to_string(),
+            });
+        }
+        let pool = self.workspace_pool(&artifact.workspace_id).await?;
+        let now = format_ts(Utc::now());
+        let result = sqlx::query(
+            "INSERT INTO suppression_gate_evaluations \
+             (artifact_id, workspace_id, mode, sample_json, denominators_json, \
+              shadow_estimates_json, canary_measured_json, false_skip_review_json, latency_json, \
+              approver, content_sha256, approved_at, state_version, created_at, updated_at) \
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)",
+        )
+        .bind(&artifact.artifact_id)
+        .bind(&artifact.workspace_id)
+        .bind(artifact.mode.as_str())
+        .bind(serde_json::to_string(&artifact.sample)?)
+        .bind(serde_json::to_string(&artifact.denominators)?)
+        .bind(serde_json::to_string(&artifact.shadow_estimates)?)
+        .bind(serde_json::to_string(&artifact.canary_measured)?)
+        .bind(serde_json::to_string(&artifact.false_skip_review)?)
+        .bind(serde_json::to_string(&artifact.latency)?)
+        .bind(&artifact.approver)
+        .bind(&artifact.content_sha256)
+        .bind(format_ts(artifact.approved_at))
+        .bind(&now)
+        .bind(&now)
+        .execute(&pool)
+        .await;
+        match result {
+            Ok(_) => Ok(()),
+            Err(sqlx::Error::Database(error)) if error.is_unique_violation() => Err(DbError::Conflict {
+                message: format!("gate artifact {} already exists", artifact.artifact_id),
+            }),
+            Err(error) => Err(error.into()),
+        }
+    }
+
+    /// Load one immutable artifact by id.
+    pub async fn load_suppression_gate_artifact(
+        &self,
+        workspace_id: &str,
+        artifact_id: &str,
+    ) -> Result<Option<SuppressionGateArtifact>> {
+        let pool = self.workspace_pool(workspace_id).await?;
+        let row = sqlx::query(sqlx::AssertSqlSafe(format!(
+            "SELECT {GATE_ARTIFACT_COLUMNS} FROM suppression_gate_evaluations \
+             WHERE workspace_id = ? AND artifact_id = ?"
+        )))
+        .bind(workspace_id)
+        .bind(artifact_id)
+        .fetch_optional(&pool)
+        .await?;
+        row.as_ref().map(map_gate_artifact_row).transpose()
+    }
+
+    /// Latest artifact for one rollout step, by approval time.
+    ///
+    /// A stale newest artifact must not be bypassed with an older one, so
+    /// callers validate exactly this row.
+    pub async fn latest_suppression_gate_artifact(
+        &self,
+        workspace_id: &str,
+        mode: SuppressionGateMode,
+    ) -> Result<Option<SuppressionGateArtifact>> {
+        let pool = self.workspace_pool(workspace_id).await?;
+        let row = sqlx::query(sqlx::AssertSqlSafe(format!(
+            "SELECT {GATE_ARTIFACT_COLUMNS} FROM suppression_gate_evaluations \
+             WHERE workspace_id = ? AND mode = ? \
+             ORDER BY approved_at DESC, created_at DESC LIMIT 1"
+        )))
+        .bind(workspace_id)
+        .bind(mode.as_str())
+        .fetch_optional(&pool)
+        .await?;
+        row.as_ref().map(map_gate_artifact_row).transpose()
+    }
+
+    /// Most recent confirmed false-skip alert for a workspace.
+    ///
+    /// R18 staleness compares this against an artifact's approval time; no
+    /// age window is applied.
+    pub async fn latest_confirmed_false_skip_at(&self, workspace_id: &str) -> Result<Option<DateTime<Utc>>> {
+        let pool = self.workspace_pool(workspace_id).await?;
+        let occurred_at: Option<String> = sqlx::query_scalar(
+            "SELECT MAX(occurred_at) FROM session_events \
+             WHERE execution_mode = 'production' \
+               AND type = 'assistant.suppression.alert' \
+               AND json_extract(payload_json, '$.code') = 'false_skip_detected'",
+        )
+        .fetch_one(&pool)
+        .await?;
+        occurred_at.as_deref().map(parse_ts).transpose()
+    }
+}
