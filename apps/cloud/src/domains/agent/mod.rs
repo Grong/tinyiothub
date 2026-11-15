@@ -97,6 +97,10 @@ pub struct AgentState {
     /// composition layer to the live TriggerRouter/WakeRunner; `None` in unit
     /// tests and unfinished compositions (endpoints then return 503).
     pub suppression_ops: Option<Arc<dyn crate::domains::agent::session::trigger::SuppressionOps>>,
+    /// Server configuration (loopback fixture only) that allows sealing and
+    /// validating synthetic gate evidence. Never a client parameter; production
+    /// keeps this false.
+    pub suppression_gate_allow_synthetic: bool,
 }
 
 impl AgentState {

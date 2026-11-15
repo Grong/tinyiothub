@@ -1482,6 +1482,9 @@ impl SuppressionGateMode {
 #[serde(rename_all = "camelCase")]
 pub struct GateSample {
     pub turn_ids: Vec<String>,
+    /// Pre-canary baseline Turns for a canary artifact (mode=shadow).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub baseline_turn_ids: Vec<String>,
     pub dates: Vec<String>,
     pub registry_version: String,
     /// True only for the loopback synthetic fixture. Production validation
@@ -1542,6 +1545,17 @@ pub struct ShadowEstimates {
     pub longest_consecutive_skips: u64,
 }
 
+/// Human-labelled duplicate-report evidence. This is the one place where an
+/// operator-supplied count is legitimate; the labeler provenance is explicit.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DuplicateReportLabels {
+    pub labeler: String,
+    pub labelled_at: DateTime<Utc>,
+    pub baseline_reports: u64,
+    pub canary_reports: u64,
+}
+
 /// Measured canary reductions and the human-labelled duplicate-report drop.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -1550,6 +1564,8 @@ pub struct CanaryMeasured {
     pub model_call_reduction: f64,
     pub tool_call_reduction: f64,
     pub duplicate_report_reduction: f64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub duplicate_report_labels: Option<DuplicateReportLabels>,
 }
 
 /// One reviewed wouldSkip sample. `reviewed=false` blocks the gate.
@@ -1751,5 +1767,159 @@ impl Db {
         .fetch_one(&pool)
         .await?;
         occurred_at.as_deref().map(parse_ts).transpose()
+    }
+}
+
+/// One server-recorded suppression-aware Turn.
+///
+/// This is the only source for gate denominators/numerators. `mode` is the
+/// configured mode at decision time; shadow records its counterfactual
+/// `would_skip` while still executing the full Turn.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SuppressionTurnObservation {
+    pub workspace_id: String,
+    pub session_id: String,
+    pub turn_id: String,
+    pub attempt_id: String,
+    pub mode: SuppressionMode,
+    pub observed_at: DateTime<Utc>,
+    pub would_skip: bool,
+    pub vetoes: Vec<String>,
+    pub model_calls: u64,
+    pub tool_calls: u64,
+    pub preflight_latency_ms: u64,
+    pub registry_version: String,
+}
+
+const OBSERVATION_COLUMNS: &str = "workspace_id, session_id, turn_id, attempt_id, mode, observed_at, \
+    would_skip, vetoes_json, model_calls, tool_calls, preflight_latency_ms, registry_version";
+
+fn map_observation_row(row: &SqliteRow) -> Result<SuppressionTurnObservation> {
+    let mode: String = row.try_get("mode")?;
+    let mode = SuppressionMode::parse(&mode).ok_or_else(|| DbError::Validation {
+        message: format!("unknown suppression observation mode: {mode}"),
+    })?;
+    let observed_at: String = row.try_get("observed_at")?;
+    let vetoes_json: String = row.try_get("vetoes_json")?;
+    Ok(SuppressionTurnObservation {
+        workspace_id: row.try_get("workspace_id")?,
+        session_id: row.try_get("session_id")?,
+        turn_id: row.try_get("turn_id")?,
+        attempt_id: row.try_get("attempt_id")?,
+        mode,
+        observed_at: parse_ts(&observed_at)?,
+        would_skip: row.try_get::<i64, _>("would_skip")? != 0,
+        vetoes: serde_json::from_str(&vetoes_json)?,
+        model_calls: row.try_get::<i64, _>("model_calls")?.max(0) as u64,
+        tool_calls: row.try_get::<i64, _>("tool_calls")?.max(0) as u64,
+        preflight_latency_ms: row.try_get::<i64, _>("preflight_latency_ms")?.max(0) as u64,
+        registry_version: row.try_get("registry_version")?,
+    })
+}
+
+impl Db {
+    /// Record exactly one row per completed suppression-aware Turn.
+    ///
+    /// A replay of the same Turn keeps the first recorded evidence (`INSERT OR
+    /// IGNORE`), so retries cannot inflate denominators.
+    pub async fn record_suppression_turn_observation(&self, observation: &SuppressionTurnObservation) -> Result<()> {
+        if observation.workspace_id.trim().is_empty()
+            || observation.session_id.trim().is_empty()
+            || observation.turn_id.trim().is_empty()
+            || observation.attempt_id.trim().is_empty()
+        {
+            return Err(DbError::Validation {
+                message: "suppression observation ids must not be empty".to_string(),
+            });
+        }
+        if observation.mode == SuppressionMode::Off {
+            return Err(DbError::Validation {
+                message: "suppression observations are only recorded for shadow/canary/enforce".to_string(),
+            });
+        }
+        if observation.registry_version.trim().is_empty() {
+            return Err(DbError::Validation {
+                message: "suppression observation registryVersion must not be empty".to_string(),
+            });
+        }
+        let pool = self.workspace_pool(&observation.workspace_id).await?;
+        sqlx::query(
+            "INSERT OR IGNORE INTO suppression_observations \
+             (workspace_id, session_id, turn_id, attempt_id, mode, observed_at, would_skip, \
+              vetoes_json, model_calls, tool_calls, preflight_latency_ms, registry_version, created_at) \
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        )
+        .bind(&observation.workspace_id)
+        .bind(&observation.session_id)
+        .bind(&observation.turn_id)
+        .bind(&observation.attempt_id)
+        .bind(observation.mode.as_str())
+        .bind(format_ts(observation.observed_at))
+        .bind(if observation.would_skip { 1_i64 } else { 0_i64 })
+        .bind(serde_json::to_string(&observation.vetoes)?)
+        .bind(observation.model_calls as i64)
+        .bind(observation.tool_calls as i64)
+        .bind(observation.preflight_latency_ms as i64)
+        .bind(&observation.registry_version)
+        .bind(format_ts(Utc::now()))
+        .execute(&pool)
+        .await?;
+        Ok(())
+    }
+
+    /// Load the observations named by an artifact sample.
+    pub async fn load_suppression_turn_observations(
+        &self,
+        workspace_id: &str,
+        turn_ids: &[String],
+    ) -> Result<Vec<SuppressionTurnObservation>> {
+        if turn_ids.is_empty() {
+            return Ok(Vec::new());
+        }
+        let pool = self.workspace_pool(workspace_id).await?;
+        let mut observations = Vec::with_capacity(turn_ids.len());
+        // SQLite's bound-variable limit is far above 500; chunking also keeps
+        // the generated placeholder list bounded.
+        for chunk in turn_ids.chunks(500) {
+            let placeholders = std::iter::repeat_n("?", chunk.len()).collect::<Vec<_>>().join(",");
+            let sql = format!(
+                "SELECT {OBSERVATION_COLUMNS} FROM suppression_observations \
+                 WHERE workspace_id = ? AND turn_id IN ({placeholders}) \
+                 ORDER BY observed_at ASC, turn_id ASC"
+            );
+            let mut query = sqlx::query(sqlx::AssertSqlSafe(sql)).bind(workspace_id);
+            for turn_id in chunk {
+                query = query.bind(turn_id);
+            }
+            let rows = query.fetch_all(&pool).await?;
+            for row in &rows {
+                observations.push(map_observation_row(row)?);
+            }
+        }
+        observations.sort_by(|left, right| {
+            left.observed_at
+                .cmp(&right.observed_at)
+                .then_with(|| left.turn_id.cmp(&right.turn_id))
+        });
+        Ok(observations)
+    }
+
+    /// Load one observation by Turn id.
+    pub async fn suppression_turn_observation(
+        &self,
+        workspace_id: &str,
+        turn_id: &str,
+    ) -> Result<Option<SuppressionTurnObservation>> {
+        let pool = self.workspace_pool(workspace_id).await?;
+        let row = sqlx::query(sqlx::AssertSqlSafe(format!(
+            "SELECT {OBSERVATION_COLUMNS} FROM suppression_observations \
+             WHERE workspace_id = ? AND turn_id = ?"
+        )))
+        .bind(workspace_id)
+        .bind(turn_id)
+        .fetch_optional(&pool)
+        .await?;
+        row.as_ref().map(map_observation_row).transpose()
     }
 }

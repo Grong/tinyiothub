@@ -78,6 +78,14 @@ impl TurnEventHealth {
     }
 }
 
+/// Actual model/tool calls observed for one Turn. Recorded as suppression gate
+/// evidence; never operator-typed.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct TurnCounts {
+    pub model_calls: u64,
+    pub tool_calls: u64,
+}
+
 pub struct SessionRunner {
     events: Arc<dyn SessionEventSink>,
     contexts: Arc<TurnContextRegistry>,
@@ -156,7 +164,7 @@ impl SessionRunner {
         cancel: Option<TurnCancellation>,
         attempt: Option<&WakeAttempt>,
         previous_attempt_id: Option<&str>,
-    ) -> (TurnOutcome, TurnEventHealth) {
+    ) -> (TurnOutcome, TurnEventHealth, TurnCounts) {
         let _guard = self.contexts.set(context.clone());
         let mut health = TurnEventHealth::default();
         let mut started = json!({ "turnId": &context.turn_id });
@@ -175,6 +183,9 @@ impl SessionRunner {
             let observer = observer.clone();
             async move {
                 let mut tool_calls = 0u32;
+                // One Usage event is emitted per model call; this is the
+                // server-side model-call count used by gate evidence.
+                let mut model_calls = 0u64;
                 let mut usage = UsageTotals::default();
                 let mut failed = 0u32;
                 let mut text_buf = String::new();
@@ -310,7 +321,10 @@ impl SessionRunner {
                             cached_input_tokens,
                             output_tokens,
                             cost_usd,
-                        } => usage.add(*input_tokens, *cached_input_tokens, *output_tokens, *cost_usd),
+                        } => {
+                            model_calls += 1;
+                            usage.add(*input_tokens, *cached_input_tokens, *output_tokens, *cost_usd);
+                        }
                         _ => {}
                     }
                     if let Some(observer) = &observer {
@@ -329,13 +343,14 @@ impl SessionRunner {
                 {
                     failed += 1;
                 }
-                (tool_calls, usage.to_json(), failed)
+                (tool_calls, model_calls, usage.to_json(), failed)
             }
         });
 
         let cancel_token = cancel.as_ref().map(|cancellation| cancellation.token.clone());
         let result = agent.turn_streamed(message, event_tx, cancel_token).await;
-        let (tool_calls, usage, forward_failed) = forward.await.unwrap_or((0, serde_json::Value::Null, 1));
+        let (tool_calls, model_calls, usage, forward_failed) =
+            forward.await.unwrap_or((0, 0, serde_json::Value::Null, 1));
         health.failed += forward_failed;
 
         let outcome = match result {
@@ -366,6 +381,7 @@ impl SessionRunner {
                             "outcome": "completed",
                             "text": &text,
                             "toolCalls": tool_calls,
+                            "modelCalls": model_calls,
                             "usage": &usage
                         }),
                     )
@@ -382,6 +398,7 @@ impl SessionRunner {
                     "turnId": &context.turn_id,
                     "outcome": if cancellation.is_some() { "cancelled" } else { "failed" },
                     "toolCalls": tool_calls,
+                    "modelCalls": model_calls,
                     "usage": &usage
                 });
                 if let Some(cancellation) = cancellation {
@@ -411,7 +428,14 @@ impl SessionRunner {
                 }
             }
         };
-        (outcome, health)
+        (
+            outcome,
+            health,
+            TurnCounts {
+                model_calls,
+                tool_calls: u64::from(tool_calls),
+            },
+        )
     }
 
     /// Emit one Turn event. Planned-wake lifecycle events use the attempt's

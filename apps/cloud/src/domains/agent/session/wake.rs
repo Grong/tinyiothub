@@ -17,7 +17,8 @@ use tinyiothub_storage::Db;
 use tinyiothub_storage::assistant_schedule::{AssistantSchedule, SuppressionConfig};
 use tinyiothub_storage::session::Session;
 use tinyiothub_storage::suppression::{
-    FullAttempt, FullAttemptCompletion, SkipAttempt, SuppressionState, SyncPending, TURN_STATE_VERSION,
+    FullAttempt, FullAttemptCompletion, SkipAttempt, SuppressionState, SuppressionTurnObservation, SyncPending,
+    TURN_STATE_VERSION,
 };
 
 use super::trigger::EventWake;
@@ -26,7 +27,7 @@ use crate::domains::agent::prompt::PromptMemorySource;
 use crate::domains::agent::session::chat::service::ensure_agent;
 use crate::domains::agent::session::context::TurnContext;
 use crate::domains::agent::session::events::{SessionEventSink, session_event, session_started_payload};
-use crate::domains::agent::session::runner::{SessionRunner, TurnCancellation, TurnOutcome};
+use crate::domains::agent::session::runner::{SessionRunner, TurnCancellation, TurnCounts, TurnOutcome};
 use crate::domains::agent::session::suppression::SuppressionMode;
 use crate::domains::agent::session::suppression::audit::{
     AtomicSkipAudit, PlannedWake, RecoveryReport, SkipAuditRequest, SuppressionNotifier, SuppressionRecovery,
@@ -114,6 +115,8 @@ pub(crate) struct SuppressionObservation {
     /// its durable attempt without installing a baseline (and keeps the old
     /// baseline ineligible).
     settle_without_baseline: bool,
+    /// Wall-clock preflight duration recorded as gate evidence.
+    preflight_latency_ms: u64,
 }
 
 struct CapturedPreflight {
@@ -133,6 +136,14 @@ impl SuppressionObservation {
     fn decision(&self) -> Option<&PreflightDecision> {
         self.captured.as_ref().map(|captured| &captured.decision)
     }
+
+    fn registry_version(&self) -> Option<String> {
+        self.captured
+            .as_ref()
+            .map(|captured| captured.registry.registry_version())
+            .or_else(|| self.state.registry_version.clone())
+            .filter(|value| !value.trim().is_empty())
+    }
 }
 
 fn fencing_observation(state: SuppressionState, observed_at: DateTime<Utc>, reason: &str) -> SuppressionObservation {
@@ -144,7 +155,77 @@ fn fencing_observation(state: SuppressionState, observed_at: DateTime<Utc>, reas
         unavailable_reason: Some(reason.to_string()),
         skip_disabled: true,
         settle_without_baseline: false,
+        preflight_latency_ms: 0,
     }
+}
+
+/// Record a human-confirmed false skip through the real Session Events
+/// producer. Shared by the wake executor and the admin endpoint so there is
+/// exactly one `false_skip_detected` emission path.
+pub async fn emit_confirmed_false_skip(
+    db: &Db,
+    events: &dyn SessionEventSink,
+    workspace_id: &str,
+    turn_id: &str,
+    reviewer: &str,
+    root_cause: &str,
+) -> Result<(), String> {
+    if reviewer.trim().is_empty() {
+        return Err("false skip reviewer must not be empty".to_string());
+    }
+    let observation = db
+        .suppression_turn_observation(workspace_id, turn_id)
+        .await
+        .map_err(|error| error.to_string())?
+        .ok_or_else(|| format!("turn {turn_id} has no recorded suppression observation"))?;
+    if !observation.would_skip || !matches!(observation.mode, SuppressionMode::Canary | SuppressionMode::Enforce) {
+        return Err(format!(
+            "turn {turn_id} is not a recorded canary/enforce wouldSkip observation"
+        ));
+    }
+    let session_key = format!("agent:{workspace_id}:{}/main", assistant_agent_id(workspace_id));
+    let state = db
+        .load_suppression_state(workspace_id, &session_key)
+        .await
+        .map_err(|error| error.to_string())?
+        .unwrap_or_else(|| SuppressionState::initial(workspace_id, &session_key));
+    let trace_id = Uuid::new_v4().to_string();
+    let context = TurnContext::new(
+        workspace_id.to_string(),
+        assistant_agent_id(workspace_id),
+        session_key,
+        trace_id.clone(),
+        0,
+    );
+    let payload = json!({
+        "code": ErrorCode::FalseSkipDetected.as_str(),
+        "workspaceId": workspace_id,
+        "turnId": turn_id,
+        "baselineStateId": &state.baseline_state_id,
+        "currentRegistryVersion": &observation.registry_version,
+        "baselineRegistryVersion": &state.registry_version,
+        "vetoes": &observation.vetoes,
+        "consecutiveFailures": 0,
+        "metrics": {
+            "reviewer": reviewer,
+            "rootCause": root_cause,
+            "source": "confirmed_false_skip_endpoint",
+        },
+        "traceId": trace_id,
+    });
+    events
+        .emit(session_event(&context, ALERT_EVENT_TYPE, payload))
+        .await
+        .map_err(|error| error.to_string())?;
+    tracing::error!(
+        event_type = ALERT_EVENT_TYPE,
+        alert_code = ErrorCode::FalseSkipDetected.as_str(),
+        %workspace_id,
+        %turn_id,
+        %reviewer,
+        "assistant suppression alert"
+    );
+    Ok(())
 }
 
 /// Post-commit notification consumer backed by the Session Events sink.
@@ -426,10 +507,12 @@ impl WakeRunner {
             mode: config.mode.into(),
         };
         let service = SuppressionService::new(registry.clone());
-        let mut decision = match service
+        let preflight_started = std::time::Instant::now();
+        let evaluated = service
             .evaluate(context, Some(&state), config, current_user_seq.unwrap_or(0))
-            .await
-        {
+            .await;
+        let preflight_latency_ms = preflight_started.elapsed().as_millis() as u64;
+        let mut decision = match evaluated {
             Ok(decision) => decision,
             Err(error) => {
                 tracing::warn!(
@@ -489,7 +572,85 @@ impl WakeRunner {
             unavailable_reason: None,
             skip_disabled,
             settle_without_baseline: config.mode == SuppressionMode::Off,
+            preflight_latency_ms,
         }
+    }
+
+    /// Record one completed suppression-aware Turn as gate evidence.
+    ///
+    /// Only `shadow|canary|enforce` are recorded. A replay keeps the first row
+    /// (the DB primary key is `(workspace_id, turn_id)`), so retries cannot
+    /// inflate denominators.
+    #[allow(clippy::too_many_arguments)]
+    async fn record_turn_observation(
+        &self,
+        workspace_id: &str,
+        session_key: &str,
+        turn_id: &str,
+        attempt_id: &str,
+        observation: &SuppressionObservation,
+        decision: &PreflightDecision,
+        counts: TurnCounts,
+    ) {
+        if !matches!(
+            decision.mode,
+            SuppressionMode::Shadow | SuppressionMode::Canary | SuppressionMode::Enforce
+        ) {
+            return;
+        }
+        let Some(registry_version) = observation.registry_version() else {
+            tracing::warn!(
+                %workspace_id,
+                %turn_id,
+                "suppression observation skipped: no registryVersion"
+            );
+            return;
+        };
+        let record = SuppressionTurnObservation {
+            workspace_id: workspace_id.to_string(),
+            session_id: session_key.to_string(),
+            turn_id: turn_id.to_string(),
+            attempt_id: attempt_id.to_string(),
+            mode: decision.mode,
+            observed_at: observation.observed_at,
+            would_skip: decision.would_skip,
+            vetoes: decision.vetoes.iter().map(|veto| veto.as_str().to_string()).collect(),
+            model_calls: counts.model_calls,
+            tool_calls: counts.tool_calls,
+            preflight_latency_ms: observation.preflight_latency_ms,
+            registry_version,
+        };
+        if let Err(error) = self.db.record_suppression_turn_observation(&record).await {
+            tracing::warn!(
+                %error,
+                %workspace_id,
+                %turn_id,
+                "failed to record suppression observation"
+            );
+        }
+    }
+
+    /// Record a human-confirmed false skip through the real alert producer.
+    ///
+    /// The event is `assistant.suppression.alert` with code
+    /// `false_skip_detected`; R18 staleness and the report read it back from
+    /// the workspace session events.
+    pub async fn record_confirmed_false_skip(
+        &self,
+        workspace_id: &str,
+        turn_id: &str,
+        reviewer: &str,
+        root_cause: &str,
+    ) -> Result<(), String> {
+        emit_confirmed_false_skip(
+            &self.db,
+            self.events.as_ref(),
+            workspace_id,
+            turn_id,
+            reviewer,
+            root_cause,
+        )
+        .await
     }
 
     /// Read-only public preflight used by the GET endpoints.
@@ -704,6 +865,16 @@ impl WakeRunner {
                     {
                         tracing::warn!(%error, %session_key, "manual wake: schedule barrier clear failed");
                     }
+                    self.record_turn_observation(
+                        &schedule.workspace_id,
+                        &session_key,
+                        &attempt.turn_id,
+                        &skip.attempt_id,
+                        &observation,
+                        decision,
+                        TurnCounts::default(),
+                    )
+                    .await;
                     let session = match self.db.get_session(&session_key).await {
                         Ok(Some(session)) => session,
                         Ok(None) => {
@@ -1026,6 +1197,20 @@ pub trait WakeExecutor: Send + Sync {
                 error: "suppression manual operations are unavailable".to_string(),
             },
         }
+    }
+
+    /// Record a human-confirmed false skip through the real alert producer.
+    /// Default: unwired.
+    async fn record_confirmed_false_skip(
+        &self,
+        _workspace_id: &str,
+        _turn_id: &str,
+        _reviewer: &str,
+        _root_cause: &str,
+    ) -> Result<(), ManualStartError> {
+        Err(ManualStartError::Unavailable(
+            "confirmed false-skip recording is unavailable".to_string(),
+        ))
     }
 }
 
@@ -1648,9 +1833,9 @@ impl WakeRunner {
             drop(guard);
             turn
         };
-        let (mut outcome, turn_health) = match turn {
-            Some((turn, health)) => (outcome_with_todos(turn, &self.todos.get(&session_key)), health),
-            None => (WakeOutcome::Cancelled, Default::default()),
+        let (mut outcome, turn_health, turn_counts) = match turn {
+            Some((turn, health, counts)) => (outcome_with_todos(turn, &self.todos.get(&session_key)), health, counts),
+            None => (WakeOutcome::Cancelled, Default::default(), TurnCounts::default()),
         };
         // Missing lifecycle/terminal events are failed evidence, never a
         // successful Turn. This decides the reported outcome *and* the
@@ -1694,6 +1879,18 @@ impl WakeRunner {
                     events_ok,
                 )
                 .await;
+            if let Some(decision) = observation.decision() {
+                self.record_turn_observation(
+                    origin.workspace_id,
+                    &session_key,
+                    &context.turn_id,
+                    &durable.attempt_id,
+                    observation,
+                    decision,
+                    turn_counts,
+                )
+                .await;
+            }
         }
         // A previous committed skip may have left projection/notification
         // barriers that no later skip can clear (begin_skip_attempt requires
@@ -1812,6 +2009,29 @@ impl WakeRunner {
                         outcome: WakeOutcome::AuditFailed,
                     });
                 }
+                let turn_id = wake.attempt(skip_attempt.attempt_no).turn_id.clone();
+                self.record_turn_observation(
+                    &session.workspace_id,
+                    &session_key,
+                    &turn_id,
+                    &skip_attempt.attempt_id,
+                    observation,
+                    decision,
+                    TurnCounts::default(),
+                )
+                .await;
+            }
+            if let Some(committed) = replay.committed_skip() {
+                self.record_turn_observation(
+                    &session.workspace_id,
+                    &session_key,
+                    replay.turn_id(),
+                    &committed.attempt_id,
+                    observation,
+                    decision,
+                    TurnCounts::default(),
+                )
+                .await;
             }
             self.reconcile_committed_skip(session, decision).await;
             return Some(WakeReport {
@@ -2083,6 +2303,18 @@ impl WakeExecutor for WakeRunner {
     async fn execute_manual(&self, prepared: PreparedManual, cancel: CancellationToken) -> WakeReport {
         WakeRunner::execute_manual(self, prepared, cancel).await
     }
+
+    async fn record_confirmed_false_skip(
+        &self,
+        workspace_id: &str,
+        turn_id: &str,
+        reviewer: &str,
+        root_cause: &str,
+    ) -> Result<(), ManualStartError> {
+        WakeRunner::record_confirmed_false_skip(self, workspace_id, turn_id, reviewer, root_cause)
+            .await
+            .map_err(ManualStartError::Unavailable)
+    }
 }
 
 /// 构造 wake Turn 的上下文。scheduled / event 两个入口共用，确保 schedule
@@ -2147,7 +2379,7 @@ mod tests {
     use tinyiothub_storage::assistant_schedule::AssistantSchedule;
     use tinyiothub_storage::error::DbError;
     use tinyiothub_storage::harness_event::EventFilter;
-    use tinyiothub_storage::suppression::SuppressionMode;
+    use tinyiothub_storage::suppression::{SuppressionMode, SuppressionTurnObservation};
     use tokio::sync::mpsc;
 
     struct ScriptedProvider;
@@ -3638,6 +3870,99 @@ mod tests {
         assert!(
             state.full_failed,
             "the old baseline stays ineligible until a full Turn installs one"
+        );
+    }
+
+    #[tokio::test]
+    async fn scheduled_shadow_turns_record_one_observation_each() {
+        let fixture = lifecycle_fixture(SuppressionMode::Shadow, None, true).await;
+        // First Turn installs the baseline; the second computes wouldSkip but
+        // shadow still executes the full Turn.
+        let _ = fixture.run().await;
+        let _ = fixture.run().await;
+
+        let pool = fixture
+            .db
+            .workspace_pool_for_testing("ws")
+            .await
+            .expect("workspace pool");
+        let rows: Vec<(String, String, i64, i64, i64)> = sqlx::query_as(
+            "SELECT turn_id, mode, would_skip, model_calls, tool_calls \
+             FROM suppression_observations WHERE workspace_id = 'ws' ORDER BY observed_at ASC",
+        )
+        .fetch_all(&pool)
+        .await
+        .expect("observations");
+        assert_eq!(rows.len(), 2, "exactly one row per completed Turn");
+        assert!(rows.iter().all(|(_, mode, _, _, _)| mode == "shadow"));
+        assert_eq!(rows[0].2, 0, "first Turn has no baseline");
+        assert_eq!(
+            rows[1].2, 1,
+            "shadow records the second Turn's counterfactual wouldSkip"
+        );
+        assert!(
+            rows.iter().all(|(turn_id, _, _, _, _)| !turn_id.is_empty()),
+            "recorded turn ids are real"
+        );
+    }
+
+    #[tokio::test]
+    async fn confirmed_false_skip_uses_the_real_alert_producer() {
+        let fixture = lifecycle_fixture(SuppressionMode::Canary, None, true).await;
+        let session_key = lifecycle_session_key();
+        fixture
+            .db
+            .record_suppression_turn_observation(&SuppressionTurnObservation {
+                workspace_id: "ws".to_string(),
+                session_id: session_key,
+                turn_id: "turn-false-skip".to_string(),
+                attempt_id: "attempt-false-skip".to_string(),
+                mode: SuppressionMode::Canary,
+                observed_at: Utc::now(),
+                would_skip: true,
+                vetoes: Vec::new(),
+                model_calls: 0,
+                tool_calls: 0,
+                preflight_latency_ms: 10,
+                registry_version: "sha256:test-registry".to_string(),
+            })
+            .await
+            .expect("observation");
+
+        let db = fixture.db.clone();
+        let sink = Arc::new(crate::domains::agent::session::events::DbSessionEventSink::new(
+            db.clone(),
+            Arc::new(crate::domains::agent::runtime::session_stream::SessionStreamHub::default()),
+        ));
+        let runner = Arc::new(SessionRunner::new(
+            sink.clone(),
+            Arc::new(TurnContextRegistry::default()),
+        ));
+        let wake = WakeRunner::from_parts(
+            db.clone(),
+            fixture.pool.clone(),
+            sink,
+            Arc::new(TodoStore::default()),
+            runner,
+        );
+        wake.record_confirmed_false_skip("ws", "turn-false-skip", "reviewer-1", "fixed the tombstone")
+            .await
+            .expect("emit the real alert");
+
+        let recorded = db
+            .latest_confirmed_false_skip_at("ws")
+            .await
+            .expect("false-skip read")
+            .expect("confirmed false skip must be persisted");
+        assert!(recorded <= Utc::now());
+        let events = db.recent_session_events("ws", 20).await.expect("recent events");
+        assert!(
+            events.iter().any(|event| {
+                event.event_type == ALERT_EVENT_TYPE
+                    && event.payload_json["code"] == "false_skip_detected"
+                    && event.payload_json["turnId"] == "turn-false-skip"
+            }),
+            "the producer must persist an assistant.suppression.alert event"
         );
     }
 }

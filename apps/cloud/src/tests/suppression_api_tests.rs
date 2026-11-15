@@ -167,10 +167,18 @@ fn fake_preflight() -> ManualPreflight {
 }
 
 async fn app_with_ops(ops: Arc<dyn SuppressionOps>) -> (axum::Router, sqlx::SqlitePool, Arc<tinyiothub_storage::Db>) {
+    app_with_ops_config(ops, false).await
+}
+
+async fn app_with_ops_config(
+    ops: Arc<dyn SuppressionOps>,
+    allow_synthetic: bool,
+) -> (axum::Router, sqlx::SqlitePool, Arc<tinyiothub_storage::Db>) {
     let (mut app_state, pool) = setup_test_app_with_pool().await;
     seed_test_workspace(&pool, "tenant-1", WS).await;
     seed_test_workspace(&pool, "tenant-2", WS_CROSS).await;
     app_state.suppression_ops = Some(ops);
+    app_state.suppression_gate_allow_synthetic = allow_synthetic;
     let db = app_state.db.clone();
     let api = crate::api::create_router(&app_state);
     (axum::Router::new().nest("/api", api).with_state(app_state), pool, db)
@@ -939,7 +947,79 @@ async fn unauthenticated_suppression_routes_are_rejected() {
 
 // ── Task 10: evidence-gated canary/enforce transitions ──
 
+use crate::domains::agent::session::suppression::preflight::suppression_gate::observations_for;
+
 const FAKE_REGISTRY_VERSION: &str = "sha256:registry-v1";
+
+async fn seed_artifact_observations(
+    db: &tinyiothub_storage::Db,
+    artifact: &tinyiothub_storage::suppression::SuppressionGateArtifact,
+) {
+    let (sample, baseline) = observations_for(artifact);
+    for observation in sample.iter().chain(baseline.iter()) {
+        db.record_suppression_turn_observation(observation)
+            .await
+            .expect("seed suppression observation");
+    }
+}
+
+/// Real admin operations: `record_confirmed_false_skip` delegates to the same
+/// producer `WakeRunner` uses, backed by the workspace DB sink.
+struct FalseSkipOps {
+    db: Arc<tinyiothub_storage::Db>,
+}
+
+#[async_trait::async_trait]
+impl SuppressionOps for FalseSkipOps {
+    async fn manual_preflight(&self, _workspace_id: &str) -> Result<ManualPreflight, ManualStartError> {
+        Ok(fake_preflight())
+    }
+
+    async fn registry_version(&self, _workspace_id: &str) -> Result<String, ManualStartError> {
+        Ok(FAKE_REGISTRY_VERSION.to_string())
+    }
+
+    async fn start_manual(
+        &self,
+        _workspace_id: &str,
+        _operation: ManualOperation,
+    ) -> Result<ManualTurnStart, ManualStartError> {
+        Err(ManualStartError::Unavailable("unused in false-skip tests".to_string()))
+    }
+
+    async fn record_confirmed_false_skip(
+        &self,
+        workspace_id: &str,
+        turn_id: &str,
+        reviewer: &str,
+        root_cause: &str,
+    ) -> Result<(), ManualStartError> {
+        let sink = crate::domains::agent::session::events::DbSessionEventSink::new(
+            self.db.clone(),
+            Arc::new(crate::domains::agent::runtime::session_stream::SessionStreamHub::default()),
+        );
+        crate::domains::agent::session::wake::emit_confirmed_false_skip(
+            &self.db,
+            &sink,
+            workspace_id,
+            turn_id,
+            reviewer,
+            root_cause,
+        )
+        .await
+        .map_err(ManualStartError::Unavailable)
+    }
+}
+
+async fn app_with_false_skip_ops() -> (axum::Router, sqlx::SqlitePool, Arc<tinyiothub_storage::Db>) {
+    let (mut app_state, pool) = setup_test_app_with_pool().await;
+    seed_test_workspace(&pool, "tenant-1", WS).await;
+    seed_test_workspace(&pool, "tenant-2", WS_CROSS).await;
+    let db = app_state.db.clone();
+    app_state.suppression_ops = Some(Arc::new(FalseSkipOps { db: db.clone() }));
+    let api = crate::api::create_router(&app_state);
+    (axum::Router::new().nest("/api", api).with_state(app_state), pool, db)
+}
 
 async fn seed_schedule(db: &tinyiothub_storage::Db) {
     db.ensure_assistant_schedule(
@@ -991,6 +1071,7 @@ async fn canary_and_enforce_without_gate_artifacts_are_rejected() {
     db.insert_suppression_gate_artifact(&shadow)
         .await
         .expect("insert shadow artifact");
+    seed_artifact_observations(&db, &shadow).await;
     assert_problem(&put_mode(&app, &token, "enforce").await, 409, "shadow_gate_not_met");
 
     // A canary artifact unlocks enforce.
@@ -1000,6 +1081,7 @@ async fn canary_and_enforce_without_gate_artifacts_are_rejected() {
     db.insert_suppression_gate_artifact(&canary)
         .await
         .expect("insert canary artifact");
+    seed_artifact_observations(&db, &canary).await;
     let accepted = put_mode(&app, &token, "enforce").await;
     assert_eq!(accepted.0, axum::http::StatusCode::OK, "{:?}", accepted.2);
     assert_eq!(accepted.2["suppressionMode"], "enforce");
@@ -1025,6 +1107,7 @@ async fn canary_requires_non_synthetic_approved_shadow_evidence() {
     db.insert_suppression_gate_artifact(&synthetic)
         .await
         .expect("insert synthetic artifact");
+    seed_artifact_observations(&db, &synthetic).await;
     assert_problem(&put_mode(&app, &token, "canary").await, 409, "shadow_gate_not_met");
 
     // A new artifact id must be used because the synthetic row is immutable,
@@ -1037,6 +1120,7 @@ async fn canary_requires_non_synthetic_approved_shadow_evidence() {
     db.insert_suppression_gate_artifact(&real)
         .await
         .expect("insert real artifact");
+    seed_artifact_observations(&db, &real).await;
     let accepted = put_mode(&app, &token, "canary").await;
     assert_eq!(accepted.0, axum::http::StatusCode::OK, "{:?}", accepted.2);
     assert_eq!(accepted.2["suppressionMode"], "canary");
@@ -1052,8 +1136,7 @@ async fn canary_requires_non_synthetic_approved_shadow_evidence() {
 async fn off_is_always_allowed_and_false_skip_requires_fresh_evidence() {
     use crate::domains::agent::session::suppression::preflight::suppression_gate::canary_fixture;
 
-    let ops = FakeOps::new(StartBehavior::Accept);
-    let (app, pool, db) = app_with_ops(ops).await;
+    let (app, pool, db) = app_with_false_skip_ops().await;
     let token = admin(&pool).await;
     seed_schedule(&db).await;
 
@@ -1070,15 +1153,51 @@ async fn off_is_always_allowed_and_false_skip_requires_fresh_evidence() {
     db.insert_suppression_gate_artifact(&old)
         .await
         .expect("insert old canary artifact");
-    append_event(
-        &db,
-        WS,
-        "event-false-skip",
-        &session_key(WS),
-        "assistant.suppression.alert",
-        json!({"code": "false_skip_detected"}),
+    seed_artifact_observations(&db, &old).await;
+
+    // The real admin endpoint emits `false_skip_detected` through the same
+    // producer the wake path uses (not a hand-appended event).
+    let uri = format!("/api/v1/workspaces/{WS}/agent/suppression/false-skip");
+    let recorded = send(
+        &app,
+        "POST",
+        &uri,
+        &token,
+        Some("false-skip-1"),
+        Some(json!({
+            "turnId": "canary-turn-000",
+            "reviewer": "reviewer-1",
+            "rootCause": "fixed the adapter tombstone"
+        })),
     )
     .await;
+    assert_eq!(recorded.0, axum::http::StatusCode::CREATED, "{:?}", recorded.2);
+    assert_eq!(recorded.2["code"], "false_skip_detected");
+    assert!(
+        db.latest_confirmed_false_skip_at(WS)
+            .await
+            .expect("false skip read")
+            .is_some(),
+        "the real alert must be persisted for R18 staleness"
+    );
+
+    // Same key replays the recorded result without a second alert.
+    let replay = send(
+        &app,
+        "POST",
+        &uri,
+        &token,
+        Some("false-skip-1"),
+        Some(json!({
+            "turnId": "canary-turn-000",
+            "reviewer": "reviewer-1",
+            "rootCause": "fixed the adapter tombstone"
+        })),
+    )
+    .await;
+    assert_eq!(replay.0, axum::http::StatusCode::CREATED, "{:?}", replay.2);
+    assert_eq!(replay.2, recorded.2);
+
     assert_problem(&put_mode(&app, &token, "enforce").await, 409, "shadow_gate_not_met");
 
     // The kill switch still wins while remediation is in progress.
@@ -1094,6 +1213,7 @@ async fn off_is_always_allowed_and_false_skip_requires_fresh_evidence() {
     db.insert_suppression_gate_artifact(&fresh)
         .await
         .expect("insert fresh canary artifact");
+    seed_artifact_observations(&db, &fresh).await;
     let accepted = put_mode(&app, &token, "enforce").await;
     assert_eq!(accepted.0, axum::http::StatusCode::OK, "{:?}", accepted.2);
     assert_eq!(accepted.2["suppressionMode"], "enforce");
@@ -1119,5 +1239,270 @@ async fn stale_registry_artifact_is_rejected_by_put() {
     db.insert_suppression_gate_artifact(&stale)
         .await
         .expect("insert stale artifact");
+    seed_artifact_observations(&db, &stale).await;
     assert_problem(&put_mode(&app, &token, "canary").await, 409, "shadow_gate_not_met");
+}
+
+fn seal_body(artifact: &tinyiothub_storage::suppression::SuppressionGateArtifact, mode: &str) -> Value {
+    let mut body = json!({
+        "mode": mode,
+        "sampleTurnIds": &artifact.sample.turn_ids,
+        "from": "2026-11-01T00:00:00Z",
+        "to": "2026-11-30T23:59:59Z",
+        "approver": "approver-1",
+    });
+    if !artifact.sample.baseline_turn_ids.is_empty() {
+        body["baselineTurnIds"] = json!(&artifact.sample.baseline_turn_ids);
+    }
+    body
+}
+
+fn canary_provenance() -> (Value, Value) {
+    let labels = json!({
+        "labeler": "labeler-1",
+        "labelledAt": "2026-11-16T00:00:00Z",
+        "baselineReports": 1000,
+        "canaryReports": 200
+    });
+    let review = json!({
+        "reviewer": "reviewer-1",
+        "reviewedAt": "2026-11-16T00:00:00Z",
+        "conclusion": "no_confirmed_false_skip",
+        "confirmedFalseSkips": 0,
+        "samples": [{
+            "turnId": "canary-turn-000",
+            "reviewed": true,
+            "confirmedFalseSkip": false
+        }]
+    });
+    (labels, review)
+}
+
+// Value card
+// - Covers: the only production artifact authoring path derives shadow metrics
+//   from recorded observations and unlocks canary.
+// - Real regression: an operator-typed denominator artifact bypasses the
+//   observation record.
+// - Failure signal: 201 without observations, or PUT canary rejected.
+#[tokio::test]
+async fn seal_endpoint_derives_shadow_metrics_from_observations() {
+    use crate::domains::agent::session::suppression::preflight::suppression_gate::shadow_fixture;
+
+    let ops = FakeOps::new(StartBehavior::Accept);
+    let (app, pool, db) = app_with_ops(ops).await;
+    let token = admin(&pool).await;
+    seed_schedule(&db).await;
+
+    let fixture = shadow_fixture(WS)
+        .with_registry_version(FAKE_REGISTRY_VERSION)
+        .artifact();
+    seed_artifact_observations(&db, &fixture).await;
+
+    let response = send(
+        &app,
+        "POST",
+        &format!("/api/v1/workspaces/{WS}/agent/suppression/gate-artifacts"),
+        &token,
+        Some("seal-shadow-1"),
+        Some(seal_body(&fixture, "shadow")),
+    )
+    .await;
+    assert_eq!(response.0, axum::http::StatusCode::CREATED, "{:?}", response.2);
+    assert_eq!(response.2["mode"], "shadow");
+    assert_eq!(response.2["synthetic"], false);
+    assert!(
+        response.2["contentSha256"]
+            .as_str()
+            .expect("hash")
+            .starts_with("sha256:")
+    );
+
+    let artifact_id = response.2["artifactId"].as_str().expect("artifactId");
+    let sealed = db
+        .load_suppression_gate_artifact(WS, artifact_id)
+        .await
+        .expect("artifact read")
+        .expect("artifact row");
+    let denominators = sealed.denominators.shadow.as_ref().expect("shadow denominators");
+    assert_eq!(denominators.turns, 100);
+    assert_eq!(denominators.would_skip_turns, 60);
+    assert_eq!(denominators.model_calls, 1_000);
+    assert_eq!(denominators.model_driven_tool_calls, 500);
+    assert_eq!(sealed.shadow_estimates.would_skip_ratio, 0.6);
+    assert_eq!(sealed.shadow_estimates.estimated_model_savings, 0.6);
+    assert_eq!(sealed.shadow_estimates.estimated_tool_savings, 0.5);
+
+    let accepted = put_mode(&app, &token, "canary").await;
+    assert_eq!(accepted.0, axum::http::StatusCode::OK, "{:?}", accepted.2);
+}
+
+// Value card
+// - Covers: canary metrics are derived from canary + baseline observations and
+//   only human provenance is operator-supplied.
+// - Real regression: a canary artifact without labeler/reviewer provenance
+//   unlocks enforce, or model/tool counts are typed by the caller.
+// - Failure signal: 201 without provenance, or PUT enforce rejected.
+#[tokio::test]
+async fn seal_endpoint_requires_canary_human_provenance() {
+    use crate::domains::agent::session::suppression::preflight::suppression_gate::canary_fixture;
+
+    let ops = FakeOps::new(StartBehavior::Accept);
+    let (app, pool, db) = app_with_ops(ops).await;
+    let token = admin(&pool).await;
+    seed_schedule(&db).await;
+
+    let fixture = canary_fixture(WS)
+        .with_registry_version(FAKE_REGISTRY_VERSION)
+        .artifact();
+    seed_artifact_observations(&db, &fixture).await;
+    let uri = format!("/api/v1/workspaces/{WS}/agent/suppression/gate-artifacts");
+
+    let missing = send(
+        &app,
+        "POST",
+        &uri,
+        &token,
+        Some("seal-canary-missing"),
+        Some(seal_body(&fixture, "canary")),
+    )
+    .await;
+    assert_problem(&missing, 409, "shadow_gate_not_met");
+
+    let (labels, review) = canary_provenance();
+    let mut body = seal_body(&fixture, "canary");
+    body["duplicateReportReview"] = labels;
+    body["falseSkipReview"] = review;
+    let created = send(&app, "POST", &uri, &token, Some("seal-canary-1"), Some(body)).await;
+    assert_eq!(created.0, axum::http::StatusCode::CREATED, "{:?}", created.2);
+    assert_eq!(created.2["mode"], "canary");
+
+    let sealed = db
+        .load_suppression_gate_artifact(WS, created.2["artifactId"].as_str().expect("artifactId"))
+        .await
+        .expect("artifact read")
+        .expect("artifact row");
+    let measured = &sealed.canary_measured;
+    assert_eq!(measured.model_call_reduction, 0.4);
+    assert_eq!(measured.tool_call_reduction, 0.4);
+    assert_eq!(measured.duplicate_report_reduction, 0.8);
+    assert_eq!(
+        measured.duplicate_report_labels.as_ref().expect("labels").labeler,
+        "labeler-1"
+    );
+
+    let accepted = put_mode(&app, &token, "enforce").await;
+    assert_eq!(accepted.0, axum::http::StatusCode::OK, "{:?}", accepted.2);
+}
+
+// Value card
+// - Covers: artifacts may only reference real workspace observations.
+// - Real regression: a self-typed artifact names turn IDs that were never
+//   recorded (or repeats one) and still passes.
+// - Failure signal: 201 for missing/duplicate turn ids.
+#[tokio::test]
+async fn seal_endpoint_rejects_missing_duplicate_or_foreign_turn_ids() {
+    use crate::domains::agent::session::suppression::preflight::suppression_gate::shadow_fixture;
+
+    let ops = FakeOps::new(StartBehavior::Accept);
+    let (app, pool, db) = app_with_ops(ops).await;
+    let token = admin(&pool).await;
+    seed_schedule(&db).await;
+
+    let fixture = shadow_fixture(WS)
+        .with_registry_version(FAKE_REGISTRY_VERSION)
+        .artifact();
+    seed_artifact_observations(&db, &fixture).await;
+    let uri = format!("/api/v1/workspaces/{WS}/agent/suppression/gate-artifacts");
+
+    let mut missing_body = seal_body(&fixture, "shadow");
+    missing_body["sampleTurnIds"] = json!([&fixture.sample.turn_ids[0], "missing-turn"]);
+    let missing = send(&app, "POST", &uri, &token, Some("seal-missing"), Some(missing_body)).await;
+    assert_problem(&missing, 409, "shadow_gate_not_met");
+
+    let mut duplicate_body = seal_body(&fixture, "shadow");
+    duplicate_body["sampleTurnIds"] = json!([&fixture.sample.turn_ids[0], &fixture.sample.turn_ids[0]]);
+    let duplicate = send(&app, "POST", &uri, &token, Some("seal-duplicate"), Some(duplicate_body)).await;
+    assert_problem(&duplicate, 400, "suppression_config_invalid");
+}
+
+// Value card
+// - Covers: synthetic evidence is enabled only by server configuration, never
+//   by a request field.
+// - Real regression: a client sets synthetic=true and the artifact is treated
+//   as loopback-only evidence, or the loopback fixture cannot seal it.
+// - Failure signal: request-controlled synthetic value, or 201 without config.
+#[tokio::test]
+async fn synthetic_evidence_is_server_config_only() {
+    use crate::domains::agent::session::suppression::preflight::suppression_gate::shadow_fixture;
+
+    let ops = FakeOps::new(StartBehavior::Accept);
+    let (app, pool, db) = app_with_ops_config(ops, true).await;
+    let token = admin(&pool).await;
+    seed_schedule(&db).await;
+
+    let fixture = shadow_fixture(WS)
+        .with_registry_version(FAKE_REGISTRY_VERSION)
+        .artifact();
+    seed_artifact_observations(&db, &fixture).await;
+    let mut body = seal_body(&fixture, "shadow");
+    // A client-supplied synthetic flag is ignored.
+    body["synthetic"] = json!(false);
+    let created = send(
+        &app,
+        "POST",
+        &format!("/api/v1/workspaces/{WS}/agent/suppression/gate-artifacts"),
+        &token,
+        Some("seal-synthetic"),
+        Some(body),
+    )
+    .await;
+    assert_eq!(created.0, axum::http::StatusCode::CREATED, "{:?}", created.2);
+    assert_eq!(
+        created.2["synthetic"], true,
+        "server configuration, not the request, controls synthetic evidence"
+    );
+
+    let accepted = put_mode(&app, &token, "canary").await;
+    assert_eq!(
+        accepted.0,
+        axum::http::StatusCode::OK,
+        "the loopback server configuration permits synthetic evidence: {:?}",
+        accepted.2
+    );
+}
+
+// Value card
+// - Covers: the authoring endpoints require workspace write permission.
+// - Real regression: a read-only member seals artifacts or confirms false skips.
+// - Failure signal: non-403 response.
+#[tokio::test]
+async fn gate_authoring_endpoints_require_workspace_write() {
+    let ops = FakeOps::new(StartBehavior::Accept);
+    let (app, _pool, _db) = app_with_ops(ops).await;
+    let member = create_test_token("member-user", "tenant-1");
+
+    for (suffix, body) in [
+        (
+            "gate-artifacts",
+            json!({
+                "mode": "shadow",
+                "sampleTurnIds": ["turn-1"],
+                "from": "2026-11-01T00:00:00Z",
+                "to": "2026-11-30T23:59:59Z",
+                "approver": "approver-1"
+            }),
+        ),
+        ("false-skip", json!({"turnId": "turn-1", "reviewer": "reviewer-1"})),
+    ] {
+        let response = send(
+            &app,
+            "POST",
+            &format!("/api/v1/workspaces/{WS}/agent/suppression/{suffix}"),
+            &member,
+            Some("member-key"),
+            Some(body),
+        )
+        .await;
+        assert_problem(&response, 403, "workspace_write_required");
+    }
 }

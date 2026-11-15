@@ -430,6 +430,20 @@ pub trait SuppressionOps: Send + Sync {
         Ok(self.manual_preflight(workspace_id).await?.registry_version)
     }
 
+    /// Record a human-confirmed false skip through the real alert producer.
+    /// Default: unwired.
+    async fn record_confirmed_false_skip(
+        &self,
+        _workspace_id: &str,
+        _turn_id: &str,
+        _reviewer: &str,
+        _root_cause: &str,
+    ) -> Result<(), ManualStartError> {
+        Err(ManualStartError::Unavailable(
+            "confirmed false-skip recording is unavailable".to_string(),
+        ))
+    }
+
     /// Allocate the durable attempt synchronously, then spawn execution.
     async fn start_manual(
         &self,
@@ -497,6 +511,18 @@ impl SuppressionOps for TriggerRouter {
             );
         });
         Ok(start)
+    }
+
+    async fn record_confirmed_false_skip(
+        &self,
+        workspace_id: &str,
+        turn_id: &str,
+        reviewer: &str,
+        root_cause: &str,
+    ) -> Result<(), ManualStartError> {
+        self.executor
+            .record_confirmed_false_skip(workspace_id, turn_id, reviewer, root_cause)
+            .await
     }
 }
 

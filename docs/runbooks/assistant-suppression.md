@@ -121,7 +121,84 @@ Staleness follows ruling R18 only — there is no age window:
 
 Synthetic evidence (`synthetic=true`) is valid only in the loopback
 quickstart fixture. Production validation always rejects it; there is no
-parameter that bypasses the artifact gate.
+parameter that bypasses the artifact gate. The flag is set by server
+configuration in the loopback fixture only; a request field named `synthetic`
+is ignored.
+
+### 3.2 Publish gate evidence (admin, idempotent)
+
+Both endpoints require workspace write and an `Idempotency-Key`. Neither
+changes `suppressionMode`; the separate `PUT` remains the only mode change.
+
+Metrics are derived server-side from Turns recorded by the wake path. The
+request supplies references and human provenance only; model/tool counts are
+never typed by the caller.
+
+```bash
+# 1. Shadow evidence: all sampleTurnIds must be recorded mode=shadow Turns.
+curl --fail-with-body -X POST "$API/suppression/gate-artifacts" \
+  -H "$AUTH" -H "$JSON" -H 'Idempotency-Key: gate-shadow-001' -d '{
+    "mode": "shadow",
+    "sampleTurnIds": ["turn:shadow-a", "turn:shadow-b", "turn:shadow-c"],
+    "from": "2026-11-10T00:00:00Z",
+    "to": "2026-11-13T00:00:00Z",
+    "approver": "alice"
+  }' | jq '{artifactId, mode, approvedAt, contentSha256, synthetic}'
+```
+
+```bash
+# 2. Canary evidence: sampleTurnIds are mode=canary Turns, baselineTurnIds are
+#    the pre-canary mode=shadow Turns. Only the human duplicate-report labels
+#    and false-skip review are caller-supplied.
+curl --fail-with-body -X POST "$API/suppression/gate-artifacts" \
+  -H "$AUTH" -H "$JSON" -H 'Idempotency-Key: gate-canary-001' -d '{
+    "mode": "canary",
+    "sampleTurnIds": ["turn:canary-a", "turn:canary-b"],
+    "baselineTurnIds": ["turn:shadow-a", "turn:shadow-b"],
+    "from": "2026-11-13T00:00:00Z",
+    "to": "2026-11-16T00:00:00Z",
+    "approver": "alice",
+    "duplicateReportReview": {
+      "labeler": "bob",
+      "labelledAt": "2026-11-16T00:00:00Z",
+      "baselineReports": 50,
+      "canaryReports": 8
+    },
+    "falseSkipReview": {
+      "reviewer": "carol",
+      "reviewedAt": "2026-11-16T00:00:00Z",
+      "conclusion": "no_confirmed_false_skip",
+      "confirmedFalseSkips": 0,
+      "samples": [{"turnId": "turn:canary-a", "reviewed": true, "confirmedFalseSkip": false}]
+    }
+  }' | jq '{artifactId, mode, approvedAt, contentSha256, synthetic}'
+```
+
+A missing/foreign/duplicate `turnId`, a sample outside `from`/`to`, the wrong
+observation mode, missing human provenance, or an artifact that does not match
+its recorded observations returns HTTP 409 `shadow_gate_not_met` (duplicate IDs
+in the request are a 400 `suppression_config_invalid`). Replaying the same
+`Idempotency-Key` returns the recorded artifact without appending a second row.
+
+### 3.3 Record a confirmed false skip
+
+This is the only producer of the `false_skip_detected` alert used by R18
+staleness. It requires workspace write and an `Idempotency-Key`, and the
+`turnId` must be a recorded canary/enforce `wouldSkip` observation.
+
+```bash
+curl --fail-with-body -X POST "$API/suppression/false-skip" \
+  -H "$AUTH" -H "$JSON" -H 'Idempotency-Key: false-skip-001' -d '{
+    "turnId": "turn:canary-a",
+    "reviewer": "carol",
+    "rootCause": "adapter tombstone dropped a closed work item"
+  }' | jq .
+# => {"code":"false_skip_detected","turnId":"turn:canary-a","reviewer":"carol"}
+
+# The alert is now visible to the report and invalidates any artifact approved
+# before this confirmation. Fix the root cause and publish fresh evidence.
+curl --fail-with-body "$API/suppression/report" -H "$AUTH" | jq '.alerts'
+```
 
 ## 4. Wake and reconcile (write operations)
 

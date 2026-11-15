@@ -4,6 +4,8 @@
 //! 所有端点先做 workspace 归属校验。Suppression 的决策/执行仍住 session
 //! 模块；本文件只做 HTTP DTO、权限、problem details 和幂等投影。
 
+use std::collections::HashSet;
+
 use axum::extract::{Extension, Path, Query, State};
 use axum::http::{HeaderMap, StatusCode, header};
 use axum::response::{IntoResponse, Response};
@@ -16,10 +18,11 @@ use sha2::{Digest, Sha256};
 use tinyiothub_storage::alarm::{AlarmLevel, AlarmQueryCriteria, AlarmStatus};
 use tinyiothub_storage::assistant_schedule::{AssistantSchedule, SuppressionConfig};
 use tinyiothub_storage::suppression::{
-    MAX_RECONCILIATION_SECONDS, MIN_RECONCILIATION_SECONDS, SuppressionGateMode, SuppressionMode,
-    SuppressionTurnTerminal,
+    DuplicateReportLabels, FalseSkipReview, MAX_RECONCILIATION_SECONDS, MIN_RECONCILIATION_SECONDS,
+    SuppressionGateMode, SuppressionMode, SuppressionTurnTerminal,
 };
 use tinyiothub_web::security::Claims;
+use uuid::Uuid;
 
 use crate::domains::agent::AgentState;
 use crate::domains::agent::session::handlers::is_admin;
@@ -29,7 +32,8 @@ use crate::domains::agent::session::hud::{
 };
 use crate::domains::agent::session::suppression::contract::{SourceDescriptor, SourceSnapshot};
 use crate::domains::agent::session::suppression::preflight::{
-    GateValidationContext, PreflightDecision, validate_transition,
+    GateValidationContext, PreflightDecision, derive_canary_gate_artifact, derive_shadow_gate_artifact,
+    seal_gate_artifact, validate_transition, verify_artifact_evidence,
 };
 use crate::domains::agent::session::wake::{ManualOperation, ManualPreflight, ManualStartError, assistant_agent_id};
 
@@ -50,6 +54,14 @@ where
         .route(
             "/{workspace_id}/agent/suppression/reconcile",
             post(post_suppression_reconcile),
+        )
+        .route(
+            "/{workspace_id}/agent/suppression/gate-artifacts",
+            post(post_seal_gate_artifact),
+        )
+        .route(
+            "/{workspace_id}/agent/suppression/false-skip",
+            post(post_confirmed_false_skip),
         )
 }
 
@@ -213,6 +225,32 @@ fn gate_problem(detail: impl Into<String>) -> Response {
     problem(StatusCode::CONFLICT, "shadow_gate_not_met", detail)
 }
 
+/// Re-derive every non-human metric from the server-recorded observations.
+/// Persisting an artifact row is not evidence; the observations must support
+/// it.
+#[allow(clippy::result_large_err)]
+async fn verify_gate_artifact_evidence(
+    state: &AgentState,
+    workspace_id: &str,
+    artifact: &tinyiothub_storage::suppression::SuppressionGateArtifact,
+) -> Result<(), Response> {
+    let sample = state
+        .db
+        .load_suppression_turn_observations(workspace_id, &artifact.sample.turn_ids)
+        .await
+        .map_err(internal)?;
+    let baseline = if artifact.mode == SuppressionGateMode::Canary {
+        state
+            .db
+            .load_suppression_turn_observations(workspace_id, &artifact.sample.baseline_turn_ids)
+            .await
+            .map_err(internal)?
+    } else {
+        Vec::new()
+    };
+    verify_artifact_evidence(artifact, &sample, &baseline).map_err(|error| gate_problem(error.what))
+}
+
 /// Task 10: `canary` requires an approved shadow artifact and `enforce`
 /// requires an approved canary-measured artifact. `off` is the kill switch and
 /// `shadow` is observational, so both are always allowed. There is no bypass
@@ -258,6 +296,7 @@ async fn validate_gate_artifact_seam(
         }
         Err(error) => return Err(internal(error)),
     };
+    verify_gate_artifact_evidence(state, workspace_id, &artifact).await?;
     let latest_confirmed_false_skip_at = match state.db.latest_confirmed_false_skip_at(workspace_id).await {
         Ok(value) => value,
         Err(error) => return Err(internal(error)),
@@ -266,7 +305,7 @@ async fn validate_gate_artifact_seam(
         workspace_id,
         current_registry_version: &current_registry_version,
         latest_confirmed_false_skip_at,
-        allow_synthetic: false,
+        allow_synthetic: state.suppression_gate_allow_synthetic,
     };
     validate_transition(mode, &artifact, &context).map_err(|error| {
         tracing::warn!(
@@ -1152,6 +1191,421 @@ fn manual_error(error: ManualStartError) -> Response {
                 "suppression_unavailable",
                 "suppression 操作暂不可用",
             )
+        }
+    }
+}
+
+// ── Gate evidence authoring (Task 10 / R20) ──
+//
+// These endpoints only append evidence: they never change suppression mode and
+// never bypass PUT gate validation. Metrics are derived from server-recorded
+// observations; the caller supplies references plus human provenance only.
+
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SealGateArtifactRequest {
+    /// `shadow` (unlocks canary) or `canary` (unlocks enforce).
+    pub mode: String,
+    pub sample_turn_ids: Vec<String>,
+    #[serde(default)]
+    pub baseline_turn_ids: Vec<String>,
+    pub from: chrono::DateTime<Utc>,
+    pub to: chrono::DateTime<Utc>,
+    pub approver: String,
+    #[serde(default)]
+    pub duplicate_report_review: Option<DuplicateReportLabels>,
+    #[serde(default)]
+    pub false_skip_review: Option<FalseSkipReview>,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RecordFalseSkipRequest {
+    pub turn_id: String,
+    pub reviewer: String,
+    #[serde(default)]
+    pub root_cause: String,
+}
+
+fn json_request_fingerprint(operation: &str, workspace_id: &str, request: &impl Serialize) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(b"tinyiothub:suppression-gate-http:v1\0");
+    hasher.update(operation.as_bytes());
+    hasher.update(b"\0");
+    hasher.update(workspace_id.as_bytes());
+    hasher.update(b"\0");
+    hasher.update(serde_json::to_vec(request).unwrap_or_default());
+    format!("sha256:{:x}", hasher.finalize())
+}
+
+/// Reserve an admin operation key. A recorded result is replayed; a
+/// concurrent or conflicting reservation is a 409.
+#[allow(clippy::result_large_err)]
+async fn reserve_admin_idempotency(
+    state: &AgentState,
+    workspace_id: &str,
+    operation: &str,
+    key: &str,
+    fingerprint: &str,
+) -> Result<(), Response> {
+    match state.db.find_suppression_idempotency(workspace_id, key).await {
+        Ok(Some(record)) => {
+            if record.operation != operation || record.request_fingerprint != fingerprint {
+                return Err(problem(
+                    StatusCode::CONFLICT,
+                    "idempotency_conflict",
+                    "同一 Idempotency-Key 不能用于不同 operation 或请求指纹；请使用新的 key",
+                ));
+            }
+            if let Some(result) = record.result {
+                return Err((StatusCode::CREATED, Json(result)).into_response());
+            }
+            return Err(problem(
+                StatusCode::CONFLICT,
+                "wake_in_flight",
+                "相同请求正在处理中，请稍后使用同一 Idempotency-Key 重试",
+            ));
+        }
+        Ok(None) => {}
+        Err(error) => return Err(internal(error)),
+    }
+    match state
+        .db
+        .try_insert_suppression_idempotency(workspace_id, operation, key, fingerprint, None)
+        .await
+    {
+        Ok(true) => Ok(()),
+        Ok(false) => Err(problem(
+            StatusCode::CONFLICT,
+            "wake_in_flight",
+            "相同请求正在处理中，请稍后使用同一 Idempotency-Key 重试",
+        )),
+        Err(error) => Err(internal(error)),
+    }
+}
+
+async fn complete_admin_idempotency(
+    state: &AgentState,
+    workspace_id: &str,
+    operation: &str,
+    key: &str,
+    id: &str,
+    result: Value,
+) -> Response {
+    if let Err(error) = state
+        .db
+        .record_suppression_idempotency(workspace_id, operation, key, id, &result)
+        .await
+    {
+        tracing::error!(%workspace_id, %operation, %error, "record admin idempotency result failed");
+    }
+    (StatusCode::CREATED, Json(result)).into_response()
+}
+
+#[allow(clippy::result_large_err)]
+fn validate_unique_turn_ids(ids: &[String], field: &str) -> Result<(), Response> {
+    if ids.is_empty() {
+        return Err(problem(
+            StatusCode::BAD_REQUEST,
+            "suppression_config_invalid",
+            format!("{field} 不能为空"),
+        ));
+    }
+    let unique: HashSet<&str> = ids.iter().map(String::as_str).collect();
+    if unique.len() != ids.len() {
+        return Err(problem(
+            StatusCode::BAD_REQUEST,
+            "suppression_config_invalid",
+            format!("{field} 不能包含重复 turnId"),
+        ));
+    }
+    Ok(())
+}
+
+#[allow(clippy::result_large_err)]
+async fn seal_gate_artifact_inner(
+    state: &AgentState,
+    workspace_id: &str,
+    request: SealGateArtifactRequest,
+) -> Result<(String, Value), Response> {
+    let mode = match request.mode.trim() {
+        "shadow" => SuppressionGateMode::Shadow,
+        "canary" => SuppressionGateMode::Canary,
+        _ => {
+            return Err(problem(
+                StatusCode::BAD_REQUEST,
+                "suppression_config_invalid",
+                "mode 必须是 shadow 或 canary",
+            ));
+        }
+    };
+    if request.approver.trim().is_empty() {
+        return Err(gate_problem("gate artifact 需要 approver"));
+    }
+    if request.from > request.to {
+        return Err(problem(
+            StatusCode::BAD_REQUEST,
+            "suppression_config_invalid",
+            "from 不能晚于 to",
+        ));
+    }
+    validate_unique_turn_ids(&request.sample_turn_ids, "sampleTurnIds")?;
+
+    let sample = state
+        .db
+        .load_suppression_turn_observations(workspace_id, &request.sample_turn_ids)
+        .await
+        .map_err(internal)?;
+    if sample.len() != request.sample_turn_ids.len() {
+        return Err(gate_problem("sampleTurnIds 引用了缺失或不属于本工作空间的 Turn"));
+    }
+    let expected_mode = match mode {
+        SuppressionGateMode::Shadow => SuppressionMode::Shadow,
+        SuppressionGateMode::Canary => SuppressionMode::Canary,
+    };
+    if sample.iter().any(|observation| observation.mode != expected_mode) {
+        return Err(gate_problem("sampleTurnIds 必须全部来自对应 mode 的已记录观测"));
+    }
+    if sample
+        .iter()
+        .any(|observation| observation.observed_at < request.from || observation.observed_at > request.to)
+    {
+        return Err(gate_problem("sampleTurnIds 超出 from/to 范围"));
+    }
+
+    let baseline = match mode {
+        SuppressionGateMode::Shadow => {
+            if !request.baseline_turn_ids.is_empty() {
+                return Err(gate_problem("shadow artifact 不接受 baselineTurnIds"));
+            }
+            Vec::new()
+        }
+        SuppressionGateMode::Canary => {
+            validate_unique_turn_ids(&request.baseline_turn_ids, "baselineTurnIds")?;
+            let baseline = state
+                .db
+                .load_suppression_turn_observations(workspace_id, &request.baseline_turn_ids)
+                .await
+                .map_err(internal)?;
+            if baseline.len() != request.baseline_turn_ids.len() {
+                return Err(gate_problem("baselineTurnIds 引用了缺失或不属于本工作空间的 Turn"));
+            }
+            if baseline
+                .iter()
+                .any(|observation| observation.mode != SuppressionMode::Shadow)
+            {
+                return Err(gate_problem("baselineTurnIds 必须全部来自 mode=shadow 观测"));
+            }
+            if baseline
+                .iter()
+                .any(|observation| observation.observed_at < request.from || observation.observed_at > request.to)
+            {
+                return Err(gate_problem("baselineTurnIds 超出 from/to 范围"));
+            }
+            baseline
+        }
+    };
+
+    let now = Utc::now();
+    let review = match mode {
+        SuppressionGateMode::Shadow => FalseSkipReview {
+            reviewer: String::new(),
+            reviewed_at: now,
+            conclusion: tinyiothub_storage::suppression::FALSE_SKIP_CONCLUSION_NONE.to_string(),
+            confirmed_false_skips: 0,
+            samples: Vec::new(),
+        },
+        SuppressionGateMode::Canary => {
+            let review = request
+                .false_skip_review
+                .ok_or_else(|| gate_problem("canary artifact 需要 falseSkipReview（reviewer、conclusion、samples）"))?;
+            if review.reviewer.trim().is_empty() {
+                return Err(gate_problem("falseSkipReview.reviewer 不能为空"));
+            }
+            let would_skip: HashSet<&str> = sample
+                .iter()
+                .filter(|observation| observation.would_skip)
+                .map(|observation| observation.turn_id.as_str())
+                .collect();
+            for review_sample in &review.samples {
+                if !would_skip.contains(review_sample.turn_id.as_str()) {
+                    return Err(gate_problem(format!(
+                        "falseSkipReview sample {} 不是样本内的 wouldSkip Turn",
+                        review_sample.turn_id
+                    )));
+                }
+            }
+            review
+        }
+    };
+
+    let labels = match mode {
+        SuppressionGateMode::Shadow => None,
+        SuppressionGateMode::Canary => Some(
+            request
+                .duplicate_report_review
+                .ok_or_else(|| gate_problem("canary artifact 需要 duplicateReportReview（labeler 与人工计数）"))?,
+        ),
+    };
+
+    let artifact_id = format!("gate:{}:{}:{}", mode.as_str(), workspace_id, Uuid::new_v4());
+    let synthetic = state.suppression_gate_allow_synthetic;
+    let artifact = match mode {
+        SuppressionGateMode::Shadow => derive_shadow_gate_artifact(
+            workspace_id,
+            artifact_id.clone(),
+            &request.approver,
+            now,
+            synthetic,
+            &sample,
+        ),
+        SuppressionGateMode::Canary => derive_canary_gate_artifact(
+            workspace_id,
+            artifact_id.clone(),
+            &request.approver,
+            now,
+            synthetic,
+            &sample,
+            &baseline,
+            labels.expect("canary labels"),
+            review,
+        ),
+    }
+    .map_err(|error| gate_problem(error.what))?;
+    verify_artifact_evidence(&artifact, &sample, &baseline).map_err(|error| gate_problem(error.what))?;
+    let artifact = seal_gate_artifact(artifact);
+    state
+        .db
+        .insert_suppression_gate_artifact(&artifact)
+        .await
+        .map_err(internal)?;
+
+    let result = json!({
+        "artifactId": artifact.artifact_id,
+        "mode": artifact.mode.as_str(),
+        "workspaceId": workspace_id,
+        "approvedAt": artifact.approved_at,
+        "contentSha256": artifact.content_sha256,
+        "synthetic": artifact.sample.synthetic,
+        "sampleTurnCount": artifact.sample.turn_ids.len(),
+        "baselineTurnCount": artifact.sample.baseline_turn_ids.len(),
+    });
+    Ok((artifact.artifact_id, result))
+}
+
+#[allow(clippy::result_large_err)]
+async fn confirmed_false_skip_inner(
+    state: &AgentState,
+    workspace_id: &str,
+    request: &RecordFalseSkipRequest,
+) -> Result<(String, Value), Response> {
+    if request.turn_id.trim().is_empty() || request.reviewer.trim().is_empty() {
+        return Err(problem(
+            StatusCode::BAD_REQUEST,
+            "suppression_config_invalid",
+            "turnId 与 reviewer 不能为空",
+        ));
+    }
+    let Some(observation) = state
+        .db
+        .suppression_turn_observation(workspace_id, &request.turn_id)
+        .await
+        .map_err(internal)?
+    else {
+        return Err(problem(
+            StatusCode::NOT_FOUND,
+            "suppression_config_invalid",
+            "turnId 没有对应的 suppression 观测",
+        ));
+    };
+    if !observation.would_skip || !matches!(observation.mode, SuppressionMode::Canary | SuppressionMode::Enforce) {
+        return Err(problem(
+            StatusCode::BAD_REQUEST,
+            "suppression_config_invalid",
+            "只有 canary/enforce 的 wouldSkip Turn 才能确认 false skip",
+        ));
+    }
+    let Some(ops) = state.suppression_ops.as_ref() else {
+        return Err(problem(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "suppression_unavailable",
+            "suppression operations are not wired",
+        ));
+    };
+    ops.record_confirmed_false_skip(workspace_id, &request.turn_id, &request.reviewer, &request.root_cause)
+        .await
+        .map_err(manual_error)?;
+    Ok((
+        request.turn_id.clone(),
+        json!({
+            "code": "false_skip_detected",
+            "turnId": request.turn_id,
+            "reviewer": request.reviewer,
+        }),
+    ))
+}
+
+pub async fn post_seal_gate_artifact(
+    State(state): State<AgentState>,
+    Extension(claims): Extension<Claims>,
+    Path(workspace_id): Path<String>,
+    headers: HeaderMap,
+    Json(request): Json<SealGateArtifactRequest>,
+) -> Response {
+    if let Err(response) = verify_workspace_write_problem(&state, &claims, &workspace_id).await {
+        return response;
+    }
+    let key = match idempotency_key(&headers) {
+        Ok(key) => key,
+        Err(response) => return response,
+    };
+    let fingerprint = json_request_fingerprint("gate_seal", &workspace_id, &request);
+    if let Err(response) = reserve_admin_idempotency(&state, &workspace_id, "gate_seal", &key, &fingerprint).await {
+        return response;
+    }
+    match seal_gate_artifact_inner(&state, &workspace_id, request).await {
+        Ok((artifact_id, result)) => {
+            complete_admin_idempotency(&state, &workspace_id, "gate_seal", &key, &artifact_id, result).await
+        }
+        Err(response) => {
+            let _ = state
+                .db
+                .delete_suppression_idempotency(&workspace_id, "gate_seal", &key)
+                .await;
+            response
+        }
+    }
+}
+
+pub async fn post_confirmed_false_skip(
+    State(state): State<AgentState>,
+    Extension(claims): Extension<Claims>,
+    Path(workspace_id): Path<String>,
+    headers: HeaderMap,
+    Json(request): Json<RecordFalseSkipRequest>,
+) -> Response {
+    if let Err(response) = verify_workspace_write_problem(&state, &claims, &workspace_id).await {
+        return response;
+    }
+    let key = match idempotency_key(&headers) {
+        Ok(key) => key,
+        Err(response) => return response,
+    };
+    let fingerprint = json_request_fingerprint("gate_false_skip", &workspace_id, &request);
+    if let Err(response) = reserve_admin_idempotency(&state, &workspace_id, "gate_false_skip", &key, &fingerprint).await
+    {
+        return response;
+    }
+    match confirmed_false_skip_inner(&state, &workspace_id, &request).await {
+        Ok((turn_id, result)) => {
+            complete_admin_idempotency(&state, &workspace_id, "gate_false_skip", &key, &turn_id, result).await
+        }
+        Err(response) => {
+            let _ = state
+                .db
+                .delete_suppression_idempotency(&workspace_id, "gate_false_skip", &key)
+                .await;
+            response
         }
     }
 }
