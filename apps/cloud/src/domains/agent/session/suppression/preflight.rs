@@ -9,7 +9,9 @@
 #![allow(clippy::result_large_err)]
 
 use std::collections::{BTreeMap, HashSet};
-use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Arc, LazyLock};
+use std::time::Duration as StdDuration;
 
 use chrono::{DateTime, Duration, Utc};
 use serde::{Deserialize, Serialize};
@@ -19,10 +21,144 @@ use tinyiothub_storage::suppression::{
     OUTCOME_BASELINE_MISSING, OUTCOME_FULL_COMPLETED, OUTCOME_FULL_FAILED, OUTCOME_FULL_IN_PROGRESS,
     OUTCOME_SKIP_IN_PROGRESS, OUTCOME_SKIPPED, SuppressionMode, SuppressionState,
 };
+use tokio::sync::{OwnedSemaphorePermit, Semaphore};
+use tokio_util::sync::CancellationToken;
 
 use super::contract::{SourceSnapshot, TURN_STATE_VERSION};
-use super::error::SuppressionError;
+use super::error::{ErrorCode, SuppressionError};
 use super::registry::{SourceContext, SourceMode, SourceRegistry};
+
+/// Bound on concurrent preflight captures across every workspace.
+pub const DEFAULT_PREFLIGHT_CONCURRENCY: usize = 4;
+pub const MIN_PREFLIGHT_CONCURRENCY: usize = 1;
+pub const MAX_PREFLIGHT_CONCURRENCY: usize = 32;
+/// Per-Source capture deadline. A hanging adapter cannot hold a slot forever.
+pub const PREFLIGHT_CAPTURE_DEADLINE: StdDuration = StdDuration::from_secs(2);
+/// Per-Source reference-resolution deadline (defaults equal the capture bound).
+pub const PREFLIGHT_RESOLVE_DEADLINE: StdDuration = StdDuration::from_secs(2);
+/// Whole-preflight deadline; a preflight that exceeds it is a timeout, never a
+/// partial comparison.
+pub const PREFLIGHT_TOTAL_DEADLINE: StdDuration = StdDuration::from_secs(4);
+/// Immediate HTTP retry hint when the global gate is saturated.
+pub const PREFLIGHT_BACKPRESSURE_RETRY_AFTER_MS: u64 = 1_000;
+
+/// Preflight deadlines. Defaults are the spec values 2s/2s/4s; tests inject
+/// shorter values so timeout behavior stays fast and deterministic.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct PreflightLimits {
+    pub capture_deadline: StdDuration,
+    pub resolve_deadline: StdDuration,
+    pub total_deadline: StdDuration,
+}
+
+impl Default for PreflightLimits {
+    fn default() -> Self {
+        Self {
+            capture_deadline: PREFLIGHT_CAPTURE_DEADLINE,
+            resolve_deadline: PREFLIGHT_RESOLVE_DEADLINE,
+            total_deadline: PREFLIGHT_TOTAL_DEADLINE,
+        }
+    }
+}
+
+/// Runtime-configurable global preflight gate.
+///
+/// Admission uses `try_acquire`: saturation is an immediate typed answer, not
+/// an unbounded waiter queue. The master semaphore owns
+/// `MAX_PREFLIGHT_CONCURRENCY` permits so `set_limit` never needs to rebuild
+/// it while attempts are in flight.
+pub struct PreflightGate {
+    limit: AtomicUsize,
+    in_flight: AtomicUsize,
+    permits: Arc<Semaphore>,
+}
+
+impl PreflightGate {
+    pub fn new(limit: usize) -> Arc<Self> {
+        Arc::new(Self {
+            limit: AtomicUsize::new(clamp_concurrency(limit)),
+            in_flight: AtomicUsize::new(0),
+            permits: Arc::new(Semaphore::new(MAX_PREFLIGHT_CONCURRENCY)),
+        })
+    }
+
+    pub fn limit(&self) -> usize {
+        self.limit.load(Ordering::Acquire)
+    }
+
+    /// Runtime reconfiguration. Values outside 1..=32 are clamped.
+    pub fn set_limit(&self, limit: usize) {
+        self.limit.store(clamp_concurrency(limit), Ordering::Release);
+    }
+
+    pub fn in_flight(&self) -> usize {
+        self.in_flight.load(Ordering::Acquire)
+    }
+
+    pub fn has_capacity(&self) -> bool {
+        self.in_flight() < self.limit()
+    }
+
+    /// Reserve one slot or return `None` immediately; never waits.
+    pub fn try_acquire(self: &Arc<Self>) -> Option<PreflightPermit> {
+        let permit = self.permits.clone().try_acquire_owned().ok()?;
+        let mut current = self.in_flight.load(Ordering::Acquire);
+        loop {
+            if current >= self.limit() {
+                // The temporary permit is dropped here; the counter was never
+                // incremented, so a failed admission cannot leak capacity.
+                return None;
+            }
+            match self
+                .in_flight
+                .compare_exchange_weak(current, current + 1, Ordering::AcqRel, Ordering::Acquire)
+            {
+                Ok(_) => {
+                    return Some(PreflightPermit {
+                        gate: Arc::clone(self),
+                        _permit: permit,
+                    });
+                }
+                Err(actual) => current = actual,
+            }
+        }
+    }
+}
+
+fn clamp_concurrency(limit: usize) -> usize {
+    limit.clamp(MIN_PREFLIGHT_CONCURRENCY, MAX_PREFLIGHT_CONCURRENCY)
+}
+
+/// RAII slot guard. Dropping it (including on timeout/cancellation/panic)
+/// releases both the durable counter and the semaphore permit.
+pub struct PreflightPermit {
+    gate: Arc<PreflightGate>,
+    _permit: OwnedSemaphorePermit,
+}
+
+impl Drop for PreflightPermit {
+    fn drop(&mut self) {
+        self.gate.in_flight.fetch_sub(1, Ordering::AcqRel);
+    }
+}
+
+static GLOBAL_PREFLIGHT_GATE: LazyLock<Arc<PreflightGate>> =
+    LazyLock::new(|| PreflightGate::new(DEFAULT_PREFLIGHT_CONCURRENCY));
+
+/// The process-wide preflight gate shared by scheduled, event and manual wakes.
+pub fn global_preflight_gate() -> Arc<PreflightGate> {
+    Arc::clone(&GLOBAL_PREFLIGHT_GATE)
+}
+
+fn preflight_timeout_error() -> SuppressionError {
+    SuppressionError::from_code(ErrorCode::PreflightTimeout)
+}
+
+fn backpressure_error() -> SuppressionError {
+    let mut error = SuppressionError::from_code(ErrorCode::WakeBackpressure);
+    error.context = serde_json::json!({ "retryAfterMs": PREFLIGHT_BACKPRESSURE_RETRY_AFTER_MS });
+    error
+}
 
 /// A full attempt is durably in progress; its old baseline is ineligible.
 pub const FENCE_FULL_IN_PROGRESS: &str = "full_in_progress";
@@ -107,15 +243,39 @@ struct PreflightInput<'a> {
 /// cursor, config version or fence.
 pub struct SuppressionService {
     registry: Arc<SourceRegistry>,
+    gate: Arc<PreflightGate>,
+    limits: PreflightLimits,
 }
 
 impl SuppressionService {
     pub fn new(registry: Arc<SourceRegistry>) -> Self {
-        Self { registry }
+        Self {
+            registry,
+            gate: global_preflight_gate(),
+            limits: PreflightLimits::default(),
+        }
+    }
+
+    /// Inject a gate (tests and composition that needs an isolated capacity).
+    pub fn with_gate(registry: Arc<SourceRegistry>, gate: Arc<PreflightGate>) -> Self {
+        Self {
+            registry,
+            gate,
+            limits: PreflightLimits::default(),
+        }
+    }
+
+    pub fn with_limits(mut self, limits: PreflightLimits) -> Self {
+        self.limits = limits;
+        self
     }
 
     pub fn registry(&self) -> &SourceRegistry {
         self.registry.as_ref()
+    }
+
+    pub fn gate(&self) -> &Arc<PreflightGate> {
+        &self.gate
     }
 
     pub async fn evaluate(
@@ -126,11 +286,34 @@ impl SuppressionService {
         current_user_seq: i64,
     ) -> Result<PreflightDecision, SuppressionError> {
         context.mode = config.mode.into();
-        // Off observes nothing: the kill switch must stay cheap and immediate.
-        let snapshots = if config.mode == SuppressionMode::Off {
-            Vec::new()
-        } else {
-            self.registry.capture_all(&context).await?
+        // Off observes nothing: the kill switch must stay cheap and immediate
+        // and must not depend on capture capacity.
+        if config.mode == SuppressionMode::Off {
+            let registry_version = self.registry.registry_version();
+            return Ok(evaluate_snapshots(PreflightInput {
+                observed_at: context.observed_at,
+                state,
+                config,
+                current_user_seq,
+                registry_version: &registry_version,
+                snapshots: &[],
+            }));
+        }
+        let _permit = self.gate.try_acquire().ok_or_else(backpressure_error)?;
+        let cancel = CancellationToken::new();
+        let capture = self.registry.capture_all_bounded(
+            &context,
+            self.limits.capture_deadline,
+            self.limits.resolve_deadline,
+            &cancel,
+        );
+        let snapshots = match tokio::time::timeout(self.limits.total_deadline, capture).await {
+            Ok(result) => result?,
+            Err(_) => {
+                // Cooperative cancellation on top of dropping the slow future.
+                cancel.cancel();
+                return Err(preflight_timeout_error());
+            }
         };
         let registry_version = self.registry.registry_version();
         Ok(evaluate_snapshots(PreflightInput {
@@ -925,5 +1108,420 @@ mod preflight {
             .expect("disabled decision");
         assert_eq!(decision.vetoes, vec![SkipVeto::Disabled]);
         assert!(!decision.would_skip);
+    }
+}
+
+/// Task 9 overload controls: bounded concurrency, bounded Source capture and
+/// database contention/replay safety. The module name is the `cargo test`
+/// filter (`suppression_overload`).
+#[cfg(test)]
+mod suppression_overload {
+    use std::sync::Arc;
+    use std::time::{Duration as StdDuration, Instant};
+
+    use tinyiothub_storage::assistant_schedule::SuppressionConfig;
+    use tinyiothub_storage::error::DbError;
+    use tinyiothub_storage::suppression::{SuppressionMode, SuppressionState};
+
+    use super::{
+        DEFAULT_PREFLIGHT_CONCURRENCY, MAX_PREFLIGHT_CONCURRENCY, MIN_PREFLIGHT_CONCURRENCY,
+        PREFLIGHT_BACKPRESSURE_RETRY_AFTER_MS, PreflightGate, PreflightLimits, SuppressionService,
+    };
+    use crate::domains::agent::session::suppression::contract::{
+        CanonicalBytes, PayloadRef, SourceDescriptor, SourceSnapshot, StateRef,
+    };
+    use crate::domains::agent::session::suppression::error::SuppressionError;
+    use crate::domains::agent::session::suppression::registry::{
+        AssistantSource, SOURCE_VERSION, SourceContext, SourceRegistry,
+    };
+
+    const WS: &str = "ws-overload";
+    const SESSION: &str = "agent:ws-overload:__assistant__ws-overload/main";
+
+    fn config(mode: SuppressionMode) -> SuppressionConfig {
+        SuppressionConfig {
+            workspace_id: WS.to_string(),
+            mode,
+            reconciliation_seconds: tinyiothub_storage::suppression::DEFAULT_RECONCILIATION_SECONDS,
+            config_version: 1,
+        }
+    }
+
+    fn context() -> SourceContext {
+        SourceContext::new(WS, SESSION)
+    }
+
+    fn hash_hex(character: char) -> String {
+        format!("sha256:{}", character.to_string().repeat(64))
+    }
+
+    fn snapshot(source_id: &str) -> SourceSnapshot {
+        let state_hash = hash_hex('a');
+        SourceSnapshot {
+            source_id: source_id.to_string(),
+            source_version: SOURCE_VERSION,
+            revision: "rev-a".to_string(),
+            state_hash: state_hash.clone(),
+            available: true,
+            empty: true,
+            state_ref: Some(StateRef {
+                id: "state:rev-a".to_string(),
+                revision: "rev-a".to_string(),
+                state_hash,
+            }),
+            work_items: vec![],
+            error: None,
+        }
+    }
+
+    struct StaticSource {
+        snapshot: SourceSnapshot,
+    }
+
+    #[async_trait::async_trait]
+    impl AssistantSource for StaticSource {
+        fn descriptor(&self) -> SourceDescriptor {
+            SourceDescriptor {
+                source_id: self.snapshot.source_id.clone(),
+                source_version: self.snapshot.source_version,
+            }
+        }
+
+        async fn capture(&self, _cx: &SourceContext) -> Result<SourceSnapshot, SuppressionError> {
+            Ok(self.snapshot.clone())
+        }
+
+        async fn resolve_state(&self, _reference: &StateRef) -> Result<CanonicalBytes, SuppressionError> {
+            Err(SuppressionError::new("source_ref_mismatch", "unused", "unused"))
+        }
+
+        async fn resolve_payload(&self, _reference: &PayloadRef) -> Result<CanonicalBytes, SuppressionError> {
+            Err(SuppressionError::new("work_item_payload_missing", "unused", "unused"))
+        }
+    }
+
+    struct HangingSource;
+
+    #[async_trait::async_trait]
+    impl AssistantSource for HangingSource {
+        fn descriptor(&self) -> SourceDescriptor {
+            SourceDescriptor {
+                source_id: "test.hanging".to_string(),
+                source_version: SOURCE_VERSION,
+            }
+        }
+
+        async fn capture(&self, _cx: &SourceContext) -> Result<SourceSnapshot, SuppressionError> {
+            std::future::pending::<()>().await;
+            unreachable!("a pending capture never resolves")
+        }
+
+        async fn resolve_state(&self, _reference: &StateRef) -> Result<CanonicalBytes, SuppressionError> {
+            Err(SuppressionError::new("source_ref_mismatch", "unused", "unused"))
+        }
+
+        async fn resolve_payload(&self, _reference: &PayloadRef) -> Result<CanonicalBytes, SuppressionError> {
+            Err(SuppressionError::new("work_item_payload_missing", "unused", "unused"))
+        }
+    }
+
+    struct SlowSource {
+        delay: StdDuration,
+        snapshot: SourceSnapshot,
+    }
+
+    #[async_trait::async_trait]
+    impl AssistantSource for SlowSource {
+        fn descriptor(&self) -> SourceDescriptor {
+            SourceDescriptor {
+                source_id: self.snapshot.source_id.clone(),
+                source_version: self.snapshot.source_version,
+            }
+        }
+
+        async fn capture(&self, _cx: &SourceContext) -> Result<SourceSnapshot, SuppressionError> {
+            tokio::time::sleep(self.delay).await;
+            Ok(self.snapshot.clone())
+        }
+
+        async fn resolve_state(&self, _reference: &StateRef) -> Result<CanonicalBytes, SuppressionError> {
+            Err(SuppressionError::new("source_ref_mismatch", "unused", "unused"))
+        }
+
+        async fn resolve_payload(&self, _reference: &PayloadRef) -> Result<CanonicalBytes, SuppressionError> {
+            Err(SuppressionError::new("work_item_payload_missing", "unused", "unused"))
+        }
+    }
+
+    fn registry_with(source: Arc<dyn AssistantSource>) -> Arc<SourceRegistry> {
+        let mut registry = SourceRegistry::new();
+        registry.register(source).expect("register overload source");
+        Arc::new(registry)
+    }
+
+    fn limits(capture: StdDuration, total: StdDuration) -> PreflightLimits {
+        PreflightLimits {
+            capture_deadline: capture,
+            // Both deadlines are 2s by default; the test keeps them equal so
+            // either bound is observable.
+            resolve_deadline: capture,
+            total_deadline: total,
+        }
+    }
+
+    #[test]
+    fn suppression_overload_concurrency_limit_is_runtime_configurable() {
+        assert_eq!(
+            PreflightGate::new(DEFAULT_PREFLIGHT_CONCURRENCY).limit(),
+            DEFAULT_PREFLIGHT_CONCURRENCY
+        );
+        assert_eq!(PreflightGate::new(0).limit(), MIN_PREFLIGHT_CONCURRENCY);
+        assert_eq!(PreflightGate::new(usize::MAX).limit(), MAX_PREFLIGHT_CONCURRENCY);
+
+        let gate = PreflightGate::new(2);
+        let first = gate.try_acquire().expect("first permit");
+        let second = gate.try_acquire().expect("second permit");
+        assert!(
+            gate.try_acquire().is_none(),
+            "a saturated gate must refuse instead of queueing"
+        );
+        drop(first);
+        let third = gate.try_acquire().expect("a released permit is reusable");
+        assert_eq!(gate.in_flight(), 2);
+        drop(second);
+        assert_eq!(gate.in_flight(), 1);
+        drop(third);
+        assert_eq!(gate.in_flight(), 0);
+
+        gate.set_limit(0);
+        assert_eq!(gate.limit(), MIN_PREFLIGHT_CONCURRENCY);
+        gate.set_limit(1_000);
+        assert_eq!(gate.limit(), MAX_PREFLIGHT_CONCURRENCY);
+    }
+
+    #[tokio::test]
+    async fn suppression_overload_hanging_adapter_times_out_without_skipping() {
+        let gate = PreflightGate::new(DEFAULT_PREFLIGHT_CONCURRENCY);
+        let service = SuppressionService::with_gate(registry_with(Arc::new(HangingSource)), gate.clone())
+            .with_limits(limits(StdDuration::from_millis(30), StdDuration::from_millis(150)));
+        let baseline = SuppressionState::initial(WS, SESSION);
+        let before = baseline.clone();
+
+        let started = Instant::now();
+        let error = service
+            .evaluate(context(), Some(&baseline), &config(SuppressionMode::Enforce), 0)
+            .await
+            .expect_err("a hanging adapter must time out");
+
+        assert_eq!(error.code, "preflight_timeout");
+        assert_eq!(error.recovery.side_effects, "none");
+        assert!(
+            !error.recovery.baseline_advanced,
+            "a preflight timeout may never advance the baseline"
+        );
+        assert!(started.elapsed() < StdDuration::from_secs(1), "timeout must be prompt");
+        assert_eq!(gate.in_flight(), 0, "the timed-out attempt must release its permit");
+        assert_eq!(baseline, before, "preflight is read-only even on timeout");
+    }
+
+    #[tokio::test]
+    async fn suppression_overload_source_timeout_forbids_skip_and_does_not_hold_capacity() {
+        let gate = PreflightGate::new(1);
+        let service = SuppressionService::with_gate(registry_with(Arc::new(HangingSource)), gate.clone())
+            .with_limits(limits(StdDuration::from_millis(20), StdDuration::from_millis(60)));
+        assert!(gate.has_capacity());
+
+        let error = service
+            .evaluate(context(), None, &config(SuppressionMode::Enforce), 0)
+            .await
+            .expect_err("hanging capture");
+        assert_eq!(error.code, "preflight_timeout");
+        assert!(
+            gate.has_capacity(),
+            "a timed-out attempt must not hold the global slot forever"
+        );
+        assert_eq!(gate.in_flight(), 0);
+    }
+
+    #[tokio::test]
+    async fn suppression_overload_saturation_returns_backpressure_without_queueing() {
+        let gate = PreflightGate::new(1);
+        let held = gate.try_acquire().expect("hold the only slot");
+        let service = SuppressionService::with_gate(
+            registry_with(Arc::new(StaticSource {
+                snapshot: snapshot("test.static"),
+            })),
+            gate.clone(),
+        )
+        .with_limits(limits(StdDuration::from_secs(2), StdDuration::from_secs(4)));
+
+        let started = Instant::now();
+        let error = service
+            .evaluate(context(), None, &config(SuppressionMode::Enforce), 0)
+            .await
+            .expect_err("saturated preflight must backpressure immediately");
+
+        assert_eq!(error.code, "wake_backpressure");
+        assert_eq!(error.recovery.side_effects, "none");
+        assert!(!error.recovery.baseline_advanced);
+        assert_eq!(
+            error.context["retryAfterMs"],
+            serde_json::json!(PREFLIGHT_BACKPRESSURE_RETRY_AFTER_MS)
+        );
+        assert!(
+            started.elapsed() < StdDuration::from_millis(100),
+            "backpressure must not wait for a queued slot"
+        );
+        assert_eq!(gate.in_flight(), 1, "the failed admission must not consume a slot");
+        drop(held);
+        assert_eq!(gate.in_flight(), 0);
+    }
+
+    #[tokio::test]
+    async fn suppression_overload_off_mode_never_consumes_capacity() {
+        let gate = PreflightGate::new(1);
+        let held = gate.try_acquire().expect("hold the only slot");
+        let service = SuppressionService::with_gate(registry_with(Arc::new(HangingSource)), gate.clone());
+
+        let decision = service
+            .evaluate(context(), None, &config(SuppressionMode::Off), 0)
+            .await
+            .expect("off is the kill switch and must not capture");
+        assert!(!decision.would_skip);
+        assert_eq!(decision.vetoes, vec![super::SkipVeto::Disabled]);
+        assert_eq!(gate.in_flight(), 1, "off must be independent of the capture gate");
+        drop(held);
+    }
+
+    #[tokio::test]
+    async fn suppression_overload_synchronized_burst_is_bounded() {
+        let gate = PreflightGate::new(2);
+        let service = Arc::new(
+            SuppressionService::with_gate(
+                registry_with(Arc::new(SlowSource {
+                    delay: StdDuration::from_millis(100),
+                    snapshot: snapshot("test.slow"),
+                })),
+                gate.clone(),
+            )
+            .with_limits(limits(StdDuration::from_secs(2), StdDuration::from_secs(4))),
+        );
+        let config = config(SuppressionMode::Enforce);
+
+        let started = Instant::now();
+        let mut handles = Vec::new();
+        for _ in 0..8 {
+            let service = Arc::clone(&service);
+            let config = config.clone();
+            handles.push(tokio::spawn(async move {
+                service.evaluate(context(), None, &config, 0).await
+            }));
+        }
+        let mut accepted = 0;
+        let mut rejected = 0;
+        for handle in handles {
+            match handle.await.expect("burst task") {
+                Ok(_) => accepted += 1,
+                Err(error) => {
+                    assert_eq!(error.code, "wake_backpressure");
+                    rejected += 1;
+                }
+            }
+        }
+        assert_eq!(accepted, 2, "only the configured concurrency may run");
+        assert_eq!(rejected, 6, "the rest are rejected, never queued");
+        assert!(
+            started.elapsed() < StdDuration::from_millis(500),
+            "saturation must not serialize the burst into a queue"
+        );
+        assert_eq!(gate.in_flight(), 0);
+    }
+
+    #[tokio::test]
+    async fn suppression_overload_sqlite_contention_keeps_one_full_attempt() {
+        let fixture = tinyiothub_storage::test_helpers::fixture_workspace(WS).await;
+        let db = Arc::new(fixture.db.clone());
+        let baseline = SuppressionState::initial(WS, SESSION);
+
+        let mut handles = Vec::new();
+        for _ in 0..8 {
+            let db = Arc::clone(&db);
+            let baseline = baseline.clone();
+            handles.push(tokio::spawn(
+                async move { db.begin_full_attempt(SESSION, &baseline).await },
+            ));
+        }
+        let mut accepted = 0;
+        let mut conflicts = 0;
+        for handle in handles {
+            match handle.await.expect("contention task") {
+                Ok(_) => accepted += 1,
+                Err(DbError::CasConflict { .. }) => conflicts += 1,
+                Err(error) => panic!("SQLite contention must not surface as {error:?}"),
+            }
+        }
+        assert_eq!(accepted, 1, "suppression_state CAS admits exactly one full attempt");
+        assert_eq!(conflicts, 7);
+
+        // Reads stay available while the durable fence is in place.
+        let mut readers = Vec::new();
+        for _ in 0..16 {
+            let db = Arc::clone(&db);
+            readers.push(tokio::spawn(
+                async move { db.load_suppression_state(WS, SESSION).await },
+            ));
+        }
+        for reader in readers {
+            let state = reader.await.expect("read task").expect("read must not be busy");
+            assert!(state.expect("state row").full_attempt_in_progress);
+        }
+
+        drop(db);
+        fixture.close().await;
+    }
+
+    #[tokio::test]
+    async fn suppression_overload_replay_storm_has_one_winner() {
+        let fixture = tinyiothub_storage::test_helpers::fixture_workspace(WS).await;
+        let db = Arc::new(fixture.db.clone());
+        let mut handles = Vec::new();
+        for _ in 0..24 {
+            let db = Arc::clone(&db);
+            handles.push(tokio::spawn(async move {
+                db.try_insert_suppression_idempotency(WS, "wake", "storm-key", "sha256:fingerprint", None)
+                    .await
+            }));
+        }
+        let mut winners = 0;
+        for handle in handles {
+            if handle.await.expect("storm task").expect("insert") {
+                winners += 1;
+            }
+        }
+        assert_eq!(winners, 1, "the unique key must pick exactly one winner");
+
+        let record = db
+            .find_suppression_idempotency(WS, "storm-key")
+            .await
+            .expect("read winner")
+            .expect("winner row");
+        assert_eq!(record.operation, "wake");
+        assert_eq!(record.request_fingerprint, "sha256:fingerprint");
+        assert!(record.result.is_none(), "the reservation has no result yet");
+
+        // A new intent with a different key is admitted independently.
+        assert!(
+            db.try_insert_suppression_idempotency(WS, "wake", "other-key", "sha256:fingerprint", None)
+                .await
+                .expect("insert other key")
+        );
+
+        drop(db);
+        fixture.close().await;
+    }
+
+    #[test]
+    fn suppression_overload_retry_after_is_a_stable_wire_value() {
+        assert_eq!(PREFLIGHT_BACKPRESSURE_RETRY_AFTER_MS, 1_000);
     }
 }

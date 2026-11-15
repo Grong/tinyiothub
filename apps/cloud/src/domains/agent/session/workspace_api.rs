@@ -1166,4 +1166,31 @@ mod tests {
         assert_eq!(mode, Some(SuppressionMode::Off));
         assert_eq!(seconds, Some(300));
     }
+
+    #[tokio::test]
+    async fn suppression_overload_backpressure_problem_carries_retry_after() {
+        let response = manual_error(ManualStartError::Backpressure { retry_after_ms: 250 });
+        assert_eq!(response.status(), StatusCode::TOO_MANY_REQUESTS);
+        assert_eq!(
+            response
+                .headers()
+                .get(header::CONTENT_TYPE)
+                .and_then(|value| value.to_str().ok()),
+            Some("application/problem+json")
+        );
+        assert_eq!(
+            response
+                .headers()
+                .get(header::RETRY_AFTER)
+                .and_then(|value| value.to_str().ok()),
+            Some("1")
+        );
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .expect("problem body");
+        let body: Value = serde_json::from_slice(&body).expect("problem json");
+        assert_eq!(body["status"], 429);
+        assert_eq!(body["code"], "wake_backpressure");
+        assert_eq!(body["retryAfterMs"], 250);
+    }
 }

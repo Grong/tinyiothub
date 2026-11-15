@@ -26,6 +26,7 @@ use tinyiothub_runtime::watch::live_state::WorkspaceSnapshot;
 use tinyiothub_skills::LoadedSkill;
 use tinyiothub_storage::Db;
 use tinyiothub_storage::harness_event::EventFilter;
+use tokio_util::sync::CancellationToken;
 use unicode_normalization::UnicodeNormalization;
 
 use crate::domains::agent::prompt::{MEMORY_MAX_TOKENS, MemorySelection, PromptMemorySource, paths, select_memory};
@@ -36,6 +37,7 @@ use super::contract::{
 };
 // Re-exported for the conformance tests and for later harness modules.
 pub(crate) use super::contract::{CanonicalBytes, StateRef};
+use super::error::ErrorCode;
 pub(crate) use super::error::SuppressionError;
 
 /// The six first-party Source IDs, in registration order.
@@ -177,6 +179,38 @@ impl SourceRegistry {
         let mut snapshots = Vec::with_capacity(self.sources.len());
         for registered in &self.sources {
             let snapshot = registered.source.capture(cx).await?;
+            snapshot.validate(&registered.descriptor)?;
+            snapshots.push(snapshot);
+        }
+        Ok(snapshots)
+    }
+
+    /// Bounded preflight capture.
+    ///
+    /// Every Source gets its own deadline, and an adapter's internal reference
+    /// resolution is inside the same capture future, so the effective
+    /// per-Source budget is `min(capture_deadline, resolve_deadline)` (2s/2s
+    /// with the defaults). Cancellation drops the slow future immediately; the
+    /// caller's whole-preflight deadline is the outer bound.
+    pub async fn capture_all_bounded(
+        &self,
+        cx: &SourceContext,
+        capture_deadline: std::time::Duration,
+        resolve_deadline: std::time::Duration,
+        cancel: &CancellationToken,
+    ) -> Result<Vec<SourceSnapshot>, SuppressionError> {
+        validate_descriptors(&self.descriptors())?;
+        let per_source = capture_deadline.min(resolve_deadline);
+        let mut snapshots = Vec::with_capacity(self.sources.len());
+        for registered in &self.sources {
+            let snapshot = tokio::select! {
+                biased;
+                _ = cancel.cancelled() => return Err(SuppressionError::from_code(ErrorCode::PreflightTimeout)),
+                result = tokio::time::timeout(per_source, registered.source.capture(cx)) => match result {
+                    Ok(result) => result?,
+                    Err(_) => return Err(SuppressionError::from_code(ErrorCode::PreflightTimeout)),
+                },
+            };
             snapshot.validate(&registered.descriptor)?;
             snapshots.push(snapshot);
         }
@@ -1779,5 +1813,142 @@ mod registry {
         assert!(snap.available && snap.empty);
         assert!(snap.state_ref.is_some());
         assert!(fixture.registry.source_ids().contains(&"workspace.snapshot"));
+    }
+}
+
+/// Task 9: per-Source capture bounds and large-state hashing evidence.
+#[cfg(test)]
+mod suppression_overload {
+    use std::sync::Arc;
+    use std::time::{Duration as StdDuration, Instant};
+
+    use tokio_util::sync::CancellationToken;
+
+    use crate::domains::agent::session::suppression::canonical::{canonical_bytes, hash_payload};
+    use crate::domains::agent::session::suppression::contract::{
+        CanonicalBytes, PayloadRef, SourceDescriptor, SourceSnapshot, StateRef, WorkItemDisposition,
+    };
+    use crate::domains::agent::session::suppression::error::SuppressionError;
+
+    use super::{AssistantSource, SOURCE_VERSION, SourceCache, SourceContext, SourceMode, SourceRegistry};
+
+    const WS: &str = "ws-registry-overload";
+    const SESSION: &str = "agent:ws-registry-overload:__assistant__ws-registry-overload/main";
+
+    fn context() -> SourceContext {
+        SourceContext {
+            workspace_id: WS.to_string(),
+            session_id: SESSION.to_string(),
+            observed_at: chrono::Utc::now(),
+            mode: SourceMode::Enforce,
+        }
+    }
+
+    struct HangingSource;
+
+    #[async_trait::async_trait]
+    impl AssistantSource for HangingSource {
+        fn descriptor(&self) -> SourceDescriptor {
+            SourceDescriptor {
+                source_id: "test.hanging".to_string(),
+                source_version: SOURCE_VERSION,
+            }
+        }
+
+        async fn capture(&self, _cx: &SourceContext) -> Result<SourceSnapshot, SuppressionError> {
+            std::future::pending::<()>().await;
+            unreachable!("a pending capture never resolves")
+        }
+
+        async fn resolve_state(&self, _reference: &StateRef) -> Result<CanonicalBytes, SuppressionError> {
+            Err(SuppressionError::new("source_ref_mismatch", "unused", "unused"))
+        }
+
+        async fn resolve_payload(&self, _reference: &PayloadRef) -> Result<CanonicalBytes, SuppressionError> {
+            Err(SuppressionError::new("work_item_payload_missing", "unused", "unused"))
+        }
+    }
+
+    #[tokio::test]
+    async fn suppression_overload_hanging_source_capture_is_bounded() {
+        let mut registry = SourceRegistry::new();
+        registry
+            .register(Arc::new(HangingSource))
+            .expect("register hanging source");
+        let started = Instant::now();
+        let error = registry
+            .capture_all_bounded(
+                &context(),
+                StdDuration::from_millis(25),
+                StdDuration::from_millis(25),
+                &CancellationToken::new(),
+            )
+            .await
+            .expect_err("a hanging Source must hit the per-Source deadline");
+        assert_eq!(error.code, "preflight_timeout");
+        assert!(!error.recovery.baseline_advanced);
+        assert!(started.elapsed() < StdDuration::from_secs(1));
+    }
+
+    #[tokio::test]
+    async fn suppression_overload_cancellation_stops_capture_without_a_result() {
+        let mut registry = SourceRegistry::new();
+        registry
+            .register(Arc::new(HangingSource))
+            .expect("register hanging source");
+        let cancel = CancellationToken::new();
+        cancel.cancel();
+        let started = Instant::now();
+        let error = registry
+            .capture_all_bounded(
+                &context(),
+                StdDuration::from_secs(30),
+                StdDuration::from_secs(30),
+                &cancel,
+            )
+            .await
+            .expect_err("a cancelled preflight must abort without waiting for the deadline");
+        assert_eq!(error.code, "preflight_timeout");
+        assert!(started.elapsed() < StdDuration::from_secs(1));
+    }
+
+    /// The canonical hash is computed over one retained canonical buffer; this
+    /// exercises a 10x item payload and proves deterministic revisions without
+    /// a second full copy or quadratic re-hash.
+    #[test]
+    fn suppression_overload_large_state_hashing_is_deterministic() {
+        let cache = SourceCache::default();
+        let current: Vec<(String, Vec<u8>, WorkItemDisposition)> = (0..10_000)
+            .map(|index| {
+                let payload = canonical_bytes(&serde_json::json!({
+                    "thingId": format!("device-{index}"),
+                    "health": "ok",
+                    "values": { "temperature": format!("{index}") },
+                }))
+                .expect("canonical payload");
+                (format!("device-{index}"), payload, WorkItemDisposition::Active)
+            })
+            .collect();
+        let expected_payload_hash = hash_payload(&current[0].1);
+
+        let started = Instant::now();
+        let first = cache.merge(current.clone()).expect("first merge");
+        assert_eq!(first.len(), 10_000);
+        assert_eq!(first[0].work_key, "device-0");
+        assert_eq!(first[0].payload_hash, expected_payload_hash);
+        let first_state = cache
+            .snapshot("workspace.snapshot", first.clone())
+            .expect("first snapshot");
+        assert!(!first_state.empty);
+
+        let second = cache.merge(current).expect("second merge");
+        assert_eq!(second, first, "unchanged content keeps identical revisions");
+        let second_state = cache.snapshot("workspace.snapshot", second).expect("second snapshot");
+        assert_eq!(second_state.state_hash, first_state.state_hash);
+        assert_eq!(second_state.revision, first_state.revision);
+        assert!(
+            started.elapsed() < StdDuration::from_secs(10),
+            "10k-item hashing must stay linear and bounded"
+        );
     }
 }

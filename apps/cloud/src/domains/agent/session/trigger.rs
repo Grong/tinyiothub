@@ -10,6 +10,7 @@ use std::time::{Duration, Instant};
 use chrono::{DateTime, Duration as ChronoDuration, Utc};
 use dashmap::{DashMap, DashSet};
 use parking_lot::Mutex as ParkingMutex;
+use sha2::{Digest, Sha256};
 use tokio::sync::broadcast;
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
@@ -18,15 +19,18 @@ use tinyiothub_core::models::event::{Event, EventType};
 use tinyiothub_runtime::event_bus::EventBus;
 use tinyiothub_storage::Db;
 use tinyiothub_storage::assistant_schedule::AssistantSchedule;
-use tinyiothub_storage::suppression::{OUTCOME_AUDIT_FAILED, SyncPending};
+use tinyiothub_storage::suppression::{OUTCOME_AUDIT_FAILED, SuppressionMode, SyncPending};
 
 use crate::domains::agent::event::types::AiEvent;
 use crate::domains::agent::orchestrator::callbacks::extract_payload;
+use crate::domains::agent::session::suppression::preflight::{PREFLIGHT_BACKPRESSURE_RETRY_AFTER_MS, PreflightGate};
 use crate::domains::agent::session::wake::{
     ManualOperation, ManualPreflight, ManualStartError, ManualTurnStart, WakeExecutor, WakeOutcome, assistant_agent_id,
 };
 
 pub const TRIGGER_TICK_INTERVAL: Duration = Duration::from_secs(30);
+/// Canary/enforce may delay a wake by up to this deterministic workspace jitter.
+pub const WAKE_JITTER_MAX_SECONDS: i64 = 15;
 const DUE_BATCH_LIMIT: i64 = 100;
 /// 每 workspace + trigger 的窗口内最多派发次数（3/min 去重）。
 const EVENT_RATE_LIMIT: usize = 3;
@@ -56,6 +60,10 @@ struct RateWindow {
     hits: VecDeque<Instant>,
 }
 
+/// Completion-time source. Production uses `Utc::now()`; tests pin it so
+/// completion-based scheduling is deterministic without a fake clock server.
+type RouterClock = Arc<dyn Fn() -> DateTime<Utc> + Send + Sync>;
+
 pub struct TriggerRouter {
     db: Arc<Db>,
     executor: Arc<dyn WakeExecutor>,
@@ -65,6 +73,8 @@ pub struct TriggerRouter {
     event_tx: mpsc::Sender<EventWake>,
     event_rx: ParkingMutex<Option<mpsc::Receiver<EventWake>>>,
     rate: DashMap<String, RateWindow>,
+    clock: RouterClock,
+    preflight_gate: Arc<PreflightGate>,
 }
 
 /// RAII guard for the per-workspace in-flight marker.
@@ -100,7 +110,31 @@ impl TriggerRouter {
             event_tx,
             event_rx: ParkingMutex::new(Some(event_rx)),
             rate: DashMap::new(),
+            clock: Arc::new(Utc::now),
+            preflight_gate: crate::domains::agent::session::suppression::preflight::global_preflight_gate(),
         }
+    }
+
+    /// Inject the completion-time clock (tests).
+    pub fn with_clock<F>(mut self, clock: F) -> Self
+    where
+        F: Fn() -> DateTime<Utc> + Send + Sync + 'static,
+    {
+        self.clock = Arc::new(clock);
+        self
+    }
+
+    /// Inject the preflight admission gate (tests/composition).
+    pub fn with_preflight_gate(mut self, gate: Arc<PreflightGate>) -> Self {
+        self.preflight_gate = gate;
+        self
+    }
+
+    /// Immediate backpressure answer for manual operations. Scheduled wakes
+    /// stay coalesced by the workspace in-flight guard; this is the HTTP-facing
+    /// admission check that must never wait for a slot.
+    fn preflight_backpressure(&self) -> Option<u64> {
+        (!self.preflight_gate.has_capacity()).then_some(PREFLIGHT_BACKPRESSURE_RETRY_AFTER_MS)
     }
 
     /// 提交一次事件 wake。同 workspace 在途时拒绝；同一
@@ -166,6 +200,12 @@ impl TriggerRouter {
             if !schedule.enabled {
                 continue;
             }
+            // Coalescing arbiter: every due request for the same
+            // `(workspaceId, plannedWakeAt)` maps to one workspace slot, so a
+            // duplicate burst is dropped (including after a restart) instead
+            // of queued. The planned wake's durable identity
+            // (`PlannedWake::planned`) also carries the same planned time, so
+            // recovery replays rather than creating a second Turn.
             if !self.in_flight.insert(schedule.workspace_id.clone()) {
                 continue;
             }
@@ -176,19 +216,38 @@ impl TriggerRouter {
             let router = Arc::clone(self);
             handles.push(tokio::spawn(async move {
                 let _guard = guard;
-                router.dispatch(schedule, now).await;
+                router.dispatch(schedule).await;
             }));
         }
         handles
     }
 
-    async fn dispatch(self: Arc<Self>, schedule: AssistantSchedule, now: DateTime<Utc>) {
+    /// Execute one scheduled wake and advance its Schedule.
+    ///
+    /// `nextWakeAt = completion time + interval + jitter`. Off/shadow force
+    /// jitter to zero, so their scheduling stays the previous behavior apart
+    /// from moving the base from tick time to completion time (long Turns no
+    /// longer race their own next slot).
+    async fn dispatch(self: Arc<Self>, schedule: AssistantSchedule) {
         let report = self.executor.execute(schedule.clone(), self.shutdown.clone()).await;
-        let next_wake_at = now + ChronoDuration::seconds(i64::from(schedule.interval_seconds));
+        let completed_at = (self.clock)();
+        let mode = match self.db.get_suppression_config(&schedule.workspace_id).await {
+            Ok(Some(config)) => config.mode,
+            Ok(None) => SuppressionMode::Off,
+            Err(error) => {
+                // Fail safe: unknown config means no jitter, preserving the
+                // existing off/shadow timing rather than delaying silently.
+                tracing::warn!(%error, workspace_id = %schedule.workspace_id, "assistant schedule: suppression mode read failed");
+                SuppressionMode::Off
+            }
+        };
+        let jitter_seconds = wake_jitter_seconds(&schedule.workspace_id, mode);
+        let next_wake_at =
+            completed_at + ChronoDuration::seconds(i64::from(schedule.interval_seconds) + jitter_seconds);
         let outcome = persisted_outcome(schedule.last_outcome.as_deref(), &report.outcome);
         match self
             .db
-            .mark_assistant_wake(&schedule.workspace_id, next_wake_at, now, &outcome)
+            .mark_assistant_wake(&schedule.workspace_id, next_wake_at, completed_at, &outcome)
             .await
         {
             Ok(()) => {
@@ -374,6 +433,9 @@ pub trait SuppressionOps: Send + Sync {
 #[async_trait::async_trait]
 impl SuppressionOps for TriggerRouter {
     async fn manual_preflight(&self, workspace_id: &str) -> Result<ManualPreflight, ManualStartError> {
+        if let Some(retry_after_ms) = self.preflight_backpressure() {
+            return Err(ManualStartError::Backpressure { retry_after_ms });
+        }
         self.executor.manual_preflight(workspace_id).await
     }
 
@@ -382,6 +444,9 @@ impl SuppressionOps for TriggerRouter {
         workspace_id: &str,
         operation: ManualOperation,
     ) -> Result<ManualTurnStart, ManualStartError> {
+        if let Some(retry_after_ms) = self.preflight_backpressure() {
+            return Err(ManualStartError::Backpressure { retry_after_ms });
+        }
         let schedule = self
             .db
             .ensure_assistant_schedule(workspace_id, &assistant_agent_id(workspace_id), Utc::now())
@@ -425,6 +490,21 @@ impl SuppressionOps for TriggerRouter {
         });
         Ok(start)
     }
+}
+
+/// Deterministic `0..=15s` workspace jitter for canary/enforce only.
+///
+/// Derived from the workspace ID (not process randomness or wall time), so
+/// every worker computes the same next wake for the same workspace. Off and
+/// shadow always return 0: their scheduling behavior must not change.
+pub fn wake_jitter_seconds(workspace_id: &str, mode: SuppressionMode) -> i64 {
+    if !matches!(mode, SuppressionMode::Canary | SuppressionMode::Enforce) {
+        return 0;
+    }
+    let digest = Sha256::digest(workspace_id.as_bytes());
+    let mut bytes = [0u8; 8];
+    bytes.copy_from_slice(&digest[..8]);
+    (u64::from_be_bytes(bytes) % (WAKE_JITTER_MAX_SECONDS as u64 + 1)) as i64
 }
 
 /// TriggerRouter is the only Schedule outcome writer. An `audit_failed`
@@ -731,7 +811,7 @@ mod tests {
 
         let executor = Arc::new(RecordingExecutor::default());
         let router = Arc::new(TriggerRouter::new(db.clone(), executor));
-        router.dispatch(schedule, now).await;
+        router.dispatch(schedule).await;
 
         let state = db
             .load_suppression_state("ws-barrier", "s")
@@ -922,7 +1002,7 @@ mod tests {
             .await
             .unwrap();
         let executor = Arc::new(RecordingExecutor::default());
-        let router = Arc::new(TriggerRouter::new(db.clone(), executor.clone()));
+        let router = Arc::new(TriggerRouter::new(db.clone(), executor.clone()).with_clock(move || now));
 
         let handles = router.tick(now).await;
         assert_eq!(handles.len(), 1);
@@ -945,7 +1025,7 @@ mod tests {
         db.ensure_assistant_schedule("ws-skip", "__assistant__ws-skip", now)
             .await
             .unwrap();
-        let router = Arc::new(TriggerRouter::new(db.clone(), Arc::new(SkippedExecutor)));
+        let router = Arc::new(TriggerRouter::new(db.clone(), Arc::new(SkippedExecutor)).with_clock(move || now));
 
         for handle in router.tick(now).await {
             handle.await.unwrap();
@@ -994,7 +1074,7 @@ mod tests {
         db.mark_assistant_wake("ws-audit-failed", now, now, "audit_failed")
             .await
             .unwrap();
-        let router = Arc::new(TriggerRouter::new(db.clone(), Arc::new(SkippedExecutor)));
+        let router = Arc::new(TriggerRouter::new(db.clone(), Arc::new(SkippedExecutor)).with_clock(move || now));
 
         for handle in router.tick(now).await {
             handle.await.unwrap();
@@ -1021,7 +1101,7 @@ mod tests {
             started: Notify::new(),
             release: Notify::new(),
         });
-        let router = Arc::new(TriggerRouter::new(db.clone(), executor.clone()));
+        let router = Arc::new(TriggerRouter::new(db.clone(), executor.clone()).with_clock(move || now));
 
         let mut handles = router.tick(now).await;
         assert_eq!(handles.len(), 1);
@@ -1127,7 +1207,7 @@ mod tests {
             Arc::new(TodoStore::default()),
             runner,
         ));
-        let router = Arc::new(TriggerRouter::new(db.clone(), wake));
+        let router = Arc::new(TriggerRouter::new(db.clone(), wake).with_clock(move || now));
 
         for handle in router.tick(now).await {
             handle.await.unwrap();
@@ -1363,7 +1443,10 @@ mod tests {
                     },
                 ))),
         );
-        let router = Arc::new(TriggerRouter::new(db.clone(), wake));
+        let clock = Arc::new(std::sync::Mutex::new(now));
+        let clock_view = Arc::clone(&clock);
+        let router =
+            Arc::new(TriggerRouter::new(db.clone(), wake).with_clock(move || *clock_view.lock().expect("test clock")));
 
         for handle in router.tick(now).await {
             handle.await.unwrap();
@@ -1371,7 +1454,10 @@ mod tests {
         let first = db.get_assistant_schedule(WS).await.unwrap().unwrap();
         assert_eq!(first.last_outcome.as_deref(), Some("completed"));
 
-        let second_at = now + chrono::Duration::seconds(300);
+        // enforce mode adds the deterministic workspace jitter.
+        let jitter = wake_jitter_seconds(WS, SuppressionMode::Enforce);
+        let second_at = now + chrono::Duration::seconds(300 + jitter);
+        *clock.lock().expect("test clock") = second_at;
         for handle in router.tick(second_at).await {
             handle.await.unwrap();
         }
@@ -1380,8 +1466,8 @@ mod tests {
         assert_eq!(row.last_outcome.as_deref(), Some("skipped"));
         assert_eq!(
             row.next_wake_at,
-            Some(second_at + chrono::Duration::seconds(300)),
-            "the schedule still advances from the tick with the configured interval"
+            Some(second_at + chrono::Duration::seconds(300 + jitter)),
+            "the schedule still advances from completion with interval + enforce jitter"
         );
 
         let session_key = format!("agent:{WS}:{}/main", assistant_agent_id(WS));
@@ -1410,5 +1496,281 @@ mod tests {
                 .count(),
             1
         );
+    }
+}
+
+/// Task 9: scheduled-wake coalescing, completion-time scheduling and the
+/// manual-operation backpressure admission shared with preflight.
+#[cfg(test)]
+mod suppression_overload {
+    use std::collections::HashSet;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    use chrono::TimeZone;
+    use tokio::sync::Notify;
+
+    use super::*;
+    use crate::domains::agent::session::suppression::preflight::{
+        PREFLIGHT_BACKPRESSURE_RETRY_AFTER_MS, PreflightGate,
+    };
+    use crate::domains::agent::session::wake::{ManualStartError, WakeReport};
+    use tinyiothub_storage::suppression::SuppressionMode as StorageMode;
+
+    fn ts(secs: i64) -> DateTime<Utc> {
+        Utc.timestamp_opt(secs, 0).single().unwrap()
+    }
+
+    async fn test_db() -> Db {
+        let pool = sqlx::SqlitePool::connect("sqlite::memory:").await.unwrap();
+        tinyiothub_storage::test_helpers::run_all_migrations(&pool)
+            .await
+            .unwrap();
+        Db::new(pool)
+    }
+
+    struct CompletedExecutor;
+
+    #[async_trait::async_trait]
+    impl WakeExecutor for CompletedExecutor {
+        async fn execute(&self, _schedule: AssistantSchedule, _cancel: CancellationToken) -> WakeReport {
+            WakeReport {
+                session_key: "s".into(),
+                outcome: WakeOutcome::Completed,
+            }
+        }
+    }
+
+    #[derive(Default)]
+    struct CountingExecutor {
+        calls: AtomicUsize,
+        started: Notify,
+        release: Notify,
+    }
+
+    #[async_trait::async_trait]
+    impl WakeExecutor for CountingExecutor {
+        async fn execute(&self, _schedule: AssistantSchedule, _cancel: CancellationToken) -> WakeReport {
+            self.calls.fetch_add(1, Ordering::SeqCst);
+            self.started.notify_one();
+            self.release.notified().await;
+            WakeReport {
+                session_key: "s".into(),
+                outcome: WakeOutcome::Completed,
+            }
+        }
+    }
+
+    struct FailOnceExecutor {
+        calls: AtomicUsize,
+    }
+
+    #[async_trait::async_trait]
+    impl WakeExecutor for FailOnceExecutor {
+        async fn execute(&self, _schedule: AssistantSchedule, _cancel: CancellationToken) -> WakeReport {
+            let call = self.calls.fetch_add(1, Ordering::SeqCst);
+            if call == 0 {
+                WakeReport {
+                    session_key: "s".into(),
+                    outcome: WakeOutcome::Failed {
+                        error: "injected first-attempt failure".into(),
+                    },
+                }
+            } else {
+                WakeReport {
+                    session_key: "s".into(),
+                    outcome: WakeOutcome::Completed,
+                }
+            }
+        }
+    }
+
+    async fn schedule_for(db: &Arc<Db>, workspace_id: &str, now: DateTime<Utc>) {
+        db.ensure_assistant_schedule(workspace_id, &assistant_agent_id(workspace_id), now)
+            .await
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn suppression_overload_same_wake_coalesces_without_queueing() {
+        let db = Arc::new(test_db().await);
+        let now = ts(1_800_000_000);
+        schedule_for(&db, "ws-coalesce", now).await;
+        let executor = Arc::new(CountingExecutor::default());
+        let router = Arc::new(TriggerRouter::new(db.clone(), executor.clone()).with_clock(move || now));
+
+        let mut tick_tasks = Vec::new();
+        for _ in 0..8 {
+            let router = Arc::clone(&router);
+            tick_tasks.push(tokio::spawn(async move { router.tick(now).await }));
+        }
+        executor.started.notified().await;
+        let mut dispatch_handles = Vec::new();
+        for task in tick_tasks {
+            dispatch_handles.extend(task.await.expect("tick task"));
+        }
+        assert_eq!(
+            executor.calls.load(Ordering::SeqCst),
+            1,
+            "a duplicate burst for the same planned wake must create one Turn"
+        );
+        assert_eq!(dispatch_handles.len(), 1, "coalesced wakes are not queued as tasks");
+        assert!(router.in_flight.contains("ws-coalesce"));
+
+        executor.release.notify_one();
+        for handle in dispatch_handles {
+            handle.await.unwrap();
+        }
+        assert_eq!(executor.calls.load(Ordering::SeqCst), 1);
+        assert!(!router.in_flight.contains("ws-coalesce"));
+
+        let again = router.tick(now).await;
+        assert!(
+            again.is_empty(),
+            "the same planned wake is not due again after its schedule advanced"
+        );
+    }
+
+    #[tokio::test]
+    async fn suppression_overload_coalesced_wake_still_executes_after_recovery() {
+        let db = Arc::new(test_db().await);
+        let now = ts(1_800_000_000);
+        schedule_for(&db, "ws-recovery", now).await;
+        let executor = Arc::new(FailOnceExecutor {
+            calls: AtomicUsize::new(0),
+        });
+        let router = Arc::new(TriggerRouter::new(db.clone(), executor.clone()).with_clock(move || now));
+
+        for handle in router.tick(now).await {
+            handle.await.unwrap();
+        }
+        assert_eq!(executor.calls.load(Ordering::SeqCst), 1);
+        let failed = db.get_assistant_schedule("ws-recovery").await.unwrap().unwrap();
+        assert_eq!(failed.last_outcome.as_deref(), Some("failed"));
+
+        router.recover_suppression().await;
+        assert!(!router.in_flight.contains("ws-recovery"));
+
+        let next_due = now + chrono::Duration::seconds(300);
+        for handle in router.tick(next_due).await {
+            handle.await.unwrap();
+        }
+        assert_eq!(
+            executor.calls.load(Ordering::SeqCst),
+            2,
+            "a coalesced wake still executes after recovery"
+        );
+        let recovered = db.get_assistant_schedule("ws-recovery").await.unwrap().unwrap();
+        assert_eq!(recovered.last_outcome.as_deref(), Some("completed"));
+    }
+
+    #[test]
+    fn suppression_overload_jitter_is_zero_for_off_and_shadow() {
+        for workspace in ["ws-off", "ws-shadow", "ws-other"] {
+            assert_eq!(wake_jitter_seconds(workspace, StorageMode::Off), 0);
+            assert_eq!(wake_jitter_seconds(workspace, StorageMode::Shadow), 0);
+        }
+    }
+
+    #[test]
+    fn suppression_overload_jitter_is_deterministic_and_bounded() {
+        let mut seen = HashSet::new();
+        for index in 0..64 {
+            let workspace = format!("ws-jitter-{index}");
+            let jitter = wake_jitter_seconds(&workspace, StorageMode::Enforce);
+            assert!((0..=WAKE_JITTER_MAX_SECONDS).contains(&jitter));
+            assert_eq!(jitter, wake_jitter_seconds(&workspace, StorageMode::Enforce));
+            assert_eq!(
+                jitter,
+                wake_jitter_seconds(&workspace, StorageMode::Canary),
+                "canary and enforce share the deterministic workspace jitter"
+            );
+            seen.insert(jitter);
+        }
+        assert!(
+            seen.len() > 1,
+            "workspace hashing must vary the jitter, not pin one value"
+        );
+    }
+
+    #[tokio::test]
+    async fn suppression_overload_off_and_shadow_timing_parity() {
+        let db = Arc::new(test_db().await);
+        let now = ts(1_800_000_000);
+        let completed_at = now + chrono::Duration::seconds(40);
+        for (workspace, mode) in [
+            ("ws-off-parity", StorageMode::Off),
+            ("ws-shadow-parity", StorageMode::Shadow),
+        ] {
+            schedule_for(&db, workspace, now).await;
+            db.update_suppression_config(workspace, Some(mode), None)
+                .await
+                .unwrap()
+                .expect("schedule row");
+        }
+        let router =
+            Arc::new(TriggerRouter::new(db.clone(), Arc::new(CompletedExecutor)).with_clock(move || completed_at));
+
+        for handle in router.tick(now).await {
+            handle.await.unwrap();
+        }
+
+        for workspace in ["ws-off-parity", "ws-shadow-parity"] {
+            let row = db.get_assistant_schedule(workspace).await.unwrap().unwrap();
+            assert_eq!(
+                row.next_wake_at,
+                Some(completed_at + chrono::Duration::seconds(300)),
+                "{workspace} keeps off/shadow jitter at zero"
+            );
+            assert_eq!(row.last_wake_at, Some(completed_at));
+        }
+    }
+
+    #[tokio::test]
+    async fn suppression_overload_enforce_uses_completion_plus_interval_and_jitter() {
+        let db = Arc::new(test_db().await);
+        let now = ts(1_800_000_000);
+        let completed_at = now + chrono::Duration::seconds(25);
+        schedule_for(&db, "ws-enforce-jitter", now).await;
+        db.update_suppression_config("ws-enforce-jitter", Some(StorageMode::Enforce), None)
+            .await
+            .unwrap()
+            .expect("schedule row");
+        let router =
+            Arc::new(TriggerRouter::new(db.clone(), Arc::new(CompletedExecutor)).with_clock(move || completed_at));
+
+        for handle in router.tick(now).await {
+            handle.await.unwrap();
+        }
+
+        let expected = completed_at
+            + chrono::Duration::seconds(300)
+            + chrono::Duration::seconds(wake_jitter_seconds("ws-enforce-jitter", StorageMode::Enforce));
+        let row = db.get_assistant_schedule("ws-enforce-jitter").await.unwrap().unwrap();
+        assert_eq!(row.next_wake_at, Some(expected));
+        assert_eq!(row.last_wake_at, Some(completed_at));
+    }
+
+    #[tokio::test]
+    async fn suppression_overload_manual_operations_share_preflight_backpressure() {
+        let db = Arc::new(test_db().await);
+        let gate = PreflightGate::new(1);
+        let held = gate.try_acquire().expect("hold the only preflight slot");
+        let router = Arc::new(TriggerRouter::new(db, Arc::new(CompletedExecutor)).with_preflight_gate(gate.clone()));
+
+        let preflight = router.manual_preflight("ws-manual-gate").await;
+        assert!(matches!(
+            preflight,
+            Err(ManualStartError::Backpressure { retry_after_ms })
+                if retry_after_ms == PREFLIGHT_BACKPRESSURE_RETRY_AFTER_MS
+        ));
+        let start = router.start_manual("ws-manual-gate", ManualOperation::Wake).await;
+        assert!(matches!(
+            start,
+            Err(ManualStartError::Backpressure { retry_after_ms })
+                if retry_after_ms == PREFLIGHT_BACKPRESSURE_RETRY_AFTER_MS
+        ));
+
+        drop(held);
+        assert!(gate.has_capacity());
     }
 }
