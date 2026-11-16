@@ -569,10 +569,11 @@ memory/skill bodies, user text, credentials or internal paths.
 `POST /suppression/gate-artifacts` derives every non-human metric from the
 workspace observation table; the request supplies only sample references and
 human provenance (`approver`, duplicate-report labels, false-skip review).
-Duplicate/foreign/out-of-window turn IDs, a wrong observation mode, missing
-provenance or an artifact that disagrees with recorded observations returns
-HTTP 409 `shadow_gate_not_met`. Replaying the same `Idempotency-Key` returns
-the recorded artifact without appending a second row.
+Duplicate turn IDs in the request are rejected with HTTP 400
+`suppression_config_invalid`. A foreign or out-of-window turn ID, a wrong
+observation mode, missing provenance or an artifact that disagrees with recorded
+observations returns HTTP 409 `shadow_gate_not_met`. Replaying the same
+`Idempotency-Key` returns the recorded artifact without appending a second row.
 
 `POST /suppression/false-skip` requires a recorded canary/enforce `wouldSkip`
 observation; it emits the single `false_skip_detected` alert producer used by
@@ -590,11 +591,17 @@ artifact staleness.
 
 Database changes are additive:
 
-- `20261114000002_harness_assistant_suppression_workspace.sql` adds the schedule
-  suppression columns, `suppression_state`, `suppression_idempotency`,
-  `suppression_gate_evaluations` and the per-workspace observation surface.
+- `20261114000001_assistant_suppression.sql` adds the schedule suppression
+  columns (`suppression_mode`, `reconciliation_seconds`,
+  `suppression_config_version`) to the platform scheduler row.
+- `20261114000002_harness_assistant_suppression_workspace.sql` adds the
+  per-workspace `suppression_state`, `suppression_idempotency` and
+  `suppression_gate_evaluations` tables.
+- `20261114000003_harness_suppression_fence_attempt_ids.sql` adds the durable
+  per-fence attempt identity and start-time columns used by startup recovery.
 - `20261115000001_harness_suppression_observations.sql` adds
-  `suppression_observations` and its indexes.
+  `suppression_observations` and its indexes (the sole source for gate
+  denominators/numerators).
 
 No destructive migration and no codemod are required. Existing workspaces start
 in `off` with config version 1. Rolling back the code but keeping the additive
@@ -622,6 +629,29 @@ temporary per-workspace Harness store, and creates:
 
 No real provider, device, credential or browser cookie is involved. There is no
 client parameter that enables synthetic evidence.
+
+Production paths the fixture exercises:
+
+- `SuppressionService::evaluate` for every preflight decision, including
+  baseline parsing, registry comparison, control cursor and reconciliation
+  vetoes;
+- `begin_full_attempt` / `complete_full_attempt` (and
+  `settle_full_attempt_without_baseline` for `off`) for the durable baseline
+  lifecycle;
+- `AtomicSkipAudit` + `Db::commit_skip` for the skip terminal, followed by the
+  same Schedule/projection/notification barrier reconciliation;
+- the production Source adapters' `resolve_state` / `resolve_payload`: every
+  full Turn resolves each captured ref and asserts the assembled request
+  contains every registered Source's canonical content and work-item payloads;
+- the production HTTP handlers, authorization gates, idempotency records and
+  public DTOs.
+
+Synthetic boundary: model and tool execution only. The fixture does not call a
+model or a tool, so a completed full Turn records fixed counts of 2 model calls
+and 1 tool call. Gate observations and artifacts are synthetic
+(`sample.synthetic=true`) and exist only because the fixture server sets
+`suppression_gate_allow_synthetic`; the synthetic token maps to a local
+administrator claim and the fixture binds to loopback only.
 
 ### 6.2 Execute the documented flow
 
@@ -660,9 +690,15 @@ wait_turn "$TURN" | jq '{turn, mode}'
 "${CURL[@]}" "$BASE/api/v1/workspaces/$WS/agent/suppression/preflight" -H "$AUTH" \
   | jq '{mode, wouldSkip, vetoes, sourceIds: [.sources[].sourceId]}'
 
-# 2. change ChangingSource: the next full request still contains every Source.
+# 2. Change ChangingSource, switch to enforce, then run the next full Turn.
+# A mode change increments configVersion; the first full Turn after the change
+# installs the baseline at the new version, after which skips may commit. The
+# changed revision already forces this Turn to be full.
 "${CURL[@]}" -X POST "$BASE/fixture/sources/changing/items/item-1" \
   -H "$JSON" -d '{"revision":"2","text":"resolved"}' | jq .
+"${CURL[@]}" -X PUT "$BASE/api/v1/workspaces/$WS/agent/schedule" \
+  -H "$AUTH" -H "$JSON" -d '{"suppressionMode":"enforce"}' \
+  | jq '{suppressionMode, suppressionConfigVersion}'
 "${CURL[@]}" "$BASE/api/v1/workspaces/$WS/agent/suppression/preflight" -H "$AUTH" \
   | jq '{mode, wouldSkip, vetoes}'
 TURN=$("${CURL[@]}" -X POST "$BASE/api/v1/workspaces/$WS/agent/suppression/wake" \
@@ -670,9 +706,6 @@ TURN=$("${CURL[@]}" -X POST "$BASE/api/v1/workspaces/$WS/agent/suppression/wake"
 wait_turn "$TURN" | jq '{turn, mode, sourceIds: [.sources[].sourceId]}'
 
 # 3. enforce (synthetic loopback gate evidence): two zero-call skips.
-"${CURL[@]}" -X PUT "$BASE/api/v1/workspaces/$WS/agent/schedule" \
-  -H "$AUTH" -H "$JSON" -d '{"suppressionMode":"enforce"}' \
-  | jq '{suppressionMode, suppressionConfigVersion}'
 for KEY in demo-0003 demo-0004; do
   TURN=$("${CURL[@]}" -X POST "$BASE/api/v1/workspaces/$WS/agent/suppression/wake" \
     -H "$AUTH" -H "Idempotency-Key: $KEY" | jq -r '.turnId')
@@ -691,13 +724,20 @@ Expected observable sequence:
 
 1. shadow full: `turn.outcome=completed`, `turn.toolCalls=1`; the following
    preflight has `wouldSkip=true`.
-2. changed revision: preflight has `wouldSkip=false` and `vetoes` contains
-   `source_changed`; the full report still lists `demo.static` and
-   `demo.changing`.
+2. changed revision + enforce: preflight has `wouldSkip=false` and `vetoes`
+   contains `source_changed`; the full Turn completes under enforce and the
+   report still lists `demo.static` and `demo.changing`. This Turn installs the
+   baseline at the new `suppressionConfigVersion`.
 3. enforce skips 1 and 2: `turn.outcome=skipped`, `turn.modelCalls=0`,
    `turn.toolCalls=0`.
 4. off + reconcile: `turn.outcome=completed` with `turn.toolCalls=1`; preflight
    is `mode=off`, `wouldSkip=false`, veto `disabled`.
+
+Do not switch mode and immediately expect a skip: `commit_skip` rejects a
+baseline whose persisted `configVersion` predates the current schedule. The
+production-equivalent recovery is a full Turn under the new configuration (as
+step 2 does here); an attempted skip returns `audit_failed` and keeps the old
+baseline ineligible.
 
 ## 7. Recovery and rollback
 

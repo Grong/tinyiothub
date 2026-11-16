@@ -15,10 +15,15 @@
   suppression/false-skip`. Writes require workspace write plus an
   `Idempotency-Key`; `PUT schedule` accepts `suppressionMode` and
   `reconciliationSeconds`.
-- **Additive DDL only** (no destructive migration, no codemod): schedule
-  suppression columns, `suppression_state`, `suppression_idempotency`,
-  `suppression_observations` and append-only `suppression_gate_evaluations`.
-  Migrations `20261114000002` and `20261115000001`.
+- **Additive DDL only** (no destructive migration, no codemod):
+  `20261114000001_assistant_suppression.sql` adds the schedule suppression
+  columns; `20261114000002_harness_assistant_suppression_workspace.sql` adds
+  `suppression_state`, `suppression_idempotency` and append-only
+  `suppression_gate_evaluations`;
+  `20261114000003_harness_suppression_fence_attempt_ids.sql` adds durable
+  fence attempt identities;
+  `20261115000001_harness_suppression_observations.sql` adds
+  `suppression_observations`.
 - **Typed suppression errors** with stable `code`, safe `what`/`fix`,
   recovery bounds, `codeAnchor`, allowlisted context, trace and redaction.
   Catalog: `docs/dev/assistant-suppression.md` (one anchor per code).
