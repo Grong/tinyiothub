@@ -55,7 +55,7 @@ pub async fn build_full_system_prompt(
     let memory_layer = if let Some(source) = memory_source {
         let ws_id = workspace_id.unwrap_or(paths::DEFAULT_WORKSPACE_ID);
         let a_id = agent_id.unwrap_or("default");
-        build_memory_layer(source.as_ref(), &workspace_dir, ws_id, a_id, 4096).await
+        build_memory_layer(source.as_ref(), &workspace_dir, ws_id, a_id, MEMORY_MAX_TOKENS).await
     } else {
         String::new()
     };
@@ -168,6 +168,55 @@ fn get_embedded_template(filename: &str) -> Option<&'static str> {
     }
 }
 
+/// Memory tokens reserved for the dynamic layer (aligns with the prompt builder).
+pub(crate) const MEMORY_MAX_TOKENS: usize = 4096;
+
+/// The exact memory content the prompt will inject: either a compiled profile
+/// or the budgeted active entries. Source adapters reuse this selection so the
+/// `memory` revision always describes what the model actually sees.
+pub(crate) enum MemorySelection {
+    Profile(String),
+    Entries(Vec<tinyiothub_core::memory::AgentMemory>),
+}
+
+/// Select the memory layer without rendering it or recording loads.
+pub(crate) async fn select_memory(
+    memory_source: &dyn PromptMemorySource,
+    workspace_dir: &std::path::Path,
+    workspace_id: &str,
+    agent_id: &str,
+    max_tokens: usize,
+) -> anyhow::Result<MemorySelection> {
+    // 1. Prefer compiled PROFILE.md
+    let profile_path = workspace_dir.join("PROFILE.md");
+    if profile_path.exists()
+        && let Ok(profile) = tokio::fs::read_to_string(&profile_path).await
+    {
+        let trimmed = profile.trim();
+        if !trimmed.is_empty() {
+            return Ok(MemorySelection::Profile(trimmed.to_string()));
+        }
+    }
+
+    // 2. Fall back to dynamic memory injection (same budget rule as rendering).
+    let active = memory_source.list_active(workspace_id, agent_id).await?;
+    let mut selected = Vec::new();
+    let mut token_budget = max_tokens / 5;
+    for memory in active {
+        if memory.source == tinyiothub_core::memory::MemorySource::DeviceSnapshot {
+            continue;
+        }
+        let entry = format!("- [{}] {}\n", memory.zone.as_str(), memory.content);
+        let entry_tokens = entry.len() / 4;
+        if entry_tokens > token_budget {
+            break;
+        }
+        token_budget -= entry_tokens;
+        selected.push(memory);
+    }
+    Ok(MemorySelection::Entries(selected))
+}
+
 /// Build the dynamic memory layer for the system prompt.
 /// Prefers PROFILE.md if available; otherwise injects top active memories.
 async fn build_memory_layer(
@@ -177,49 +226,24 @@ async fn build_memory_layer(
     agent_id: &str,
     max_tokens: usize,
 ) -> String {
-    // 1. Prefer compiled PROFILE.md
-    let profile_path = workspace_dir.join("PROFILE.md");
-    if profile_path.exists()
-        && let Ok(profile) = tokio::fs::read_to_string(&profile_path).await
-    {
-        let trimmed = profile.trim();
-        if !trimmed.is_empty() {
-            return format!("\n## Agent Memory (Compiled Profile)\n{}\n", trimmed);
+    match select_memory(memory_source, workspace_dir, workspace_id, agent_id, max_tokens).await {
+        Ok(MemorySelection::Profile(profile)) => format!("\n## Agent Memory (Compiled Profile)\n{profile}\n"),
+        Ok(MemorySelection::Entries(entries)) => {
+            if entries.is_empty() {
+                return String::new();
+            }
+            let mut fragments = vec!["\n## Dynamic Memory\n".to_string()];
+            for memory in &entries {
+                fragments.push(format!("- [{}] {}\n", memory.zone.as_str(), memory.content));
+                let _ = memory_source.record_load(&memory.id).await;
+            }
+            fragments.concat()
         }
-    }
-
-    // 2. Fall back to dynamic memory injection
-    let active = match memory_source.list_active(workspace_id, agent_id).await {
-        Ok(memories) => memories,
         Err(e) => {
             tracing::warn!(%e, "Failed to load active memories");
-            return String::new();
+            String::new()
         }
-    };
-
-    if active.is_empty() {
-        return String::new();
     }
-
-    let mut fragments = vec!["\n## Dynamic Memory\n".to_string()];
-    let mut token_budget = max_tokens / 5;
-
-    for mem in &active {
-        if mem.source == tinyiothub_core::memory::MemorySource::DeviceSnapshot {
-            continue;
-        }
-        let entry = format!("- [{}] {}\n", mem.zone.as_str(), mem.content);
-        let entry_tokens = entry.len() / 4;
-        if entry_tokens > token_budget {
-            break;
-        }
-        token_budget -= entry_tokens;
-        fragments.push(entry);
-
-        let _ = memory_source.record_load(&mem.id).await;
-    }
-
-    fragments.concat()
 }
 
 #[cfg(test)]

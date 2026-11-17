@@ -20,6 +20,12 @@ pub const SESSION_EVENT_SCHEMA_V: i64 = 1;
 #[async_trait::async_trait]
 pub trait SessionEventSink: Send + Sync {
     async fn emit(&self, input: HarnessEventInput) -> Result<HarnessEvent, DbError>;
+
+    /// Post-commit SSE hint. The database is the high watermark clients resume
+    /// from, so a notification failure never changes committed facts.
+    async fn notify(&self, _workspace_id: &str, _session_id: &str) -> Result<(), DbError> {
+        Ok(())
+    }
 }
 
 pub struct DbSessionEventSink {
@@ -39,6 +45,11 @@ impl SessionEventSink for DbSessionEventSink {
         let event = self.db.append_session_event(&input).await?;
         self.hub.notify(&input.workspace_id);
         Ok(event)
+    }
+
+    async fn notify(&self, workspace_id: &str, _session_id: &str) -> Result<(), DbError> {
+        self.hub.notify(workspace_id);
+        Ok(())
     }
 }
 

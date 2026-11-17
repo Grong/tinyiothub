@@ -120,6 +120,13 @@ pub struct AppState {
     /// 统一 Session 运行时（事件、Todo、待答问题、子代理槽）。
     pub session_runtime: Arc<crate::domains::agent::session::SessionRuntime>,
 
+    /// 手动 suppression 操作端口（preflight/wake/reconcile）——ServiceManager
+    /// 装配到 live TriggerRouter/WakeRunner；None = 未接线（端点 503）。
+    pub suppression_ops: Option<Arc<dyn crate::domains::agent::session::trigger::SuppressionOps>>,
+    /// Loopback-fixture only: allow synthetic gate evidence. Never set by a
+    /// client request; production keeps this false.
+    pub suppression_gate_allow_synthetic: bool,
+
     /// 用户服务 - CRUD 操作
     pub user_service: Arc<crate::domains::user::UserService>,
 
@@ -579,6 +586,8 @@ impl AppState {
             alarm_service,
             agent_pool,
             session_runtime,
+            suppression_ops: None,
+            suppression_gate_allow_synthetic: false,
             orchestrator: None,
             heartbeat_last_ticks: None,
             thing_agents: None, // T13 bootstrap 装配时注入
@@ -1112,6 +1121,8 @@ impl axum::extract::FromRef<AppState> for crate::domains::agent::AgentState {
             effect_dispatch: state.effect_dispatch.clone(),
             runtime_recorder: state.runtime_recorder.clone(),
             session_runtime: state.session_runtime.clone(),
+            suppression_ops: state.suppression_ops.clone(),
+            suppression_gate_allow_synthetic: state.suppression_gate_allow_synthetic,
         }
     }
 }

@@ -2,6 +2,13 @@ use std::time::Duration;
 
 pub const ASK_USER_TIMEOUT: Duration = Duration::from_secs(10 * 60);
 
+/// Raw `turn.state` envelopes (state ref, payload refs, work keys, revisions)
+/// are backend metadata. Every public Session Events surface filters them on
+/// the server; the frontend is never the enforcement point.
+pub fn is_public_session_event(event_type: &str) -> bool {
+    event_type != "turn.state"
+}
+
 pub mod agent_host;
 pub mod approvals;
 pub mod chat;
@@ -23,6 +30,7 @@ pub mod questions;
 pub mod runner;
 pub mod skills_seed;
 pub mod subagent;
+pub mod suppression;
 pub mod todos;
 pub mod tool_guard;
 pub mod tools;

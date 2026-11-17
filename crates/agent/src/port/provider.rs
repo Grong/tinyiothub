@@ -113,12 +113,53 @@ pub struct ChatRequest<'a> {
     pub max_tokens: Option<u64>,
 }
 
+/// Exact provider-owned context measurement. `counted_input_tokens` includes
+/// the complete serialized request and encoding overhead; output reserve is
+/// added separately by the caller.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ContextMeasurement {
+    pub context_window: u64,
+    pub counted_input_tokens: u64,
+    pub counting_method: String,
+}
+
+/// The provider could not supply a real context window or exact tokenizer.
+#[derive(Debug, thiserror::Error)]
+#[error("context_budget_unavailable: {message}")]
+pub struct ContextBudgetUnavailable {
+    pub message: String,
+}
+
+/// Measured input plus output reserve exceeds the provider's real window.
+#[derive(Debug, thiserror::Error)]
+#[error(
+    "context_too_large: input={counted_input_tokens} reserve={output_reserve_tokens} window={context_window} method={counting_method}"
+)]
+pub struct ContextTooLarge {
+    pub counted_input_tokens: u64,
+    pub output_reserve_tokens: u64,
+    pub context_window: u64,
+    pub counting_method: String,
+}
+
 /// 极简 provider 抽象：agent loop 只走 `chat`。
 #[async_trait::async_trait]
 pub trait ModelProvider: Send + Sync + crate::port::attribution::Attributable {
     fn supports_vision(&self) -> bool {
         false
     }
+
+    /// Return an exact provider-owned measurement, or `None` when the real
+    /// window/tokenizer is unavailable. Never substitute a character estimate.
+    async fn measure_context(
+        &self,
+        _request: ChatRequest<'_>,
+        _model: &str,
+        _temperature: Option<f64>,
+    ) -> anyhow::Result<Option<ContextMeasurement>> {
+        Ok(None)
+    }
+
     async fn chat(
         &self,
         request: ChatRequest<'_>,

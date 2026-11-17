@@ -52,7 +52,10 @@ pub async fn ensure_agent(
         // requires a fresh loop, otherwise stale rules remain in the preamble.
         let tools_match = pool.agent_session_tools(agent_id) == Some(session_tools_enabled);
         let prompt_matches = pool.agent_prompt_hash(agent_id) == Some(prompt_hash);
-        if tools_match && prompt_matches {
+        let budget_matches = pool
+            .agent_config(agent_id)
+            .is_some_and(|cached| cached.require_context_budget == config.require_context_budget);
+        if tools_match && prompt_matches && budget_matches {
             return Ok(agent);
         }
         pool.invalidate(agent_id);

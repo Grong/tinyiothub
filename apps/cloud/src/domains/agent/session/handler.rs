@@ -119,7 +119,11 @@ pub async fn list_events(
         .await
     {
         Ok(page) => Json(serde_json::json!({
-            "events": page.events,
+            "events": page
+                .events
+                .into_iter()
+                .filter(|event| super::is_public_session_event(&event.event_type))
+                .collect::<Vec<_>>(),
             "highWatermark": page.high_watermark,
         }))
         .into_response(),
@@ -152,6 +156,9 @@ pub async fn stream_events(
                 Ok(page) => {
                     for event in page.events {
                         cursor = event.seq;
+                        if !super::is_public_session_event(&event.event_type) {
+                            continue;
+                        }
                         if let Ok(frame) = Event::default()
                             .event("session")
                             .id(event.seq.to_string())

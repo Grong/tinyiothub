@@ -4,6 +4,10 @@ use std::sync::Arc;
 
 use tinyiothub_agent::port::prompt::{PromptContext, StaticPromptSection, SystemPromptBuilder};
 use tinyiothub_agent::port::prompt_sections::{ChannelMediaSection, DateTimeSection, SafetySection};
+use tinyiothub_runtime::watch::live_state::WorkspaceSnapshot;
+
+use crate::domains::agent::session::suppression::contract::WorkItemDisposition;
+use crate::domains::agent::session::suppression::registry::{self, ResolvedSource, SemanticSessionEvent};
 
 use super::PromptMemorySource;
 
@@ -54,21 +58,34 @@ pub async fn build_assistant_prompt(
     turn_input: String,
     memory_source: Option<&Arc<dyn PromptMemorySource>>,
 ) -> anyhow::Result<PromptPackage> {
+    build_assistant_prompt_with_sources(config, workspace_id, assistant_id, turn_input, memory_source, None, &[]).await
+}
+
+/// Build the full Assistant prompt from the same content the Source adapters
+/// capture. `workspace_snapshot` and `semantic_events` are optional additions
+/// used by the scheduled wake path; turn brief, skills, memory and
+/// `SHORT_TERM.md` are always loaded from their existing single source.
+pub async fn build_assistant_prompt_with_sources(
+    config: &tinyiothub_core::config::SystemPromptsConfig,
+    workspace_id: &str,
+    assistant_id: &str,
+    turn_input: String,
+    memory_source: Option<&Arc<dyn PromptMemorySource>>,
+    workspace_snapshot: Option<&WorkspaceSnapshot>,
+    semantic_events: &[SemanticSessionEvent],
+) -> anyhow::Result<PromptPackage> {
     let workspace_prompt =
         super::build_full_system_prompt(config, Some(workspace_id), Some(assistant_id), memory_source).await;
     let workspace_prompt = format!("# Current Workspace\nworkspace_id: {workspace_id}\n\n{workspace_prompt}");
-    let workspace_dir = if config.workspace_dir.is_empty() {
-        super::paths::workspace_dir(workspace_id)
-    } else {
-        std::path::PathBuf::from(&config.workspace_dir).join(workspace_id)
-    };
-    let skills = super::super::pool::load_workspace_skills(&workspace_dir);
+    let workspace_dir = registry::workspace_dir_for(config, workspace_id);
+    let skills = registry::load_skills_for(&workspace_dir);
     let skill_index = tinyiothub_skills::build_skill_index_prompt(&skills);
-    let turn_brief = match std::fs::read_to_string(workspace_dir.join("TURN_BRIEF.md")) {
-        Ok(content) => content,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => String::new(),
-        Err(error) => return Err(error.into()),
-    };
+    let turn_brief = registry::read_workspace_file(&workspace_dir, "TURN_BRIEF.md")
+        .map_err(|error| anyhow::anyhow!("{}: {}", error.code, error.what))?
+        .unwrap_or_default();
+    let short_term = registry::read_workspace_file(&workspace_dir, "SHORT_TERM.md")
+        .map_err(|error| anyhow::anyhow!("{}: {}", error.code, error.what))?
+        .unwrap_or_default();
     let builder = SystemPromptBuilder::empty()
         .add_section(Box::new(StaticPromptSection::new("harness", HARNESS_CONTRACT)))
         .add_section(Box::new(SafetySection))
@@ -85,6 +102,32 @@ pub async fn build_assistant_prompt(
             "turn_brief",
             format!("## Turn Brief\n\n{turn_brief}"),
         )))
+    };
+    let builder = if short_term.trim().is_empty() {
+        builder
+    } else {
+        builder.add_section(Box::new(StaticPromptSection::new(
+            "short_term",
+            format!("## Short Term\n\n{short_term}"),
+        )))
+    };
+    let builder = match workspace_snapshot {
+        Some(snapshot) => {
+            let (body, _) = super::snapshot::render_snapshot(snapshot);
+            let section = super::snapshot::section(&body);
+            if section.is_empty() {
+                builder
+            } else {
+                builder.add_section(Box::new(StaticPromptSection::new("workspace_snapshot", section)))
+            }
+        }
+        None => builder,
+    };
+    let events_section = semantic_events_section(semantic_events);
+    let builder = if events_section.is_empty() {
+        builder
+    } else {
+        builder.add_section(Box::new(StaticPromptSection::new("session_events", events_section)))
     };
     let builder = builder
         .add_section(Box::new(DateTimeSection))
@@ -103,6 +146,280 @@ pub async fn build_assistant_prompt(
         system_prompt,
         turn_input,
     })
+}
+
+/// Build a full Turn from the exact immutable refs captured during preflight.
+/// Mutable stores are never reread for the six registered Source contents.
+pub async fn build_assistant_prompt_with_resolved_sources(
+    config: &tinyiothub_core::config::SystemPromptsConfig,
+    workspace_id: &str,
+    assistant_id: &str,
+    turn_input: String,
+    sources: &[ResolvedSource],
+) -> anyhow::Result<PromptPackage> {
+    let workspace_prompt = super::build_full_system_prompt(config, Some(workspace_id), Some(assistant_id), None).await;
+    let workspace_prompt = format!("# Current Workspace\nworkspace_id: {workspace_id}\n\n{workspace_prompt}");
+    let workspace_dir = registry::workspace_dir_for(config, workspace_id);
+
+    let turn_brief = source_document(sources, registry::TURN_BRIEF_SOURCE);
+    let short_term = source_document(sources, registry::SHORT_TERM_SOURCE);
+    let skills = resolved_skills(sources)?;
+    let skill_index = tinyiothub_skills::build_skill_index_prompt(&skills);
+    let workspace_snapshot = resolved_workspace_snapshot(sources)?;
+    let semantic_events = resolved_semantic_events(sources)?;
+    let memory_layer = resolved_memory_layer(sources)?;
+
+    let mut builder = SystemPromptBuilder::empty()
+        .add_section(Box::new(StaticPromptSection::new("harness", HARNESS_CONTRACT)))
+        .add_section(Box::new(SafetySection))
+        .add_section(Box::new(StaticPromptSection::new(
+            "assistant",
+            super::templates::ASSISTANT_MD,
+        )))
+        .add_section(Box::new(StaticPromptSection::new("workspace", workspace_prompt)))
+        .add_section(Box::new(StaticPromptSection::new("skills", skill_index)));
+    if !turn_brief.trim().is_empty() {
+        builder = builder.add_section(Box::new(StaticPromptSection::new(
+            "turn_brief",
+            format!("## Turn Brief\n\n{turn_brief}"),
+        )));
+    }
+    if !short_term.trim().is_empty() {
+        builder = builder.add_section(Box::new(StaticPromptSection::new(
+            "short_term",
+            format!("## Short Term\n\n{short_term}"),
+        )));
+    }
+    if !memory_layer.is_empty() {
+        builder = builder.add_section(Box::new(StaticPromptSection::new("resolved_memory", memory_layer)));
+    }
+    if let Some(snapshot) = workspace_snapshot {
+        let (body, _) = super::snapshot::render_snapshot(&snapshot);
+        let section = super::snapshot::section(&body);
+        if !section.is_empty() {
+            builder = builder.add_section(Box::new(StaticPromptSection::new("workspace_snapshot", section)));
+        }
+    }
+    let events_section = semantic_events_section(&semantic_events);
+    if !events_section.is_empty() {
+        builder = builder.add_section(Box::new(StaticPromptSection::new("session_events", events_section)));
+    }
+    let closed = closed_tombstones_section(sources);
+    if !closed.is_empty() {
+        builder = builder.add_section(Box::new(StaticPromptSection::new("closed_source_items", closed)));
+    }
+    let system_prompt = builder
+        .add_section(Box::new(DateTimeSection))
+        .add_section(Box::new(ChannelMediaSection))
+        .build(&PromptContext {
+            workspace_dir: &workspace_dir,
+            agent_workspace_dir: &workspace_dir,
+            model_name: "",
+            tool_specs: vec![],
+            security_summary: Some(
+                "IoT device operations: destructive actions (delete, write) require user approval. Read-only operations are auto-approved."
+                    .into(),
+            ),
+        })?;
+    Ok(PromptPackage {
+        system_prompt,
+        turn_input,
+    })
+}
+
+fn source_values<'a>(
+    sources: &'a [ResolvedSource],
+    source_id: &str,
+    closed: bool,
+) -> Vec<(
+    &'a crate::domains::agent::session::suppression::contract::WorkItem,
+    serde_json::Value,
+)> {
+    let Some(source) = sources.iter().find(|source| source.source_id == source_id) else {
+        return Vec::new();
+    };
+    source
+        .work_items
+        .iter()
+        .zip(source.payloads.iter())
+        .filter(|(item, _)| (item.disposition == WorkItemDisposition::Closed) == closed)
+        .filter_map(|(item, payload)| {
+            serde_json::from_slice::<serde_json::Value>(payload.as_bytes())
+                .ok()
+                .map(|value| (item, value))
+        })
+        .collect()
+}
+
+fn source_document(sources: &[ResolvedSource], source_id: &str) -> String {
+    source_values(sources, source_id, false)
+        .into_iter()
+        .find_map(|(_, value)| {
+            value
+                .get("content")
+                .and_then(serde_json::Value::as_str)
+                .map(str::to_string)
+        })
+        .unwrap_or_default()
+}
+
+fn resolved_skills(sources: &[ResolvedSource]) -> anyhow::Result<Vec<tinyiothub_skills::LoadedSkill>> {
+    source_values(sources, registry::SKILLS_SOURCE, false)
+        .into_iter()
+        .map(|(_, value)| {
+            let inject = match value.get("inject").and_then(serde_json::Value::as_str) {
+                Some("always") => tinyiothub_skills::InjectMode::Always,
+                Some("trigger") => tinyiothub_skills::InjectMode::Trigger,
+                _ => tinyiothub_skills::InjectMode::Index,
+            };
+            Ok(tinyiothub_skills::LoadedSkill {
+                name: required_string(&value, "name")?,
+                title: required_string(&value, "title")?,
+                description: required_string(&value, "description")?,
+                version: required_string(&value, "version")?,
+                inject,
+                trigger: value
+                    .get("trigger")
+                    .and_then(serde_json::Value::as_str)
+                    .map(str::to_string),
+                body: required_string(&value, "body")?,
+            })
+        })
+        .collect()
+}
+
+fn required_string(value: impl std::borrow::Borrow<serde_json::Value>, key: &str) -> anyhow::Result<String> {
+    value
+        .borrow()
+        .get(key)
+        .and_then(serde_json::Value::as_str)
+        .map(str::to_string)
+        .ok_or_else(|| anyhow::anyhow!("captured Source payload is missing {key}"))
+}
+
+fn resolved_workspace_snapshot(sources: &[ResolvedSource]) -> anyhow::Result<Option<WorkspaceSnapshot>> {
+    let values = source_values(sources, registry::WORKSPACE_SNAPSHOT_SOURCE, false);
+    if values.is_empty() {
+        return Ok(None);
+    }
+    let mut devices = Vec::with_capacity(values.len());
+    for (_, value) in values {
+        let health = match value.get("health").and_then(serde_json::Value::as_str) {
+            Some("bad") => tinyiothub_runtime::watch::live_state::Health::Bad,
+            Some("attention") => tinyiothub_runtime::watch::live_state::Health::Attention,
+            Some("ok") => tinyiothub_runtime::watch::live_state::Health::Ok,
+            _ => tinyiothub_runtime::watch::live_state::Health::Unknown,
+        };
+        let values = value
+            .get("values")
+            .and_then(serde_json::Value::as_object)
+            .map(|values| {
+                values
+                    .iter()
+                    .filter_map(|(key, value)| value.as_str().map(|value| (key.clone(), value.to_string())))
+                    .collect()
+            })
+            .unwrap_or_default();
+        let properties = value
+            .get("properties")
+            .and_then(serde_json::Value::as_array)
+            .map(|properties| {
+                properties
+                    .iter()
+                    .filter_map(serde_json::Value::as_str)
+                    .map(str::to_string)
+                    .collect()
+            })
+            .unwrap_or_default();
+        devices.push(tinyiothub_runtime::watch::live_state::DeviceSnapshot {
+            thing_id: required_string(&value, "thingId")?,
+            name: required_string(&value, "name")?,
+            health,
+            online: value
+                .get("online")
+                .and_then(serde_json::Value::as_bool)
+                .unwrap_or(false),
+            zone: required_string(&value, "zone")?,
+            values,
+            properties,
+        });
+    }
+    let total = devices.len() as u32;
+    Ok(Some(WorkspaceSnapshot { v: 1, devices, total }))
+}
+
+fn resolved_semantic_events(sources: &[ResolvedSource]) -> anyhow::Result<Vec<SemanticSessionEvent>> {
+    source_values(sources, registry::SESSION_EVENTS_SOURCE, false)
+        .into_iter()
+        .map(|(_, value)| {
+            Ok(SemanticSessionEvent {
+                event_id: required_string(&value, "eventId")?,
+                event_type: required_string(&value, "type")?,
+                payload: value.get("payload").cloned().unwrap_or(serde_json::Value::Null),
+            })
+        })
+        .collect()
+}
+
+fn resolved_memory_layer(sources: &[ResolvedSource]) -> anyhow::Result<String> {
+    let values = source_values(sources, registry::MEMORY_SOURCE, false);
+    if values.is_empty() {
+        return Ok(String::new());
+    }
+    if let Some((_item, value)) = values.iter().find(|(item, _)| item.work_key == "profile") {
+        return Ok(format!(
+            "\n## Agent Memory (Compiled Profile)\n{}\n",
+            required_string(value, "content")?
+        ));
+    }
+    let mut out = String::from("\n## Dynamic Memory\n");
+    for (_, value) in values {
+        out.push_str(&format!(
+            "- [{}] {}\n",
+            required_string(&value, "zone")?,
+            required_string(value, "content")?
+        ));
+    }
+    Ok(out)
+}
+
+fn closed_tombstones_section(sources: &[ResolvedSource]) -> String {
+    let mut out = String::new();
+    for source in sources {
+        for (item, payload) in source.work_items.iter().zip(source.payloads.iter()) {
+            if item.disposition != WorkItemDisposition::Closed {
+                continue;
+            }
+            if out.is_empty() {
+                out.push_str("## Closed Source Items\n\n<closed_source_items>\n");
+            }
+            let payload = String::from_utf8_lossy(payload.as_bytes());
+            out.push_str(&format!(
+                "- {} {} ({}): {}\n",
+                source.source_id, item.work_key, item.revision, payload
+            ));
+        }
+    }
+    if !out.is_empty() {
+        out.push_str("</closed_source_items>");
+    }
+    out
+}
+
+/// External semantic Session Events enter the full input once, fenced as
+/// untrusted data. Harness lifecycle, assistant output and cursor-owned user
+/// messages are already excluded by the Session Events adapter.
+fn semantic_events_section(events: &[SemanticSessionEvent]) -> String {
+    if events.is_empty() {
+        return String::new();
+    }
+    let mut out = String::from("## Session Events\n\n<session_events>\n");
+    for event in events {
+        let payload = serde_json::to_string(&event.payload).unwrap_or_else(|_| "null".to_string());
+        out.push_str(&format!("- {} ({}) {}\n", event.event_type, event.event_id, payload));
+    }
+    out.push_str("</session_events>");
+    out
 }
 
 pub async fn build_chat_assistant_prompt(
@@ -360,6 +677,68 @@ mod tests {
         assert_ne!(first.system_prompt, second.system_prompt);
         assert!(second.system_prompt.contains("event-marker"));
         assert!(!second.system_prompt.contains("inspection-marker"));
+    }
+
+    #[tokio::test]
+    async fn short_term_snapshot_and_semantic_events_render_once() {
+        use tinyiothub_runtime::watch::live_state::{DeviceSnapshot, Health, WorkspaceSnapshot};
+
+        let root = tempfile::tempdir().unwrap();
+        let workspace = root.path().join("ws-test");
+        std::fs::create_dir_all(&workspace).unwrap();
+        std::fs::write(workspace.join("SHORT_TERM.md"), "short-term-prompt-marker").unwrap();
+        let snapshot = WorkspaceSnapshot {
+            v: 1,
+            devices: vec![DeviceSnapshot {
+                thing_id: "device-1".into(),
+                name: "prompt-device-marker".into(),
+                health: Health::Ok,
+                online: true,
+                zone: "zone".into(),
+                values: vec![],
+                properties: vec![],
+            }],
+            total: 1,
+        };
+        let events = vec![
+            crate::domains::agent::session::suppression::registry::SemanticSessionEvent {
+                event_id: "event-1".into(),
+                event_type: "thing.event".into(),
+                payload: serde_json::json!({ "marker": "prompt-event-marker" }),
+            },
+        ];
+
+        let package = build_assistant_prompt_with_sources(
+            &config(root.path()),
+            "ws-test",
+            "assistant",
+            "turn".into(),
+            None,
+            Some(&snapshot),
+            &events,
+        )
+        .await
+        .unwrap();
+
+        for marker in [
+            "short-term-prompt-marker",
+            "prompt-device-marker",
+            "prompt-event-marker",
+        ] {
+            assert_eq!(package.system_prompt.matches(marker).count(), 1, "{marker}");
+        }
+        assert!(package.system_prompt.contains("<workspace_snapshot>"));
+        assert!(package.system_prompt.contains("<session_events>"));
+    }
+
+    #[tokio::test]
+    async fn missing_short_term_section_is_optional() {
+        let root = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(root.path().join("ws-test")).unwrap();
+        let package = build_assistant_prompt(&config(root.path()), "ws-test", "assistant", "turn".into(), None)
+            .await
+            .unwrap();
+        assert!(!package.system_prompt.contains("## Short Term"));
     }
 
     #[tokio::test]

@@ -14,6 +14,7 @@ use tokio_util::sync::CancellationToken;
 
 use super::context::{TurnContext, TurnContextRegistry};
 use super::events::{SessionEventSink, session_event};
+use super::suppression::audit::{WakeAttempt, attempt_event};
 
 #[async_trait::async_trait]
 pub trait TurnObserver: Send + Sync {
@@ -58,6 +59,31 @@ pub enum TurnOutcome {
     Completed { text: String, tool_calls: u32 },
     Cancelled { reason: String, source: String },
     Failed { error: String },
+}
+
+/// Session Event write health for one Turn.
+///
+/// A full Turn may install a suppression baseline only when every event
+/// persisted and the `turn.completed` terminal was written.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct TurnEventHealth {
+    pub failed: u32,
+    /// The `turn.completed` terminal event was persisted.
+    pub terminal_written: bool,
+}
+
+impl TurnEventHealth {
+    pub fn is_healthy(&self) -> bool {
+        self.failed == 0 && self.terminal_written
+    }
+}
+
+/// Actual model/tool calls observed for one Turn. Recorded as suppression gate
+/// evidence; never operator-typed.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct TurnCounts {
+    pub model_calls: u64,
+    pub tool_calls: u64,
 }
 
 pub struct SessionRunner {
@@ -116,9 +142,39 @@ impl SessionRunner {
         observer: Option<Arc<dyn TurnObserver>>,
         cancel: Option<TurnCancellation>,
     ) -> TurnOutcome {
+        self.run_turn_tracked(agent, context, message, observer, cancel, None, None)
+            .await
+            .0
+    }
+
+    /// Run one Turn and report Session Event write health.
+    ///
+    /// Planned-wake callers pass the durably allocated attempt so
+    /// `turn.started`/`turn.completed` share the attempt-derived ids used by
+    /// the skip audit. `previous_attempt_id` links a changed-source replay's
+    /// new attempt to the committed skip it supersedes. The health evidence
+    /// lets those callers refuse to install a baseline when any event (in
+    /// particular the terminal) was not persisted.
+    pub async fn run_turn_tracked(
+        &self,
+        agent: &dyn AgentLoop,
+        context: &TurnContext,
+        message: &str,
+        observer: Option<Arc<dyn TurnObserver>>,
+        cancel: Option<TurnCancellation>,
+        attempt: Option<&WakeAttempt>,
+        previous_attempt_id: Option<&str>,
+    ) -> (TurnOutcome, TurnEventHealth, TurnCounts) {
         let _guard = self.contexts.set(context.clone());
-        self.emit(context, "turn.started", json!({ "turnId": &context.turn_id }))
-            .await;
+        let mut health = TurnEventHealth::default();
+        let mut started = json!({ "turnId": &context.turn_id });
+        if let Some(previous) = previous_attempt_id {
+            started["previousAttemptId"] = json!(previous);
+            started["supersedes"] = json!(true);
+        }
+        if !self.emit_turn_event(context, attempt, "turn.started", started).await {
+            health.failed += 1;
+        }
 
         let (event_tx, mut event_rx) = mpsc::channel::<TurnEvent>(64);
         let forward = tokio::spawn({
@@ -127,7 +183,11 @@ impl SessionRunner {
             let observer = observer.clone();
             async move {
                 let mut tool_calls = 0u32;
+                // One Usage event is emitted per model call; this is the
+                // server-side model-call count used by gate evidence.
+                let mut model_calls = 0u64;
                 let mut usage = UsageTotals::default();
+                let mut failed = 0u32;
                 let mut text_buf = String::new();
                 let mut last_text_flush = tokio::time::Instant::now();
                 while let Some(event) = event_rx.recv().await {
@@ -138,36 +198,48 @@ impl SessionRunner {
                                 || last_text_flush.elapsed() >= std::time::Duration::from_millis(250);
                             if due && !text_buf.is_empty() {
                                 let text = std::mem::take(&mut text_buf);
-                                let _ = events
+                                if events
                                     .emit(session_event(
                                         &context,
                                         "step.text",
                                         json!({ "turnId": &context.turn_id, "text": text }),
                                     ))
-                                    .await;
+                                    .await
+                                    .is_err()
+                                {
+                                    failed += 1;
+                                }
                                 last_text_flush = tokio::time::Instant::now();
                             }
                         }
                         TurnEvent::ToolCall { id, name, args } => {
                             if !text_buf.is_empty() {
                                 let text = std::mem::take(&mut text_buf);
-                                let _ = events
+                                if events
                                     .emit(session_event(
                                         &context,
                                         "step.text",
                                         json!({ "turnId": &context.turn_id, "text": text }),
                                     ))
-                                    .await;
+                                    .await
+                                    .is_err()
+                                {
+                                    failed += 1;
+                                }
                                 last_text_flush = tokio::time::Instant::now();
                             }
                             tool_calls += 1;
-                            let _ = events
+                            if events
                                 .emit(session_event(
                                     &context,
                                     "tool.called",
                                     json!({ "toolCallId": id, "tool": name, "args": args }),
                                 ))
-                                .await;
+                                .await
+                                .is_err()
+                            {
+                                failed += 1;
+                            }
                         }
                         TurnEvent::ToolResult {
                             id,
@@ -177,18 +249,22 @@ impl SessionRunner {
                         } => {
                             if !text_buf.is_empty() {
                                 let text = std::mem::take(&mut text_buf);
-                                let _ = events
+                                if events
                                     .emit(session_event(
                                         &context,
                                         "step.text",
                                         json!({ "turnId": &context.turn_id, "text": text }),
                                     ))
-                                    .await;
+                                    .await
+                                    .is_err()
+                                {
+                                    failed += 1;
+                                }
                                 last_text_flush = tokio::time::Instant::now();
                             }
                             let evidence: Vec<tinyiothub_core::media::EvidenceRef> =
                                 attachments.iter().map(Into::into).collect();
-                            let _ = events
+                            if events
                                 .emit(session_event(
                                     &context,
                                     "tool.returned",
@@ -199,22 +275,30 @@ impl SessionRunner {
                                         "evidence": evidence
                                     }),
                                 ))
-                                .await;
+                                .await
+                                .is_err()
+                            {
+                                failed += 1;
+                            }
                         }
                         TurnEvent::Thinking { delta } => {
-                            let _ = events
+                            let written = events
                                 .emit(session_event(
                                     &context,
                                     "step.thinking",
                                     json!({ "turnId": &context.turn_id, "thinking": delta }),
                                 ))
-                                .await;
+                                .await
+                                .is_ok();
+                            if !written {
+                                failed += 1;
+                            }
                         }
                         TurnEvent::Retry(notice) => {
                             // Buffered text belongs to the failed model attempt;
                             // persisted chunks are rolled back by turn.retry in the UI.
                             text_buf.clear();
-                            let _ = events
+                            if events
                                 .emit(session_event(
                                     &context,
                                     "turn.retry",
@@ -226,62 +310,85 @@ impl SessionRunner {
                                         "error": notice.error
                                     }),
                                 ))
-                                .await;
+                                .await
+                                .is_err()
+                            {
+                                failed += 1;
+                            }
                         }
                         TurnEvent::Usage {
                             input_tokens,
                             cached_input_tokens,
                             output_tokens,
                             cost_usd,
-                        } => usage.add(*input_tokens, *cached_input_tokens, *output_tokens, *cost_usd),
+                        } => {
+                            model_calls += 1;
+                            usage.add(*input_tokens, *cached_input_tokens, *output_tokens, *cost_usd);
+                        }
                         _ => {}
                     }
                     if let Some(observer) = &observer {
                         observer.on_turn_event(&event).await;
                     }
                 }
-                if !text_buf.is_empty() {
-                    let _ = events
+                if !text_buf.is_empty()
+                    && events
                         .emit(session_event(
                             &context,
                             "step.text",
                             json!({ "turnId": &context.turn_id, "text": std::mem::take(&mut text_buf) }),
                         ))
-                        .await;
+                        .await
+                        .is_err()
+                {
+                    failed += 1;
                 }
-                (tool_calls, usage.to_json())
+                (tool_calls, model_calls, usage.to_json(), failed)
             }
         });
 
         let cancel_token = cancel.as_ref().map(|cancellation| cancellation.token.clone());
         let result = agent.turn_streamed(message, event_tx, cancel_token).await;
-        let (tool_calls, usage) = forward.await.unwrap_or((0, serde_json::Value::Null));
+        let (tool_calls, model_calls, usage, forward_failed) =
+            forward.await.unwrap_or((0, 0, serde_json::Value::Null, 1));
+        health.failed += forward_failed;
 
-        match result {
+        let outcome = match result {
             Ok(text) => {
-                self.emit(
-                    context,
-                    "message.created",
-                    json!({
-                        "messageId": uuid::Uuid::new_v4().to_string(),
-                        "turnId": &context.turn_id,
-                        "role": "assistant",
-                        "text": &text
-                    }),
-                )
-                .await;
-                self.emit(
-                    context,
-                    "turn.completed",
-                    json!({
-                        "turnId": &context.turn_id,
-                        "outcome": "completed",
-                        "text": &text,
-                        "toolCalls": tool_calls,
-                        "usage": &usage
-                    }),
-                )
-                .await;
+                if !self
+                    .emit_turn_event(
+                        context,
+                        attempt,
+                        "message.created",
+                        json!({
+                            "messageId": uuid::Uuid::new_v4().to_string(),
+                            "turnId": &context.turn_id,
+                            "role": "assistant",
+                            "text": &text
+                        }),
+                    )
+                    .await
+                {
+                    health.failed += 1;
+                }
+                health.terminal_written = self
+                    .emit_turn_event(
+                        context,
+                        attempt,
+                        "turn.completed",
+                        json!({
+                            "turnId": &context.turn_id,
+                            "outcome": "completed",
+                            "text": &text,
+                            "toolCalls": tool_calls,
+                            "modelCalls": model_calls,
+                            "usage": &usage
+                        }),
+                    )
+                    .await;
+                if !health.terminal_written {
+                    health.failed += 1;
+                }
                 TurnOutcome::Completed { text, tool_calls }
             }
             Err(error) => {
@@ -291,16 +398,39 @@ impl SessionRunner {
                     "turnId": &context.turn_id,
                     "outcome": if cancellation.is_some() { "cancelled" } else { "failed" },
                     "toolCalls": tool_calls,
+                    "modelCalls": model_calls,
                     "usage": &usage
                 });
                 if let Some(cancellation) = cancellation {
-                    payload["error"] = json!(&cancellation.reason);
+                    let reason = super::suppression::error::sanitize_public_text(&cancellation.reason);
+                    payload["error"] = json!(&reason);
+                    payload["errorMessage"] = json!(&reason);
                     payload["source"] = json!(&cancellation.source);
                 } else {
-                    payload["error"] = json!(&error);
-                    payload["source"] = json!("system");
+                    let budget_code = if error.contains("context_too_large") {
+                        Some(super::suppression::error::ErrorCode::ContextTooLarge)
+                    } else if error.contains("context_budget_unavailable") {
+                        Some(super::suppression::error::ErrorCode::ContextBudgetUnavailable)
+                    } else {
+                        None
+                    };
+                    if let Some(code) = budget_code {
+                        let typed = super::suppression::error::SuppressionError::from_code(code);
+                        payload = typed.async_failure_payload();
+                        payload["source"] = json!("system");
+                    } else {
+                        // Async failures carry the safe summary the existing
+                        // frontend renders, without payloads, paths or credentials.
+                        let message = super::suppression::error::sanitize_public_text(&error);
+                        payload["error"] = json!(&message);
+                        payload["errorMessage"] = json!(&message);
+                        payload["source"] = json!("system");
+                    }
                 }
-                self.emit(context, "turn.completed", payload).await;
+                health.terminal_written = self.emit_turn_event(context, attempt, "turn.completed", payload).await;
+                if !health.terminal_written {
+                    health.failed += 1;
+                }
                 if let Some(cancellation) = cancellation {
                     TurnOutcome::Cancelled {
                         reason: cancellation.reason.clone(),
@@ -310,12 +440,37 @@ impl SessionRunner {
                     TurnOutcome::Failed { error }
                 }
             }
-        }
+        };
+        (
+            outcome,
+            health,
+            TurnCounts {
+                model_calls,
+                tool_calls: u64::from(tool_calls),
+            },
+        )
     }
 
-    async fn emit(&self, context: &TurnContext, event_type: &str, payload: serde_json::Value) {
-        if let Err(error) = self.events.emit(session_event(context, event_type, payload)).await {
+    /// Emit one Turn event. Planned-wake lifecycle events use the attempt's
+    /// stable ids; everything else keeps the existing per-invocation identity.
+    async fn emit_turn_event(
+        &self,
+        context: &TurnContext,
+        attempt: Option<&WakeAttempt>,
+        event_type: &str,
+        payload: serde_json::Value,
+    ) -> bool {
+        let input = match attempt {
+            Some(attempt) if matches!(event_type, "turn.started" | "turn.completed") => {
+                attempt_event(context, attempt, event_type, payload)
+            }
+            _ => session_event(context, event_type, payload),
+        };
+        if let Err(error) = self.events.emit(input).await {
             tracing::warn!(%error, event_type, "session event write failed");
+            false
+        } else {
+            true
         }
     }
 }

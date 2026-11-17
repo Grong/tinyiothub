@@ -1,5 +1,71 @@
 # Changelog
 
+## [Unreleased]
+
+### Added
+
+- **Assistant suppression gate (additive, opt-in)**: workspace modes `off`
+  (default), `shadow`, `canary` and `enforce`; a `shadow` Turn still executes
+  fully while recording `wouldSkip`, and only `canary`/`enforce` may dispatch a
+  skip.
+- **Suppression HTTP API** under
+  `/api/v1/workspaces/{workspaceId}/agent`: `GET suppression/preflight`, `GET
+  suppression/report`, `POST suppression/wake`, `POST
+  suppression/reconcile`, `POST suppression/gate-artifacts` and `POST
+  suppression/false-skip`. Writes require workspace write plus an
+  `Idempotency-Key`; `PUT schedule` accepts `suppressionMode` and
+  `reconciliationSeconds`.
+- **Additive DDL only** (no destructive migration, no codemod):
+  `20261114000001_assistant_suppression.sql` adds the schedule suppression
+  columns; `20261114000002_harness_assistant_suppression_workspace.sql` adds
+  `suppression_state`, `suppression_idempotency` and append-only
+  `suppression_gate_evaluations`;
+  `20261114000003_harness_suppression_fence_attempt_ids.sql` adds durable
+  fence attempt identities;
+  `20261115000001_harness_suppression_observations.sql` adds
+  `suppression_observations`;
+  `20261116000001_harness_suppression_linearization_and_sources.sql` adds the
+  workspace mode/config generation and restart-safe Source ref/tombstone
+  retention.
+- **Typed suppression errors** with stable `code`, safe `what`/`fix`,
+  recovery bounds, `codeAnchor`, allowlisted context, trace and redaction.
+  Catalog: `docs/dev/assistant-suppression.md` (one anchor per code).
+- **Exact provider context budgets** for non-off suppression: the model-call
+  boundary measures the complete OpenAI request and returns
+  `context_too_large` or `context_budget_unavailable` without advancing the
+  baseline. Configure `TINYIOTHUB__MINIMAX__CONTEXT_WINDOW`,
+  `TINYIOTHUB__MINIMAX__TOKENIZE_URL` and
+  `TINYIOTHUB__MINIMAX__COUNTING_METHOD`; `off` remains unchanged.
+- **Loopback quickstart fixture**:
+  `cargo run -p tinyiothub-cloud --example suppression_quickstart` serves
+  synthetic Sources on `127.0.0.1:3109` with in-memory SQLite and synthetic
+  `test-token`; no provider, device or credential is contacted. Synthetic gate
+  evidence is enabled only by fixture server configuration.
+
+### Compatibility
+
+| Item | Version / rule |
+|---|---|
+| `TURN_STATE_VERSION` (`stateVersion`) | 1. Unknown envelope versions are rejected; additive fields inside v1 are allowed. |
+| `sourceVersion` | 1 (`SOURCE_VERSION`). Snapshots are compatible only with an equal registered descriptor version; a bump makes older gate artifacts stale via `registryVersion`. |
+| `registryVersion` | `sha256` of the canonical ordered `(sourceId, sourceVersion)` descriptor list. Any registration change invalidates existing gate artifacts. |
+| `suppressionConfigVersion` | Per workspace, starts at 1 and increments on every accepted suppression update. |
+| Gate artifact `contentSha256` | SHA-256 over canonical JCS bytes excluding the hash field; tampering is rejected. |
+
+Existing workspaces start in `off`; the feature is invisible until a mode is
+explicitly chosen, and `canary`/`enforce` require approved current evidence.
+
+### Rollback
+
+- Immediate kill switch: `PUT /api/v1/workspaces/{id}/agent/schedule` with
+  `{"suppressionMode":"off"}`. It needs no other fields or evidence.
+- Roll back the code without a data rollback: the suppression tables are
+  additive and ignored by older binaries. No codemod, destructive DDL or
+  backfill is required.
+- After a confirmed false skip, stay `off`, run `POST suppression/reconcile`,
+  and re-enable only after root-cause repair, two clean preflights and fresh
+  approved evidence. See `docs/runbooks/assistant-suppression.md`.
+
 ## [0.5.2.0] - 2026-09-14
 
 ### Added

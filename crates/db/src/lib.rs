@@ -99,6 +99,8 @@ pub mod scene_template;
 pub mod seed;
 /// Session persistence and row types.
 pub mod session;
+/// Durable Assistant suppression state, fences and skip commits.
+pub mod suppression;
 /// system_settings key-value storage (event security config).
 pub mod ticket;
 

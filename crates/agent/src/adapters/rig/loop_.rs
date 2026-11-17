@@ -460,8 +460,9 @@ pub fn rig_loop_factory(cfg: AgentLoopConfig) -> anyhow::Result<AgentLoopHandle>
     let provider = (cfg.provider_factory)()?;
     let provider_supports_vision = provider.supports_vision();
     let retry_events = super::provider::RetryEvents::default();
-    let model =
-        PortModelAsRig::new(Arc::from(provider), cfg.model_name.clone()).with_retry_events(retry_events.clone());
+    let model = PortModelAsRig::new(Arc::from(provider), cfg.model_name.clone())
+        .with_retry_events(retry_events.clone())
+        .with_context_budget_required(cfg.require_context_budget);
 
     // Resolve the capabilities actually available at composition time. Vision
     // comes from the provider port; callers add configuration-derived
