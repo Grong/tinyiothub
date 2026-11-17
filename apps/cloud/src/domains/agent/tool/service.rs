@@ -47,8 +47,17 @@ pub fn chat_builtin_tools_provider(
 ) -> ToolProvider {
     Arc::new(move |workspace_id: &str, runtime: &ToolRuntimeContext| {
         let mut tools: Vec<(Box<dyn Tool>, ToolSafety)> = Vec::new();
+        let session_agent_id = session_primitive_agent(runtime);
         tools.push((Box::new(CanvasTool), classify_tool_safety("canvas")));
-        tools.push((Box::new(GetSkillTool), classify_tool_safety("get_skill")));
+        tools.push((
+            Box::new(GetSkillTool::new(
+                workspace_id.to_string(),
+                session_agent_id.clone(),
+                session.contexts.clone(),
+                session.events.clone(),
+            )),
+            classify_tool_safety("get_skill"),
+        ));
 
         // Thing Ontology tools (9) — always available, no denylist
         tools.extend(create_thing_tools(
@@ -75,7 +84,7 @@ pub fn chat_builtin_tools_provider(
 
         // Session 原语（Todo / 提问 / 子代理）—— 只在聊天/子代理 Turn 暴露：
         // 需要 agent_id 注册 TurnContext，并且仅聊天入口打开 flag。
-        if let Some(agent_id) = session_primitive_agent(runtime) {
+        if let Some(agent_id) = session_agent_id {
             use crate::domains::agent::session::tools::{AskUserTool, SpawnSubagentTool, TodoWriteTool};
             tools.push((
                 Box::new(TodoWriteTool::new(

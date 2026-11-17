@@ -483,6 +483,9 @@ impl Tool for ReadDeviceTool {
             "state": state,
             "text": text,
         });
+        if let Some(knowledge_docs) = &thing.knowledge_docs {
+            payload["knowledgeDocs"] = json!(knowledge_docs);
+        }
         let mut attachments = Vec::new();
         if let Some(requested) = input.sources.as_deref().filter(|sources| !sources.is_empty()) {
             match self.read_model_sources(&input.thing_id, requested).await {

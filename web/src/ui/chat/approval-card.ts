@@ -1,6 +1,7 @@
 import { LitElement, css, html, type PropertyValues } from 'lit';
 import { customElement, property, state } from 'lit/decorators.js';
 import { answerApproval } from '../../api/assistant.js';
+import { ApiError } from '../../api/client.js';
 import type { PendingApproval } from './timeline-model.js';
 
 @customElement('approval-card')
@@ -30,7 +31,7 @@ export class ApprovalCard extends LitElement {
       text-transform: uppercase;
     }
     .head::before {
-      content: "";
+      content: '';
       width: 5px;
       height: 5px;
       background: var(--warn);
@@ -117,7 +118,15 @@ export class ApprovalCard extends LitElement {
       this.done = true;
       this.dispatchEvent(new CustomEvent('answered', { detail: this.pending.approvalId }));
     } catch (error) {
-      this.error = (error as Error).message || '提交审批失败';
+      if (error instanceof ApiError && (error.code === 404 || error.code === 409)) {
+        // The server no longer has a pending entry (for example a cancelled
+        // turn or a restarted process). Close the stale card instead of
+        // trapping the user behind an approval that can never be answered.
+        this.done = true;
+        this.dispatchEvent(new CustomEvent('answered', { detail: this.pending.approvalId }));
+      } else {
+        this.error = (error as Error).message || '提交审批失败';
+      }
     } finally {
       this.submitting = false;
     }
@@ -132,16 +141,26 @@ export class ApprovalCard extends LitElement {
         <div class="summary">${this.pending.summary}</div>
         ${this.error ? html`<div class="error">${this.error}</div>` : ''}
         <div class="actions">
-          ${this.done
-            ? html`<span class="done">已处理，等待大脑继续</span>`
-            : html`
-                <button class="approval-deny" ?disabled=${this.submitting} @click=${() => this.decide('denied')}>
-                  拒绝
-                </button>
-                <button class="approval-approve" ?disabled=${this.submitting} @click=${() => this.decide('approved')}>
-                  批准
-                </button>
-              `}
+          ${
+            this.done
+              ? html`<span class="done">已处理，等待大脑继续</span>`
+              : html`
+                  <button
+                    class="approval-deny"
+                    ?disabled=${this.submitting}
+                    @click=${() => this.decide('denied')}
+                  >
+                    拒绝
+                  </button>
+                  <button
+                    class="approval-approve"
+                    ?disabled=${this.submitting}
+                    @click=${() => this.decide('approved')}
+                  >
+                    批准
+                  </button>
+                `
+          }
         </div>
       </section>
     `;

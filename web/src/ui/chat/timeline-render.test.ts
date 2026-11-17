@@ -37,6 +37,19 @@ describe('timeline render helpers', () => {
     ).toBe('查找设备 → 12 台设备');
   });
 
+  it('summarizes known device JSON instead of exposing raw JSON', () => {
+    expect(
+      toolSummary({
+        kind: 'tool',
+        id: 'c1',
+        name: 'read_device',
+        args: { thingId: 'dev-1' },
+        result: JSON.stringify({ name: '3号楼传感器', online: true, state: { 温度: 24, 湿度: 60 } }),
+        at: '',
+      }),
+    ).toBe('查看设备 dev-1 → 在线，2 项属性');
+  });
+
   it('uses the structured error for a failed tool summary', () => {
     expect(
       toolSummary({

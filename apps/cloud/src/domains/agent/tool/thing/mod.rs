@@ -862,12 +862,17 @@ mod tests {
         .execute(&pool)
         .await
         .unwrap();
-        let service = Arc::new(ThingService::new(pool));
+        let service = Arc::new(ThingService::new(pool.clone()));
         let created = service
             .create_thing(
                 &serde_json::from_value(serde_json::json!({"name":"温感-1","thingType":"device"})).unwrap(),
                 Some("ws"),
             )
+            .await
+            .unwrap();
+        sqlx::query("INSERT INTO resources (id, workspace_id, thing_id, resource_type, name, file_path, content, tags, created_at, updated_at) VALUES ('doc-temp-1', 'ws', ?, 'document', '温感维护手册', '', '每六个月校准一次', '[]', '2026-01-01', '2026-01-01')")
+            .bind(&created.id)
+            .execute(&pool)
             .await
             .unwrap();
 
@@ -898,6 +903,9 @@ mod tests {
         assert_eq!(v["health"], "attention");
         assert_eq!(v["zone"], "园区A/3号楼");
         assert_eq!(v["state"]["温度"], "31.5");
+        assert_eq!(v["knowledgeDocs"][0]["name"], "温感维护手册");
+        assert_eq!(v["knowledgeDocs"][0]["content"], "每六个月校准一次");
+        assert!(v["knowledgeDocs"][0]["url"].as_str().unwrap().contains("doc-temp-1"));
         assert!(v["text"].as_str().unwrap().contains("园区A/3号楼"));
         assert_eq!(v["v"], 1);
     }

@@ -24,6 +24,13 @@ export interface SessionEvent {
 export interface SessionEventPage {
   events: SessionEvent[];
   highWatermark: number;
+  nextBefore?: number | null;
+  hasMore?: boolean;
+}
+
+export interface SessionEventHistoryQuery {
+  turns: number;
+  before?: number;
 }
 
 export type TodoStatus = 'pending' | 'in_progress' | 'completed';
@@ -146,8 +153,14 @@ export async function fetchSessionEvents(
   sessionKey: string,
   after = 0,
   limit = 200,
+  history?: SessionEventHistoryQuery,
 ): Promise<SessionEventPage> {
-  const response = await fetch(buildUrl(`${sessionPath(sessionKey, '/events')}?after=${after}&limit=${limit}`), {
+  const params = new URLSearchParams({ after: String(after), limit: String(limit) });
+  if (history) {
+    params.set('turns', String(history.turns));
+    if (history.before !== undefined) params.set('before', String(history.before));
+  }
+  const response = await fetch(buildUrl(`${sessionPath(sessionKey, '/events')}?${params}`), {
     headers: authHeaders(),
     credentials: 'include',
   });

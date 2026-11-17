@@ -81,6 +81,16 @@ describe('assistant api', () => {
     expect(page.highWatermark).toBe(3);
   });
 
+  it('fetches complete turn pages with an older-turn cursor', async () => {
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      jsonResponse({ events: [], highWatermark: 30, hasMore: true, nextBefore: 20 }),
+    );
+    await fetchSessionEvents('agent:ws-1:default/a', 0, 200, { turns: 5, before: 30 });
+    expect(String(fetchMock.mock.calls[0][0])).toBe(
+      '/api/v1/chat/sessions/agent%3Aws-1%3Adefault%2Fa/events?after=0&limit=200&turns=5&before=30',
+    );
+  });
+
   it('maps answer status codes to ApiError', async () => {
     vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response('', { status: 409 }));
     await expect(

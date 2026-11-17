@@ -181,7 +181,8 @@ impl TriggerRouter {
 
     async fn dispatch(self: Arc<Self>, schedule: AssistantSchedule, now: DateTime<Utc>) {
         let report = self.executor.execute(schedule.clone(), self.shutdown.clone()).await;
-        let next_wake_at = now + ChronoDuration::seconds(i64::from(schedule.interval_seconds));
+        // 长 Turn 完成后仍保留完整间隔，避免按原计划时间立即补跑。
+        let next_wake_at = Utc::now() + ChronoDuration::seconds(i64::from(schedule.interval_seconds));
         if let Err(error) = self
             .db
             .mark_assistant_wake(&schedule.workspace_id, next_wake_at, now, report.outcome.as_str())
@@ -541,6 +542,16 @@ mod tests {
         Utc.timestamp_opt(secs, 0).single().unwrap()
     }
 
+    fn assert_next_wake_near_now(row: &AssistantSchedule, seconds: i64) {
+        let next = row.next_wake_at.expect("next wake scheduled");
+        let earliest = Utc::now() + chrono::Duration::seconds(seconds - 1);
+        let latest = Utc::now() + chrono::Duration::seconds(seconds + 1);
+        assert!(
+            next >= earliest && next <= latest,
+            "next wake {next} not near completion time"
+        );
+    }
+
     fn alarm(severity: &str) -> AiEvent {
         AiEvent::AlarmCreated(tinyiothub_core::models::event::AlarmEvent {
             id: "alarm-1".into(),
@@ -592,10 +603,11 @@ mod tests {
         }
         assert_eq!(executor.calls.load(Ordering::SeqCst), 1);
         let row = db.get_assistant_schedule("ws-1").await.unwrap().unwrap();
-        assert_eq!(row.next_wake_at, Some(now + chrono::Duration::seconds(300)));
+        assert_next_wake_near_now(&row, 300);
         assert_eq!(row.last_outcome.as_deref(), Some("completed"));
 
-        let handles = router.tick(now + chrono::Duration::seconds(299)).await;
+        let not_due_yet = row.next_wake_at.unwrap() - chrono::Duration::seconds(1);
+        let handles = router.tick(not_due_yet).await;
         assert!(handles.is_empty(), "not due yet");
     }
 
@@ -613,7 +625,7 @@ mod tests {
         }
 
         let row = db.get_assistant_schedule("ws-skip").await.unwrap().unwrap();
-        assert_eq!(row.next_wake_at, Some(now + chrono::Duration::seconds(300)));
+        assert_next_wake_near_now(&row, 300);
         assert_eq!(row.last_outcome.as_deref(), Some("skipped"));
     }
 
@@ -643,7 +655,37 @@ mod tests {
 
         assert_eq!(executor.calls.load(Ordering::SeqCst), 1);
         let row = db.get_assistant_schedule("ws-1").await.unwrap().unwrap();
-        assert_eq!(row.next_wake_at, Some(now + chrono::Duration::seconds(300)));
+        assert_next_wake_near_now(&row, 300);
+    }
+
+    #[tokio::test]
+    async fn long_turn_schedules_next_wake_after_completion() {
+        let db = Arc::new(test_db().await);
+        let scheduled = ts(Utc::now().timestamp() - 7_200);
+        db.ensure_assistant_schedule("ws-long", "__assistant__ws-long", scheduled)
+            .await
+            .unwrap();
+        let executor = Arc::new(BlockingExecutor {
+            calls: AtomicUsize::new(0),
+            started: Notify::new(),
+            release: Notify::new(),
+        });
+        let router = Arc::new(TriggerRouter::new(db.clone(), executor.clone()));
+
+        let mut handles = router.tick(scheduled).await;
+        executor.started.notified().await;
+        let earliest = Utc::now() + chrono::Duration::seconds(299);
+        executor.release.notify_one();
+        handles.remove(0).await.unwrap();
+        let latest = Utc::now() + chrono::Duration::seconds(300);
+
+        let row = db.get_assistant_schedule("ws-long").await.unwrap().unwrap();
+        let next = row.next_wake_at.expect("next wake scheduled");
+        assert!(
+            next >= earliest && next <= latest,
+            "next wake must be completion + interval: next={next}, earliest={earliest}, latest={latest}"
+        );
+        assert_eq!(row.last_wake_at, Some(scheduled));
     }
 
     #[tokio::test]
@@ -767,7 +809,7 @@ mod tests {
         assert_eq!(session.kind, "scheduled");
         assert_eq!(session.status, "ended");
         let schedule = db.get_assistant_schedule("ws-e2e").await.unwrap().unwrap();
-        assert_eq!(schedule.next_wake_at, Some(now + chrono::Duration::seconds(300)));
+        assert_next_wake_near_now(&schedule, 300);
         assert_eq!(schedule.last_outcome.as_deref(), Some("completed"));
     }
 

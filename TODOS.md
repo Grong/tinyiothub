@@ -839,3 +839,66 @@ Source: `/plan-eng-review` on `main` (2026-06-15)
 - **What:** ①`updatePropertyDef` 签名放宽 `expression: string | null` 并移除调用侧 cast（things-detail.ts:287）；②解绑弹窗 expando 状态改正式 state（T5 M-4）；③extra 属性缺 name 时跳过+告警（scene_instantiator parse_extra_properties，当前静默落空串）；④显式 driver 的 driver_options IS NULL 断言锁（scene_instantiate_test）。
 - **Why:** 各任务评审 Minor 分诊可延期；②④为测试/状态健壮性收紧。
 - **Effort:** S | **Depends on:** —
+
+## AI 视觉证据与视频 — Deferred (from /autoplan 2026-11-13)
+
+### P3 — 多帧与预报警画面评估
+- **What:** 仅当单帧试点的无法确认比例、重复失败或误排除风险触发阈值时，评估多帧、短时预报警缓冲及相应保留策略。
+- **Why:** 首版已批准单帧；提前建设会增加媒体存储、隐私与模型成本，且没有真实样本证明必要。
+- **Pros:** 以实测决定演进，数据契约已保留序列元数据。
+- **Cons:** 需要新标注样本、存储/带宽预算和重新评审安全边界。
+- **Context:** 从 `docs/designs/video-perception-streaming.md` 的 The Assignment、三组对照和停止信号开始；不要把单帧试点误称为通用安全证明。
+- **Depends on / blocked by:** 单帧真实摄像头试点与人工复核结果。
+
+### P3 — 自动摄像头发现
+- **What:** 在受控网络内评估 ONVIF/GB28181 自动发现、去重和显式确认入库。
+- **Why:** 当前创建流程要求用户选择模板并填写参数；自动发现不是 AI 证据或实时播放闭环的阻塞项。
+- **Pros:** 降低大规模接入配置成本。
+- **Cons:** 增加网络扫描、重复设备、凭证和跨网段安全风险。
+- **Context:** 复用真实驱动、创建 intent 和出站允许清单；不得绕过现有模板向导直接创建设备。
+- **Depends on / blocked by:** 视频创建链路稳定及真实部署规模证据。
+
+### P3 — 显式观察绑定（条件性备选）
+- **What:** 只有共享位置标签在试点中被证明误关联或维护成本不可接受时，才另议显式 subject↔camera 绑定。
+- **Why:** 用户当前明确选择标签发现且不新增持久化观察绑定表；本项不是默认方向。
+- **Pros:** 可能提高复杂现场的拓扑精度。
+- **Cons:** 引入第二套关系真相、迁移和权限维护成本。
+- **Context:** 先分析误关联、标签漂移和运营成本；任何提案必须保留多摄像头、证据出处与失败安全语义。
+- **Depends on / blocked by:** 标签方案试点失败证据与新的用户设计决策。
+
+### P3 — HLS 备用播放开放
+- **What:** 在固定 ZLMediaKit 版本上验证清单、分片、密钥全部子请求的短期授权后，才考虑开放 HLS。
+- **Why:** 首版允许 WebRTC-only；未经验证的 HLS 子资源鉴权会形成旁路。
+- **Pros:** 可增加浏览器兼容与分发选择。
+- **Cons:** 增加凭证传播、缓存、日志和回收复杂度。
+- **Context:** 从播放 lease、on_play/on_publish Hook、Referrer-Policy 和负向浏览器测试开始；鉴权不全时继续隐藏入口。
+- **Depends on / blocked by:** 选定媒体版本的真实浏览器鉴权证据。
+
+## Assistant 无变化抑制 — Deferred (from /autoplan 2026-11-13)
+
+### P3 — Phase 2 增量输入与覆盖回收协议
+- **What:** 仅在 Phase 0/1 数据证明需要后，独立设计增量 Source 输入、analyzedWork、requiredAcks、覆盖确认与物理 tombstone 释放。
+- **Why:** 首版薄 skip 门已保留完整 Turn 输入语义；提前加入增量覆盖与回收会把两类正确性风险耦合。
+- **Pros:** 可能进一步降低输入 token 与保留成本。
+- **Cons:** 需要新的跨存储恢复、容量与语义覆盖证明，复杂度高。
+- **Context:** 从 `docs/designs/assistant-turn-state-diff.md` 的 Delivery Decision 和 Deferred 开始；必须先取得 shadow 收益、Source veto、错误 skip 和最大工作量数据。
+- **Effort:** L（human）/ M（CC+gstack） | **Priority:** P3
+- **Depends on / blocked by:** Phase 0/1 shadow 与 canary 实测达标及独立设计批准。
+
+### P3 — Source revision 事件驱动即时唤醒
+- **What:** 评估 Source revision 变化直接触发唤醒，定时调度只作为对账兜底。
+- **Why:** 可能同时降低模型成本与五分钟异常延迟。
+- **Pros:** 比单纯降低轮询成本更接近及时行动的目标。
+- **Cons:** 需要事件去重、风暴背压、唤醒语义与调度恢复的新验证。
+- **Context:** 复用 Phase 0/1 的 Source revision 契约；首版只保留扩展点，不实现。
+- **Effort:** M（human）/ S（CC+gstack） | **Priority:** P3
+- **Depends on / blocked by:** 薄 skip 门稳定及延迟/成本收益评估。
+
+### P3 — 连续无变化时动态延长调度间隔
+- **What:** 根据连续 skip 与 Source veto 指标评估动态延长 scheduled 间隔。
+- **Why:** 可能进一步减少唤醒与审计开销，但与首版 skip 同时上线会混淆调度行为。
+- **Pros:** 降低长期空闲工作区的轮询成本。
+- **Cons:** 增加异常发现延迟与调度恢复复杂度。
+- **Context:** 先观察连续 skip 长度、reconciliation 和外部事件唤醒覆盖率，再决定是否独立设计。
+- **Effort:** M（human）/ S（CC+gstack） | **Priority:** P3
+- **Depends on / blocked by:** Phase 1 上线指标与独立批准。

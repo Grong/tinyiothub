@@ -942,6 +942,75 @@ fn openai_message(message: &ChatMessage) -> serde_json::Value {
     }
 }
 
+/// Incrementally separates provider content enclosed in `<think>` tags from
+/// ordinary answer text. Partial tags stay buffered across SSE chunks.
+#[derive(Default)]
+struct InlineThinkParser {
+    pending: String,
+    thinking: bool,
+}
+
+impl InlineThinkParser {
+    fn push(&mut self, chunk: &str) -> Vec<(String, bool)> {
+        self.pending.push_str(chunk);
+        let mut out = Vec::new();
+        while let Some(start) = self.pending.find('<') {
+            if start > 0 {
+                out.push((self.pending[..start].to_string(), self.thinking));
+                self.pending.drain(..start);
+            }
+            let Some(end) = self.pending.find('>') else {
+                return out;
+            };
+            let tag = self.pending[..=end].to_string();
+            let consumed = match tag.as_str() {
+                "<think>" => {
+                    self.thinking = true;
+                    end + 1
+                }
+                "</think>" => {
+                    self.thinking = false;
+                    end + 1
+                }
+                _ => {
+                    out.push(("<".to_string(), self.thinking));
+                    1
+                }
+            };
+            self.pending.drain(..consumed);
+        }
+        if !self.pending.is_empty() {
+            out.push((std::mem::take(&mut self.pending), self.thinking));
+        }
+        out
+    }
+
+    fn finish(&mut self) -> Vec<(String, bool)> {
+        if self.pending.is_empty() {
+            Vec::new()
+        } else {
+            vec![(std::mem::take(&mut self.pending), self.thinking)]
+        }
+    }
+}
+
+fn emit_content_delta(
+    text: &mut String,
+    reasoning: &mut String,
+    on_delta: &(dyn Fn(crate::port::provider::ChatStreamDelta) + Send + Sync),
+    (content, is_reasoning): (String, bool),
+) {
+    if is_reasoning {
+        reasoning.push_str(&content);
+    } else {
+        text.push_str(&content);
+    }
+    on_delta(crate::port::provider::ChatStreamDelta {
+        text: content,
+        reasoning: is_reasoning,
+    });
+}
+
 #[derive(Debug, Clone)]
 pub struct StreamingOpenAiPort {
     base_url: String,
@@ -1077,6 +1146,7 @@ impl ModelProvider for StreamingOpenAiPort {
         let mut reasoning = String::new();
         let mut tool_calls: Vec<PortToolCall> = Vec::new();
         let mut usage: Option<crate::port::provider::TokenUsage> = None;
+        let mut inline_think = InlineThinkParser::default();
         while let Some(chunk) = futures::StreamExt::next(&mut bytes).await {
             buffer.push_str(&String::from_utf8_lossy(&chunk?));
             while let Some(index) = buffer.find('\n') {
@@ -1123,11 +1193,9 @@ impl ModelProvider for StreamingOpenAiPort {
                 {
                     let delta = choice.get("delta").cloned().unwrap_or(serde_json::json!({}));
                     if let Some(t) = delta.get("content").and_then(serde_json::Value::as_str) {
-                        text.push_str(t);
-                        on_delta(crate::port::provider::ChatStreamDelta {
-                            text: t.to_string(),
-                            reasoning: false,
-                        });
+                        for event in inline_think.push(t) {
+                            emit_content_delta(&mut text, &mut reasoning, on_delta, event);
+                        }
                     }
                     if let Some(r) = delta
                         .get("reasoning_content")
@@ -1166,6 +1234,9 @@ impl ModelProvider for StreamingOpenAiPort {
                 }
             }
         }
+        for event in inline_think.finish() {
+            emit_content_delta(&mut text, &mut reasoning, on_delta, event);
+        }
         // Some providers omit tool call ids on the streamed deltas.
         for call in &mut tool_calls {
             if call.id.is_empty() {
@@ -1178,5 +1249,50 @@ impl ModelProvider for StreamingOpenAiPort {
             usage,
             reasoning_content: if reasoning.is_empty() { None } else { Some(reasoning) },
         })
+    }
+}
+
+#[cfg(test)]
+mod think_tag_tests {
+    use super::InlineThinkParser;
+
+    #[test]
+    fn inline_think_tags_become_reasoning_even_when_split() {
+        let mut parser = InlineThinkParser::default();
+        let mut events = Vec::new();
+        for chunk in ["<th", "ink>The user", " asks</", "think>\n\nAnswer"] {
+            events.extend(parser.push(chunk));
+        }
+        events.extend(parser.finish());
+        let merged = events
+            .into_iter()
+            .fold(Vec::<(String, bool)>::new(), |mut merged, (text, reasoning)| {
+                if let Some((previous, _)) = merged.last_mut().filter(|(_, current)| *current == reasoning) {
+                    previous.push_str(&text);
+                } else {
+                    merged.push((text, reasoning));
+                }
+                merged
+            });
+        assert_eq!(
+            merged,
+            vec![("The user asks".to_string(), true), ("\n\nAnswer".to_string(), false),]
+        );
+    }
+
+    #[test]
+    fn ordinary_less_than_text_is_not_lost() {
+        let mut parser = InlineThinkParser::default();
+        let mut events = parser.push("value < 10 and <b>not thinking</b>");
+        events.extend(parser.finish());
+        let text = events.into_iter().map(|(text, _)| text).collect::<String>();
+        assert_eq!(text, "value < 10 and <b>not thinking</b>");
+    }
+
+    #[test]
+    fn unclosed_think_block_remains_reasoning_at_end() {
+        let mut parser = InlineThinkParser::default();
+        assert_eq!(parser.push("<think>unfinished"), vec![("unfinished".to_string(), true)]);
+        assert!(parser.finish().is_empty());
     }
 }

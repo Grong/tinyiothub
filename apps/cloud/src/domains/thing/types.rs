@@ -129,6 +129,8 @@ pub struct ThingResponse {
     pub ontology_summary: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub summary_status: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub knowledge_docs: Option<Vec<serde_json::Value>>,
     #[serde(default)]
     pub tags: Vec<TagInfo>,
     /// Ancestor chain from root to this node.

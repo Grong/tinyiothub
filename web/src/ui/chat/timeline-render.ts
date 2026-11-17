@@ -82,14 +82,123 @@ function formatAt(value: string): string {
     : date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false });
 }
 
+type StructuredToolResult =
+  | { kind: 'device'; device: Record<string, unknown> }
+  | { kind: 'devices'; devices: Record<string, unknown>[]; total?: number }
+  | { kind: 'todos'; todos: TodoItem[] };
+
+function record(value: unknown): Record<string, unknown> | null {
+  return value !== null && typeof value === 'object' && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : null;
+}
+
+function structuredToolResult(part: ToolPart): StructuredToolResult | null {
+  if (!part.result) return null;
+  let value: unknown;
+  try {
+    value = JSON.parse(part.result);
+  } catch {
+    return null;
+  }
+  const result = record(value);
+  if (!result) return null;
+
+  if (['todo_write', 'update_todo', 'todo'].includes(part.name)) {
+    const items = result.todos ?? result.tasks;
+    if (!Array.isArray(items)) return null;
+    const todos = items.map((item) => {
+      const todo = record(item);
+      const content = todo?.content ?? todo?.title ?? todo?.name;
+      if (typeof content !== 'string') return null;
+      const status = todo?.status;
+      return {
+        content,
+        activeForm: typeof todo?.activeForm === 'string' ? todo.activeForm : content,
+        status: status === 'completed' || status === 'in_progress' ? status : 'pending',
+      } satisfies TodoItem;
+    });
+    return todos.every((todo): todo is TodoItem => todo !== null) ? { kind: 'todos', todos } : null;
+  }
+
+  if (['list_devices', 'list_things', 'search_things'].includes(part.name)) {
+    if (!Array.isArray(result.items)) return null;
+    const devices = result.items.map(record);
+    return devices.every((device): device is Record<string, unknown> => device !== null)
+      ? {
+          kind: 'devices',
+          devices,
+          total: typeof result.total === 'number' ? result.total : undefined,
+        }
+      : null;
+  }
+
+  if (['read_device', 'get_thing', 'get_thing_profile'].includes(part.name)) {
+    return { kind: 'device', device: result };
+  }
+  return null;
+}
+
+function deviceOnline(device: Record<string, unknown>): boolean | undefined {
+  if (typeof device.online === 'boolean') return device.online;
+  const live = record(device.live);
+  return typeof live?.online === 'boolean' ? live.online : undefined;
+}
+
+function deviceName(device: Record<string, unknown>): string {
+  for (const key of ['displayName', 'name', 'thingId', 'id']) {
+    const value = device[key];
+    if (typeof value === 'string' && value) return value;
+  }
+  return '未命名设备';
+}
+
+function thingTypeLabel(value: unknown): string {
+  if (typeof value !== 'string') return '';
+  const labels: Record<string, string> = { device: '设备', space: '空间', line: '产线', building: '建筑' };
+  return labels[value] ?? value;
+}
+
+function healthLabel(value: unknown): string {
+  if (typeof value !== 'string') return '';
+  const labels: Record<string, string> = { ok: '健康正常', attention: '需要关注', bad: '健康异常', unknown: '健康未知' };
+  return labels[value] ?? value;
+}
+
+function displayValue(value: unknown): string {
+  if (value === null || value === undefined) return '—';
+  if (typeof value === 'string') return value;
+  if (typeof value === 'number' || typeof value === 'boolean') return String(value);
+  return JSON.stringify(value);
+}
+
+function structuredSummary(result: StructuredToolResult): string {
+  if (result.kind === 'todos') {
+    const { done, total } = todoProgress(result.todos);
+    return `${done}/${total} 已完成`;
+  }
+  if (result.kind === 'devices') return `共 ${result.total ?? result.devices.length} 台`;
+  const online = deviceOnline(result.device);
+  const state = record(result.device.state);
+  return [
+    online === undefined ? '' : online ? '在线' : '离线',
+    state ? `${Object.keys(state).length} 项属性` : '',
+  ]
+    .filter(Boolean)
+    .join('，');
+}
+
 export function toolSummary(block: ToolPart): string {
   const arg = firstValue(block.args);
   const verb = TOOL_META[block.name]?.verb ?? block.name;
   const head = arg ? `${verb} ${arg}` : verb;
+  const structured = structuredToolResult(block);
   const output =
     block.status === 'failed' && block.error
       ? block.error
-      : block.result?.replace(/\s+/g, ' ').trim();
+      : structured
+        ? structuredSummary(structured)
+        : block.result?.replace(/\s+/g, ' ').trim();
   if (!output) return head;
   return `${head} → ${output.slice(0, 140)}`;
 }
@@ -150,9 +259,12 @@ function renderAssistant(
   // Interactive chat already renders the token stream below as liveText;
   // avoid showing the same text twice while both update.
   if (part.streaming && liveText) return nothing;
+  // A Turn header owns assistant identity; only legacy messages without a
+  // turn retain the old per-message header.
+  const showIdentity = showHeader && !part.turnId;
   return html`<article class="log-entry log-entry--assistant">
     ${
-      showHeader
+      showIdentity
         ? html`<div class="assistant-message__head">
             <span class="assistant-message__avatar" aria-hidden="true">脑</span>
             <span class="assistant-message__name">大脑</span>
@@ -177,8 +289,50 @@ function renderReasoning(part: ReasoningPart): TemplateResult {
   </details>`;
 }
 
+function renderStructuredResult(result: StructuredToolResult): TemplateResult {
+  if (result.kind === 'todos') return renderTodoItems(result.todos, 'structured-todos');
+  if (result.kind === 'devices') {
+    return html`<section class="structured-device-list" aria-label="设备列表">
+      <div class="structured-device-list__count">共 ${result.total ?? result.devices.length} 台</div>
+      <ul>
+        ${result.devices.map((device) => {
+          const online = deviceOnline(device);
+          const type = thingTypeLabel(device.thingType);
+          return html`<li class="structured-device-row">
+            <span class="structured-device-row__name">${deviceName(device)}</span>
+            ${type ? html`<span class="structured-device-row__type">${type}</span>` : nothing}
+            ${online === undefined ? nothing : html`<span class="structured-device__status ${online ? 'is-online' : 'is-offline'}">${online ? '在线' : '离线'}</span>`}
+          </li>`;
+        })}
+      </ul>
+    </section>`;
+  }
+
+  const { device } = result;
+  const online = deviceOnline(device);
+  const state = record(device.state);
+  const context = [thingTypeLabel(device.thingType), device.zone, healthLabel(device.health)]
+    .filter((value) => typeof value === 'string' && value)
+    .map((value) => String(value));
+  return html`<section class="structured-device" aria-label="设备状态">
+    <div class="structured-device__head">
+      <strong class="structured-device__name">${deviceName(device)}</strong>
+      ${online === undefined ? nothing : html`<span class="structured-device__status ${online ? 'is-online' : 'is-offline'}">${online ? '在线' : '离线'}</span>`}
+    </div>
+    ${context.length > 0 ? html`<div class="structured-device__context">${context.map((value) => html`<span>${value}</span>`)}</div>` : nothing}
+    ${state && Object.keys(state).length > 0
+      ? html`<dl class="structured-properties">
+          ${Object.entries(state).map(
+            ([name, value]) => html`<div class="structured-property"><dt>${name}</dt><dd>${displayValue(value)}</dd></div>`,
+          )}
+        </dl>`
+      : nothing}
+  </section>`;
+}
+
 function renderTool(part: ToolPart): TemplateResult {
   const meta = TOOL_META[part.name];
+  const structured = structuredToolResult(part);
   const icon = meta?.icon ?? '⚙';
   const failed = part.status === 'failed';
   const stateClass = failed
@@ -202,7 +356,7 @@ function renderTool(part: ToolPart): TemplateResult {
       ${
         part.result
           ? html`<div class="activity__detail-label">结果</div>
-              <pre>${part.result}</pre>`
+              ${structured ? renderStructuredResult(structured) : html`<pre>${part.result}</pre>`}`
           : nothing
       }
       ${
@@ -351,6 +505,21 @@ const PART_RENDERERS: Record<string, PartRenderer> = {
   retry: renderRetry as PartRenderer,
 };
 
+function renderTodoItems(todos: TodoItem[], className = ''): TemplateResult {
+  return html`<ol class="timeline-todos__list ${className}">
+    ${todos.map(
+      (todo) => html`
+        <li class="timeline-todo timeline-todo--${todo.status}">
+          <span class="timeline-todo__mark" aria-hidden="true">
+            ${todo.status === 'completed' ? '✓' : todo.status === 'in_progress' ? '▸' : '·'}
+          </span>
+          <span class="timeline-todo__text">${todo.content}</span>
+        </li>
+      `,
+    )}
+  </ol>`;
+}
+
 export function renderTodoPanel(todos: TodoItem[]): TemplateResult | typeof nothing {
   if (todos.length === 0) return nothing;
   const { done, total } = todoProgress(todos);
@@ -364,18 +533,7 @@ export function renderTodoPanel(todos: TodoItem[]): TemplateResult | typeof noth
       <div class="timeline-todos__meter" aria-hidden="true">
         <span style=${`width:${percent}%`}></span>
       </div>
-      <ol class="timeline-todos__list">
-        ${todos.map(
-          (todo) => html`
-            <li class="timeline-todo timeline-todo--${todo.status}">
-              <span class="timeline-todo__mark" aria-hidden="true">
-                ${todo.status === 'completed' ? '✓' : todo.status === 'in_progress' ? '▸' : '·'}
-              </span>
-              <span class="timeline-todo__text">${todo.content}</span>
-            </li>
-          `,
-        )}
-      </ol>
+      ${renderTodoItems(todos)}
     </section>
   `;
 }
@@ -505,10 +663,12 @@ export function renderTimeline(
             ${
               current && liveText
                 ? html`<article class="log-entry log-entry--assistant">
-                    <div class="assistant-message__head">
-                      <span class="assistant-message__avatar" aria-hidden="true">脑</span>
-                      <span class="assistant-message__name">大脑</span>
-                    </div>
+                    ${!hasTurn
+                      ? html`<div class="assistant-message__head">
+                          <span class="assistant-message__avatar" aria-hidden="true">脑</span>
+                          <span class="assistant-message__name">大脑</span>
+                        </div>`
+                      : nothing}
                     <div class="timeline-assistant timeline-assistant--live">
                       ${unsafeHTML(md(liveText))}
                     </div>

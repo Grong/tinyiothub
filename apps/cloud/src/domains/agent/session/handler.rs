@@ -27,6 +27,8 @@ pub struct EventQuery {
     #[serde(default)]
     pub after: i64,
     pub limit: Option<i64>,
+    pub turns: Option<i64>,
+    pub before: Option<i64>,
 }
 
 pub(crate) fn verify_session_workspace(session_key: &str, authorized_workspace: &str) -> Option<SessionKey> {
@@ -92,6 +94,25 @@ pub async fn list_events(
         return StatusCode::NOT_FOUND.into_response();
     };
     let filter = event_filter(&parsed.session_key());
+    if let Some(turns) = query.turns {
+        return match state
+            .db
+            .session_turn_page(&parsed.workspace_id, &filter, query.before, turns)
+            .await
+        {
+            Ok(page) => Json(serde_json::json!({
+                "events": page.events,
+                "highWatermark": page.high_watermark,
+                "nextBefore": page.next_before,
+                "hasMore": page.has_more,
+            }))
+            .into_response(),
+            Err(error) => {
+                tracing::warn!(%error, %session_key, "session turn page failed");
+                StatusCode::INTERNAL_SERVER_ERROR.into_response()
+            }
+        };
+    }
     match state
         .db
         .session_event_page(&parsed.workspace_id, &filter, query.after, query.limit.unwrap_or(200))

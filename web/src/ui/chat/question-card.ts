@@ -1,6 +1,7 @@
 import { LitElement, css, html, type PropertyValues } from 'lit';
 import { customElement, property, state } from 'lit/decorators.js';
 import { answerQuestion, type QuestionAnswer } from '../../api/assistant.js';
+import { ApiError } from '../../api/client.js';
 import type { PendingQuestion } from './timeline-model.js';
 
 @customElement('question-card')
@@ -53,17 +54,20 @@ export class QuestionCard extends LitElement {
     }
     .options {
       display: flex;
-      flex-wrap: wrap;
-      gap: 6px;
+      flex-direction: column;
+      align-items: stretch;
+      gap: 7px;
     }
     .question-option {
-      padding: 6px 12px;
+      padding: 9px 12px;
       border: 1px solid var(--border);
-      border-radius: var(--radius-full);
+      border-radius: var(--radius-md);
       background: transparent;
       color: var(--text);
       cursor: pointer;
       font-size: 12px;
+      line-height: 1.5;
+      text-align: left;
     }
     .question-option:hover {
       border-color: var(--asst-hairline-strong, #3a4047);
@@ -76,7 +80,9 @@ export class QuestionCard extends LitElement {
     }
     .question-option__desc {
       display: block;
+      margin-top: 3px;
       font-size: 10.5px;
+      line-height: 1.5;
       color: var(--muted);
     }
     .footer {
@@ -109,12 +115,14 @@ export class QuestionCard extends LitElement {
   @state() private selected: string[][] = [];
   @state() private submitting = false;
   @state() private submitted = false;
+  @state() private closed = false;
   @state() private error = '';
 
   protected willUpdate(changed: PropertyValues): void {
     if (changed.has('pending') && this.pending) {
       this.selected = this.pending.questions.map(() => []);
       this.submitted = false;
+      this.closed = false;
       this.error = '';
     }
   }
@@ -152,7 +160,12 @@ export class QuestionCard extends LitElement {
       this.submitted = true;
       this.dispatchEvent(new CustomEvent('answered'));
     } catch (error) {
-      this.error = (error as Error).message || '提交回答失败';
+      if (error instanceof ApiError && (error.code === 404 || error.code === 409)) {
+        this.closed = true;
+        this.dispatchEvent(new CustomEvent('answered'));
+      } else {
+        this.error = (error as Error).message || '提交回答失败';
+      }
     } finally {
       this.submitting = false;
     }
@@ -192,9 +205,11 @@ export class QuestionCard extends LitElement {
         ${this.error ? html`<div class="error">${this.error}</div>` : ''}
         <div class="footer">
           ${
-            this.submitted
-              ? html`<span class="question-option__desc">已提交，等待大脑继续</span>`
-              : html`<button
+            this.closed
+              ? html`<span class="question-option__desc">问题已关闭</span>`
+              : this.submitted
+                ? html`<span class="question-option__desc">已提交，等待大脑继续</span>`
+                : html`<button
                   class="question-submit"
                   ?disabled=${!this.complete || this.submitting}
                   @click=${() => this.submit()}

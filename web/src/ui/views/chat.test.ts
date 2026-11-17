@@ -99,6 +99,80 @@ describe('view-chat codex layout', () => {
     expect(el.querySelector('global-hud')).toBeTruthy();
   });
 
+  it('loads only the latest five turns before tailing new events', async () => {
+    hoisted.fetchSessionEvents.mockResolvedValue({
+      events: [turnStarted],
+      highWatermark: 1,
+      hasMore: true,
+      nextBefore: 1,
+    });
+    const el = document.createElement('view-chat') as ChatView;
+    document.body.appendChild(el);
+    await vi.waitFor(() => expect(hoisted.connectSessionEvents).toHaveBeenCalled());
+
+    expect(hoisted.fetchSessionEvents).toHaveBeenCalledTimes(1);
+    const [sessionKey, after, limit, query] = hoisted.fetchSessionEvents.mock.calls[0];
+    expect(sessionKey).toMatch(/^agent:ws-1:default\//);
+    expect([after, limit, query]).toEqual([0, 200, { turns: 5 }]);
+    expect(hoisted.connectSessionEvents.mock.calls[0][0].after).toBe(1);
+  });
+
+  it('loads five older turns at the top and preserves the reading anchor', async () => {
+    const latestTurn = { ...turnStarted, seq: 10, eventId: 'e10', runId: 'r10', payloadJson: { turnId: 't10' } };
+    const olderTurn = { ...turnStarted, seq: 1, eventId: 'e1-old', runId: 'r1', payloadJson: { turnId: 't1' } };
+    hoisted.fetchSessionEvents
+      .mockResolvedValueOnce({ events: [latestTurn], highWatermark: 10, hasMore: true, nextBefore: 10 })
+      .mockResolvedValueOnce({ events: [olderTurn], highWatermark: 10, hasMore: false, nextBefore: null });
+    const el = document.createElement('view-chat') as ChatView;
+    document.body.appendChild(el);
+    await vi.waitFor(() => expect(hoisted.connectSessionEvents).toHaveBeenCalled());
+
+    const thread = el.querySelector('.assistant-thread') as HTMLElement;
+    let scrollTop = 0;
+    Object.defineProperty(thread, 'clientHeight', { configurable: true, value: 400 });
+    Object.defineProperty(thread, 'scrollHeight', {
+      configurable: true,
+      get: () => ((el as any).timeline.blocks.some((block: any) => block.id === 't1') ? 1400 : 1000),
+    });
+    Object.defineProperty(thread, 'scrollTop', {
+      configurable: true,
+      get: () => scrollTop,
+      set: (value: number) => { scrollTop = value; },
+    });
+    thread.dispatchEvent(new Event('scroll'));
+
+    await vi.waitFor(() => expect(hoisted.fetchSessionEvents).toHaveBeenCalledTimes(2));
+    const [, after, limit, query] = hoisted.fetchSessionEvents.mock.calls[1];
+    expect([after, limit, query]).toEqual([0, 200, { turns: 5, before: 10 }]);
+    await vi.waitFor(() => expect(thread.scrollTop).toBe(400));
+    expect((el as any).timeline.blocks.filter((block: any) => block.kind === 'turn')).toHaveLength(2);
+  });
+
+  it('does not reload a just-answered question before its terminal event', async () => {
+    hoisted.fetchSessionEvents.mockResolvedValue({
+      events: [
+        turnStarted,
+        {
+          ...turnStarted,
+          seq: 2,
+          eventId: 'question-1',
+          eventType: 'question.asked',
+          payloadJson: { questionId: 'q1', questions: [] },
+        },
+      ],
+      highWatermark: 2,
+    });
+    const el = document.createElement('view-chat') as ChatView;
+    document.body.appendChild(el);
+    await vi.waitFor(() => expect((el as any).timeline.pendingQuestion?.questionId).toBe('q1'));
+
+    (el as any).answerPending();
+    await el.updateComplete;
+
+    expect((el as any).timeline.pendingQuestion).toBeNull();
+    expect(hoisted.fetchSessionEvents).toHaveBeenCalledTimes(1);
+  });
+
   it('connects session events and reconnects on session switch', async () => {
     hoisted.fetchSessionEvents.mockResolvedValue({ events: [turnStarted], highWatermark: 1 });
     const closeFirst = vi.fn();
@@ -110,7 +184,7 @@ describe('view-chat codex layout', () => {
 
     const first = hoisted.connectSessionEvents.mock.calls[0][0];
     expect(first.sessionKey).toMatch(/^agent:ws-1:default\//);
-    expect(first.after).toBe(0);
+    expect(first.after).toBe(1);
 
     el.querySelector('session-drawer')!.dispatchEvent(
       new CustomEvent('session-select', {
@@ -119,13 +193,12 @@ describe('view-chat codex layout', () => {
         composed: true,
       }),
     );
-    await el.updateComplete;
+    await vi.waitFor(() => expect(hoisted.connectSessionEvents).toHaveBeenCalledTimes(2));
 
     expect(closeFirst).toHaveBeenCalledTimes(1);
-    expect(hoisted.connectSessionEvents).toHaveBeenCalledTimes(2);
     const second = hoisted.connectSessionEvents.mock.calls[1][0];
     expect(second.sessionKey).toBe('agent:ws-1:default/next');
-    expect(second.after).toBe(0);
+    expect(second.after).toBe(1);
   });
 
   it('renders a2ui surfaces pushed through the chat state', async () => {

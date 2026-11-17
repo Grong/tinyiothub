@@ -12,7 +12,7 @@
 //!   event performance thresholds, social provider row, event-retention
 //!   cron job.
 //! - [`seed_demo`] — demo scenario, gated by `[seed] demo_data` (default
-//!   true): 8 demo things + per-thing properties/actions, tags + bindings,
+//!   true): 20 demo things + per-thing properties/actions, tags + bindings,
 //!   alarm rules + sample alarms, sample jobs, example notification channels.
 //!
 //! Both tiers are idempotent (`INSERT OR IGNORE` / `WHERE NOT EXISTS` guards)

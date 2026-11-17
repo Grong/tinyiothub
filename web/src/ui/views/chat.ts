@@ -79,6 +79,9 @@ export class ChatView extends LitElement {
   private a2uiHydrated = false;
   private stickToBottom = true;
   private threadObserver: ResizeObserver | null = null;
+  private historyBefore: number | null = null;
+  private historyHasMore = false;
+  private loadingOlder = false;
 
   connectedCallback(): void {
     super.connectedCallback();
@@ -137,6 +140,9 @@ export class ChatView extends LitElement {
     this.sending = false;
     this.loading = true;
     this.stickToBottom = true;
+    this.historyBefore = null;
+    this.historyHasMore = false;
+    this.loadingOlder = false;
     this.permissionMode = 'ask';
     this.sessionKey = sessionKey;
     this.sessionLabel = '';
@@ -160,40 +166,35 @@ export class ChatView extends LitElement {
     };
     this.refreshDrawer();
     void this.loadSessionMeta();
-    void this.loadTimeline(sessionKey);
-    this.closeEvents = connectSessionEvents({
-      sessionKey,
-      after: 0,
-      onEvent: (event) => {
-        if (this.sessionKey !== sessionKey) return;
-        this.timeline.ingestEvent(event);
-        this.requestUpdate();
-      },
-      onError: (error) => {
-        if (this.sessionKey !== sessionKey) return;
-        this.error = error.message;
-        this.requestUpdate();
-      },
+    void this.loadTimeline(sessionKey, true).then(() => {
+      if (this.sessionKey !== sessionKey || this.closeEvents) return;
+      this.closeEvents = connectSessionEvents({
+        sessionKey,
+        after: this.timeline.highWatermark,
+        onEvent: (event) => {
+          if (this.sessionKey !== sessionKey) return;
+          this.timeline.ingestEvent(event);
+          this.requestUpdate();
+        },
+        onError: (error) => {
+          if (this.sessionKey !== sessionKey) return;
+          this.error = error.message;
+          this.requestUpdate();
+        },
+      });
     });
   }
 
-  private async loadTimeline(sessionKey: string): Promise<void> {
+  private async loadTimeline(sessionKey: string, initializeHistory = false): Promise<void> {
     const key = sessionKey;
     const chatState = this.chatState;
     try {
-      let pageCursor = 0;
-      let page = await fetchSessionEvents(key, pageCursor, 200);
+      const page = await fetchSessionEvents(key, 0, 200, { turns: 5 });
       if (key !== this.sessionKey) return;
       this.timeline.ingest(page);
-      for (const event of page.events) pageCursor = Math.max(pageCursor, event.seq);
-      let guard = 0;
-      while (pageCursor < page.highWatermark && guard < 10) {
-        page = await fetchSessionEvents(key, pageCursor, 200);
-        if (key !== this.sessionKey) return;
-        if (page.events.length === 0) break;
-        this.timeline.ingest(page);
-        for (const event of page.events) pageCursor = Math.max(pageCursor, event.seq);
-        guard += 1;
+      if (initializeHistory) {
+        this.historyBefore = page.nextBefore ?? null;
+        this.historyHasMore = page.hasMore ?? false;
       }
       const todos = await fetchSessionTodos(key);
       if (key !== this.sessionKey) return;
@@ -264,15 +265,38 @@ export class ChatView extends LitElement {
     textarea.style.height = `${Math.min(textarea.scrollHeight, 164)}px`;
   }
 
+  private async loadOlderTimeline(thread: HTMLElement): Promise<void> {
+    const before = this.historyBefore;
+    if (!this.historyHasMore || before === null || this.loadingOlder || this.loading) return;
+    const key = this.sessionKey;
+    const previousHeight = thread.scrollHeight;
+    const previousTop = thread.scrollTop;
+    this.loadingOlder = true;
+    try {
+      const page = await fetchSessionEvents(key, 0, 200, { turns: 5, before });
+      if (key !== this.sessionKey) return;
+      this.timeline.ingest(page);
+      this.historyBefore = page.nextBefore ?? null;
+      this.historyHasMore = page.hasMore ?? false;
+      this.requestUpdate();
+      await this.updateComplete;
+      thread.scrollTop = previousTop + thread.scrollHeight - previousHeight;
+    } catch (error) {
+      if (key === this.sessionKey) this.error = (error as Error).message || '加载更早对话失败';
+    } finally {
+      if (key === this.sessionKey) this.loadingOlder = false;
+    }
+  }
+
   private onThreadScroll(): void {
-    const thread = this.querySelector('.assistant-thread');
+    const thread = this.querySelector('.assistant-thread') as HTMLElement | null;
     if (!thread) return;
     this.stickToBottom = thread.scrollHeight - thread.scrollTop - thread.clientHeight < 80;
+    if (thread.scrollTop <= 24) void this.loadOlderTimeline(thread);
   }
 
   private answerPending(): void {
     this.timeline.pendingQuestion = null;
-    void this.loadTimeline(this.sessionKey);
   }
 
   private onApprovalAnswered(event: CustomEvent<string>): void {
@@ -369,7 +393,7 @@ export class ChatView extends LitElement {
     const thread = this.querySelector('.assistant-thread');
     if (!thread) return;
     const pin = () => {
-      thread.scrollTop = thread.scrollHeight;
+      if (this.stickToBottom) thread.scrollTop = thread.scrollHeight;
     };
     pin();
     requestAnimationFrame(() => {

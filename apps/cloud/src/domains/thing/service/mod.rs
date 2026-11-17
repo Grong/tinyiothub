@@ -121,18 +121,19 @@ impl ThingService {
         let tags_map = self.db.load_thing_tags_batch(&[id]).await?;
         let mut resp = Self::row_to_response(&row, breadcrumb);
         resp.tags = tags_map.get(id).cloned().unwrap_or_default();
+        resp.knowledge_docs = self.load_knowledge_docs(id).await;
 
         Ok(resp)
     }
 
     /// Full profile: thing + properties + recent events + knowledge docs.
     pub async fn get_thing_profile(&self, id: &str, workspace_id: &str) -> Result<ThingProfileResponse, ThingError> {
-        let thing = self.get_thing(id, workspace_id).await?;
+        let mut thing = self.get_thing(id, workspace_id).await?;
 
         let properties = self.load_properties(id).await.unwrap_or_default();
         let actions = self.load_actions(id).await.unwrap_or_default();
         let recent_events = self.load_recent_events(id).await.unwrap_or_default();
-        let knowledge_docs = self.load_knowledge_docs(id).await.unwrap_or_default();
+        let knowledge_docs = thing.knowledge_docs.take().unwrap_or_default();
 
         Ok(ThingProfileResponse {
             thing,
@@ -529,6 +530,7 @@ impl ThingService {
             address: row.address.clone(),
             ontology_summary: row.ontology_summary.clone(),
             summary_status: row.summary_status.clone(),
+            knowledge_docs: None,
             tags: vec![],
             breadcrumb,
             created_at: row.created_at.clone(),

@@ -4,7 +4,7 @@ const hoisted = vi.hoisted(() => ({ answerQuestion: vi.fn() }));
 vi.mock('../../api/assistant.js', () => ({ answerQuestion: hoisted.answerQuestion }));
 
 import './question-card.js';
-import type { QuestionCard } from './question-card.js';
+import { QuestionCard } from './question-card.js';
 
 async function mount(): Promise<QuestionCard> {
   const el = document.createElement('question-card') as QuestionCard;
@@ -57,5 +57,26 @@ describe('question-card', () => {
   it('renders the question header', async () => {
     const el = await mount();
     expect(el.shadowRoot!.textContent).toContain('范围');
+  });
+
+  it('uses left-aligned full-width option rows', async () => {
+    await mount();
+    const styles = QuestionCard.styles.toString();
+    expect(styles).toContain('flex-direction: column');
+    expect(styles).toContain('text-align: left');
+  });
+
+  it('dismisses an already-closed question after a 404 response', async () => {
+    const { ApiError } = await import('../../api/client.js');
+    hoisted.answerQuestion.mockRejectedValue(new ApiError(404, '问题不存在或会话已结束'));
+    const el = await mount();
+    let answered = 0;
+    el.addEventListener('answered', () => { answered += 1; });
+    (el.shadowRoot!.querySelectorAll('.question-option')[0] as HTMLButtonElement).click();
+    await el.updateComplete;
+    (el.shadowRoot!.querySelector('.question-submit') as HTMLButtonElement).click();
+    await vi.waitFor(() => expect(answered).toBe(1));
+    await el.updateComplete;
+    expect(el.shadowRoot!.textContent).toContain('问题已关闭');
   });
 });

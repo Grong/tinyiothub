@@ -23,4 +23,99 @@ describe('process detail surfaces', () => {
     expect(host.querySelectorAll('.turn-process .process-detail')).toHaveLength(4);
     expect(host.querySelector('.timeline-todos')?.classList.contains('process-detail')).toBe(true);
   });
+
+  it('renders a known device result as status and readable properties', () => {
+    const host = document.createElement('div');
+    render(
+      renderTimeline([
+        { kind: 'turn', id: 't1', status: 'completed', at },
+        {
+          kind: 'tool',
+          id: 'c1',
+          name: 'read_device',
+          args: {},
+          result: JSON.stringify({
+            thingId: 'dev-1',
+            name: '3号楼温度传感器',
+            thingType: 'device',
+            online: true,
+            health: 'ok',
+            zone: '3号楼一层',
+            state: { 温度: 24.5, 湿度: '60%' },
+          }),
+          at,
+        },
+      ]),
+      host,
+    );
+
+    expect(host.querySelector('.structured-device__name')?.textContent).toBe('3号楼温度传感器');
+    expect(host.querySelector('.structured-device__status')?.textContent).toBe('在线');
+    expect(host.querySelector('.structured-device__context')?.textContent).toContain('设备');
+    expect(host.querySelector('.structured-device__context')?.textContent).toContain('健康正常');
+    const properties = [...host.querySelectorAll('.structured-property')].map((row) => row.textContent);
+    expect(properties.some((text) => text?.includes('温度') && text.includes('24.5'))).toBe(true);
+    expect(properties.some((text) => text?.includes('湿度') && text.includes('60%'))).toBe(true);
+    expect(host.querySelector('.activity__detail')?.textContent).not.toContain('"online"');
+  });
+
+  it('renders known device and task collections without raw JSON', () => {
+    const host = document.createElement('div');
+    render(
+      renderTimeline([
+        { kind: 'turn', id: 't1', status: 'completed', at },
+        {
+          kind: 'tool',
+          id: 'devices',
+          name: 'list_devices',
+          args: {},
+          result: JSON.stringify({
+            items: [
+              { id: 'dev-1', name: '冷却塔', thingType: 'device' },
+              { id: 'dev-2', displayName: '冷冻泵', name: 'pump-2', thingType: 'device' },
+            ],
+            total: 8,
+          }),
+          at,
+        },
+        {
+          kind: 'tool',
+          id: 'todos',
+          name: 'todo_write',
+          args: {},
+          result: JSON.stringify({
+            todos: [
+              { content: '检查设备', status: 'completed' },
+              { content: '生成摘要', status: 'in_progress' },
+            ],
+          }),
+          at,
+        },
+      ]),
+      host,
+    );
+
+    expect(host.querySelectorAll('.structured-device-row')).toHaveLength(2);
+    expect(host.querySelector('.structured-device-list__count')?.textContent).toBe('共 8 台');
+    expect(host.querySelector('.structured-device-list')?.textContent).toContain('冷冻泵');
+    expect(host.querySelector('.structured-device-row__type')?.textContent).toBe('设备');
+    expect(host.querySelectorAll('.structured-todos .timeline-todo')).toHaveLength(2);
+    expect(host.querySelector('.structured-todos .timeline-todo--completed')?.textContent).toContain('检查设备');
+    expect(host.querySelector('.structured-todos .timeline-todo--in_progress')?.textContent).toContain('生成摘要');
+  });
+
+  it('keeps unrecognized JSON available as raw text', () => {
+    const host = document.createElement('div');
+    const result = '{"custom":{"value":1}}';
+    render(
+      renderTimeline([
+        { kind: 'turn', id: 't1', status: 'completed', at },
+        { kind: 'tool', id: 'c1', name: 'custom_tool', args: {}, result, at },
+      ]),
+      host,
+    );
+    expect(host.querySelector('.structured-device')).toBeNull();
+    expect(host.querySelector('.structured-todos')).toBeNull();
+    expect(host.querySelector('.activity__detail pre:last-of-type')?.textContent).toBe(result);
+  });
 });

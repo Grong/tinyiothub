@@ -26,9 +26,43 @@ Docs-only changes: skip Rust/frontend batteries; run markdown lint and link-inte
 
 ## Project Snapshot
 
-TinyIoTHub is a Rust + Lit 3 SaaS IoT platform for managing things (物) — devices, spaces, buildings, production lines — with multi-protocol support (Modbus, ONVIF, SNMP, MQTT). Architecture follows the **relay paradigm** (buzz-relay model): one application crate owns all behavior; capability crates provide isolated subsystems. Things are organized in a hierarchical ontology with properties, events, actions, and knowledge resources.
+TinyIoTHub is an **IoT agent harness**, built in Rust + Lit 3. Device access is the substrate; the product itself is the agent runtime layer on top of it. Things (物) — devices, spaces, buildings, production lines — are modeled in a hierarchical ontology with properties, events, actions, and knowledge resources, and accessed over multiple protocols (Modbus, ONVIF, SNMP, MQTT).
+
+Three layers — value concentrates in the middle:
+
+| Layer | Contents | Note |
+|---|---|---|
+| Application | 巡检 / 应急 / 节能 / user-authored `SKILL.md` | scenario-specific — no Rust change needed |
+| **Harness** | Session Loop · Skill · Todo · Ask · Subagent · safety layer | **the product** |
+| Device | MQTT / Modbus / ONVIF / SNMP · thing ontology | substrate, must be sufficient but is not the differentiator |
+
+Core promise: give an AI a hand that can safely operate the physical world. `SessionRunner` is the single execution entry for an Assistant turn; `TriggerRouter` only emits wakes; every device action passes policy / approval / Effect / unknown reconciliation and is verified by read-back.
+
+Architecture follows the **relay paradigm** (buzz-relay model): one application crate owns all behavior; capability crates provide isolated subsystems.
 
 **Tech stack**: Rust 2024, Tokio, Axum, Tower, SQLx + SQLite | Lit 3 + Vite + TypeScript, nanostore
+
+### Harness Invariants (2026-11 定位：harness 是产品本体)
+
+These are constraints, not suggestions. A change that violates one is wrong even if it compiles and passes tests.
+
+1. **One loop** — chat, scheduled inspection, and event handling all execute through `SessionRunner`. Do not add a second executor or a parallel loop.
+2. **Trigger ≠ execution** — `TriggerRouter` produces wakes and nothing else: no prompt assembly, no turn execution.
+3. **Scenario lives in `SKILL.md`** — a new scenario (e.g. 空压机巡检) adds a skill plus a prompt section, not a Rust branch. If a change makes the loop scenario-aware, it is wrong.
+4. **Safety does not move** — policy / trust / approval / Effect / Decision / unknown reconciliation stay in the tool layer. No permission mode (`read_only` / `ask` / `full_access`) bypasses interlocks or e-stop.
+5. **Two ledgers, one timeline** — `session_events` is the only UI timeline; `hub_ledger` `runtime.v1` is the safety/audit ledger and must never feed the UI.
+
+Where the primitives live:
+
+| Primitive | Location |
+|---|---|
+| Session Loop / turn entry | `apps/cloud/src/domains/agent/session/runner.rs` |
+| Trigger (wake only) | `apps/cloud/src/domains/agent/session/trigger.rs` |
+| `todo_write` / `ask_user` / `spawn_subagent` | `apps/cloud/src/domains/agent/session/tools/` |
+| Session state (todo / question / approval) | `session/todos.rs` · `questions.rs` · `approvals.rs` |
+| Global HUD projection | `session/hud.rs` |
+| Port / adapters / memory | `crates/agent/src/{port,adapters,memory}` |
+| Design spec | `docs/superpowers/specs/2026-11-07-assistant-harness-design.md` |
 
 ### The Relay Paradigm (2026-08 范式统一，buzz-relay 模型)
 
@@ -96,12 +130,12 @@ apps/
       bootstrap.rs           # Startup logic (logging, driver rehydrate, device cache)
       state.rs               # AppState — single shared state struct (buzz-relay state.rs)
       router.rs              # build_router: ALL route mounting in one place
-      error.rs               # HTTP error mapping (composition layer)
-      config/                # Configuration loading
+      api/                   # HTTP middleware + extractors (WorkspaceScope, auth)
       domains/               # All business behavior, one dir per domain
+        agent/               #   harness orchestration: session/ · prompt/ · tools/
         thing/               #   {mod.rs, handler.rs, service.rs, dto.rs}
         auth/  user/  tenant/  event/  alarm/  driver/
-        notify/  agent/  mcp/  admin/
+        notify/  mcp/  admin/
       shared/                # Composition-private glue (service_manager, paths, initialization)
       tests/                 # Integration tests
     templates/               # Skill templates
@@ -231,7 +265,7 @@ domains/thing/
 
 ## Risk Tiers
 
-- **Low risk**: docs only, `.kiro/specs/**`, pure chore/ci changes without behavior impact, test-only changes
+- **Low risk**: docs only, pure chore/ci changes without behavior impact, test-only changes
 - **Medium risk**: most `apps/cloud/src/domains/*/service.rs` and `apps/cloud/src/domains/*/handler.rs` behavior changes, `web/src/ui/**` component changes, `web/src/stores/**` state changes
 - **High risk**: `apps/cloud/src/state.rs`/`router.rs`（组合根）, `crates/db/**`, `crates/db/migrations/**`, `crates/core/src/**` (contract changes ripple everywhere), `crates/web/src/**`, `.github/workflows/**`, JWT/session boundary code (`apps/cloud/src/domains/auth/**`), `crates/agent/**`（AI agent 运行时，安全敏感）与 `apps/cloud/src/domains/agent/**`（agent 域 handler/数据实现，运行时已迁入 crates/agent）
 
@@ -324,10 +358,9 @@ Branch/commit/PR rules:
 ## Design Docs
 
 ```
-.kiro/steering/           # Development standards (naming, API, architecture)
-.kiro/specs/              # Feature design documents
 docs/superpowers/plans/   # AI-assisted architecture design
 docs/superpowers/specs/   # AI-assisted detailed design
+docs/designs/             # Historical design records (some superseded)
 docs/api/                 # API documentation
 docs/guide/               # User guide
 ```
@@ -376,7 +409,6 @@ Protected files — consumed by AI coding skills and development tooling. Do not
 | `.github/pull_request_template.md` | `github-pr` — PR body structure |
 | `.github/ISSUE_TEMPLATE/bug_report.yml` | `github-issue` — bug report fields |
 | `.github/ISSUE_TEMPLATE/feature_request.yml` | `github-issue` — feature request fields |
-| `.kiro/steering/` | `review` — naming/API/architecture standards |
 | `FRONTEND_LAYERING_GUIDE.md` | `review` — frontend architecture check |
 | `.github/workflows/ci.yml` | CI pipeline — architecture checks, commit message validation |
 | `Justfile` | All skills — canonical command recipes |

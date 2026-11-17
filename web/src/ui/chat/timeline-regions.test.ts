@@ -99,6 +99,15 @@ describe('turn functional regions', () => {
     expect(host.querySelectorAll('.turn-process details.activity--tool')).toHaveLength(2);
   });
 
+  it('shows only one assistant identity in a turn with persisted or live body text', () => {
+    const host = document.createElement('div');
+    const answer: ContentPart = { kind: 'assistant', id: 'a1', text: '正文', at, turnId: 't1' };
+    render(renderTimeline([turn('running'), answer], { liveText: '正在输出' }), host);
+    const header = host.querySelector('.timeline-turn-group--current');
+    expect(header?.querySelectorAll('.turn-header')).toHaveLength(1);
+    expect(header?.querySelector('.assistant-message__head')).toBeNull();
+  });
+
   it('places terminal error details in the footer', () => {
     const host = document.createElement('div');
     const failed = { ...turn('failed'), error: 'HTTP 503: unavailable' } as ContentPart;

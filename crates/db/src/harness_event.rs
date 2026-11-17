@@ -52,6 +52,15 @@ pub struct EventPage {
     pub high_watermark: i64,
 }
 
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TurnEventPage {
+    pub events: Vec<HarnessEvent>,
+    pub high_watermark: i64,
+    pub next_before: Option<i64>,
+    pub has_more: bool,
+}
+
 #[derive(sqlx::FromRow)]
 struct SessionEventRow {
     seq: i64,
@@ -550,6 +559,88 @@ impl Db {
         tx.commit().await?;
         Ok(EventPage { events, high_watermark })
     }
+
+    /// Return complete turns, newest page first, without truncating long turns.
+    /// `before` is the oldest loaded `turn.started` sequence.
+    pub async fn session_turn_page(
+        &self,
+        workspace_id: &str,
+        filter: &EventFilter,
+        before: Option<i64>,
+        turns: i64,
+    ) -> Result<TurnEventPage> {
+        let Some(session_id) = &filter.session_id else {
+            return Err(DbError::Validation {
+                message: "turn pages require a session filter".to_string(),
+            });
+        };
+        let turns = turns.clamp(1, 20);
+        let pool = self.workspace_pool(workspace_id).await?;
+        let mut tx = pool.begin().await?;
+        let selected = sqlx::query_as::<_, (String, i64)>(
+            "SELECT run_id, MIN(seq) AS turn_seq FROM session_events
+             WHERE execution_mode = ? AND session_id = ? AND type = 'turn.started'
+               AND run_id IS NOT NULL AND (? IS NULL OR seq < ?)
+             GROUP BY run_id ORDER BY turn_seq DESC LIMIT ?",
+        )
+        .bind(filter.execution_mode.as_str())
+        .bind(session_id)
+        .bind(before)
+        .bind(before)
+        .bind(turns)
+        .fetch_all(&mut *tx)
+        .await?;
+
+        let oldest_turn_seq = selected.last().map(|(_, seq)| *seq);
+        let next_before = if let Some(oldest_turn_seq) = oldest_turn_seq {
+            sqlx::query_scalar::<_, i64>(
+                "SELECT seq FROM session_events
+                 WHERE execution_mode = ? AND session_id = ? AND type = 'turn.started' AND seq < ?
+                 ORDER BY seq DESC LIMIT 1",
+            )
+            .bind(filter.execution_mode.as_str())
+            .bind(session_id)
+            .bind(oldest_turn_seq)
+            .fetch_optional(&mut *tx)
+            .await?
+            .map(|_| oldest_turn_seq)
+        } else {
+            None
+        };
+
+        let rows = if selected.is_empty() {
+            Vec::new()
+        } else {
+            let mut query = sqlx::QueryBuilder::new(
+                "SELECT seq, event_id, session_id, execution_mode, run_id, task_id, type, occurred_at, cause_id, schema_v, payload_digest, payload_json FROM session_events WHERE execution_mode = ",
+            );
+            query
+                .push_bind(filter.execution_mode.as_str())
+                .push(" AND session_id = ")
+                .push_bind(session_id)
+                .push(" AND run_id IN (");
+            let mut run_ids = query.separated(", ");
+            for (run_id, _) in &selected {
+                run_ids.push_bind(run_id);
+            }
+            run_ids.push_unseparated(") ORDER BY seq ASC");
+            query.build_query_as::<SessionEventRow>().fetch_all(&mut *tx).await?
+        };
+        let high_watermark = sqlx::query_scalar::<_, i64>("SELECT COALESCE(MAX(seq), 0) FROM session_events")
+            .fetch_one(&mut *tx)
+            .await?;
+        let events = rows
+            .into_iter()
+            .map(|row| row.into_event(workspace_id))
+            .collect::<Result<Vec<_>>>()?;
+        tx.commit().await?;
+        Ok(TurnEventPage {
+            events,
+            high_watermark,
+            next_before,
+            has_more: next_before.is_some(),
+        })
+    }
 }
 
 #[cfg(test)]
@@ -943,6 +1034,76 @@ mod tests {
         assert_eq!(second.events.len(), 1);
         assert_eq!(second.events[0].seq, 257);
         assert_eq!(second.high_watermark, 257);
+
+        fixture.close().await;
+    }
+
+    #[tokio::test]
+    async fn session_turn_pages_return_complete_latest_turns_and_resume_older() {
+        let fixture = HarnessEventFixture::new().await;
+        for turn in 1..=7 {
+            let run_id = format!("run-{turn}");
+            let mut started = input(&format!("turn-{turn}-started"), ExecutionMode::Production);
+            started.run_id = Some(run_id.clone());
+            started.event_type = "turn.started".to_string();
+            started.payload_json = json!({"turnId": format!("turn-{turn}")});
+            fixture
+                .db
+                .append_session_event(&started)
+                .await
+                .expect("append turn start");
+
+            let event_count = if turn == 7 { 260 } else { 1 };
+            for item in 0..event_count {
+                let mut event = input(&format!("turn-{turn}-text-{item}"), ExecutionMode::Production);
+                event.run_id = Some(run_id.clone());
+                event.event_type = "step.text".to_string();
+                event.payload_json = json!({"turnId": format!("turn-{turn}"), "text": format!("text-{item}")});
+                fixture
+                    .db
+                    .append_session_event(&event)
+                    .await
+                    .expect("append turn event");
+            }
+        }
+
+        let latest = fixture
+            .db
+            .session_turn_page("ws-events", &filter(ExecutionMode::Production), None, 5)
+            .await
+            .expect("latest turn page");
+        let run_ids: Vec<Option<String>> = latest.events.iter().map(|event| event.run_id.clone()).collect();
+        assert!(run_ids.iter().all(|run_id| {
+            run_id
+                .as_deref()
+                .is_some_and(|id| ["run-3", "run-4", "run-5", "run-6", "run-7"].contains(&id))
+        }));
+        assert_eq!(
+            latest
+                .events
+                .iter()
+                .filter(|event| event.run_id.as_deref() == Some("run-7"))
+                .count(),
+            261
+        );
+        assert!(latest.events.windows(2).all(|pair| pair[0].seq < pair[1].seq));
+        assert!(latest.has_more);
+        let before = latest.next_before.expect("older turn cursor");
+
+        let older = fixture
+            .db
+            .session_turn_page("ws-events", &filter(ExecutionMode::Production), Some(before), 5)
+            .await
+            .expect("older turn page");
+        let older_runs: Vec<Option<String>> = older.events.iter().map(|event| event.run_id.clone()).collect();
+        assert!(
+            older_runs
+                .iter()
+                .all(|run_id| { run_id.as_deref().is_some_and(|id| ["run-1", "run-2"].contains(&id)) })
+        );
+        assert_eq!(older.events.len(), 4);
+        assert!(!older.has_more);
+        assert_eq!(older.next_before, None);
 
         fixture.close().await;
     }
