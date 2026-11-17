@@ -307,7 +307,7 @@ mod contract {
     use serde_json::json;
 
     use crate::domains::agent::session::suppression::canonical::{
-        canonical_bytes, canonicalize_json, hash_payload, hash_state, registry_version,
+        canonical_bytes, canonical_source_state, canonicalize_json, hash_payload, hash_state, registry_version,
     };
     use crate::domains::agent::session::suppression::error::SuppressionError;
 
@@ -491,8 +491,12 @@ mod contract {
     fn canonically_equivalent_work_keys_are_rejected_as_duplicates() {
         let snapshot = available_snapshot(vec![work_item("é", "r1"), work_item("e\u{0301}", "r2")]);
         assert_eq!(snapshot.validate(&descriptor()).unwrap_err().code, "duplicate_work_key");
-        let value = serde_json::to_value(&snapshot).unwrap();
-        assert_eq!(canonical_bytes(&value).unwrap_err().code, "duplicate_work_key");
+        assert_eq!(
+            canonical_source_state("devices", &snapshot.work_items)
+                .unwrap_err()
+                .code,
+            "duplicate_work_key"
+        );
     }
 
     #[test]
@@ -507,6 +511,23 @@ mod contract {
         assert_eq!(
             canonical_bytes(&json!([3, 1, {"b": 1, "a": 2}])).unwrap(),
             br#"[3,1,{"a":2,"b":1}]"#.as_slice()
+        );
+    }
+
+    #[test]
+    fn nested_business_work_items_preserve_order_and_allow_duplicate_keys() {
+        let left = json!({"steps": [{"workItems": [
+            {"workKey": "same", "revision": "1"},
+            {"workKey": "same", "revision": "2"}
+        ]}]});
+        let right = json!({"steps": [{"workItems": [
+            {"workKey": "same", "revision": "2"},
+            {"workKey": "same", "revision": "1"}
+        ]}]});
+        assert_ne!(canonical_bytes(&left).unwrap(), canonical_bytes(&right).unwrap());
+        assert_ne!(
+            hash_state(&canonical_bytes(&left).unwrap()),
+            hash_state(&canonical_bytes(&right).unwrap())
         );
     }
 
@@ -692,8 +713,12 @@ mod contract {
     fn duplicate_work_keys_are_rejected() {
         let snapshot = available_snapshot(vec![work_item("a", "r1"), work_item("a", "r2")]);
         assert_eq!(snapshot.validate(&descriptor()).unwrap_err().code, "duplicate_work_key");
-        let value = serde_json::to_value(&snapshot).unwrap();
-        assert_eq!(canonical_bytes(&value).unwrap_err().code, "duplicate_work_key");
+        assert_eq!(
+            canonical_source_state("devices", &snapshot.work_items)
+                .unwrap_err()
+                .code,
+            "duplicate_work_key"
+        );
     }
 
     #[test]
@@ -749,8 +774,8 @@ mod contract {
         let left = available_snapshot(vec![work_item("b", "r1"), work_item("a", "r1")]);
         let right = available_snapshot(vec![work_item("a", "r1"), work_item("b", "r1")]);
         assert_eq!(
-            canonical_bytes(&serde_json::to_value(&left).unwrap()).unwrap(),
-            canonical_bytes(&serde_json::to_value(&right).unwrap()).unwrap()
+            canonical_source_state("devices", &left.work_items).unwrap(),
+            canonical_source_state("devices", &right.work_items).unwrap()
         );
     }
 

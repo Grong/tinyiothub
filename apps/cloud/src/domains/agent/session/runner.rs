@@ -407,12 +407,25 @@ impl SessionRunner {
                     payload["errorMessage"] = json!(&reason);
                     payload["source"] = json!(&cancellation.source);
                 } else {
-                    // Async failures carry the safe summary the existing
-                    // frontend renders, without payloads, paths or credentials.
-                    let message = super::suppression::error::sanitize_public_text(&error);
-                    payload["error"] = json!(&message);
-                    payload["errorMessage"] = json!(&message);
-                    payload["source"] = json!("system");
+                    let budget_code = if error.contains("context_too_large") {
+                        Some(super::suppression::error::ErrorCode::ContextTooLarge)
+                    } else if error.contains("context_budget_unavailable") {
+                        Some(super::suppression::error::ErrorCode::ContextBudgetUnavailable)
+                    } else {
+                        None
+                    };
+                    if let Some(code) = budget_code {
+                        let typed = super::suppression::error::SuppressionError::from_code(code);
+                        payload = typed.async_failure_payload();
+                        payload["source"] = json!("system");
+                    } else {
+                        // Async failures carry the safe summary the existing
+                        // frontend renders, without payloads, paths or credentials.
+                        let message = super::suppression::error::sanitize_public_text(&error);
+                        payload["error"] = json!(&message);
+                        payload["errorMessage"] = json!(&message);
+                        payload["source"] = json!("system");
+                    }
                 }
                 health.terminal_written = self.emit_turn_event(context, attempt, "turn.completed", payload).await;
                 if !health.terminal_written {

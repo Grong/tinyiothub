@@ -900,11 +900,14 @@ async fn seed_synthetic_gate_evidence(
         reviewed_at: now,
         conclusion: FALSE_SKIP_CONCLUSION_NONE.to_string(),
         confirmed_false_skips: 0,
-        samples: vec![FalseSkipSample {
-            turn_id: canary[0].turn_id.clone(),
-            reviewed: true,
-            confirmed_false_skip: false,
-        }],
+        samples: canary
+            .iter()
+            .map(|observation| FalseSkipSample {
+                turn_id: observation.turn_id.clone(),
+                reviewed: true,
+                confirmed_false_skip: false,
+            })
+            .collect(),
     };
     let canary_artifact = seal_gate_artifact(
         derive_canary_gate_artifact(

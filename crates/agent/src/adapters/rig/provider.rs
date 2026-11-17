@@ -195,6 +195,7 @@ pub struct PortModelAsRig {
     pub(crate) inner: Arc<dyn ModelProvider>,
     pub(crate) model: String,
     retry_events: RetryEvents,
+    require_context_budget: bool,
 }
 
 impl PortModelAsRig {
@@ -203,6 +204,7 @@ impl PortModelAsRig {
             inner,
             model,
             retry_events: RetryEvents::default(),
+            require_context_budget: false,
         }
     }
 
@@ -210,6 +212,58 @@ impl PortModelAsRig {
         self.retry_events = retry_events;
         self
     }
+
+    pub fn with_context_budget_required(mut self, required: bool) -> Self {
+        self.require_context_budget = required;
+        self
+    }
+
+    async fn enforce_context_budget(
+        &self,
+        request: ChatRequest<'_>,
+        output_reserve: u64,
+        temperature: Option<f64>,
+    ) -> anyhow::Result<()> {
+        enforce_context_budget_for(
+            self.inner.as_ref(),
+            self.require_context_budget,
+            &self.model,
+            request,
+            output_reserve,
+            temperature,
+        )
+        .await
+    }
+}
+
+async fn enforce_context_budget_for(
+    inner: &dyn ModelProvider,
+    required: bool,
+    model: &str,
+    request: ChatRequest<'_>,
+    output_reserve: u64,
+    temperature: Option<f64>,
+) -> anyhow::Result<()> {
+    if !required {
+        return Ok(());
+    }
+    let Some(measurement) = inner.measure_context(request, model, temperature).await? else {
+        return Err(crate::port::provider::ContextBudgetUnavailable {
+            message: "provider did not expose a real context window and exact tokenizer".into(),
+        }
+        .into());
+    };
+    let required = measurement.counted_input_tokens.saturating_add(output_reserve);
+    if required > measurement.context_window {
+        return Err(crate::port::provider::ContextTooLarge {
+            counted_input_tokens: measurement.counted_input_tokens,
+            output_reserve_tokens: output_reserve,
+            context_window: measurement.context_window,
+            counting_method: measurement.counting_method,
+        }
+        .into());
+    }
+    Ok(())
 }
 
 /// 本适配器在 rig 侧的 provider 描述符：用 port provider 的 attribution alias。
@@ -712,6 +766,9 @@ impl CompletionModel for PortModelAsRig {
             tools: if tool_specs.is_empty() { None } else { Some(&tool_specs) },
             max_tokens: request.max_tokens,
         };
+        self.enforce_context_budget(port_request, request.max_tokens.unwrap_or(4096), request.temperature)
+            .await
+            .map_err(|error| CompletionError::ProviderError(error.to_string()))?;
         let resp = self
             .inner
             .chat(port_request, &self.model, request.temperature)
@@ -745,6 +802,7 @@ impl CompletionModel for PortModelAsRig {
             .collect();
         let provider = self.provider_name();
         let inner = self.inner.clone();
+        let require_context_budget = self.require_context_budget;
         let model = self.model.clone();
         let temperature = request.temperature;
         let max_tokens = request.max_tokens;
@@ -760,6 +818,15 @@ impl CompletionModel for PortModelAsRig {
                     tools: if tool_specs.is_empty() { None } else { Some(&tool_specs) },
                     max_tokens,
                 };
+                enforce_context_budget_for(
+                    inner.as_ref(),
+                    require_context_budget,
+                    &model,
+                    port_request,
+                    max_tokens.unwrap_or(4096),
+                    temperature,
+                )
+                    .await?;
                 let mut retries = 0;
                 loop {
                     let on_delta = |delta: crate::port::provider::ChatStreamDelta| {
@@ -948,6 +1015,9 @@ pub struct StreamingOpenAiPort {
     api_key: String,
     model: String,
     client: reqwest::Client,
+    context_window: Option<u64>,
+    tokenize_url: Option<String>,
+    counting_method: Option<String>,
 }
 
 impl StreamingOpenAiPort {
@@ -960,7 +1030,19 @@ impl StreamingOpenAiPort {
                 .no_proxy()
                 .build()
                 .unwrap_or_else(|_| reqwest::Client::new()),
+            context_window: std::env::var("TINYIOTHUB__MINIMAX__CONTEXT_WINDOW")
+                .ok()
+                .and_then(|value| value.parse::<u64>().ok()),
+            tokenize_url: std::env::var("TINYIOTHUB__MINIMAX__TOKENIZE_URL").ok(),
+            counting_method: std::env::var("TINYIOTHUB__MINIMAX__COUNTING_METHOD").ok(),
         }
+    }
+
+    pub fn with_context_budget(mut self, context_window: u64, tokenize_url: String, counting_method: String) -> Self {
+        self.context_window = Some(context_window);
+        self.tokenize_url = Some(tokenize_url);
+        self.counting_method = Some(counting_method);
+        self
     }
 }
 
@@ -975,10 +1057,117 @@ impl crate::port::attribution::Attributable for StreamingOpenAiPort {
     }
 }
 
+fn openai_request_body(request: ChatRequest<'_>, model: &str, temperature: Option<f64>) -> serde_json::Value {
+    let messages: Vec<serde_json::Value> = request
+        .messages
+        .iter()
+        .map(|message| {
+            let mut out = openai_message(message);
+            if !message.attachments.is_empty() {
+                let content: Vec<serde_json::Value> = std::iter::once(serde_json::json!({
+                    "type": "text",
+                    "text": message.content,
+                }))
+                .chain(message.attachments.iter().map(|attachment| {
+                    let data = format!(
+                        "data:{};base64,{}",
+                        attachment.mime,
+                        base64::engine::general_purpose::STANDARD.encode(&attachment.bytes)
+                    );
+                    serde_json::json!({ "type": "image_url", "image_url": { "url": data } })
+                }))
+                .collect();
+                out["content"] = serde_json::Value::Array(content);
+            }
+            out
+        })
+        .collect();
+    let tools: Vec<serde_json::Value> = request
+        .tools
+        .unwrap_or(&[])
+        .iter()
+        .map(|tool| {
+            serde_json::json!({ "type": "function", "function": {
+                "name": tool.name,
+                "description": tool.description,
+                "parameters": tool.parameters,
+            }})
+        })
+        .collect();
+    let mut body = serde_json::json!({
+        "model": model,
+        "messages": messages,
+        "stream": true,
+    });
+    if !tools.is_empty() {
+        body["tools"] = serde_json::Value::Array(tools);
+        body["tool_choice"] = serde_json::json!("auto");
+    }
+    if let Some(temperature) = temperature {
+        body["temperature"] = serde_json::json!(temperature);
+    }
+    if let Some(max_tokens) = request.max_tokens {
+        body["max_tokens"] = serde_json::json!(max_tokens);
+    }
+    body
+}
+
 #[async_trait::async_trait]
 impl ModelProvider for StreamingOpenAiPort {
     fn supports_vision(&self) -> bool {
         true
+    }
+
+    async fn measure_context(
+        &self,
+        request: ChatRequest<'_>,
+        model: &str,
+        temperature: Option<f64>,
+    ) -> anyhow::Result<Option<crate::port::provider::ContextMeasurement>> {
+        let Some(context_window) = self.context_window else {
+            return Ok(None);
+        };
+        let Some(tokenize_url) = self.tokenize_url.clone() else {
+            return Ok(None);
+        };
+        let model_name = if model.is_empty() { self.model.as_str() } else { model };
+        let body = openai_request_body(request, model_name, temperature);
+        let response = self
+            .client
+            .post(tokenize_url)
+            .bearer_auth(&self.api_key)
+            .header("Content-Type", "application/json")
+            .json(&body)
+            .send()
+            .await?;
+        if !response.status().is_success() {
+            return Err(crate::port::provider::ContextBudgetUnavailable {
+                message: format!("tokenizer endpoint returned HTTP {}", response.status()),
+            }
+            .into());
+        }
+        let payload: serde_json::Value = response.json().await?;
+        let counted_input_tokens = payload
+            .get("inputTokens")
+            .or_else(|| payload.get("input_tokens"))
+            .and_then(serde_json::Value::as_u64);
+        let counting_method = payload
+            .get("countingMethod")
+            .or_else(|| payload.get("counting_method"))
+            .and_then(serde_json::Value::as_str)
+            .map(str::to_string)
+            .or_else(|| self.counting_method.clone());
+        let (Some(counted_input_tokens), Some(counting_method)) = (counted_input_tokens, counting_method) else {
+            return Err(crate::port::provider::ContextBudgetUnavailable {
+                message: "tokenizer response omitted inputTokens or countingMethod".into(),
+            }
+            .into());
+        };
+        Ok(Some(crate::port::provider::ContextMeasurement {
+            context_window,
+            counted_input_tokens,
+            counting_method,
+        }))
     }
 
     async fn chat(
@@ -1001,57 +1190,7 @@ impl ModelProvider for StreamingOpenAiPort {
     ) -> anyhow::Result<crate::port::provider::ChatResponse> {
         let model_name = if model.is_empty() { self.model.as_str() } else { model };
         let url = format!("{}/chat/completions", self.base_url);
-        let messages: Vec<serde_json::Value> = request
-            .messages
-            .iter()
-            .map(|message| {
-                let mut out = openai_message(message);
-                if !message.attachments.is_empty() {
-                    let content: Vec<serde_json::Value> = std::iter::once(serde_json::json!({
-                        "type": "text",
-                        "text": message.content,
-                    }))
-                    .chain(message.attachments.iter().map(|attachment| {
-                        let data = format!(
-                            "data:{};base64,{}",
-                            attachment.mime,
-                            base64::engine::general_purpose::STANDARD.encode(&attachment.bytes)
-                        );
-                        serde_json::json!({ "type": "image_url", "image_url": { "url": data } })
-                    }))
-                    .collect();
-                    out["content"] = serde_json::Value::Array(content);
-                }
-                out
-            })
-            .collect();
-        let tools: Vec<serde_json::Value> = request
-            .tools
-            .unwrap_or(&[])
-            .iter()
-            .map(|tool| {
-                serde_json::json!({ "type": "function", "function": {
-                    "name": tool.name,
-                    "description": tool.description,
-                    "parameters": tool.parameters,
-                }})
-            })
-            .collect();
-        let mut body = serde_json::json!({
-            "model": model_name,
-            "messages": messages,
-            "stream": true,
-        });
-        if !tools.is_empty() {
-            body["tools"] = serde_json::Value::Array(tools);
-            body["tool_choice"] = serde_json::json!("auto");
-        }
-        if let Some(temperature) = temperature {
-            body["temperature"] = serde_json::json!(temperature);
-        }
-        if let Some(max_tokens) = request.max_tokens {
-            body["max_tokens"] = serde_json::json!(max_tokens);
-        }
+        let body = openai_request_body(request, model_name, temperature);
         let response = self
             .client
             .post(url)

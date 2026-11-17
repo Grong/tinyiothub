@@ -398,11 +398,10 @@ pub async fn update_schedule(
         current.interval_seconds
     };
 
-    // Kill switch first: once `off` is committed, later ticks must not skip.
-    // `assistant_schedules` lives in the platform DB while a skip commit runs
-    // in the workspace DB. A skip whose commit is already in flight cannot be
-    // rolled back by this write; Task 8/9 own the alert/reconciliation for
-    // that residual window. This handler does not claim cross-DB atomicity.
+    // Kill switch linearization: update_suppression_config commits the platform
+    // row and then a monotonic workspace-generation mirror before returning.
+    // Skip commits revalidate that mirror inside their workspace transaction,
+    // so an older skip cannot become visible after `off` returns.
     if (mode.is_some() || reconciliation_seconds.is_some())
         && let Err(error) = state
             .db
@@ -1055,6 +1054,21 @@ async fn manual_operation(
                     return internal(error);
                 }
             } else {
+                // The winner is preparing its accepted result. Concurrent
+                // identical callers wait for that same result instead of
+                // turning the reservation window into a spurious 409.
+                for _ in 0..500 {
+                    match state.db.find_suppression_idempotency(&workspace_id, &key).await {
+                        Ok(Some(record)) => {
+                            if record.result.is_some() {
+                                return replay_or_conflict(record, operation, &fingerprint);
+                            }
+                        }
+                        Ok(None) => break,
+                        Err(error) => return internal(error),
+                    }
+                    tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+                }
                 return problem(
                     StatusCode::CONFLICT,
                     "wake_in_flight",
@@ -1106,14 +1120,13 @@ async fn manual_operation(
         Err(error) => return internal(error),
     }
 
-    match ops.start_manual(&workspace_id, operation).await {
-        Ok(start) => {
+    match ops.prepare_manual(&workspace_id, operation).await {
+        Ok(prepared) => {
+            let start = prepared.turn_start();
             let result = accepted_body(&start.session_key, &start.turn_id, &workspace_id);
-            // Persist the durable attempt id (recovery joins this against
-            // suppression_state.latest_attempt_id); the executed turn id stays
-            // in the recorded result. Retry transient write failures; if all
-            // attempts fail the null-result reservation is reclaimable after
-            // the preparation deadline instead of wedging the key forever.
+            // Persist the durable attempt and accepted result BEFORE spawning
+            // execution. A crash after this point can only replay the original
+            // attempt; terminal work can never outrun its idempotency record.
             let mut recorded = false;
             for attempt_no in 0..3 {
                 match state
@@ -1136,15 +1149,22 @@ async fn manual_operation(
                     }
                 }
             }
-            if !recorded {
+            if recorded {
+                prepared.spawn();
+                (StatusCode::ACCEPTED, Json(result)).into_response()
+            } else {
                 tracing::error!(
                     %workspace_id,
                     turn_id = %start.turn_id,
                     attempt_id = %start.attempt_id,
-                    "suppression idempotency result could not be recorded; stale reservation is reclaimable after the preparation deadline"
+                    "suppression idempotency result could not be recorded; execution was not started"
                 );
+                problem(
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    "idempotency_record_failed",
+                    "无法持久化幂等结果；本次操作未执行，请使用同一 Idempotency-Key 重试",
+                )
             }
-            (StatusCode::ACCEPTED, Json(result)).into_response()
         }
         Err(error) => {
             let _ = state

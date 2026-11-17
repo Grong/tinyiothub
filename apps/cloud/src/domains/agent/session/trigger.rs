@@ -25,7 +25,8 @@ use crate::domains::agent::event::types::AiEvent;
 use crate::domains::agent::orchestrator::callbacks::extract_payload;
 use crate::domains::agent::session::suppression::preflight::{PREFLIGHT_BACKPRESSURE_RETRY_AFTER_MS, PreflightGate};
 use crate::domains::agent::session::wake::{
-    ManualOperation, ManualPreflight, ManualStartError, ManualTurnStart, WakeExecutor, WakeOutcome, assistant_agent_id,
+    ManualOperation, ManualPreflight, ManualStartError, ManualTurnStart, PreparedManual, WakeExecutor, WakeOutcome,
+    assistant_agent_id,
 };
 
 pub const TRIGGER_TICK_INTERVAL: Duration = Duration::from_secs(30);
@@ -418,6 +419,26 @@ impl TriggerRouter {
 /// allocate their durable attempt before the 202 response and then execute
 /// asynchronously through the same full-Turn/skip implementations; they never
 /// advance `next_wake_at` or `last_outcome`.
+/// A prepared manual operation whose execution has not started. HTTP persists
+/// the accepted idempotency result before calling `spawn`, closing the crash
+/// window where terminal work could outrun its replay record.
+pub trait PreparedSuppressionOperation: Send {
+    fn turn_start(&self) -> ManualTurnStart;
+    fn spawn(self: Box<Self>);
+}
+
+struct RecordedPreparation {
+    start: ManualTurnStart,
+}
+
+impl PreparedSuppressionOperation for RecordedPreparation {
+    fn turn_start(&self) -> ManualTurnStart {
+        self.start.clone()
+    }
+
+    fn spawn(self: Box<Self>) {}
+}
+
 #[async_trait::async_trait]
 pub trait SuppressionOps: Send + Sync {
     async fn manual_preflight(&self, workspace_id: &str) -> Result<ManualPreflight, ManualStartError>;
@@ -444,12 +465,58 @@ pub trait SuppressionOps: Send + Sync {
         ))
     }
 
+    /// Prepare without starting terminal work. Legacy fixture implementations
+    /// keep their existing start behavior; production overrides this with a
+    /// genuinely deferred execution.
+    async fn prepare_manual(
+        &self,
+        workspace_id: &str,
+        operation: ManualOperation,
+    ) -> Result<Box<dyn PreparedSuppressionOperation>, ManualStartError> {
+        let start = self.start_manual(workspace_id, operation).await?;
+        Ok(Box::new(RecordedPreparation { start }))
+    }
+
     /// Allocate the durable attempt synchronously, then spawn execution.
     async fn start_manual(
         &self,
         workspace_id: &str,
         operation: ManualOperation,
     ) -> Result<ManualTurnStart, ManualStartError>;
+}
+
+struct TriggerPreparedOperation {
+    start: ManualTurnStart,
+    prepared: Option<PreparedManual>,
+    executor: Arc<dyn WakeExecutor>,
+    cancel: CancellationToken,
+    guard: Option<InFlightGuard>,
+    workspace_id: String,
+    operation: ManualOperation,
+}
+
+impl PreparedSuppressionOperation for TriggerPreparedOperation {
+    fn turn_start(&self) -> ManualTurnStart {
+        self.start.clone()
+    }
+
+    fn spawn(mut self: Box<Self>) {
+        let prepared = self.prepared.take().expect("manual operation spawned once");
+        let guard = self.guard.take().expect("manual in-flight guard");
+        let workspace = self.workspace_id.clone();
+        let operation = self.operation;
+        tokio::spawn(async move {
+            let _guard = guard;
+            let report = self.executor.execute_manual(prepared, self.cancel).await;
+            tracing::info!(
+                workspace_id = %workspace,
+                operation = operation.as_str(),
+                session_key = %report.session_key,
+                outcome = report.outcome.as_str(),
+                "manual suppression operation finished"
+            );
+        });
+    }
 }
 
 #[async_trait::async_trait]
@@ -461,11 +528,11 @@ impl SuppressionOps for TriggerRouter {
         self.executor.manual_preflight(workspace_id).await
     }
 
-    async fn start_manual(
+    async fn prepare_manual(
         &self,
         workspace_id: &str,
         operation: ManualOperation,
-    ) -> Result<ManualTurnStart, ManualStartError> {
+    ) -> Result<Box<dyn PreparedSuppressionOperation>, ManualStartError> {
         if let Some(retry_after_ms) = self.preflight_backpressure() {
             return Err(ManualStartError::Backpressure { retry_after_ms });
         }
@@ -474,9 +541,6 @@ impl SuppressionOps for TriggerRouter {
             .ensure_assistant_schedule(workspace_id, &assistant_agent_id(workspace_id), Utc::now())
             .await
             .map_err(|error| ManualStartError::Unavailable(error.to_string()))?;
-        // One workspace-wide in-flight slot shared with scheduled and event
-        // wakes. The guard is released when the spawned execution finishes
-        // (including panics or cancellation).
         if !self.in_flight.insert(workspace_id.to_string()) {
             return Err(ManualStartError::InFlight);
         }
@@ -496,20 +560,25 @@ impl SuppressionOps for TriggerRouter {
             turn_id: prepared.turn_id().to_string(),
             attempt_id: prepared.attempt_id().to_string(),
         };
-        let executor = self.executor.clone();
-        let cancel = self.shutdown.clone();
-        let workspace = workspace_id.to_string();
-        tokio::spawn(async move {
-            let _guard = guard;
-            let report = executor.execute_manual(prepared, cancel).await;
-            tracing::info!(
-                workspace_id = %workspace,
-                operation = operation.as_str(),
-                session_key = %report.session_key,
-                outcome = report.outcome.as_str(),
-                "manual suppression operation finished"
-            );
-        });
+        Ok(Box::new(TriggerPreparedOperation {
+            start,
+            prepared: Some(prepared),
+            executor: self.executor.clone(),
+            cancel: self.shutdown.clone(),
+            guard: Some(guard),
+            workspace_id: workspace_id.to_string(),
+            operation,
+        }))
+    }
+
+    async fn start_manual(
+        &self,
+        workspace_id: &str,
+        operation: ManualOperation,
+    ) -> Result<ManualTurnStart, ManualStartError> {
+        let prepared = self.prepare_manual(workspace_id, operation).await?;
+        let start = prepared.turn_start();
+        prepared.spawn();
         Ok(start)
     }
 
@@ -1177,6 +1246,19 @@ mod tests {
 
         #[async_trait::async_trait]
         impl ModelProvider for ScriptedProvider {
+            async fn measure_context(
+                &self,
+                request: ChatRequest<'_>,
+                _model: &str,
+                _temperature: Option<f64>,
+            ) -> anyhow::Result<Option<tinyiothub_agent::port::provider::ContextMeasurement>> {
+                Ok(Some(tinyiothub_agent::port::provider::ContextMeasurement {
+                    context_window: u64::MAX / 4,
+                    counted_input_tokens: serde_json::to_vec(request.messages)?.len() as u64,
+                    counting_method: "fixture-exact-json-bytes-v1".into(),
+                }))
+            }
+
             async fn chat(
                 &self,
                 _request: ChatRequest<'_>,
@@ -1388,6 +1470,19 @@ mod tests {
 
         #[async_trait::async_trait]
         impl ModelProvider for ScriptedProvider {
+            async fn measure_context(
+                &self,
+                request: ChatRequest<'_>,
+                _model: &str,
+                _temperature: Option<f64>,
+            ) -> anyhow::Result<Option<tinyiothub_agent::port::provider::ContextMeasurement>> {
+                Ok(Some(tinyiothub_agent::port::provider::ContextMeasurement {
+                    context_window: u64::MAX / 4,
+                    counted_input_tokens: serde_json::to_vec(request.messages)?.len() as u64,
+                    counting_method: "fixture-exact-json-bytes-v1".into(),
+                }))
+            }
+
             async fn chat(
                 &self,
                 _request: ChatRequest<'_>,

@@ -111,7 +111,7 @@ pub(crate) fn default_workspace_store_root() -> PathBuf {
 }
 
 fn harness_migrator() -> Migrator {
-    Migrator::with_migrations(vec![
+    let mut migrator = Migrator::with_migrations(vec![
         Migration::new(
             20261103000001,
             "harness_workspace".into(),
@@ -175,7 +175,20 @@ fn harness_migrator() -> Migrator {
             include_str!("../migrations/20261115000001_harness_suppression_observations.sql").into_sql_str(),
             false,
         ),
-    ])
+        Migration::new(
+            20261116000001,
+            "harness_suppression_linearization_and_sources".into(),
+            MigrationType::Simple,
+            include_str!("../migrations/20261116000001_harness_suppression_linearization_and_sources.sql")
+                .into_sql_str(),
+            false,
+        ),
+    ]);
+    // Rollback/mixed-version workers must open workspaces that already contain
+    // additive migrations unknown to their older binary, matching the platform
+    // migrator's forward-tolerance policy.
+    migrator.set_ignore_missing(true);
+    migrator
 }
 
 pub(crate) fn validate_workspace_id(workspace_id: &str) -> Result<()> {
@@ -1209,6 +1222,24 @@ mod tests {
             .execute(&pool)
             .await
             .expect("write marker");
+        pool.close().await;
+    }
+
+    #[tokio::test]
+    async fn final_review_workspace_migrator_tolerates_newer_applied_migrations() {
+        let pool = SqlitePool::connect("sqlite::memory:").await.expect("memory db");
+        super::harness_migrator().run(&pool).await.expect("current migrations");
+        sqlx::query(
+            "INSERT INTO _sqlx_migrations (version, description, success, checksum, execution_time) \
+             VALUES (99999999999999, 'future_rollback_fixture', 1, X'00', 0)",
+        )
+        .execute(&pool)
+        .await
+        .expect("insert newer applied migration");
+        super::harness_migrator()
+            .run(&pool)
+            .await
+            .expect("older binary must reopen a newer workspace database");
         pool.close().await;
     }
 

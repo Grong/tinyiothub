@@ -14,6 +14,8 @@ pub struct Db {
     #[cfg(test)]
     pub(crate) harness_transition_test_hooks:
         Option<std::sync::Arc<crate::harness_effect::tests::HarnessTransitionTestHooks>>,
+    #[cfg(test)]
+    pub(crate) suppression_commit_test_hooks: Option<std::sync::Arc<crate::suppression::SuppressionCommitTestHooks>>,
     #[cfg(any(test, feature = "testing"))]
     pub(crate) runtime_projection_probe: Option<std::sync::Arc<crate::runtime_event::RuntimeProjectionProbe>>,
 }
@@ -29,6 +31,8 @@ impl Db {
             workspace_store_test_hooks: None,
             #[cfg(test)]
             harness_transition_test_hooks: None,
+            #[cfg(test)]
+            suppression_commit_test_hooks: None,
             #[cfg(any(test, feature = "testing"))]
             runtime_projection_probe: None,
         }

@@ -23,10 +23,19 @@
   `20261114000003_harness_suppression_fence_attempt_ids.sql` adds durable
   fence attempt identities;
   `20261115000001_harness_suppression_observations.sql` adds
-  `suppression_observations`.
+  `suppression_observations`;
+  `20261116000001_harness_suppression_linearization_and_sources.sql` adds the
+  workspace mode/config generation and restart-safe Source ref/tombstone
+  retention.
 - **Typed suppression errors** with stable `code`, safe `what`/`fix`,
   recovery bounds, `codeAnchor`, allowlisted context, trace and redaction.
   Catalog: `docs/dev/assistant-suppression.md` (one anchor per code).
+- **Exact provider context budgets** for non-off suppression: the model-call
+  boundary measures the complete OpenAI request and returns
+  `context_too_large` or `context_budget_unavailable` without advancing the
+  baseline. Configure `TINYIOTHUB__MINIMAX__CONTEXT_WINDOW`,
+  `TINYIOTHUB__MINIMAX__TOKENIZE_URL` and
+  `TINYIOTHUB__MINIMAX__COUNTING_METHOD`; `off` remains unchanged.
 - **Loopback quickstart fixture**:
   `cargo run -p tinyiothub-cloud --example suppression_quickstart` serves
   synthetic Sources on `127.0.0.1:3109` with in-memory SQLite and synthetic

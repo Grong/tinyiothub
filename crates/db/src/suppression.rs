@@ -201,6 +201,14 @@ pub struct SkipAttempt {
     pub expected_control_cursor: i64,
 }
 
+/// Deterministic pause point used only by the kill-switch race regression.
+#[cfg(test)]
+#[derive(Debug, Default)]
+pub struct SuppressionCommitTestHooks {
+    pub config_read: tokio::sync::Notify,
+    pub release_commit: tokio::sync::Notify,
+}
+
 /// A committed skip plus the events appended to the caller's transaction.
 #[derive(Debug, Clone, PartialEq)]
 pub struct CommittedSkip {
@@ -623,6 +631,46 @@ impl Db {
             .ok_or_else(|| DbError::Internal("committed suppression row disappeared".to_string()))
     }
 
+    /// Workspace SQLite pool for adapter-owned immutable Source refs. This is
+    /// deliberately scoped to the suppression Source cache rather than exposing
+    /// arbitrary workspace queries through the cloud adapter layer.
+    pub async fn source_cache_pool(&self, workspace_id: &str) -> Result<sqlx::SqlitePool> {
+        self.workspace_pool(workspace_id).await
+    }
+
+    /// Mirror the platform schedule generation into the workspace database.
+    /// Conditional upsert prevents an older concurrent writer from overwriting
+    /// a newer kill-switch generation after that newer write has returned.
+    pub(crate) async fn sync_workspace_suppression_config(
+        &self,
+        workspace_id: &str,
+        mode: SuppressionMode,
+        config_version: i64,
+    ) -> Result<()> {
+        // A store that exists gets the linearizing mirror before the response.
+        // Minimal platform-only fixtures/legacy rows have no workspace DB yet;
+        // their first skip allocation initializes the mirror from this config.
+        let pool = match self.workspace_pool(workspace_id).await {
+            Ok(pool) => pool,
+            Err(DbError::NotFound { .. }) => return Ok(()),
+            Err(error) => return Err(error),
+        };
+        sqlx::query(
+            "INSERT INTO suppression_workspace_config (workspace_id, mode, config_version, updated_at) \
+             VALUES (?, ?, ?, ?) \
+             ON CONFLICT(workspace_id) DO UPDATE SET \
+               mode = excluded.mode, config_version = excluded.config_version, updated_at = excluded.updated_at \
+             WHERE excluded.config_version >= suppression_workspace_config.config_version",
+        )
+        .bind(workspace_id)
+        .bind(mode.as_str())
+        .bind(config_version)
+        .bind(format_ts(Utc::now()))
+        .execute(&pool)
+        .await?;
+        Ok(())
+    }
+
     /// Fence a skip before the audit transaction. From here until
     /// [`Db::commit_skip`] succeeds (or a recovery reconciles the fence), no
     /// worker may skip.
@@ -635,12 +683,13 @@ impl Db {
         // Shadow/off must never write the durable audit fence. Check the
         // platform mode before the workspace CAS so a caller that forgot the
         // decision-level gate cannot fence the session.
-        let schedule_mode: Option<String> =
-            sqlx::query_scalar("SELECT suppression_mode FROM assistant_schedules WHERE workspace_id = ?")
-                .bind(&baseline.workspace_id)
-                .fetch_optional(self.pool())
-                .await?;
-        let Some(schedule_mode) = schedule_mode else {
+        let schedule_mode: Option<(String, i64)> = sqlx::query_as(
+            "SELECT suppression_mode, suppression_config_version FROM assistant_schedules WHERE workspace_id = ?",
+        )
+        .bind(&baseline.workspace_id)
+        .fetch_optional(self.pool())
+        .await?;
+        let Some((schedule_mode, schedule_config_version)) = schedule_mode else {
             return Err(DbError::CasConflict {
                 message: format!("workspace {} has no suppression schedule", baseline.workspace_id),
             });
@@ -658,6 +707,32 @@ impl Db {
             });
         }
         let pool = self.workspace_pool(&baseline.workspace_id).await?;
+        let mut tx = pool.begin().await?;
+        // First-time initialization is platform -> workspace. Later writers use
+        // the conditional mirror update; an existing workspace generation is
+        // never replaced by this stale preflight read.
+        sqlx::query(
+            "INSERT OR IGNORE INTO suppression_workspace_config (workspace_id, mode, config_version, updated_at) \
+             VALUES (?, ?, ?, ?)",
+        )
+        .bind(&baseline.workspace_id)
+        .bind(schedule_mode.as_str())
+        .bind(schedule_config_version)
+        .bind(format_ts(Utc::now()))
+        .execute(&mut *tx)
+        .await?;
+        let workspace_mode: String =
+            sqlx::query_scalar("SELECT mode FROM suppression_workspace_config WHERE workspace_id = ?")
+                .bind(&baseline.workspace_id)
+                .fetch_one(&mut *tx)
+                .await?;
+        let workspace_mode = SuppressionMode::parse(&workspace_mode)
+            .ok_or_else(|| DbError::Internal(format!("unknown workspace suppression mode: {workspace_mode}")))?;
+        if !workspace_mode.allows_skip() {
+            return Err(DbError::CasConflict {
+                message: format!("suppression mode {} does not allow a skip", workspace_mode.as_str()),
+            });
+        }
         let attempt_no = baseline.attempt_no + 1;
         let attempt_id = attempt_id(&baseline.workspace_id, session_id, attempt_no);
         let stamp = format_ts(Utc::now());
@@ -680,7 +755,7 @@ impl Db {
         .bind(&baseline.workspace_id)
         .bind(session_id)
         .bind(baseline.state_version)
-        .execute(&pool)
+        .execute(&mut *tx)
         .await?
         .rows_affected();
         if updated != 1 {
@@ -688,6 +763,7 @@ impl Db {
                 message: format!("session {session_id} skip attempt lost its CAS"),
             });
         }
+        tx.commit().await?;
         Ok(SkipAttempt {
             attempt_id,
             workspace_id: baseline.workspace_id.clone(),
@@ -703,24 +779,27 @@ impl Db {
     /// Re-validate every decision input and commit the skipped terminal plus
     /// its sync barriers in one workspace transaction.
     ///
-    /// `assistant_schedules` config is platform state, so mode/configVersion
-    /// are read immediately before the workspace transaction. Everything else
-    /// — the state row, the user cursor, the skipped events and the pending
-    /// barriers — commits together in the workspace database. Any rejection
-    /// or event failure rolls the whole transaction back; only the durable
-    /// `audit_in_progress` fence written by [`Db::begin_skip_attempt`]
-    /// remains, so no partial skipped lifecycle is visible.
+    /// `assistant_schedules` config is platform state, mirrored with a
+    /// monotonic generation into `suppression_workspace_config`. Mode,
+    /// configVersion, the state row, user cursor, skipped events and pending
+    /// barriers are all revalidated in this one workspace transaction. PUT off
+    /// returns only after its mirror write commits, so an older skip cannot
+    /// become visible afterwards.
     pub async fn commit_skip(&self, attempt: &SkipAttempt, events: &[HarnessEventInput]) -> Result<CommittedSkip> {
+        let pool = self.workspace_pool(&attempt.workspace_id).await?;
+        // The config read authorizes later writes. Acquire SQLite's write lock
+        // before that read so a concurrent commit cannot invalidate the snapshot
+        // and make the first event INSERT fail with SQLITE_BUSY_SNAPSHOT.
+        let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
         let schedule = sqlx::query_as::<_, (String, i64)>(
-            "SELECT suppression_mode, suppression_config_version \
-             FROM assistant_schedules WHERE workspace_id = ?",
+            "SELECT mode, config_version FROM suppression_workspace_config WHERE workspace_id = ?",
         )
         .bind(&attempt.workspace_id)
-        .fetch_optional(self.pool())
+        .fetch_optional(&mut *tx)
         .await?;
         let Some((mode, schedule_config_version)) = schedule else {
             return Err(DbError::CasConflict {
-                message: format!("workspace {} has no suppression schedule", attempt.workspace_id),
+                message: format!("workspace {} has no mirrored suppression config", attempt.workspace_id),
             });
         };
         let mode = SuppressionMode::parse(&mode)
@@ -738,9 +817,12 @@ impl Db {
                 ),
             });
         }
+        #[cfg(test)]
+        if let Some(hooks) = &self.suppression_commit_test_hooks {
+            hooks.config_read.notify_one();
+            hooks.release_commit.notified().await;
+        }
 
-        let pool = self.workspace_pool(&attempt.workspace_id).await?;
-        let mut tx = pool.begin().await?;
         let committed = match self.commit_skip_in_tx(&mut tx, attempt, events).await {
             Ok(committed) => committed,
             Err(error) => {
@@ -900,6 +982,22 @@ impl Db {
         if state.latest_outcome != OUTCOME_SKIPPED || state.latest_attempt_id.as_deref() != Some(attempt_id) {
             return Ok(None);
         }
+        self.load_committed_skip_by_attempt_no(workspace_id, session_id, state.attempt_no, expected_event_ids)
+            .await
+    }
+
+    /// Load an immutable skip by its monotonic attempt number even when a
+    /// later full Turn has overwritten the session's latest outcome/attempt.
+    pub async fn load_committed_skip_by_attempt_no(
+        &self,
+        workspace_id: &str,
+        session_id: &str,
+        attempt_no: i64,
+        expected_event_ids: &[String],
+    ) -> Result<Option<CommittedSkip>> {
+        let Some(state) = self.load_suppression_state(workspace_id, session_id).await? else {
+            return Ok(None);
+        };
         let expected: std::collections::HashSet<&str> = expected_event_ids.iter().map(String::as_str).collect();
         if expected.len() != expected_event_ids.len() {
             return Ok(None);
@@ -930,8 +1028,8 @@ impl Db {
             return Ok(None);
         }
         Ok(Some(CommittedSkip {
-            attempt_id: attempt_id.to_string(),
-            attempt_no: state.attempt_no,
+            attempt_id: attempt_id(workspace_id, session_id, attempt_no),
+            attempt_no,
             events,
             state,
         }))
@@ -1482,6 +1580,10 @@ impl SuppressionGateMode {
 #[serde(rename_all = "camelCase")]
 pub struct GateSample {
     pub turn_ids: Vec<String>,
+    /// Exact canary Turns whose preflight said wouldSkip. Every one must have
+    /// an independent human false-skip review before enforce.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub would_skip_turn_ids: Vec<String>,
     /// Pre-canary baseline Turns for a canary artifact (mode=shadow).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub baseline_turn_ids: Vec<String>,
@@ -1921,5 +2023,223 @@ impl Db {
         .fetch_optional(&pool)
         .await?;
         row.as_ref().map(map_observation_row).transpose()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+
+    use super::*;
+
+    #[tokio::test]
+    async fn final_review_off_race_with_skip_commit_is_linearized() {
+        const WS: &str = "ws-off-race";
+        const SESSION: &str = "agent:ws-off-race:assistant/main";
+        let root = std::env::temp_dir().join(format!("suppression-off-race-{}", uuid::Uuid::new_v4()));
+        let mut db = Db::new(crate::test_helpers::test_pool().await).with_workspace_store_root(root.join("stores"));
+        crate::seed::seed_system(&db).await.expect("seed system");
+        sqlx::query(
+            "INSERT INTO workspaces (id, name, tenant_id, created_at, updated_at) \
+             VALUES (?, 'workspace', 'tenant-default-001', 'now', 'now')",
+        )
+        .bind(WS)
+        .execute(db.pool())
+        .await
+        .expect("workspace");
+        db.create_workspace_store(WS).await.expect("workspace store");
+        db.ensure_assistant_schedule(WS, "assistant", Utc::now())
+            .await
+            .expect("schedule");
+        db.update_suppression_config(WS, Some(SuppressionMode::Enforce), None)
+            .await
+            .expect("enforce");
+
+        let initial = SuppressionState::initial(WS, SESSION);
+        let full = db.begin_full_attempt(SESSION, &initial).await.expect("begin baseline");
+        db.complete_full_attempt(
+            WS,
+            &full.attempt_id,
+            &FullAttemptCompletion {
+                state_id: "state-1".to_string(),
+                state_version: TURN_STATE_VERSION,
+                registry_version: "sha256:registry".to_string(),
+                config_version: 2,
+                control_cursor: 0,
+                turn_state: serde_json::json!({"stateId":"state-1","sources":[]}),
+                observed_at: Utc::now(),
+            },
+        )
+        .await
+        .expect("install baseline");
+        let baseline = db.load_suppression_state(WS, SESSION).await.unwrap().unwrap();
+        let attempt = db.begin_skip_attempt(SESSION, &baseline).await.expect("begin skip");
+        let payload = serde_json::json!({"turnId":"turn-off-race","outcome":"skipped"});
+        let event = HarnessEventInput {
+            event_id: "event-off-race".to_string(),
+            workspace_id: WS.to_string(),
+            session_id: SESSION.to_string(),
+            execution_mode: ExecutionMode::Production,
+            run_id: Some("turn-off-race".to_string()),
+            task_id: None,
+            event_type: "turn.completed".to_string(),
+            occurred_at: Utc::now(),
+            cause_id: None,
+            schema_v: 1,
+            payload_digest: "digest".to_string(),
+            payload_json: payload,
+        };
+
+        let hooks = Arc::new(SuppressionCommitTestHooks::default());
+        db.suppression_commit_test_hooks = Some(hooks.clone());
+        let off_db = Db::new(db.pool().clone()).with_workspace_store_root(root.join("stores"));
+        off_db
+            .workspace_pool(WS)
+            .await
+            .expect("pre-open independent off connection");
+        let committing_db = db.clone();
+        let committing = tokio::spawn(async move { committing_db.commit_skip(&attempt, &[event]).await });
+        hooks.config_read.notified().await;
+        let mut off = tokio::spawn(async move {
+            off_db
+                .update_suppression_config(WS, Some(SuppressionMode::Off), None)
+                .await
+        });
+        // An immediate skip transaction holds the workspace write lock here,
+        // so off may either finish first (deferred implementation) or wait for
+        // the skip. Both orders are linearizable; only their required outcomes
+        // differ.
+        let early_off = tokio::time::timeout(std::time::Duration::from_millis(100), &mut off)
+            .await
+            .ok();
+        let off_finished_first = early_off.is_some();
+        hooks.release_commit.notify_one();
+        let result = committing.await.expect("join commit");
+        let off_result = match early_off {
+            Some(result) => result.expect("join early off"),
+            None => tokio::time::timeout(std::time::Duration::from_secs(5), &mut off)
+                .await
+                .expect("off timed out after skip commit was released")
+                .expect("join off"),
+        };
+        off_result.expect("off write must finish");
+        match (off_finished_first, &result) {
+            (true, Err(DbError::CasConflict { .. })) => {}
+            (false, Ok(_)) => {}
+            (true, Ok(_)) => panic!("stale skip committed after off returned"),
+            (true, Err(error)) => panic!("off completed first but skip failed for another reason: {error}"),
+            (false, Err(error)) => panic!("skip held the write lock but failed before off completed: {error}"),
+        }
+        let pool = db.workspace_pool(WS).await.expect("workspace pool");
+        let events: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM session_events WHERE session_id = ?")
+            .bind(SESSION)
+            .fetch_one(&pool)
+            .await
+            .expect("event count");
+        assert_eq!(events, if off_finished_first { 0 } else { 1 });
+        db.pool().close().await;
+        pool.close().await;
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[tokio::test]
+    async fn concurrent_workspace_write_during_skip_commit_does_not_busy_snapshot() {
+        const WS: &str = "ws-commit-write-race";
+        const SESSION: &str = "agent:ws-commit-write-race:assistant/main";
+        let root = std::env::temp_dir().join(format!("suppression-commit-write-race-{}", uuid::Uuid::new_v4()));
+        let mut db = Db::new(crate::test_helpers::test_pool().await).with_workspace_store_root(root.join("stores"));
+        crate::seed::seed_system(&db).await.expect("seed system");
+        sqlx::query(
+            "INSERT INTO workspaces (id, name, tenant_id, created_at, updated_at) \
+             VALUES (?, 'workspace', 'tenant-default-001', 'now', 'now')",
+        )
+        .bind(WS)
+        .execute(db.pool())
+        .await
+        .expect("workspace");
+        db.create_workspace_store(WS).await.expect("workspace store");
+        db.ensure_assistant_schedule(WS, "assistant", Utc::now())
+            .await
+            .expect("schedule");
+        db.update_suppression_config(WS, Some(SuppressionMode::Enforce), None)
+            .await
+            .expect("enforce");
+        let initial = SuppressionState::initial(WS, SESSION);
+        let full = db.begin_full_attempt(SESSION, &initial).await.expect("begin baseline");
+        db.complete_full_attempt(
+            WS,
+            &full.attempt_id,
+            &FullAttemptCompletion {
+                state_id: "state-1".to_string(),
+                state_version: TURN_STATE_VERSION,
+                registry_version: "sha256:registry".to_string(),
+                config_version: 2,
+                control_cursor: 0,
+                turn_state: serde_json::json!({"stateId":"state-1","sources":[]}),
+                observed_at: Utc::now(),
+            },
+        )
+        .await
+        .expect("install baseline");
+        let baseline = db.load_suppression_state(WS, SESSION).await.unwrap().unwrap();
+        let attempt = db.begin_skip_attempt(SESSION, &baseline).await.expect("begin skip");
+        let event = HarnessEventInput {
+            event_id: "event-commit-write-race".to_string(),
+            workspace_id: WS.to_string(),
+            session_id: SESSION.to_string(),
+            execution_mode: ExecutionMode::Production,
+            run_id: Some("turn-commit-write-race".to_string()),
+            task_id: None,
+            event_type: "turn.completed".to_string(),
+            occurred_at: Utc::now(),
+            cause_id: None,
+            schema_v: 1,
+            payload_digest: "digest".to_string(),
+            payload_json: serde_json::json!({"turnId":"turn-commit-write-race","outcome":"skipped"}),
+        };
+
+        let hooks = Arc::new(SuppressionCommitTestHooks::default());
+        db.suppression_commit_test_hooks = Some(hooks.clone());
+        let writer_db = Db::new(db.pool().clone()).with_workspace_store_root(root.join("stores"));
+        let writer_pool = writer_db.workspace_pool(WS).await.expect("independent writer pool");
+        let committing_db = db.clone();
+        let committing = tokio::spawn(async move { committing_db.commit_skip(&attempt, &[event]).await });
+        hooks.config_read.notified().await;
+        let mut writer = tokio::spawn(async move {
+            sqlx::query(
+                "UPDATE suppression_workspace_config SET updated_at = 'concurrent-writer' WHERE workspace_id = ?",
+            )
+            .bind(WS)
+            .execute(&writer_pool)
+            .await
+            .expect("concurrent workspace write")
+            .rows_affected()
+        });
+        // With a deferred transaction this write commits before the skip's
+        // first INSERT, invalidating its read snapshot. With an immediate
+        // transaction it waits until the skip commits; both orders are valid,
+        // but SQLITE_BUSY_SNAPSHOT is not.
+        let early_writer = tokio::time::timeout(std::time::Duration::from_millis(100), &mut writer)
+            .await
+            .ok();
+        hooks.release_commit.notify_one();
+        let result = committing.await.expect("join commit");
+        let written = match early_writer {
+            Some(result) => result.expect("join early writer"),
+            None => writer.await.expect("join blocked writer"),
+        };
+        assert_eq!(written, 1);
+        result.expect("a concurrent committed write must not fail the skip with SQLITE_BUSY_SNAPSHOT");
+
+        let pool = db.workspace_pool(WS).await.expect("workspace pool");
+        let events: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM session_events WHERE session_id = ?")
+            .bind(SESSION)
+            .fetch_one(&pool)
+            .await
+            .expect("event count");
+        assert_eq!(events, 1);
+        db.pool().close().await;
+        pool.close().await;
+        let _ = std::fs::remove_dir_all(&root);
     }
 }

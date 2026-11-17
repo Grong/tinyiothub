@@ -18,6 +18,8 @@ pub struct AgentLoopConfig {
     pub security_summary: Option<String>,
     /// 每 agent 构建一个 model provider（provider 是 per-agent 的）。
     pub provider_factory: crate::provider::ProviderFactory,
+    /// Enforce exact provider context measurement before model invocation.
+    pub require_context_budget: bool,
     /// 是否给引擎接线会话级 ConversationMemory（自动 load/append）。
     ///
     /// chat/heartbeat 路径传 `false`：历史由 cloud 侧 DB 每轮重建
@@ -142,6 +144,7 @@ mod tests {
             observer: Arc::new(NoopObserver),
             workspace_dir: PathBuf::from("/tmp"),
             security_summary: None,
+            require_context_budget: false,
             provider_factory: stub_provider_factory(),
             conversation_memory: false,
             available_capabilities: vec![],

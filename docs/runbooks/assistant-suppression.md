@@ -20,6 +20,23 @@ API="$BASE/api/v1/workspaces/$WS/agent"
 Reads need workspace read; `PUT`/`POST` need workspace write. Errors that are
 not one of the expected decisions return `application/problem+json`.
 
+Non-off suppression also requires exact provider budget metadata. Configure all
+of the following before enabling `shadow`, `canary` or `enforce`; otherwise the
+Turn fails closed with `context_budget_unavailable` and no model call:
+
+```bash
+export TINYIOTHUB__MINIMAX__CONTEXT_WINDOW=128000
+export TINYIOTHUB__MINIMAX__TOKENIZE_URL=https://provider.example/tokenize
+export TINYIOTHUB__MINIMAX__COUNTING_METHOD=provider-tokenizer-v1
+```
+
+The tokenizer endpoint receives the exact OpenAI-compatible request JSON
+(messages, system/developer content, complete history, tool schemas and
+`max_tokens`) and must return `{"inputTokens":123,"countingMethod":"provider-tokenizer-v1"}`.
+It must use the provider's real tokenizer, not a character estimate. The
+endpoint's `countingMethod` takes precedence over the environment fallback.
+`off` does not need this configuration.
+
 ## 2. Inspect the current gate (read-only)
 
 ```bash
@@ -169,7 +186,10 @@ curl --fail-with-body -X POST "$API/suppression/gate-artifacts" \
       "reviewedAt": "2026-11-16T00:00:00Z",
       "conclusion": "no_confirmed_false_skip",
       "confirmedFalseSkips": 0,
-      "samples": [{"turnId": "turn:canary-a", "reviewed": true, "confirmedFalseSkip": false}]
+      "samples": [
+        {"turnId": "turn:canary-a", "reviewed": true, "confirmedFalseSkip": false},
+        {"turnId": "turn:canary-b", "reviewed": true, "confirmedFalseSkip": false}
+      ]
     }
   }' | jq '{artifactId, mode, approvedAt, contentSha256, synthetic}'
 ```

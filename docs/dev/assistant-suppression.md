@@ -602,10 +602,25 @@ Database changes are additive:
 - `20261115000001_harness_suppression_observations.sql` adds
   `suppression_observations` and its indexes (the sole source for gate
   denominators/numerators).
+- `20261116000001_harness_suppression_linearization_and_sources.sql` adds the
+  workspace-owned mode/config generation used to linearize `off` with skip
+  commits, plus adapter-owned immutable Source state/payload retention for
+  restart-safe refs and closed tombstones.
 
 No destructive migration and no codemod are required. Existing workspaces start
 in `off` with config version 1. Rolling back the code but keeping the additive
 tables is safe; the old binary ignores them.
+
+### 5.1 Exact provider budget configuration
+
+Non-off scheduled Turns require `TINYIOTHUB__MINIMAX__CONTEXT_WINDOW` and
+`TINYIOTHUB__MINIMAX__TOKENIZE_URL`. The tokenizer endpoint receives the exact
+OpenAI-compatible request and returns `inputTokens` plus `countingMethod`.
+`TINYIOTHUB__MINIMAX__COUNTING_METHOD` is the fallback when the response omits
+the method. Unknown metadata returns `context_budget_unavailable`; measured
+input plus output reserve above the real window returns `context_too_large`.
+Neither path calls the model or advances baseline/controlCursor. `off` does not
+perform this measurement.
 
 ## 6. Quickstart
 

@@ -37,9 +37,12 @@ use crate::domains::agent::session::suppression::contract::SourceDescriptor;
 use crate::domains::agent::session::suppression::error::{
     ALERT_EVENT_TYPE, ErrorCode, SuppressionAlert, SuppressionError,
 };
-use crate::domains::agent::session::suppression::preflight::{PreflightDecision, SkipVeto, SuppressionService};
+use crate::domains::agent::session::suppression::preflight::{
+    PreflightDecision, PreflightGate, SkipVeto, SuppressionService, global_preflight_gate,
+};
 use crate::domains::agent::session::suppression::registry::{
-    self, SemanticSessionEvent, SessionEventsCapture, SourceContext, SourceRegistry, WorkspaceSnapshotProvider,
+    self, ResolvedSource, SemanticSessionEvent, SessionEventsCapture, SourceContext, SourceRegistry,
+    WorkspaceSnapshotProvider,
 };
 use crate::domains::agent::session::todos::TodoStore;
 use crate::domains::agent::session::types::{PermissionMode, Todo, TodoStatus};
@@ -117,11 +120,15 @@ pub(crate) struct SuppressionObservation {
     settle_without_baseline: bool,
     /// Wall-clock preflight duration recorded as gate evidence.
     preflight_latency_ms: u64,
+    /// A real semaphore admission failure is distinct from a degraded Source:
+    /// manual HTTP callers must shed work instead of starting a full Turn.
+    backpressure_retry_after_ms: Option<u64>,
 }
 
 struct CapturedPreflight {
     registry: Arc<SourceRegistry>,
     decision: PreflightDecision,
+    resolved: Vec<ResolvedSource>,
 }
 
 /// Durable link from a replayed full attempt to the committed skip it
@@ -156,6 +163,7 @@ fn fencing_observation(state: SuppressionState, observed_at: DateTime<Utc>, reas
         skip_disabled: true,
         settle_without_baseline: false,
         preflight_latency_ms: 0,
+        backpressure_retry_after_ms: None,
     }
 }
 
@@ -168,7 +176,7 @@ pub async fn emit_confirmed_false_skip(
     workspace_id: &str,
     turn_id: &str,
     reviewer: &str,
-    root_cause: &str,
+    _root_cause: &str,
 ) -> Result<(), String> {
     if reviewer.trim().is_empty() {
         return Err("false skip reviewer must not be empty".to_string());
@@ -207,8 +215,6 @@ pub async fn emit_confirmed_false_skip(
         "vetoes": &observation.vetoes,
         "consecutiveFailures": 0,
         "metrics": {
-            "reviewer": reviewer,
-            "rootCause": root_cause,
             "source": "confirmed_false_skip_endpoint",
         },
         "traceId": trace_id,
@@ -359,7 +365,20 @@ impl WakeRunner {
         assistant_id: &str,
         turn_input: String,
         semantic_events: &[SemanticSessionEvent],
+        observation: Option<&SuppressionObservation>,
     ) -> anyhow::Result<crate::domains::agent::prompt::assistant::PromptPackage> {
+        if let Some(captured) = observation.and_then(|observation| observation.captured.as_ref())
+            && !captured.resolved.is_empty()
+        {
+            return crate::domains::agent::prompt::assistant::build_assistant_prompt_with_resolved_sources(
+                &self.system_prompts,
+                workspace_id,
+                assistant_id,
+                turn_input,
+                &captured.resolved,
+            )
+            .await;
+        }
         let snapshot = match &self.snapshot_provider {
             Some(provider) => provider.workspace_snapshot(workspace_id).await,
             None => None,
@@ -506,15 +525,26 @@ impl WakeRunner {
             // The service applies the configured mode before capture.
             mode: config.mode.into(),
         };
-        let service = SuppressionService::new(registry.clone());
+        let service = SuppressionService::with_gate(registry.clone(), self.preflight_gate.clone());
         let preflight_started = std::time::Instant::now();
         let evaluated = service
-            .evaluate(context, Some(&state), config, current_user_seq.unwrap_or(0))
+            .evaluate_resolved(context, Some(&state), config, current_user_seq.unwrap_or(0))
             .await;
         let preflight_latency_ms = preflight_started.elapsed().as_millis() as u64;
-        let mut decision = match evaluated {
-            Ok(decision) => decision,
+        let (mut decision, resolved) = match evaluated {
+            Ok((decision, resolved)) => (decision, resolved),
             Err(error) => {
+                if error.code == ErrorCode::WakeBackpressure.as_str() {
+                    let mut observation = fencing_observation(state, observed_at, "wake_backpressure");
+                    observation.backpressure_retry_after_ms = Some(
+                        error
+                            .context
+                            .get("retryAfterMs")
+                            .and_then(Value::as_u64)
+                            .unwrap_or(1_000),
+                    );
+                    return observation;
+                }
                 tracing::warn!(
                     code = %error.code,
                     %workspace_id,
@@ -566,13 +596,18 @@ impl WakeRunner {
         );
         SuppressionObservation {
             state,
-            captured: Some(CapturedPreflight { registry, decision }),
+            captured: Some(CapturedPreflight {
+                registry,
+                decision,
+                resolved,
+            }),
             control_cursor: current_user_seq.unwrap_or(0),
             observed_at,
             unavailable_reason: None,
             skip_disabled,
             settle_without_baseline: config.mode == SuppressionMode::Off,
             preflight_latency_ms,
+            backpressure_retry_after_ms: None,
         }
     }
 
@@ -686,6 +721,9 @@ impl WakeRunner {
         let observation = self
             .observe_with(workspace_id, &session_key, &config, state, control_cursor, false)
             .await;
+        if let Some(retry_after_ms) = observation.backpressure_retry_after_ms {
+            return Err(ManualStartError::Backpressure { retry_after_ms });
+        }
         let (registry_version, descriptors) = match &observation.captured {
             Some(captured) => (captured.registry.registry_version(), captured.registry.descriptors()),
             None => {
@@ -760,6 +798,9 @@ impl WakeRunner {
         let observation = self
             .observe_with(workspace_id, &session_key, &config, state, control_cursor, true)
             .await;
+        if let Some(retry_after_ms) = observation.backpressure_retry_after_ms {
+            return Err(ManualStartError::Backpressure { retry_after_ms });
+        }
         let wake = PlannedWake::unplanned(workspace_id, session_key.clone());
 
         let wants_skip = operation == ManualOperation::Wake
@@ -936,6 +977,7 @@ impl WakeRunner {
                     &schedule.assistant_id,
                     message,
                     &semantic_events,
+                    Some(&observation),
                 )
                 .await
             {
@@ -1225,6 +1267,7 @@ pub struct WakeRunner {
     memory_source: Option<Arc<dyn PromptMemorySource>>,
     /// Existing live workspace snapshot; injected by the composition layer.
     snapshot_provider: Option<Arc<dyn WorkspaceSnapshotProvider>>,
+    preflight_gate: Arc<PreflightGate>,
     /// Test-only fault injection for the wake-level Session Events read.
     #[cfg(test)]
     fail_session_events_read: std::sync::atomic::AtomicBool,
@@ -1279,6 +1322,7 @@ impl WakeRunner {
             system_prompts: runtime.system_prompts.clone(),
             memory_source,
             snapshot_provider: None,
+            preflight_gate: global_preflight_gate(),
             #[cfg(test)]
             fail_session_events_read: std::sync::atomic::AtomicBool::new(false),
         }
@@ -1301,6 +1345,7 @@ impl WakeRunner {
             system_prompts: Arc::new(tinyiothub_core::config::SystemPromptsConfig::default()),
             memory_source,
             snapshot_provider: None,
+            preflight_gate: global_preflight_gate(),
             #[cfg(test)]
             fail_session_events_read: std::sync::atomic::AtomicBool::new(false),
         }
@@ -1384,17 +1429,53 @@ impl WakeRunner {
         let observation = self
             .observe_suppression(&schedule.workspace_id, &session_key, control_cursor)
             .await;
+        let skip_candidate = force_full_reason.is_none()
+            && observation.as_ref().is_some_and(|observation| {
+                !observation.skip_disabled
+                    && observation.decision().is_some_and(|decision| {
+                        decision.mode.allows_skip()
+                            && decision.vetoes.is_empty()
+                            && (decision.fence.is_empty() || decision.fence == "sync_pending")
+                    })
+            });
+        // Once preflight requires a full Turn, fence the old baseline before
+        // prompt construction, provider setup or any session projection write.
+        let early_full = if skip_candidate {
+            None
+        } else if let (Some(observation), Some(planned_wake_at)) = (observation.as_ref(), schedule.next_wake_at) {
+            let durable = match self.db.begin_full_attempt(&session_key, &observation.state).await {
+                Ok(durable) => durable,
+                Err(error) => {
+                    return WakeReport {
+                        session_key,
+                        outcome: WakeOutcome::Failed {
+                            error: error.to_string(),
+                        },
+                    };
+                }
+            };
+            let wake = PlannedWake::planned(&schedule.workspace_id, session_key.clone(), planned_wake_at);
+            let attempt = wake.attempt(durable.attempt_no);
+            Some((durable, attempt))
+        } else {
+            None
+        };
         let prompt = match self
             .wake_prompt(
                 &schedule.workspace_id,
                 &schedule.assistant_id,
                 message,
                 &semantic_events,
+                observation.as_ref(),
             )
             .await
         {
             Ok(prompt) => prompt,
             Err(error) => {
+                if let Some((durable, _)) = &early_full {
+                    self.fail_full_attempt(&schedule.workspace_id, durable, "prompt_build_failed")
+                        .await;
+                }
                 return WakeReport {
                     session_key: String::new(),
                     outcome: WakeOutcome::Failed {
@@ -1403,11 +1484,17 @@ impl WakeRunner {
                 };
             }
         };
+        let runtime_config = AgentRuntimeConfig {
+            require_context_budget: observation
+                .as_ref()
+                .is_some_and(|observation| !observation.settle_without_baseline),
+            ..AgentRuntimeConfig::default()
+        };
         let agent = match ensure_agent(
             &self.pool,
             &schedule.assistant_id,
             &schedule.workspace_id,
-            &AgentRuntimeConfig::default(),
+            &runtime_config,
             true,
             &prompt,
         )
@@ -1415,6 +1502,10 @@ impl WakeRunner {
         {
             Ok(agent) => agent,
             Err(error) => {
+                if let Some((durable, _)) = &early_full {
+                    self.fail_full_attempt(&schedule.workspace_id, durable, "agent_start_failed")
+                        .await;
+                }
                 return WakeReport {
                     session_key: String::new(),
                     outcome: WakeOutcome::Failed {
@@ -1423,15 +1514,27 @@ impl WakeRunner {
                 };
             }
         };
-        self.run_scheduled_with_agent(
-            schedule,
-            agent,
-            &prompt.turn_input,
-            cancel,
-            observation.as_ref(),
-            force_full_reason,
-        )
-        .await
+        let prepared = early_full
+            .as_ref()
+            .map(|(attempt, wake_attempt)| PreparedAttemptRef { attempt, wake_attempt });
+        let report = self
+            .run_scheduled_with_agent(
+                schedule,
+                agent,
+                &prompt.turn_input,
+                cancel,
+                observation.as_ref(),
+                force_full_reason,
+                prepared,
+            )
+            .await;
+        if let Some((durable, _)) = &early_full
+            && matches!(&report.outcome, WakeOutcome::Failed { .. })
+        {
+            self.fail_full_attempt(&schedule.workspace_id, durable, "scheduled_turn_failed")
+                .await;
+        }
+        report
     }
 
     #[cfg(test)]
@@ -1442,7 +1545,7 @@ impl WakeRunner {
         message: &str,
         cancel: CancellationToken,
     ) -> WakeReport {
-        self.run_scheduled_with_agent(schedule, agent, message, cancel, None, None)
+        self.run_scheduled_with_agent(schedule, agent, message, cancel, None, None, None)
             .await
     }
 
@@ -1454,6 +1557,7 @@ impl WakeRunner {
         cancel: CancellationToken,
         suppression: Option<&SuppressionObservation>,
         force_full_reason: Option<&str>,
+        prepared: Option<PreparedAttemptRef<'_>>,
     ) -> WakeReport {
         self.run_session_with_agent(
             SessionOrigin {
@@ -1465,7 +1569,7 @@ impl WakeRunner {
                 planned_wake_at: schedule.next_wake_at,
                 suppression,
                 force_full_reason,
-                prepared: None,
+                prepared,
             },
             agent,
             message,
@@ -1530,7 +1634,7 @@ impl WakeRunner {
             }
         };
         let prompt = match self
-            .wake_prompt(&wake.workspace_id, &assistant_id, message, &semantic_events)
+            .wake_prompt(&wake.workspace_id, &assistant_id, message, &semantic_events, None)
             .await
         {
             Ok(prompt) => prompt,
@@ -1711,7 +1815,6 @@ impl WakeRunner {
         let mut replay_link: Option<ReplayLink> = None;
         if let (Some(wake), Some(observation)) = (planned_wake.as_ref(), origin.suppression)
             && origin.force_full_reason.is_none()
-            && origin.prepared.is_none()
             && !observation.skip_disabled
             && let Some(decision) = observation.decision()
             && let Some(report) = self
@@ -2021,18 +2124,9 @@ impl WakeRunner {
                 )
                 .await;
             }
-            if let Some(committed) = replay.committed_skip() {
-                self.record_turn_observation(
-                    &session.workspace_id,
-                    &session_key,
-                    replay.turn_id(),
-                    &committed.attempt_id,
-                    observation,
-                    decision,
-                    TurnCounts::default(),
-                )
-                .await;
-            }
+            // A replay returns immutable evidence. Never backfill a missing
+            // observation from the current mode/decision: that could relabel a
+            // canary skip as shadow and contaminate rollout denominators.
             self.reconcile_committed_skip(session, decision).await;
             return Some(WakeReport {
                 session_key,
@@ -2253,21 +2347,7 @@ fn baseline_turn_state(
         "stateVersion": TURN_STATE_VERSION,
         "turnId": turn_id,
         "observedAt": observation.observed_at.to_rfc3339_opts(chrono::SecondsFormat::Secs, true),
-        "sources": captured
-            .decision
-            .snapshot
-            .iter()
-            .map(|source| {
-                json!({
-                    "sourceId": source.source_id,
-                    "sourceVersion": source.source_version,
-                    "revision": source.revision,
-                    "stateHash": source.state_hash,
-                    "available": source.available,
-                    "empty": source.empty,
-                })
-            })
-            .collect::<Vec<_>>(),
+        "sources": captured.decision.snapshot,
         "controlCursor": observation.control_cursor,
         "registryVersion": captured.registry.registry_version(),
         "mode": captured.decision.mode.as_str(),
@@ -2359,7 +2439,9 @@ mod tests {
     use crate::domains::agent::session::events::SessionEventSink;
     use crate::domains::agent::session::events::test_support::RecordingSink;
     use crate::domains::agent::session::runner::SessionRunner;
-    use crate::domains::agent::session::suppression::preflight::{PreflightDecision, SuppressionService};
+    use crate::domains::agent::session::suppression::preflight::{
+        PREFLIGHT_BACKPRESSURE_RETRY_AFTER_MS, PreflightDecision, PreflightGate, SuppressionService,
+    };
     use crate::domains::agent::session::suppression::registry::{
         self, SnapshotProviderSlot, SourceContext, SourceMode,
     };
@@ -2367,7 +2449,7 @@ mod tests {
     use crate::domains::agent::session::types::{Todo, TodoStatus};
     use chrono::TimeZone;
     use std::sync::Arc;
-    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
     use tinyiothub_agent::config::AgentRuntimeConfig;
     use tinyiothub_agent::port::attribution::{Attributable, ModelProviderKind, ProviderKind, Role};
     use tinyiothub_agent::port::memory::NoopMemory;
@@ -2640,7 +2722,10 @@ mod tests {
             ..Default::default()
         });
 
-        let package = wake.wake_prompt("ws", "assistant", "turn".into(), &[]).await.unwrap();
+        let package = wake
+            .wake_prompt("ws", "assistant", "turn".into(), &[], None)
+            .await
+            .unwrap();
         assert!(package.system_prompt.contains("configured-workspace-marker"));
     }
 
@@ -2694,7 +2779,7 @@ mod tests {
             .await
             .unwrap();
         let package = wake
-            .wake_prompt("ws", &assistant_agent_id("ws"), "turn".into(), &capture.events)
+            .wake_prompt("ws", &assistant_agent_id("ws"), "turn".into(), &capture.events, None)
             .await
             .unwrap();
         assert_eq!(package.system_prompt.matches("short-term-wake-marker").count(), 1);
@@ -2919,6 +3004,19 @@ mod tests {
 
     #[async_trait::async_trait]
     impl ModelProvider for SleepingProvider {
+        async fn measure_context(
+            &self,
+            request: ChatRequest<'_>,
+            _model: &str,
+            _temperature: Option<f64>,
+        ) -> anyhow::Result<Option<tinyiothub_agent::port::provider::ContextMeasurement>> {
+            Ok(Some(tinyiothub_agent::port::provider::ContextMeasurement {
+                context_window: u64::MAX / 4,
+                counted_input_tokens: serde_json::to_vec(request.messages)?.len() as u64,
+                counting_method: "fixture-exact-json-bytes-v1".into(),
+            }))
+        }
+
         async fn chat(
             &self,
             _request: ChatRequest<'_>,
@@ -3126,6 +3224,25 @@ mod tests {
 
     #[async_trait::async_trait]
     impl ModelProvider for RecordingProvider {
+        async fn measure_context(
+            &self,
+            request: ChatRequest<'_>,
+            _model: &str,
+            _temperature: Option<f64>,
+        ) -> anyhow::Result<Option<tinyiothub_agent::port::provider::ContextMeasurement>> {
+            let counted_input_tokens = serde_json::to_vec(request.messages)?.len() as u64
+                + request
+                    .tools
+                    .map(|tools| serde_json::to_vec(tools).map(|bytes| bytes.len() as u64))
+                    .transpose()?
+                    .unwrap_or(0);
+            Ok(Some(tinyiothub_agent::port::provider::ContextMeasurement {
+                context_window: u64::MAX / 4,
+                counted_input_tokens,
+                counting_method: "fixture-exact-json-bytes-v1".into(),
+            }))
+        }
+
         async fn chat(
             &self,
             request: ChatRequest<'_>,
@@ -3281,6 +3398,33 @@ mod tests {
             requests,
             fail_provider,
             snapshot_provider,
+        }
+    }
+
+    struct UnknownBudgetProvider {
+        calls: Arc<AtomicUsize>,
+    }
+
+    #[async_trait::async_trait]
+    impl ModelProvider for UnknownBudgetProvider {
+        async fn chat(
+            &self,
+            _request: ChatRequest<'_>,
+            _model: &str,
+            _temperature: Option<f64>,
+        ) -> anyhow::Result<ChatResponse> {
+            self.calls.fetch_add(1, Ordering::SeqCst);
+            Ok(ChatResponse::default())
+        }
+    }
+
+    impl Attributable for UnknownBudgetProvider {
+        fn role(&self) -> Role {
+            Role::Provider(ProviderKind::Model(ModelProviderKind::Custom))
+        }
+
+        fn alias(&self) -> &str {
+            "UnknownBudgetProvider"
         }
     }
 
@@ -3460,6 +3604,55 @@ mod tests {
         let state = fixture.state().await;
         assert_eq!(state.latest_outcome, "full_failed");
         assert!(!state.baseline_is_eligible());
+    }
+
+    #[tokio::test]
+    async fn final_review_prompt_setup_failure_fences_old_baseline_before_next_wake() {
+        let fixture = lifecycle_fixture(SuppressionMode::Enforce, None, true).await;
+        let first = fixture.wake.run(&fixture.schedule, CancellationToken::new()).await;
+        assert_eq!(first.outcome.as_str(), "completed");
+
+        let brief = fixture._prompts.path().join("ws/TURN_BRIEF.md");
+        std::fs::create_dir(&brief).expect("make prompt construction fail on a directory");
+        let failed = fixture.wake.run(&fixture.schedule, CancellationToken::new()).await;
+        assert_eq!(failed.outcome.as_str(), "failed");
+        let state = fixture
+            .db
+            .load_suppression_state("ws", &lifecycle_session_key())
+            .await
+            .expect("state")
+            .expect("durable full attempt");
+        assert!(state.full_failed, "prompt failure must invalidate the old baseline");
+
+        std::fs::remove_dir(&brief).expect("restore readable source");
+        let recovered = fixture.wake.run(&fixture.schedule, CancellationToken::new()).await;
+        assert_eq!(recovered.outcome.as_str(), "completed");
+        assert_ne!(recovered.outcome.as_str(), "skipped");
+    }
+
+    #[tokio::test]
+    async fn final_review_unknown_context_budget_fails_full_without_model_call() {
+        let calls = Arc::new(AtomicUsize::new(0));
+        let provider_calls = calls.clone();
+        let factory = Arc::new(move || {
+            Ok(Box::new(UnknownBudgetProvider {
+                calls: provider_calls.clone(),
+            }) as Box<dyn ModelProvider>)
+        });
+        let fixture = lifecycle_fixture_with_factory(SuppressionMode::Enforce, None, true, Some(factory)).await;
+
+        let report = fixture.run().await;
+        assert_eq!(report.outcome.as_str(), "failed");
+        assert!(fixture.state().await.full_failed);
+        let events = fixture.sink.events.lock().await;
+        let terminal = events
+            .iter()
+            .find(|event| event.event_type == "turn.completed")
+            .expect("failed terminal");
+        assert_eq!(terminal.payload_json["error"]["code"], "context_budget_unavailable");
+        assert!(terminal.payload_json["errorMessage"].as_str().is_some());
+        drop(events);
+        assert_eq!(calls.load(Ordering::SeqCst), 0);
     }
 
     #[tokio::test]
@@ -3806,6 +3999,35 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn final_review_manual_capacity_race_returns_backpressure_without_attempt() {
+        let mut fixture = lifecycle_fixture(SuppressionMode::Enforce, None, true).await;
+        let gate = PreflightGate::new(1);
+        let _held = gate.try_acquire().expect("hold the only slot");
+        Arc::get_mut(&mut fixture.wake)
+            .expect("unique wake fixture")
+            .preflight_gate = gate;
+
+        let result = fixture
+            .wake
+            .prepare_manual(&fixture.schedule, ManualOperation::Wake)
+            .await;
+        assert!(matches!(
+            result,
+            Err(ManualStartError::Backpressure { retry_after_ms })
+                if retry_after_ms == PREFLIGHT_BACKPRESSURE_RETRY_AFTER_MS
+        ));
+        assert!(
+            fixture
+                .db
+                .load_suppression_state("ws", &lifecycle_session_key())
+                .await
+                .expect("state read")
+                .is_none(),
+            "backpressure must not allocate a durable full attempt"
+        );
+    }
+
+    #[tokio::test]
     async fn manual_wake_uses_the_shared_skip_path_and_reconcile_forces_full() {
         let fixture = lifecycle_fixture(SuppressionMode::Enforce, None, true).await;
         assert_eq!(fixture.run().await.outcome, WakeOutcome::Completed);
@@ -3907,6 +4129,43 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn final_review_replay_does_not_backfill_missing_skip_observation() {
+        let fixture = lifecycle_fixture(SuppressionMode::Enforce, None, true).await;
+        let first = fixture.run().await;
+        assert_eq!(first.outcome.as_str(), "completed");
+        let second = fixture.run().await;
+        assert_eq!(second.outcome.as_str(), "skipped");
+        let pool = fixture
+            .db
+            .workspace_pool_for_testing("ws")
+            .await
+            .expect("workspace pool");
+        let turn_id: String = sqlx::query_scalar(
+            "SELECT turn_id FROM suppression_observations \
+             WHERE workspace_id = 'ws' AND would_skip = 1 ORDER BY observed_at DESC LIMIT 1",
+        )
+        .fetch_one(&pool)
+        .await
+        .expect("skip observation");
+        sqlx::query("DELETE FROM suppression_observations WHERE workspace_id = 'ws' AND turn_id = ?")
+            .bind(&turn_id)
+            .execute(&pool)
+            .await
+            .expect("remove first observation to simulate its lost write");
+
+        let replay = fixture.run().await;
+        assert_eq!(replay.outcome.as_str(), "skipped");
+        let count: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM suppression_observations WHERE workspace_id = 'ws' AND turn_id = ?",
+        )
+        .bind(turn_id)
+        .fetch_one(&pool)
+        .await
+        .expect("replay observation count");
+        assert_eq!(count, 0, "replay must not relabel/backfill immutable evidence");
+    }
+
+    #[tokio::test]
     async fn confirmed_false_skip_uses_the_real_alert_producer() {
         let fixture = lifecycle_fixture(SuppressionMode::Canary, None, true).await;
         let session_key = lifecycle_session_key();
@@ -3945,9 +4204,14 @@ mod tests {
             Arc::new(TodoStore::default()),
             runner,
         );
-        wake.record_confirmed_false_skip("ws", "turn-false-skip", "reviewer-1", "fixed the tombstone")
-            .await
-            .expect("emit the real alert");
+        wake.record_confirmed_false_skip(
+            "ws",
+            "turn-false-skip",
+            "reviewer-synthetic-secret",
+            "Authorization: Bearer synthetic-secret /Users/alice/private payload",
+        )
+        .await
+        .expect("emit the real alert");
 
         let recorded = db
             .latest_confirmed_false_skip_at("ws")
@@ -3956,13 +4220,17 @@ mod tests {
             .expect("confirmed false skip must be persisted");
         assert!(recorded <= Utc::now());
         let events = db.recent_session_events("ws", 20).await.expect("recent events");
-        assert!(
-            events.iter().any(|event| {
+        let alert = events
+            .iter()
+            .find(|event| {
                 event.event_type == ALERT_EVENT_TYPE
                     && event.payload_json["code"] == "false_skip_detected"
                     && event.payload_json["turnId"] == "turn-false-skip"
-            }),
-            "the producer must persist an assistant.suppression.alert event"
-        );
+            })
+            .expect("the producer must persist an assistant.suppression.alert event");
+        let public_payload = alert.payload_json.to_string();
+        assert!(!public_payload.contains("synthetic-secret"));
+        assert!(!public_payload.contains("/Users/"));
+        assert!(!public_payload.contains("Authorization"));
     }
 }

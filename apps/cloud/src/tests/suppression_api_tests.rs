@@ -1269,11 +1269,13 @@ fn canary_provenance() -> (Value, Value) {
         "reviewedAt": "2026-11-16T00:00:00Z",
         "conclusion": "no_confirmed_false_skip",
         "confirmedFalseSkips": 0,
-        "samples": [{
-            "turnId": "canary-turn-000",
-            "reviewed": true,
-            "confirmedFalseSkip": false
-        }]
+        "samples": (0..10)
+            .map(|index| json!({
+                "turnId": format!("canary-turn-{index:03}"),
+                "reviewed": true,
+                "confirmedFalseSkip": false
+            }))
+            .collect::<Vec<_>>()
     });
     (labels, review)
 }

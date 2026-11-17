@@ -3,8 +3,8 @@
 //! Object keys sort by UTF-16 code units, numbers use the shortest
 //! ECMAScript round-trip form, `-0` becomes `0`, only finite numbers are
 //! accepted, and strings use the JCS escape set with raw UTF-8 for everything
-//! else. Arrays keep their order except `workItems`, which sort by
-//! `(workKey, revision)`.
+//! else. Generic JSON arrays always keep their order. Typed Source work items
+//! are sorted separately by [`canonical_source_state`].
 //!
 //! Object keys and string values are normalized to Unicode NFC at the input
 //! boundary, so ordering, duplicate detection and emission all use the same
@@ -24,7 +24,7 @@ use serde_json::{Map, Number, Value};
 use sha2::{Digest, Sha256};
 use unicode_normalization::UnicodeNormalization;
 
-use super::contract::{SourceDescriptor, TURN_STATE_VERSION};
+use super::contract::{SourceDescriptor, TURN_STATE_VERSION, WorkItem};
 use super::error::SuppressionError;
 
 /// Domain prefix for canonical source-state bytes.
@@ -42,30 +42,43 @@ const NON_FINITE_MARKER: &str = "__tinyiothub_non_finite__";
 /// Strings and object keys are normalized to NFC first so that ordering,
 /// duplicate detection and emission all operate on the same form.
 pub fn canonical_bytes(value: &Value) -> Result<Vec<u8>, SuppressionError> {
-    let value = normalize_value(value, None)?;
+    let value = normalize_value(value)?;
     let mut out = String::new();
-    write_value(&mut out, &value, None)?;
+    write_value(&mut out, &value)?;
     Ok(out.into_bytes())
 }
 
-fn normalize_value(value: &Value, key: Option<&str>) -> Result<Value, SuppressionError> {
+/// Canonicalize the one unordered collection in the Source contract. The typed
+/// boundary is required so an unrelated business property named `workItems`
+/// keeps its ordinary array semantics.
+pub fn canonical_source_state(source_id: &str, items: &[WorkItem]) -> Result<Vec<u8>, SuppressionError> {
+    let mut normalized: Vec<WorkItem> = items
+        .iter()
+        .cloned()
+        .map(|mut item| {
+            item.work_key = item.work_key.nfc().collect();
+            item.revision = item.revision.nfc().collect();
+            item
+        })
+        .collect();
+    normalized.sort_by(|left, right| {
+        cmp_utf16(&left.work_key, &right.work_key).then_with(|| cmp_utf16(&left.revision, &right.revision))
+    });
+    let value = serde_json::json!({ "sourceId": source_id, "workItems": normalized });
+    let work_items = value.get("workItems").and_then(Value::as_array).expect("typed array");
+    reject_duplicate_work_keys(work_items)?;
+    canonical_bytes(&value)
+}
+
+fn normalize_value(value: &Value) -> Result<Value, SuppressionError> {
     Ok(match value {
         Value::String(string) => Value::String(string.nfc().collect()),
-        Value::Array(items) => {
-            let items: Vec<Value> = items
-                .iter()
-                .map(|item| normalize_value(item, None))
-                .collect::<Result<_, _>>()?;
-            if key == Some("workItems") {
-                reject_duplicate_work_keys(&items)?;
-            }
-            Value::Array(items)
-        }
+        Value::Array(items) => Value::Array(items.iter().map(normalize_value).collect::<Result<_, _>>()?),
         Value::Object(object) => {
             let mut normalized = Map::with_capacity(object.len());
             for (key, value) in object {
                 let key: String = key.nfc().collect();
-                let value = normalize_value(value, Some(&key))?;
+                let value = normalize_value(value)?;
                 if normalized.insert(key, value).is_some() {
                     return Err(canonical_error(
                         "canonical_duplicate_key",
@@ -139,20 +152,19 @@ fn hash_with_domain(domain: &[u8], bytes: &[u8]) -> String {
     format!("sha256:{:x}", hasher.finalize())
 }
 
-fn write_value(out: &mut String, value: &Value, key: Option<&str>) -> Result<(), SuppressionError> {
+fn write_value(out: &mut String, value: &Value) -> Result<(), SuppressionError> {
     match value {
         Value::Null => out.push_str("null"),
         Value::Bool(boolean) => out.push_str(if *boolean { "true" } else { "false" }),
         Value::Number(number) => out.push_str(&number_to_jcs(number)?),
         Value::String(string) => write_string(out, string),
-        Value::Array(items) if key == Some("workItems") => write_work_items(out, items)?,
         Value::Array(items) => {
             out.push('[');
             for (index, item) in items.iter().enumerate() {
                 if index > 0 {
                     out.push(',');
                 }
-                write_value(out, item, None)?;
+                write_value(out, item)?;
             }
             out.push(']');
         }
@@ -167,46 +179,12 @@ fn write_value(out: &mut String, value: &Value, key: Option<&str>) -> Result<(),
                 write_string(out, key.as_str());
                 out.push(':');
                 let value = object.get(*key).expect("object key came from the object");
-                write_value(out, value, Some(key.as_str()))?;
+                write_value(out, value)?;
             }
             out.push('}');
         }
     }
     Ok(())
-}
-
-fn write_work_items(out: &mut String, items: &[Value]) -> Result<(), SuppressionError> {
-    let mut sorted: Vec<&Value> = items.iter().collect();
-    sorted.sort_by(|left, right| compare_work_items(left, right));
-    for pair in sorted.windows(2) {
-        let left = work_item_field(pair[0], "workKey");
-        let right = work_item_field(pair[1], "workKey");
-        if left.is_some() && left == right {
-            return Err(canonical_error(
-                "duplicate_work_key",
-                "canonicalize workItems with duplicate workKey values",
-            ));
-        }
-    }
-    out.push('[');
-    for (index, item) in sorted.iter().enumerate() {
-        if index > 0 {
-            out.push(',');
-        }
-        write_value(out, item, None)?;
-    }
-    out.push(']');
-    Ok(())
-}
-
-fn compare_work_items(left: &Value, right: &Value) -> Ordering {
-    let left_key = work_item_field(left, "workKey").unwrap_or("");
-    let right_key = work_item_field(right, "workKey").unwrap_or("");
-    cmp_utf16(left_key, right_key).then_with(|| {
-        let left_revision = work_item_field(left, "revision").unwrap_or("");
-        let right_revision = work_item_field(right, "revision").unwrap_or("");
-        cmp_utf16(left_revision, right_revision)
-    })
 }
 
 fn work_item_field<'a>(item: &'a Value, field: &str) -> Option<&'a str> {

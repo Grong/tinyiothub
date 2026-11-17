@@ -357,7 +357,14 @@ impl Db {
         mode: Option<SuppressionMode>,
         reconciliation_seconds: Option<u32>,
     ) -> Result<Option<SuppressionConfig>> {
-        update_suppression_config(self.pool(), workspace_id, mode, reconciliation_seconds).await
+        let updated = update_suppression_config(self.pool(), workspace_id, mode, reconciliation_seconds).await?;
+        if let Some(config) = updated {
+            self.sync_workspace_suppression_config(workspace_id, config.mode, config.config_version)
+                .await?;
+            Ok(Some(config))
+        } else {
+            Ok(None)
+        }
     }
 
     pub async fn mark_assistant_wake(

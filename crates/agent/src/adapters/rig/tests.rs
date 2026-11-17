@@ -3,6 +3,7 @@
 use std::sync::{Arc, Mutex};
 
 use crate::port::attribution::{Attributable, Role, ToolKind};
+use crate::port::provider::ModelProvider;
 use crate::port::tool::{Tool, ToolResult};
 
 #[test]
@@ -766,6 +767,7 @@ async fn rig_loop_forwards_tool_and_usage_events() {
         observer: Arc::new(crate::port::observer::NoopObserver),
         workspace_dir: dir.path().to_path_buf(),
         security_summary: None,
+        require_context_budget: false,
         provider_factory: Arc::new(|| Ok(Box::new(ScriptModel { calls: Mutex::new(0) }))),
         conversation_memory: false,
         available_capabilities: vec![],
@@ -940,6 +942,7 @@ fn invalid_tool_loop(
         observer: Arc::new(crate::port::observer::NoopObserver),
         workspace_dir: dir.path().to_path_buf(),
         security_summary: None,
+        require_context_budget: false,
         provider_factory: Arc::new(move || {
             Ok(Box::new(InvalidToolModel {
                 first_tool,
@@ -1110,6 +1113,7 @@ async fn run_budget_rejects_fifth_distinct_image_before_provider_delivery() {
         observer: Arc::new(crate::port::observer::NoopObserver),
         workspace_dir: dir.path().to_path_buf(),
         security_summary: None,
+        require_context_budget: false,
         provider_factory: Arc::new(move || {
             Ok(Box::new(ImageModel {
                 calls: Arc::clone(&provider_calls),
@@ -1228,6 +1232,7 @@ async fn failing_tool_result_is_delivered_as_text_not_retried() {
         observer: Arc::new(crate::port::observer::NoopObserver),
         workspace_dir: dir.path().to_path_buf(),
         security_summary: None,
+        require_context_budget: false,
         provider_factory: Arc::new(|| Ok(Box::new(AssertModel { calls: Mutex::new(0) }))),
         conversation_memory: false,
         available_capabilities: vec![],
@@ -1511,6 +1516,7 @@ async fn cancelled_after_stream_end_is_tool_loop_cancelled() {
         observer: Arc::new(crate::port::observer::NoopObserver),
         workspace_dir: dir.path().to_path_buf(),
         security_summary: None,
+        require_context_budget: false,
         provider_factory: Arc::new(move || {
             Ok(Box::new(CancellingModel {
                 calls: Mutex::new(0),
@@ -1633,6 +1639,7 @@ fn tools_descriptor_capability_gate_fails_before_model_call() {
         observer: Arc::new(crate::port::observer::NoopObserver),
         workspace_dir: dir.path().to_path_buf(),
         security_summary: None,
+        require_context_budget: false,
         provider_factory: Arc::new(move || {
             Ok(Box::new(NonVisionModel {
                 calls: Arc::clone(&provider_calls),
@@ -1761,6 +1768,7 @@ async fn tools_descriptor_redacts_nested_secrets_in_public_events() {
         observer: Arc::new(crate::port::observer::NoopObserver),
         workspace_dir: dir.path().to_path_buf(),
         security_summary: None,
+        require_context_budget: false,
         provider_factory: Arc::new(|| Ok(Box::new(SecretArgsModel { calls: Mutex::new(0) }))),
         conversation_memory: false,
         available_capabilities: vec![],
@@ -1873,6 +1881,7 @@ async fn rig_loop_streams_tokens_and_tool_calls_from_real_sse() {
         observer: Arc::new(crate::port::observer::NoopObserver),
         workspace_dir: dir.path().to_path_buf(),
         security_summary: None,
+        require_context_budget: false,
         provider_factory: Arc::new(move || Ok(Box::new(provider.clone()))),
         conversation_memory: false,
         available_capabilities: vec![],
@@ -2012,6 +2021,141 @@ async fn adapter_emits_delta_before_provider_completion() {
     ));
     release.notify_one();
     while futures::StreamExt::next(&mut stream).await.is_some() {}
+}
+
+struct BudgetProvider {
+    window: Option<u64>,
+    calls: Arc<std::sync::atomic::AtomicUsize>,
+}
+
+#[async_trait::async_trait]
+impl crate::port::provider::ModelProvider for BudgetProvider {
+    async fn measure_context(
+        &self,
+        _request: crate::port::provider::ChatRequest<'_>,
+        _model: &str,
+        _temperature: Option<f64>,
+    ) -> anyhow::Result<Option<crate::port::provider::ContextMeasurement>> {
+        Ok(self
+            .window
+            .map(|context_window| crate::port::provider::ContextMeasurement {
+                context_window,
+                counted_input_tokens: 100,
+                counting_method: "fixture-exact-v1".into(),
+            }))
+    }
+
+    async fn chat(
+        &self,
+        _request: crate::port::provider::ChatRequest<'_>,
+        _model: &str,
+        _temperature: Option<f64>,
+    ) -> anyhow::Result<crate::port::provider::ChatResponse> {
+        self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        Ok(crate::port::provider::ChatResponse::default())
+    }
+}
+
+impl Attributable for BudgetProvider {
+    fn role(&self) -> Role {
+        Role::Provider(crate::port::attribution::ProviderKind::Model(
+            crate::port::attribution::ModelProviderKind::Custom,
+        ))
+    }
+
+    fn alias(&self) -> &str {
+        "BudgetProvider"
+    }
+}
+
+#[tokio::test]
+async fn context_budget_unavailable_prevents_model_call() {
+    let provider = BudgetProvider {
+        window: None,
+        calls: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
+    };
+    let calls = provider.calls.clone();
+    let adapter =
+        super::provider::PortModelAsRig::new(Arc::new(provider), "budget".into()).with_context_budget_required(true);
+    let error = collect_retry_stream(adapter)
+        .await
+        .expect_err("unknown budget must fail");
+    assert!(error.contains("context_budget_unavailable"), "{error}");
+    assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 0);
+}
+
+#[tokio::test]
+async fn context_too_large_prevents_model_call() {
+    let provider = BudgetProvider {
+        window: Some(1),
+        calls: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
+    };
+    let calls = provider.calls.clone();
+    let adapter =
+        super::provider::PortModelAsRig::new(Arc::new(provider), "budget".into()).with_context_budget_required(true);
+    let error = collect_retry_stream(adapter).await.expect_err("overflow must fail");
+    assert!(error.contains("context_too_large"), "{error}");
+    assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 0);
+}
+
+#[tokio::test]
+async fn exact_provider_budget_allows_model_call() {
+    let provider = BudgetProvider {
+        window: Some(1_000_000),
+        calls: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
+    };
+    let calls = provider.calls.clone();
+    let adapter =
+        super::provider::PortModelAsRig::new(Arc::new(provider), "budget".into()).with_context_budget_required(true);
+    collect_retry_stream(adapter).await.expect("within budget");
+    assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 1);
+}
+
+#[tokio::test]
+async fn remote_tokenizer_measures_the_exact_openai_request() {
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind loopback");
+    let address = listener.local_addr().unwrap();
+    let server = std::thread::spawn(move || {
+        let (mut stream, _) = listener.accept().expect("accept tokenizer request");
+        let mut buffer = [0u8; 16_384];
+        let read = std::io::Read::read(&mut stream, &mut buffer).expect("read request");
+        let request = String::from_utf8_lossy(&buffer[..read]).to_string();
+        assert!(request.contains("\"max_tokens\":7"), "{request}");
+        assert!(request.contains("\"temperature\":0.7"), "{request}");
+        assert!(request.contains("\"tools\""), "{request}");
+        let payload = "{\"inputTokens\":100,\"countingMethod\":\"fixture-v1\"}";
+        let body = format!(
+            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+            payload.len(),
+            payload
+        );
+        std::io::Write::write_all(&mut stream, body.as_bytes()).expect("write response");
+    });
+    let provider = super::provider::StreamingOpenAiPort::new("http://unused.invalid".into(), "test-key".into())
+        .with_context_budget(1000, format!("http://{address}/tokenize"), "fixture-v1".into());
+    let messages = vec![crate::port::provider::ChatMessage::system("budget")];
+    let tools = vec![crate::port::tool::ToolSpec {
+        name: "read_device".into(),
+        description: "Read one device".into(),
+        parameters: serde_json::json!({"type":"object"}),
+    }];
+    let measurement = provider
+        .measure_context(
+            crate::port::provider::ChatRequest {
+                messages: &messages,
+                tools: Some(&tools),
+                max_tokens: Some(7),
+            },
+            "minimax-m2",
+            Some(0.7),
+        )
+        .await
+        .expect("measure")
+        .expect("configured measurement");
+    assert_eq!(measurement.context_window, 1000);
+    assert_eq!(measurement.counted_input_tokens, 100);
+    assert_eq!(measurement.counting_method, "fixture-v1");
+    server.join().expect("join tokenizer server");
 }
 
 #[derive(Clone)]
@@ -2252,6 +2396,7 @@ async fn retry_after_partial_text_does_not_duplicate_text_or_replay_tools() {
         observer: Arc::new(crate::port::observer::NoopObserver),
         workspace_dir: dir.path().to_path_buf(),
         security_summary: None,
+        require_context_budget: false,
         provider_factory: Arc::new(move || Ok(Box::new(provider.as_ref().clone()))),
         conversation_memory: false,
         available_capabilities: vec![],
@@ -2307,6 +2452,7 @@ async fn retry_backoff_stops_when_the_turn_is_cancelled() {
         observer: Arc::new(crate::port::observer::NoopObserver),
         workspace_dir: dir.path().to_path_buf(),
         security_summary: None,
+        require_context_budget: false,
         provider_factory: Arc::new(move || Ok(Box::new(provider.as_ref().clone()))),
         conversation_memory: false,
         available_capabilities: vec![],
@@ -2393,6 +2539,7 @@ async fn cancelling_an_in_flight_request_prevents_detached_retries() {
         observer: Arc::new(crate::port::observer::NoopObserver),
         workspace_dir: dir.path().to_path_buf(),
         security_summary: None,
+        require_context_budget: false,
         provider_factory: Arc::new(move || Ok(Box::new(provider.as_ref().clone()))),
         conversation_memory: false,
         available_capabilities: vec![],
@@ -2485,6 +2632,7 @@ async fn reasoning_deltas_stay_out_of_assistant_answer_text() {
         observer: Arc::new(crate::port::observer::NoopObserver),
         workspace_dir: dir.path().to_path_buf(),
         security_summary: None,
+        require_context_budget: false,
         provider_factory: Arc::new(|| Ok(Box::new(ReasoningProvider))),
         conversation_memory: false,
         available_capabilities: vec![],

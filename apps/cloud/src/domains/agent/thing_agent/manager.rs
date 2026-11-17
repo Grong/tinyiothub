@@ -654,6 +654,7 @@ pub(crate) mod tests {
                 observer: Arc::new(tinyiothub_agent::port::observer::NoopObserver),
                 workspace_dir: dir.path().to_path_buf(),
                 security_summary: None,
+                require_context_budget: false,
                 provider_factory: Arc::new(move || Ok(Box::new(llm_for_factory.as_ref().clone()))),
                 conversation_memory: true,
                 available_capabilities: vec![],

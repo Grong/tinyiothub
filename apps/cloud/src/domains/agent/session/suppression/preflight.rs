@@ -30,7 +30,7 @@ use tokio_util::sync::CancellationToken;
 
 use super::contract::{SourceSnapshot, TURN_STATE_VERSION};
 use super::error::{ErrorCode, SuppressionError};
-use super::registry::{SourceContext, SourceMode, SourceRegistry};
+use super::registry::{ResolvedSource, SourceContext, SourceMode, SourceRegistry};
 
 /// Bound on concurrent preflight captures across every workspace.
 pub const DEFAULT_PREFLIGHT_CONCURRENCY: usize = 4;
@@ -284,24 +284,40 @@ impl SuppressionService {
 
     pub async fn evaluate(
         &self,
-        mut context: SourceContext,
+        context: SourceContext,
         state: Option<&SuppressionState>,
         config: &SuppressionConfig,
         current_user_seq: i64,
     ) -> Result<PreflightDecision, SuppressionError> {
+        self.evaluate_resolved(context, state, config, current_user_seq)
+            .await
+            .map(|(decision, _)| decision)
+    }
+
+    /// Evaluate and resolve the exact immutable bytes behind the decision.
+    pub async fn evaluate_resolved(
+        &self,
+        mut context: SourceContext,
+        state: Option<&SuppressionState>,
+        config: &SuppressionConfig,
+        current_user_seq: i64,
+    ) -> Result<(PreflightDecision, Vec<ResolvedSource>), SuppressionError> {
         context.mode = config.mode.into();
         // Off observes nothing: the kill switch must stay cheap and immediate
         // and must not depend on capture capacity.
         if config.mode == SuppressionMode::Off {
             let registry_version = self.registry.registry_version();
-            return Ok(evaluate_snapshots(PreflightInput {
-                observed_at: context.observed_at,
-                state,
-                config,
-                current_user_seq,
-                registry_version: &registry_version,
-                snapshots: &[],
-            }));
+            return Ok((
+                evaluate_snapshots(PreflightInput {
+                    observed_at: context.observed_at,
+                    state,
+                    config,
+                    current_user_seq,
+                    registry_version: &registry_version,
+                    snapshots: &[],
+                }),
+                Vec::new(),
+            ));
         }
         let _permit = self.gate.try_acquire().ok_or_else(backpressure_error)?;
         let cancel = CancellationToken::new();
@@ -311,23 +327,41 @@ impl SuppressionService {
             self.limits.resolve_deadline,
             &cancel,
         );
-        let snapshots = match tokio::time::timeout(self.limits.total_deadline, capture).await {
+        let deadline = tokio::time::Instant::now() + self.limits.total_deadline;
+        let snapshots = match tokio::time::timeout_at(deadline, capture).await {
             Ok(result) => result?,
             Err(_) => {
-                // Cooperative cancellation on top of dropping the slow future.
                 cancel.cancel();
                 return Err(preflight_timeout_error());
             }
         };
         let registry_version = self.registry.registry_version();
-        Ok(evaluate_snapshots(PreflightInput {
+        let decision = evaluate_snapshots(PreflightInput {
             observed_at: context.observed_at,
             state,
             config,
             current_user_seq,
             registry_version: &registry_version,
             snapshots: &snapshots,
-        }))
+        });
+        let resolved = if !snapshots.is_empty() && snapshots.iter().all(|snapshot| snapshot.available) {
+            match tokio::time::timeout_at(
+                deadline,
+                self.registry
+                    .resolve_all_bounded(&snapshots, self.limits.resolve_deadline, &cancel),
+            )
+            .await
+            {
+                Ok(result) => result?,
+                Err(_) => {
+                    cancel.cancel();
+                    return Err(preflight_timeout_error());
+                }
+            }
+        } else {
+            Vec::new()
+        };
+        Ok((decision, resolved))
     }
 }
 
@@ -898,10 +932,30 @@ fn validate_shadow_artifact(artifact: &SuppressionGateArtifact) -> Result<(), Su
     Ok(())
 }
 
+fn validate_false_skip_review_coverage(artifact: &SuppressionGateArtifact) -> Result<(), SuppressionError> {
+    let expected: HashSet<&str> = artifact.sample.would_skip_turn_ids.iter().map(String::as_str).collect();
+    let actual: HashSet<&str> = artifact
+        .false_skip_review
+        .samples
+        .iter()
+        .map(|sample| sample.turn_id.as_str())
+        .collect();
+    if expected.len() != artifact.sample.would_skip_turn_ids.len()
+        || actual.len() != artifact.false_skip_review.samples.len()
+        || expected != actual
+    {
+        return Err(gate_not_met(
+            "false-skip reviews must cover every wouldSkip turn exactly once",
+        ));
+    }
+    Ok(())
+}
+
 fn validate_canary_artifact(artifact: &SuppressionGateArtifact) -> Result<(), SuppressionError> {
     if artifact.mode != SuppressionGateMode::Canary {
         return Err(gate_not_met("enforce requires an approved canary-measured artifact"));
     }
+    validate_false_skip_review_coverage(artifact)?;
     let Some(denominators) = artifact.denominators.canary.as_ref() else {
         return Err(gate_not_met("canary artifact is missing its denominators"));
     };
@@ -1133,6 +1187,11 @@ pub fn derive_shadow_gate_artifact(
                 .iter()
                 .map(|observation| observation.turn_id.clone())
                 .collect(),
+            would_skip_turn_ids: observations
+                .iter()
+                .filter(|observation| observation.would_skip)
+                .map(|observation| observation.turn_id.clone())
+                .collect(),
             baseline_turn_ids: Vec::new(),
             dates: observed_dates(observations),
             registry_version,
@@ -1250,13 +1309,18 @@ pub fn derive_canary_gate_artifact(
         duplicate_report_labels: Some(duplicate_labels),
     };
 
-    Ok(SuppressionGateArtifact {
+    let artifact = SuppressionGateArtifact {
         artifact_id,
         workspace_id: workspace_id.to_string(),
         mode: SuppressionGateMode::Canary,
         sample: GateSample {
             turn_ids: observations
                 .iter()
+                .map(|observation| observation.turn_id.clone())
+                .collect(),
+            would_skip_turn_ids: observations
+                .iter()
+                .filter(|observation| observation.would_skip)
                 .map(|observation| observation.turn_id.clone())
                 .collect(),
             baseline_turn_ids: baseline_observations
@@ -1289,7 +1353,9 @@ pub fn derive_canary_gate_artifact(
         approver: approver.to_string(),
         approved_at,
         content_sha256: String::new(),
-    })
+    };
+    validate_false_skip_review_coverage(&artifact)?;
+    Ok(artifact)
 }
 
 fn verify_u64(label: &str, actual: u64, expected: u64) -> Result<(), SuppressionError> {
@@ -1437,6 +1503,21 @@ pub fn verify_artifact_evidence(
             }
         }
         SuppressionGateMode::Canary => {
+            let recorded_would_skip: Vec<String> = sample
+                .iter()
+                .filter(|observation| observation.would_skip)
+                .map(|observation| observation.turn_id.clone())
+                .collect();
+            let expected_ids: HashSet<&str> = artifact.sample.would_skip_turn_ids.iter().map(String::as_str).collect();
+            let recorded_ids: HashSet<&str> = recorded_would_skip.iter().map(String::as_str).collect();
+            if expected_ids.len() != artifact.sample.would_skip_turn_ids.len()
+                || recorded_ids.len() != recorded_would_skip.len()
+                || expected_ids != recorded_ids
+            {
+                return Err(gate_not_met(
+                    "artifact wouldSkip turn ids do not match recorded observations",
+                ));
+            }
             if sample
                 .iter()
                 .any(|observation| observation.mode != SuppressionMode::Canary)
@@ -2037,7 +2118,11 @@ mod preflight {
         }
 
         async fn resolve_state(&self, _reference: &StateRef) -> Result<CanonicalBytes, SuppressionError> {
-            Err(SuppressionError::new("source_ref_mismatch", "unused", "unused"))
+            let bytes = crate::domains::agent::session::suppression::canonical::canonical_source_state(
+                &self.snapshot.source_id,
+                &self.snapshot.work_items,
+            )?;
+            CanonicalBytes::state(bytes, self.snapshot.revision.clone())
         }
 
         async fn resolve_payload(&self, _reference: &PayloadRef) -> Result<CanonicalBytes, SuppressionError> {
@@ -2047,7 +2132,14 @@ mod preflight {
 
     #[tokio::test]
     async fn evaluate_captures_registered_sources_and_uses_config_mode() {
-        let baseline = snapshot("test.static", "rev-1", hash_hex('1'));
+        let mut baseline = snapshot("test.static", "rev-1", hash_hex('1'));
+        let bytes = crate::domains::agent::session::suppression::canonical::canonical_source_state(
+            &baseline.source_id,
+            &baseline.work_items,
+        )
+        .unwrap();
+        baseline.state_hash = crate::domains::agent::session::suppression::canonical::hash_state(&bytes);
+        baseline.state_ref.as_mut().unwrap().state_hash = baseline.state_hash.clone();
         let mut registry = SourceRegistry::new();
         registry
             .register(Arc::new(StaticSource {
@@ -2071,6 +2163,69 @@ mod preflight {
         assert!(decision.vetoes.is_empty());
         assert_eq!(decision.snapshot.len(), 1);
         assert_eq!(decision.baseline_state_id.as_deref(), Some(STATE_ID));
+    }
+
+    struct BrokenRefSource {
+        snapshot: SourceSnapshot,
+    }
+
+    #[async_trait::async_trait]
+    impl AssistantSource for BrokenRefSource {
+        fn descriptor(&self) -> SourceDescriptor {
+            SourceDescriptor {
+                source_id: self.snapshot.source_id.clone(),
+                source_version: self.snapshot.source_version,
+            }
+        }
+
+        async fn capture(&self, _cx: &SourceContext) -> Result<SourceSnapshot, SuppressionError> {
+            Ok(self.snapshot.clone())
+        }
+
+        async fn resolve_state(&self, _reference: &StateRef) -> Result<CanonicalBytes, SuppressionError> {
+            Err(SuppressionError::new(
+                "source_ref_mismatch",
+                "broken fixture",
+                "rebuild",
+            ))
+        }
+
+        async fn resolve_payload(&self, _reference: &PayloadRef) -> Result<CanonicalBytes, SuppressionError> {
+            Err(SuppressionError::new(
+                "work_item_payload_missing",
+                "broken fixture",
+                "restore",
+            ))
+        }
+    }
+
+    #[tokio::test]
+    async fn final_review_preflight_rejects_an_unresolvable_state_ref() {
+        let mut baseline = snapshot("test.static", "rev-1", hash_hex('1'));
+        let bytes = crate::domains::agent::session::suppression::canonical::canonical_source_state(
+            &baseline.source_id,
+            &baseline.work_items,
+        )
+        .unwrap();
+        baseline.state_hash = crate::domains::agent::session::suppression::canonical::hash_state(&bytes);
+        baseline.state_ref.as_mut().unwrap().state_hash = baseline.state_hash.clone();
+        let mut registry = SourceRegistry::new();
+        registry
+            .register(Arc::new(BrokenRefSource {
+                snapshot: baseline.clone(),
+            }))
+            .expect("register source");
+        let registry_version = registry.registry_version();
+        let state = state_for(std::slice::from_ref(&baseline), &registry_version);
+        let service = SuppressionService::new(Arc::new(registry));
+        let mut context = SourceContext::new(WS, SESSION);
+        context.observed_at = state.baseline_installed_at.expect("installed") + Duration::seconds(60);
+
+        let error = service
+            .evaluate(context, Some(&state), &config(SuppressionMode::Enforce), 5)
+            .await
+            .expect_err("an unresolvable ref must never authorize skip");
+        assert_eq!(error.code, "source_ref_mismatch");
     }
 
     #[tokio::test]
@@ -2151,12 +2306,10 @@ mod suppression_overload {
         SourceContext::new(WS, SESSION)
     }
 
-    fn hash_hex(character: char) -> String {
-        format!("sha256:{}", character.to_string().repeat(64))
-    }
-
     fn snapshot(source_id: &str) -> SourceSnapshot {
-        let state_hash = hash_hex('a');
+        let bytes = crate::domains::agent::session::suppression::canonical::canonical_source_state(source_id, &[])
+            .expect("empty overload state");
+        let state_hash = crate::domains::agent::session::suppression::canonical::hash_state(&bytes);
         SourceSnapshot {
             source_id: source_id.to_string(),
             source_version: SOURCE_VERSION,
@@ -2192,7 +2345,11 @@ mod suppression_overload {
         }
 
         async fn resolve_state(&self, _reference: &StateRef) -> Result<CanonicalBytes, SuppressionError> {
-            Err(SuppressionError::new("source_ref_mismatch", "unused", "unused"))
+            let bytes = crate::domains::agent::session::suppression::canonical::canonical_source_state(
+                &self.snapshot.source_id,
+                &self.snapshot.work_items,
+            )?;
+            CanonicalBytes::state(bytes, self.snapshot.revision.clone())
         }
 
         async fn resolve_payload(&self, _reference: &PayloadRef) -> Result<CanonicalBytes, SuppressionError> {
@@ -2245,7 +2402,11 @@ mod suppression_overload {
         }
 
         async fn resolve_state(&self, _reference: &StateRef) -> Result<CanonicalBytes, SuppressionError> {
-            Err(SuppressionError::new("source_ref_mismatch", "unused", "unused"))
+            let bytes = crate::domains::agent::session::suppression::canonical::canonical_source_state(
+                &self.snapshot.source_id,
+                &self.snapshot.work_items,
+            )?;
+            CanonicalBytes::state(bytes, self.snapshot.revision.clone())
         }
 
         async fn resolve_payload(&self, _reference: &PayloadRef) -> Result<CanonicalBytes, SuppressionError> {
@@ -2612,6 +2773,7 @@ pub(crate) mod suppression_gate {
                 mode: SuppressionGateMode::Shadow,
                 sample: GateSample {
                     turn_ids,
+                    would_skip_turn_ids: (0..60).map(|index| format!("shadow-turn-{index:03}")).collect(),
                     baseline_turn_ids: Vec::new(),
                     dates: vec![
                         "2026-11-10".to_string(),
@@ -2672,6 +2834,7 @@ pub(crate) mod suppression_gate {
                 mode: SuppressionGateMode::Canary,
                 sample: GateSample {
                     turn_ids,
+                    would_skip_turn_ids: (0..10).map(|index| format!("canary-turn-{index:03}")).collect(),
                     baseline_turn_ids,
                     dates: vec![
                         "2026-11-13".to_string(),
@@ -2709,11 +2872,13 @@ pub(crate) mod suppression_gate {
                     reviewed_at: ts(1_900_000_001),
                     conclusion: FALSE_SKIP_CONCLUSION_NONE.to_string(),
                     confirmed_false_skips: 0,
-                    samples: vec![FalseSkipSample {
-                        turn_id: "canary-turn-000".to_string(),
-                        reviewed: true,
-                        confirmed_false_skip: false,
-                    }],
+                    samples: (0..10)
+                        .map(|index| FalseSkipSample {
+                            turn_id: format!("canary-turn-{index:03}"),
+                            reviewed: true,
+                            confirmed_false_skip: false,
+                        })
+                        .collect(),
                 },
                 latency: LatencyDistribution {
                     sample_count: 20,
@@ -3307,6 +3472,22 @@ pub(crate) mod suppression_gate {
 
         let no_samples = canary_fixture(GATE_WS).with_review(|review| review.samples.clear());
         assert_gate_not_met(validate_transition(SuppressionMode::Enforce, &no_samples, &context()));
+    }
+
+    #[test]
+    fn final_review_canary_rejects_a_subset_of_would_skip_reviews() {
+        let one_reviewed_sample = canary_fixture(GATE_WS).with_review(|review| {
+            review.samples = vec![FalseSkipSample {
+                turn_id: "canary-turn-000".to_string(),
+                reviewed: true,
+                confirmed_false_skip: false,
+            }];
+        });
+        assert_gate_not_met(validate_transition(
+            SuppressionMode::Enforce,
+            &one_reviewed_sample,
+            &context(),
+        ));
     }
 
     // ── Staleness (ruling R18) ──

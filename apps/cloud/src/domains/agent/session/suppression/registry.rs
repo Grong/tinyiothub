@@ -20,6 +20,7 @@ use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
+use sqlx::Row;
 use tinyiothub_core::config::SystemPromptsConfig;
 use tinyiothub_core::harness::{ExecutionMode, HarnessEvent};
 use tinyiothub_runtime::watch::live_state::WorkspaceSnapshot;
@@ -31,7 +32,9 @@ use unicode_normalization::UnicodeNormalization;
 
 use crate::domains::agent::prompt::{MEMORY_MAX_TOKENS, MemorySelection, PromptMemorySource, paths, select_memory};
 
-use super::canonical::{canonical_bytes, hash_payload, hash_state, registry_version as canonical_registry_version};
+use super::canonical::{
+    canonical_bytes, canonical_source_state, hash_payload, hash_state, registry_version as canonical_registry_version,
+};
 use super::contract::{
     PayloadRef, SourceDescriptor, SourceSnapshot, WorkItem, WorkItemDisposition, validate_descriptors,
 };
@@ -116,6 +119,16 @@ pub trait AssistantSource: Send + Sync {
 struct RegisteredSource {
     descriptor: SourceDescriptor,
     source: Arc<dyn AssistantSource>,
+}
+
+/// Resolved immutable content for one captured Source. Full Turns build input
+/// from these exact bytes rather than rereading mutable stores.
+#[derive(Clone, Debug)]
+pub struct ResolvedSource {
+    pub source_id: String,
+    pub work_items: Vec<WorkItem>,
+    pub state: CanonicalBytes,
+    pub payloads: Vec<CanonicalBytes>,
 }
 
 /// Registration and conformance entry point for all Source adapters.
@@ -215,6 +228,63 @@ impl SourceRegistry {
             snapshots.push(snapshot);
         }
         Ok(snapshots)
+    }
+
+    /// Resolve every captured ref with an independent per-Source deadline and
+    /// verify revision/hash before the result can authorize skip or build a
+    /// full Turn. The caller's whole-preflight deadline wraps this batch too.
+    pub async fn resolve_all_bounded(
+        &self,
+        snapshots: &[SourceSnapshot],
+        resolve_deadline: std::time::Duration,
+        cancel: &CancellationToken,
+    ) -> Result<Vec<ResolvedSource>, SuppressionError> {
+        if snapshots.len() != self.sources.len() {
+            return Err(contract_error(
+                "source_contract_invalid",
+                "capture/source count changed",
+            ));
+        }
+        let mut resolved = Vec::with_capacity(snapshots.len());
+        for (registered, snapshot) in self.sources.iter().zip(snapshots.iter()) {
+            if !snapshot.available {
+                return Err(contract_error(
+                    "source_unavailable",
+                    "cannot resolve an unavailable Source",
+                ));
+            }
+            let future = async {
+                let state_ref = snapshot.state_ref.as_ref().ok_or_else(ref_mismatch_error)?;
+                let state = registered.source.resolve_state(state_ref).await?;
+                if state.revision() != snapshot.revision || state.hash() != snapshot.state_hash {
+                    return Err(ref_mismatch_error());
+                }
+                let mut payloads = Vec::with_capacity(snapshot.work_items.len());
+                for item in &snapshot.work_items {
+                    let payload = registered.source.resolve_payload(&item.payload_ref).await?;
+                    if payload.revision() != item.revision || payload.hash() != item.payload_hash {
+                        return Err(ref_mismatch_error());
+                    }
+                    payloads.push(payload);
+                }
+                Ok(ResolvedSource {
+                    source_id: snapshot.source_id.clone(),
+                    work_items: snapshot.work_items.clone(),
+                    state,
+                    payloads,
+                })
+            };
+            let source = tokio::select! {
+                biased;
+                _ = cancel.cancelled() => return Err(SuppressionError::from_code(ErrorCode::PreflightTimeout)),
+                result = tokio::time::timeout(resolve_deadline, future) => match result {
+                    Ok(result) => result?,
+                    Err(_) => return Err(SuppressionError::from_code(ErrorCode::PreflightTimeout)),
+                },
+            };
+            resolved.push(source);
+        }
+        Ok(resolved)
     }
 
     /// Shared conformance harness used by every adapter in tests (and usable as
@@ -401,10 +471,10 @@ fn is_external_semantic_event(event: &HarnessEvent) -> bool {
         "wake.",
         "trigger.",
         "message.",
-        "approval.",
-        "question.",
-        "todo.",
-        "task.",
+        // question/approval/todo/task events are semantic work here: the
+        // integrated registry has no other Source that owns their current
+        // payloads. Excluding them would hide answers and open work until the
+        // next timed reconciliation.
         "run.",
         "assistant.",
         "harness.",
@@ -427,6 +497,15 @@ fn is_external_semantic_event(event: &HarnessEvent) -> bool {
 pub(crate) struct SourceCache {
     entries: Mutex<BTreeMap<String, CachedEntry>>,
     state: Mutex<Option<CanonicalBytes>>,
+    db: Option<Arc<Db>>,
+    identity: Mutex<Option<CacheIdentity>>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct CacheIdentity {
+    workspace_id: String,
+    session_id: String,
+    source_id: String,
 }
 
 #[derive(Clone, Debug)]
@@ -438,6 +517,224 @@ struct CachedEntry {
 }
 
 impl SourceCache {
+    fn persistent(db: Arc<Db>) -> Self {
+        Self {
+            db: Some(db),
+            ..Self::default()
+        }
+    }
+
+    fn persistent_identity(&self) -> Result<CacheIdentity, SuppressionError> {
+        self.identity
+            .lock()
+            .expect("source cache poisoned")
+            .clone()
+            .ok_or_else(ref_mismatch_error)
+    }
+
+    async fn merge_persistent(
+        &self,
+        cx: &SourceContext,
+        source_id: &str,
+        current: Vec<(String, Vec<u8>, WorkItemDisposition)>,
+    ) -> Result<Vec<WorkItem>, SuppressionError> {
+        *self.identity.lock().expect("source cache poisoned") = Some(CacheIdentity {
+            workspace_id: cx.workspace_id.clone(),
+            session_id: cx.session_id.clone(),
+            source_id: source_id.to_string(),
+        });
+        let Some(db) = &self.db else {
+            return self.merge(current);
+        };
+        let pool = db
+            .source_cache_pool(&cx.workspace_id)
+            .await
+            .map_err(|_| source_unavailable("open the workspace Source cache"))?;
+        let rows = sqlx::query(
+            "SELECT work_key, revision, disposition, payload_hash, payload_bytes \
+             FROM suppression_source_entries WHERE workspace_id = ? AND session_id = ? AND source_id = ?",
+        )
+        .bind(&cx.workspace_id)
+        .bind(&cx.session_id)
+        .bind(source_id)
+        .fetch_all(&pool)
+        .await
+        .map_err(|_| source_unavailable("load retained Source entries"))?;
+        let retained = SourceCache::default();
+        {
+            let mut entries = retained.entries.lock().expect("source cache poisoned");
+            for row in rows {
+                let disposition = match row.get::<String, _>("disposition").as_str() {
+                    "active" => WorkItemDisposition::Active,
+                    "waiting" => WorkItemDisposition::Waiting,
+                    "closed" => WorkItemDisposition::Closed,
+                    _ => {
+                        return Err(contract_error(
+                            "source_contract_invalid",
+                            "unknown retained disposition",
+                        ));
+                    }
+                };
+                entries.insert(
+                    row.get::<String, _>("work_key"),
+                    CachedEntry {
+                        payload_bytes: Some(row.get::<Vec<u8>, _>("payload_bytes")),
+                        payload_hash: Some(row.get::<String, _>("payload_hash")),
+                        revision: row.get::<String, _>("revision"),
+                        disposition,
+                    },
+                );
+            }
+        }
+        let items = retained.merge(current)?;
+        let entries_to_persist = {
+            retained
+                .entries
+                .lock()
+                .expect("source cache poisoned")
+                .iter()
+                .map(|(key, entry)| (key.clone(), entry.clone()))
+                .collect::<Vec<_>>()
+        };
+        let mut tx = pool
+            .begin()
+            .await
+            .map_err(|_| source_unavailable("begin Source cache write"))?;
+        for chunk in entries_to_persist.chunks(50) {
+            let mut sql = String::from(
+                "INSERT INTO suppression_source_entries \
+                 (workspace_id, session_id, source_id, work_key, revision, disposition, payload_hash, payload_bytes, updated_at) VALUES ",
+            );
+            for index in 0..chunk.len() {
+                if index > 0 {
+                    sql.push(',');
+                }
+                sql.push_str("(?, ?, ?, ?, ?, ?, ?, ?, ?)");
+            }
+            sql.push_str(
+                " ON CONFLICT(workspace_id, session_id, source_id, work_key) DO UPDATE SET \
+                   revision = excluded.revision, disposition = excluded.disposition, \
+                   payload_hash = excluded.payload_hash, payload_bytes = excluded.payload_bytes, \
+                   updated_at = excluded.updated_at",
+            );
+            let mut query = sqlx::query(sqlx::AssertSqlSafe(sql));
+            for (work_key, entry) in chunk {
+                let Some(payload_bytes) = &entry.payload_bytes else {
+                    return Err(missing_payload_error());
+                };
+                let Some(payload_hash) = &entry.payload_hash else {
+                    return Err(missing_payload_error());
+                };
+                query = query
+                    .bind(&cx.workspace_id)
+                    .bind(&cx.session_id)
+                    .bind(source_id)
+                    .bind(work_key)
+                    .bind(&entry.revision)
+                    .bind(disposition_name(entry.disposition))
+                    .bind(payload_hash)
+                    .bind(payload_bytes)
+                    .bind(Utc::now().to_rfc3339());
+            }
+            query
+                .execute(&mut *tx)
+                .await
+                .map_err(|_| source_unavailable("retain Source entries in one batch"))?;
+        }
+        tx.commit()
+            .await
+            .map_err(|_| source_unavailable("commit Source entries"))?;
+        Ok(items)
+    }
+
+    async fn snapshot_persistent(
+        &self,
+        cx: &SourceContext,
+        source_id: &str,
+        items: Vec<WorkItem>,
+    ) -> Result<SourceSnapshot, SuppressionError> {
+        let snapshot = self.snapshot(source_id, items)?;
+        let Some(db) = &self.db else {
+            return Ok(snapshot);
+        };
+        let state = self
+            .state
+            .lock()
+            .expect("source cache poisoned")
+            .clone()
+            .ok_or_else(ref_mismatch_error)?;
+        let pool = db
+            .source_cache_pool(&cx.workspace_id)
+            .await
+            .map_err(|_| source_unavailable("open the workspace Source state cache"))?;
+        sqlx::query(
+            "INSERT OR IGNORE INTO suppression_source_states \
+             (workspace_id, session_id, source_id, state_hash, revision, state_bytes, created_at) \
+             VALUES (?, ?, ?, ?, ?, ?, ?)",
+        )
+        .bind(&cx.workspace_id)
+        .bind(&cx.session_id)
+        .bind(source_id)
+        .bind(state.hash())
+        .bind(state.revision())
+        .bind(state.as_bytes())
+        .bind(Utc::now().to_rfc3339())
+        .execute(&pool)
+        .await
+        .map_err(|_| source_unavailable("retain immutable Source state"))?;
+        Ok(snapshot)
+    }
+
+    async fn resolve_state_persistent(&self, reference: &StateRef) -> Result<CanonicalBytes, SuppressionError> {
+        let Some(db) = &self.db else {
+            return self.resolve_state(reference);
+        };
+        let identity = self.persistent_identity()?;
+        let pool = db
+            .source_cache_pool(&identity.workspace_id)
+            .await
+            .map_err(|_| source_unavailable("open the workspace Source state cache"))?;
+        let bytes = sqlx::query_scalar::<_, Vec<u8>>(
+            "SELECT state_bytes FROM suppression_source_states \
+             WHERE workspace_id = ? AND session_id = ? AND source_id = ? AND state_hash = ? AND revision = ?",
+        )
+        .bind(identity.workspace_id)
+        .bind(identity.session_id)
+        .bind(identity.source_id)
+        .bind(&reference.state_hash)
+        .bind(&reference.revision)
+        .fetch_optional(&pool)
+        .await
+        .map_err(|_| ref_mismatch_error())?
+        .ok_or_else(ref_mismatch_error)?;
+        CanonicalBytes::state(bytes, reference.revision.clone())
+    }
+
+    async fn resolve_payload_persistent(&self, reference: &PayloadRef) -> Result<CanonicalBytes, SuppressionError> {
+        let Some(db) = &self.db else {
+            return self.resolve_payload(reference);
+        };
+        let identity = self.persistent_identity()?;
+        let pool = db
+            .source_cache_pool(&identity.workspace_id)
+            .await
+            .map_err(|_| source_unavailable("open the workspace Source payload cache"))?;
+        let bytes = sqlx::query_scalar::<_, Vec<u8>>(
+            "SELECT payload_bytes FROM suppression_source_entries \
+             WHERE workspace_id = ? AND session_id = ? AND source_id = ? AND payload_hash = ? AND revision = ? LIMIT 1",
+        )
+        .bind(identity.workspace_id)
+        .bind(identity.session_id)
+        .bind(identity.source_id)
+        .bind(&reference.payload_hash)
+        .bind(&reference.revision)
+        .fetch_optional(&pool)
+        .await
+        .map_err(|_| missing_payload_error())?
+        .ok_or_else(missing_payload_error)?;
+        CanonicalBytes::payload(bytes, reference.revision.clone())
+    }
+
     /// Merge the current semantic items into the retained set. Items that are
     /// absent from `current` become closed tombstones with a changed revision
     /// and their last payload retained.
@@ -506,8 +803,7 @@ impl SourceCache {
     /// Build the complete available snapshot for the current retained set and
     /// remember its canonical state for immutable ref resolution.
     fn snapshot(&self, source_id: &str, items: Vec<WorkItem>) -> Result<SourceSnapshot, SuppressionError> {
-        let value = json!({ "sourceId": source_id, "workItems": &items });
-        let bytes = canonical_bytes(&value)?;
+        let bytes = canonical_source_state(source_id, &items)?;
         let state_hash = hash_state(&bytes);
         let revision = state_hash.clone();
         let state = CanonicalBytes::state(bytes, revision.clone())?;
@@ -580,13 +876,22 @@ impl SourceCache {
     }
 }
 
-fn capture_items(
+fn disposition_name(disposition: WorkItemDisposition) -> &'static str {
+    match disposition {
+        WorkItemDisposition::Active => "active",
+        WorkItemDisposition::Waiting => "waiting",
+        WorkItemDisposition::Closed => "closed",
+    }
+}
+
+async fn capture_items(
+    cx: &SourceContext,
     source_id: &str,
     cache: &SourceCache,
     current: Vec<(String, Vec<u8>, WorkItemDisposition)>,
 ) -> Result<SourceSnapshot, SuppressionError> {
-    match cache.merge(current) {
-        Ok(items) => match cache.snapshot(source_id, items) {
+    match cache.merge_persistent(cx, source_id, current).await {
+        Ok(items) => match cache.snapshot_persistent(cx, source_id, items).await {
             Ok(snapshot) => Ok(snapshot),
             Err(error) => Ok(unavailable_snapshot(source_id, error)),
         },
@@ -764,15 +1069,15 @@ impl AssistantSource for WorkspaceSnapshotSource {
             };
             current.push((device.thing_id.clone(), bytes, disposition));
         }
-        capture_items(WORKSPACE_SNAPSHOT_SOURCE, &self.cache, current)
+        capture_items(cx, WORKSPACE_SNAPSHOT_SOURCE, &self.cache, current).await
     }
 
     async fn resolve_state(&self, reference: &StateRef) -> Result<CanonicalBytes, SuppressionError> {
-        self.cache.resolve_state(reference)
+        self.cache.resolve_state_persistent(reference).await
     }
 
     async fn resolve_payload(&self, reference: &PayloadRef) -> Result<CanonicalBytes, SuppressionError> {
-        self.cache.resolve_payload(reference)
+        self.cache.resolve_payload_persistent(reference).await
     }
 }
 
@@ -857,18 +1162,18 @@ impl AssistantSource for SessionEventsSource {
                     let bytes = canonical_bytes(&payload)?;
                     current.push((event.event_id, bytes, WorkItemDisposition::Active));
                 }
-                capture_items(SESSION_EVENTS_SOURCE, &self.cache, current)
+                capture_items(cx, SESSION_EVENTS_SOURCE, &self.cache, current).await
             }
             Err(error) => Ok(unavailable_snapshot(SESSION_EVENTS_SOURCE, error)),
         }
     }
 
     async fn resolve_state(&self, reference: &StateRef) -> Result<CanonicalBytes, SuppressionError> {
-        self.cache.resolve_state(reference)
+        self.cache.resolve_state_persistent(reference).await
     }
 
     async fn resolve_payload(&self, reference: &PayloadRef) -> Result<CanonicalBytes, SuppressionError> {
-        self.cache.resolve_payload(reference)
+        self.cache.resolve_payload_persistent(reference).await
     }
 }
 
@@ -901,22 +1206,24 @@ impl AssistantSource for TurnBriefSource {
             Ok(Some(content)) if !content.trim().is_empty() => {
                 let bytes = document_payload(&content)?;
                 capture_items(
+                    cx,
                     TURN_BRIEF_SOURCE,
                     &self.cache,
                     vec![("document".to_string(), bytes, WorkItemDisposition::Active)],
                 )
+                .await
             }
-            Ok(_) => capture_items(TURN_BRIEF_SOURCE, &self.cache, vec![]),
+            Ok(_) => capture_items(cx, TURN_BRIEF_SOURCE, &self.cache, vec![]).await,
             Err(error) => Ok(unavailable_snapshot(TURN_BRIEF_SOURCE, error)),
         }
     }
 
     async fn resolve_state(&self, reference: &StateRef) -> Result<CanonicalBytes, SuppressionError> {
-        self.cache.resolve_state(reference)
+        self.cache.resolve_state_persistent(reference).await
     }
 
     async fn resolve_payload(&self, reference: &PayloadRef) -> Result<CanonicalBytes, SuppressionError> {
-        self.cache.resolve_payload(reference)
+        self.cache.resolve_payload_persistent(reference).await
     }
 }
 
@@ -959,15 +1266,15 @@ impl AssistantSource for SkillsSource {
             let bytes = canonical_bytes(&payload)?;
             current.push((skill.name, bytes, WorkItemDisposition::Active));
         }
-        capture_items(SKILLS_SOURCE, &self.cache, current)
+        capture_items(cx, SKILLS_SOURCE, &self.cache, current).await
     }
 
     async fn resolve_state(&self, reference: &StateRef) -> Result<CanonicalBytes, SuppressionError> {
-        self.cache.resolve_state(reference)
+        self.cache.resolve_state_persistent(reference).await
     }
 
     async fn resolve_payload(&self, reference: &PayloadRef) -> Result<CanonicalBytes, SuppressionError> {
-        self.cache.resolve_payload(reference)
+        self.cache.resolve_payload_persistent(reference).await
     }
 }
 
@@ -999,22 +1306,24 @@ impl AssistantSource for ShortTermSource {
             Ok(Some(content)) if !content.trim().is_empty() => {
                 let bytes = document_payload(&content)?;
                 capture_items(
+                    cx,
                     SHORT_TERM_SOURCE,
                     &self.cache,
                     vec![("document".to_string(), bytes, WorkItemDisposition::Active)],
                 )
+                .await
             }
-            Ok(_) => capture_items(SHORT_TERM_SOURCE, &self.cache, vec![]),
+            Ok(_) => capture_items(cx, SHORT_TERM_SOURCE, &self.cache, vec![]).await,
             Err(error) => Ok(unavailable_snapshot(SHORT_TERM_SOURCE, error)),
         }
     }
 
     async fn resolve_state(&self, reference: &StateRef) -> Result<CanonicalBytes, SuppressionError> {
-        self.cache.resolve_state(reference)
+        self.cache.resolve_state_persistent(reference).await
     }
 
     async fn resolve_payload(&self, reference: &PayloadRef) -> Result<CanonicalBytes, SuppressionError> {
-        self.cache.resolve_payload(reference)
+        self.cache.resolve_payload_persistent(reference).await
     }
 }
 
@@ -1064,10 +1373,12 @@ impl AssistantSource for MemorySourceAdapter {
             Ok(MemorySelection::Profile(content)) => {
                 let bytes = document_payload(&content)?;
                 capture_items(
+                    cx,
                     MEMORY_SOURCE,
                     &self.cache,
                     vec![("profile".to_string(), bytes, WorkItemDisposition::Active)],
                 )
+                .await
             }
             Ok(MemorySelection::Entries(entries)) => {
                 let mut current = Vec::with_capacity(entries.len());
@@ -1079,7 +1390,7 @@ impl AssistantSource for MemorySourceAdapter {
                     let bytes = canonical_bytes(&payload)?;
                     current.push((entry.id, bytes, WorkItemDisposition::Active));
                 }
-                capture_items(MEMORY_SOURCE, &self.cache, current)
+                capture_items(cx, MEMORY_SOURCE, &self.cache, current).await
             }
             Err(_) => Ok(unavailable_snapshot(
                 MEMORY_SOURCE,
@@ -1089,11 +1400,11 @@ impl AssistantSource for MemorySourceAdapter {
     }
 
     async fn resolve_state(&self, reference: &StateRef) -> Result<CanonicalBytes, SuppressionError> {
-        self.cache.resolve_state(reference)
+        self.cache.resolve_state_persistent(reference).await
     }
 
     async fn resolve_payload(&self, reference: &PayloadRef) -> Result<CanonicalBytes, SuppressionError> {
-        self.cache.resolve_payload(reference)
+        self.cache.resolve_payload_persistent(reference).await
     }
 }
 
@@ -1105,12 +1416,24 @@ pub fn default_sources(
     snapshot_provider: Option<Arc<dyn WorkspaceSnapshotProvider>>,
 ) -> Result<SourceRegistry, SuppressionError> {
     let mut registry = SourceRegistry::new();
-    registry.register(Arc::new(WorkspaceSnapshotSource::new(snapshot_provider)))?;
-    registry.register(Arc::new(SessionEventsSource::new(db)))?;
-    registry.register(Arc::new(TurnBriefSource::new(config.clone())))?;
-    registry.register(Arc::new(SkillsSource::new(config.clone())))?;
-    registry.register(Arc::new(ShortTermSource::new(config.clone())))?;
-    registry.register(Arc::new(MemorySourceAdapter::new(memory_source, config)))?;
+    let mut workspace = WorkspaceSnapshotSource::new(snapshot_provider);
+    workspace.cache = SourceCache::persistent(db.clone());
+    registry.register(Arc::new(workspace))?;
+    let mut events = SessionEventsSource::new(db.clone());
+    events.cache = SourceCache::persistent(db.clone());
+    registry.register(Arc::new(events))?;
+    let mut brief = TurnBriefSource::new(config.clone());
+    brief.cache = SourceCache::persistent(db.clone());
+    registry.register(Arc::new(brief))?;
+    let mut skills = SkillsSource::new(config.clone());
+    skills.cache = SourceCache::persistent(db.clone());
+    registry.register(Arc::new(skills))?;
+    let mut short_term = ShortTermSource::new(config.clone());
+    short_term.cache = SourceCache::persistent(db.clone());
+    registry.register(Arc::new(short_term))?;
+    let mut memory = MemorySourceAdapter::new(memory_source, config);
+    memory.cache = SourceCache::persistent(db);
+    registry.register(Arc::new(memory))?;
     Ok(registry)
 }
 
@@ -1128,7 +1451,7 @@ mod registry {
     use tinyiothub_storage::Db;
 
     use crate::domains::agent::prompt::PromptMemorySource;
-    use crate::domains::agent::prompt::assistant::build_assistant_prompt_with_sources;
+    use crate::domains::agent::prompt::assistant::build_assistant_prompt_with_resolved_sources;
     use crate::domains::agent::session::context::TurnContext;
     use crate::domains::agent::session::events::session_event;
     use crate::domains::agent::session::suppression::canonical::{hash_payload, hash_state};
@@ -1355,24 +1678,26 @@ mod registry {
         async fn run_full_turn(&self) -> FullTurnRequest {
             // The full-input path still captures every Source (contract check);
             // the rendered request only needs the prompt text.
-            let _snapshots = self
+            let snapshots = self
                 .registry
                 .capture_all(&context())
                 .await
                 .expect("all six sources must capture and validate");
-            let capture = load_session_events(&self.db, WS, &self.session_key)
+            let resolved = self
+                .registry
+                .resolve_all_bounded(
+                    &snapshots,
+                    std::time::Duration::from_secs(2),
+                    &tokio_util::sync::CancellationToken::new(),
+                )
                 .await
-                .expect("session events capture");
-            let snapshot = self.snapshot.get();
-            let memory: Arc<dyn PromptMemorySource> = self.memory.clone();
-            let package = build_assistant_prompt_with_sources(
+                .expect("all captured refs must resolve");
+            let package = build_assistant_prompt_with_resolved_sources(
                 &self.config,
                 WS,
                 ASSISTANT,
                 "turn-input".into(),
-                Some(&memory),
-                snapshot.as_ref(),
-                &capture.events,
+                &resolved,
             )
             .await
             .expect("full prompt");
@@ -1537,8 +1862,9 @@ mod registry {
             }
         }
 
-        async fn capture(&self, _cx: &SourceContext) -> Result<SourceSnapshot, super::SuppressionError> {
+        async fn capture(&self, cx: &SourceContext) -> Result<SourceSnapshot, super::SuppressionError> {
             super::capture_items(
+                cx,
                 "test.duplicate",
                 &self.cache,
                 vec![
@@ -1546,6 +1872,7 @@ mod registry {
                     ("same".into(), b"second".to_vec(), WorkItemDisposition::Active),
                 ],
             )
+            .await
         }
 
         async fn resolve_state(
@@ -1712,6 +2039,47 @@ mod registry {
     }
 
     #[tokio::test]
+    async fn final_review_question_approval_todo_and_task_changes_enter_full_input() {
+        let fixture = SixSourceFixture::setup().await;
+        let source = SessionEventsSource::new(fixture.db.clone());
+        let noise = TurnContext::new(
+            WS.into(),
+            ASSISTANT.into(),
+            fixture.session_key.clone(),
+            "run-external-work".into(),
+            0,
+        );
+        let mut previous = source.capture(&context()).await.unwrap();
+        for (event_type, marker) in [
+            ("question.answered", "answer-marker"),
+            ("approval.resolved", "approval-marker"),
+            ("todo.updated", "todo-marker"),
+            ("task.created", "task-marker"),
+        ] {
+            fixture
+                .db
+                .append_session_event(&session_event(
+                    &noise,
+                    event_type,
+                    json!({"eventType": event_type, "text": marker}),
+                ))
+                .await
+                .unwrap();
+            let current = source.capture(&context()).await.unwrap();
+            assert_ne!(
+                previous.revision, current.revision,
+                "{event_type} must force a full Turn"
+            );
+            previous = current;
+        }
+
+        let request = fixture.run_full_turn().await;
+        for marker in ["answer-marker", "approval-marker", "todo-marker", "task-marker"] {
+            assert!(request.text.contains(marker), "full input omitted {marker}");
+        }
+    }
+
+    #[tokio::test]
     async fn each_source_change_only_affects_its_own_revision() {
         let fixture = SixSourceFixture::setup().await;
         let before = fixture.registry.capture_all(&context()).await.unwrap();
@@ -1729,6 +2097,30 @@ mod registry {
                 );
             }
         }
+    }
+
+    #[tokio::test]
+    async fn final_review_deleted_payload_survives_registry_rebuild_and_enters_input() {
+        let mut fixture = SixSourceFixture::setup().await;
+        fixture.registry.capture_all(&context()).await.unwrap();
+        fixture.registry = default_sources(
+            fixture.config.clone(),
+            fixture.db.clone(),
+            Some(fixture.memory.clone() as Arc<dyn PromptMemorySource>),
+            Some(fixture.snapshot.clone() as Arc<dyn WorkspaceSnapshotProvider>),
+        )
+        .unwrap();
+        std::fs::remove_file(fixture.workspace_dir().join("TURN_BRIEF.md")).unwrap();
+
+        let snapshots = fixture.registry.capture_all(&context()).await.unwrap();
+        let brief = snapshots
+            .iter()
+            .find(|source| source.source_id == "turn.brief")
+            .unwrap();
+        assert_eq!(brief.work_items.len(), 1);
+        assert_eq!(brief.work_items[0].disposition, WorkItemDisposition::Closed);
+        let request = fixture.run_full_turn().await;
+        assert!(request.text.contains("turn-brief-marker"));
     }
 
     #[tokio::test]

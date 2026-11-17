@@ -426,20 +426,21 @@ impl AtomicSkipAudit {
         let Some(state) = state else {
             return Ok(None);
         };
-        if state.latest_outcome != OUTCOME_SKIPPED || state.attempt_no <= 0 {
-            return Ok(None);
+        for attempt_no in (1..=state.attempt_no).rev() {
+            let attempt = wake.attempt(attempt_no);
+            let event_ids: Vec<String> = SKIP_EVENT_TYPES
+                .iter()
+                .map(|event_type| attempt.event_id(event_type))
+                .collect();
+            if let Some(skip) = self
+                .db
+                .load_committed_skip_by_attempt_no(&wake.workspace_id, &wake.session_id, attempt_no, &event_ids)
+                .await?
+            {
+                return Ok(Some(skip));
+            }
         }
-        let Some(attempt_id) = state.latest_attempt_id.as_deref() else {
-            return Ok(None);
-        };
-        let attempt = wake.attempt(state.attempt_no);
-        let event_ids: Vec<String> = SKIP_EVENT_TYPES
-            .iter()
-            .map(|event_type| attempt.event_id(event_type))
-            .collect();
-        self.db
-            .load_committed_skip(&wake.workspace_id, &wake.session_id, attempt_id, &event_ids)
-            .await
+        Ok(None)
     }
 }
 
@@ -1168,16 +1169,19 @@ mod audit {
 
         fn snapshot(&self) -> SourceSnapshot {
             let revision = self.revision.lock().expect("source revision").clone();
+            let bytes = crate::domains::agent::session::suppression::canonical::canonical_source_state(SOURCE_ID, &[])
+                .expect("empty source state");
+            let state_hash = crate::domains::agent::session::suppression::canonical::hash_state(&bytes);
             SourceSnapshot {
                 source_id: SOURCE_ID.to_string(),
                 source_version: SOURCE_VERSION,
                 state_ref: Some(StateRef {
                     id: format!("state:{}", revision.0),
                     revision: revision.0.clone(),
-                    state_hash: revision.1.clone(),
+                    state_hash: state_hash.clone(),
                 }),
                 revision: revision.0,
-                state_hash: revision.1,
+                state_hash,
                 available: true,
                 empty: true,
                 work_items: vec![],
@@ -1200,7 +1204,12 @@ mod audit {
         }
 
         async fn resolve_state(&self, _reference: &StateRef) -> Result<CanonicalBytes, SuppressionError> {
-            Err(SuppressionError::new("source_ref_mismatch", "unused", "unused"))
+            let snapshot = self.snapshot();
+            let bytes = crate::domains::agent::session::suppression::canonical::canonical_source_state(
+                SOURCE_ID,
+                &snapshot.work_items,
+            )?;
+            CanonicalBytes::state(bytes, snapshot.revision)
         }
 
         async fn resolve_payload(&self, _reference: &PayloadRef) -> Result<CanonicalBytes, SuppressionError> {
@@ -1589,6 +1598,27 @@ mod audit {
         assert_ne!(full.turn_id(), fixture.skip_turn_id(&skip).await);
         assert_eq!(full.previous_attempt_id(), Some(skip.attempt_id.as_str()));
         assert!(full.supersedes);
+        assert_eq!(fixture.skipped_event_count().await, 1);
+    }
+
+    #[tokio::test]
+    async fn final_review_replay_finds_skip_after_a_later_full_turn() {
+        let fixture = AuditFixture::create().await;
+        let skip = fixture.commit_skip().await;
+        let original_turn_id = fixture.skip_turn_id(&skip).await;
+        fixture.change_source();
+        let full = fixture.replay().await;
+        assert_eq!(full.outcome(), "completed");
+        let before = fixture.event_count().await;
+
+        let replay = fixture.replay().await;
+        assert_eq!(replay.outcome(), "skipped");
+        assert_eq!(replay.turn_id(), original_turn_id);
+        assert_eq!(
+            replay.committed_skip().map(|committed| committed.attempt_id.as_str()),
+            Some(skip.attempt_id.as_str())
+        );
+        assert_eq!(fixture.event_count().await, before);
         assert_eq!(fixture.skipped_event_count().await, 1);
     }
 

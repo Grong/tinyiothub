@@ -85,6 +85,10 @@ pub struct AgentRuntimeConfig {
     /// Tool names disabled for this agent (denylist mode)
     #[serde(default = "default_tool_denylist")]
     pub tool_denylist: Vec<String>,
+    /// Require exact provider-owned context measurement before each model call.
+    /// Off by default; suppression enables it only for non-off scheduled Turns.
+    #[serde(default)]
+    pub require_context_budget: bool,
     /// Enable the reflection engine (post-turn memory/skill extraction).
     /// Safe to disable — only affects background processing, never core chat.
     #[serde(default = "default_enable_reflection")]
@@ -123,6 +127,7 @@ impl Default for AgentRuntimeConfig {
             persona_preset: String::new(),
             tool_denylist: default_tool_denylist(),
             enable_reflection: default_enable_reflection(),
+            require_context_budget: false,
         }
     }
 }
