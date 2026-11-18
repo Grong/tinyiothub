@@ -1,20 +1,21 @@
 //! E1 Task 11 收尾：watch 值守端到端——
 //! 注册 watch（温度>30，真实 API）→ 驱动读数越限（`consume_driver_reading`
-//! 共享管线，模拟驱动读数流入的同一入口）→ 2s 内 TriggerSource::Watch 的
-//! run 落 agent_runs（生产持久化订阅者投影）+ hub_ledger 落 watch_hit；
-//! 重启（全新 AgentRuntime/manager 重建装配）→ watch 网从 watch_rules
+//! 共享管线，模拟驱动读数流入的同一入口）→ 2s 内 EventWake(watch) 经
+//! `TriggerRouter` 交给 WakeExecutor + hub_ledger 落 watch_hit；重启（全新
+//! AgentRuntime/manager/TriggerRouter 重建装配）→ watch 网从 watch_rules
 //! 重织 → 再越限再命中（值守无人工介入继续，账本可回放全程）。
 //!
 //! 装配逐行对应生产 service_manager（E1 Task 8 bootstrap 硬顺序）：
 //! set_watch_deps（HubLedgerAdapter/WatchRuleStoreAdapter/ThingCacheAdapter
-//! 全真适配器 + 生产 event_bus）先于 start。
+//! 全真适配器 + 生产 event_bus）先于 start；TriggerRouter 先注入 manager 再
+//! start。
 //!
 //! 取舍记录：
 //! - 数据源入口：模拟器（attach_simulated_driver）产值随机不可控，无法
 //!   确定性构造"越限"时刻；本测试经 `DataServer::consume_driver_reading`
 //!   （DataServer::run 消费任务调用的同一 pub 入口）注入受控值——管线
 //!   （apply_property_values → cache_and_publish → EventBus → WatchEngine
-//!   → WatchTrigger → manager → run → agent_runs）全真，数据源受控
+//!   → session forwarder → TriggerRouter → WakeExecutor）全真，数据源受控
 //!   （park_derived_e2e_test 同款取舍）。消费端按 thing_id 从 device_cache
 //!   取物——生产代码路径，事件形状与 worker 读数路径一致。
 //! - 确定性无裸 sleep：引擎就绪屏障用 WatchCommand::Summary——与 Upsert
@@ -31,28 +32,28 @@ use serde_json::{Value, json};
 use tokio_util::sync::CancellationToken;
 use tower::ServiceExt;
 
-use tinyiothub_agent::pool::ProviderFactory;
+use crate::domains::agent::{
+    agent_runtime::{AgentRuntime, RuntimeDeps},
+    events::AgentEventBus,
+    session::trigger::{EventWake, TriggerRouter},
+    session::wake::{WakeExecutor, WakeOutcome, WakeReport},
+    thing_agent::{ThingAgentManager, WatchCommand, WatchDeps},
+};
 use tinyiothub_agent::port::attribution::{Attributable, ModelProviderKind, ProviderKind, Role};
 use tinyiothub_agent::port::provider::{ChatRequest, ChatResponse};
-use tinyiothub_agent::runtime::{
-    events::AgentEventBus,
-    runtime::{AgentRuntime, RuntimeDeps},
-    thing_agent::{ThingAgentManager, ThingAgentManagerConfig, WatchCommand, WatchDeps},
-};
+use tinyiothub_agent::provider::ProviderFactory;
 use tinyiothub_core::driver::{DriverReading, ResultValue};
 use tinyiothub_core::models::thing::{Thing, ThingStatus};
 use tinyiothub_core::models::thing_property::ThingProperty;
-use tinyiothub_policy::autonomy::{AutonomyMode, AutonomyPolicy};
 use tinyiothub_runtime::data_server::DataServer;
 use tinyiothub_runtime::ports::ThingCacheSource;
 use tinyiothub_runtime::watch::live_state::ThingLiveSummary;
 use tinyiothub_storage::Db;
+use tinyiothub_storage::assistant_schedule::AssistantSchedule;
 
 use crate::bootstrap::{build_agent_snapshot, reconcile_zombie_runs};
-use crate::domains::agent::host::{
-    autonomous_factory::AutonomousAgentFactory, persist::persist::run_persistence_subscriber,
-    thing_agent_host::CloudThingAgentHost, tools::ThingToolContext,
-};
+use crate::domains::agent::session::{factory::AutonomousAgentFactory, persist::persist::run_persistence_subscriber};
+use crate::domains::agent::tool::ThingToolContext;
 use crate::domains::event::{bus::ThingEventBus, router::ThrottleState};
 use crate::shared::runtime_ports::{HubLedgerAdapter, ThingCacheAdapter, WatchRuleStoreAdapter};
 use crate::state::AppState;
@@ -149,11 +150,48 @@ async fn seed_scene(pool: &sqlx::SqlitePool, app_state: &AppState) {
     });
 }
 
+/// 记录每条 event wake 的 WakeExecutor（TriggerRouter 的 Session 出口）。
+#[derive(Default)]
+struct RecordingExecutor {
+    wakes: std::sync::Mutex<Vec<EventWake>>,
+}
+
+impl RecordingExecutor {
+    fn len(&self) -> usize {
+        self.wakes.lock().unwrap().len()
+    }
+
+    fn snapshot(&self) -> Vec<EventWake> {
+        self.wakes.lock().unwrap().clone()
+    }
+}
+
+#[async_trait::async_trait]
+impl WakeExecutor for RecordingExecutor {
+    async fn execute(&self, _schedule: AssistantSchedule, _cancel: CancellationToken) -> WakeReport {
+        WakeReport {
+            session_key: String::new(),
+            outcome: WakeOutcome::Skipped,
+        }
+    }
+
+    async fn execute_event(&self, wake: EventWake, _cancel: CancellationToken) -> WakeReport {
+        self.wakes.lock().unwrap().push(wake);
+        WakeReport {
+            session_key: String::new(),
+            outcome: WakeOutcome::Completed,
+        }
+    }
+}
+
 /// 一次装配（生产 service_manager 同款顺序）：快照 → bus 订阅先于 restore →
 /// restore → 僵尸 reconcile → 持久化订阅者 → set_watch_deps → 注入
-/// app_state.thing_agents → start。重启 = 本函数再跑一遍（同库新装配）。
+/// app_state.thing_agents → set_session_router → start watch。重启 = 本函数
+/// 再跑一遍（同库新装配）。
 struct AgentStack {
     runtime: Arc<AgentRuntime>,
+    router: Arc<TriggerRouter>,
+    wakes: Arc<RecordingExecutor>,
     shutdown: CancellationToken,
     subscriber: tokio::task::JoinHandle<()>,
 }
@@ -188,20 +226,10 @@ async fn assemble(
     ));
 
     let deps = RuntimeDeps {
-        thing_agent_host: Arc::new(CloudThingAgentHost::new(pool.clone(), thing_bus)),
-        policy_repo: Arc::new(crate::domains::agent::host::ports::StorageAutonomyPolicyReader::new(
-            db.clone(),
-        )),
         agent_provider: factory,
-        thing_agent_config: ThingAgentManagerConfig {
-            timer_interval: Duration::from_secs(24 * 3600),
-            min_wake_level: 3,
-            ..Default::default()
-        },
         event_bus: app_state.event_bus.clone(),
         drop_notifier: None,
         agent_events: agent_events.clone(),
-        ticket_resolutions: Arc::new(tinyiothub_agent::runtime::thing_agent::traits::NoopTicketResolutions),
     };
     let runtime = Arc::new(AgentRuntime::restore(snapshot, deps));
     reconcile_zombie_runs(&db, &runtime).await;
@@ -219,15 +247,23 @@ async fn assemble(
     manager.set_watch_deps(WatchDeps {
         cache: cache_src.clone(),
         ledger: Arc::new(HubLedgerAdapter::new((*app_state.db).clone())),
-        rules: Arc::new(WatchRuleStoreAdapter((*app_state.db).clone())),
+        rules: Arc::new(WatchRuleStoreAdapter::new((*app_state.db).clone())),
         events: app_state.event_bus.clone(),
         zones: None,
     });
-    app_state.thing_agents = Some(manager);
-    runtime.thing_agents().start(WS);
+    app_state.thing_agents = Some(manager.clone());
+
+    // Plan 4B Task 2：watch 命中经 manager 注入的 TriggerRouter 进入 Session。
+    let wakes = Arc::new(RecordingExecutor::default());
+    let router = Arc::new(TriggerRouter::new(db.clone(), wakes.clone()));
+    manager.set_session_router(router.clone());
+    let _router_handle = router.clone().start();
+    manager.start_workspace_watch(WS);
 
     AgentStack {
         runtime,
+        router,
+        wakes,
         shutdown,
         subscriber,
     }
@@ -235,7 +271,8 @@ async fn assemble(
 
 impl AgentStack {
     async fn retire(self) {
-        self.runtime.thing_agents().stop(WS).await;
+        self.runtime.thing_agents().stop_workspace_watch(WS).await;
+        self.router.shutdown();
         self.shutdown.cancel();
         self.subscriber.abort();
     }
@@ -297,14 +334,6 @@ async fn ingest_temp(cache_src: &Arc<dyn ThingCacheSource>, app_state: &AppState
     .await;
 }
 
-async fn watch_run_count(pool: &sqlx::SqlitePool) -> i64 {
-    sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM agent_runs WHERE workspace_id = ? AND trigger_type = 'watch'")
-        .bind(WS)
-        .fetch_one(pool)
-        .await
-        .expect("count watch runs")
-}
-
 async fn ledger_hit_count(pool: &sqlx::SqlitePool) -> i64 {
     sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM hub_ledger WHERE workspace_id = ? AND kind = 'watch_hit'")
         .bind(WS)
@@ -313,15 +342,15 @@ async fn ledger_hit_count(pool: &sqlx::SqlitePool) -> i64 {
         .expect("count ledger hits")
 }
 
-/// spec §6 秒级唤醒断言：deadline 内轮询到目标 watch run 计数，返回实际耗时
-///（调用方在上报越限值后立即调用——计时起点即上报时刻）。
-async fn wait_watch_runs(pool: &sqlx::SqlitePool, want: i64, deadline: Duration) -> Duration {
+/// spec §6 秒级唤醒断言：deadline 内轮询到目标 event wake 计数，返回实际
+/// 耗时（调用方在上报越限值后立即调用——计时起点即上报时刻）。
+async fn wait_wakes(wakes: &RecordingExecutor, want: usize, deadline: Duration) -> Duration {
     let t0 = Instant::now();
     loop {
-        if watch_run_count(pool).await == want {
+        if wakes.len() == want {
             return t0.elapsed();
         }
-        assert!(t0.elapsed() < deadline, "超时等待 watch run 数={want}（{deadline:?}）");
+        assert!(t0.elapsed() < deadline, "超时等待 watch wake 数={want}（{deadline:?}）");
         tokio::time::sleep(Duration::from_millis(20)).await;
     }
 }
@@ -350,37 +379,20 @@ fn auth_request(method: &str, uri: &str, token: &str, body: Option<Value>) -> Re
 // Value card
 // - 覆盖路径：真实 API 注册 watch（温度>30，persistent）→ 命令通道写穿 →
 //   共享管线读数越限 → WatchEngine 命中 → hub_ledger 落 watch_hit →
-//   WatchTrigger → WakeSignal{Watch} → 全管线 run 落 agent_runs
-//   （trigger_type='watch'，2s 内）→ 重启重建装配 → watch 网从
-//   watch_rules 重织（GET 持久源仍在）→ 再越限再命中（值守无人工介入继续）。
-// - 真实回归场景：接线漏一环（写穿未进 engine / 事件未分发 / trigger 未
-//   注册 / 重织未跑）——值守规则静默不命中，用户以为有值守实际没有。
-// - 失败信号：2s 内无 watch run、账本缺 watch_hit、重启后不再命中即断口。
+//   session forwarder → TriggerRouter → WakeExecutor 收到 EventWake(watch)；
+//   重启重建装配 → watch 网从 watch_rules 重织 → 再越限再命中（值守无人工
+//   介入继续，账本可回放全程）。
+// - 真实回归场景：接线漏一环（写穿未进 engine / 事件未分发 / 转发未注册 /
+//   重织未跑）——值守规则静默不命中，用户以为有值守实际没有。
+// - 失败信号：2s 内无 watch wake、账本缺 watch_hit、重启后不再命中即断口。
 #[tokio::test]
-async fn watch_hit_wakes_run_within_2s_and_restart_reweaves() {
+async fn watch_hit_wakes_session_within_2s_and_restart_reweaves() {
     let (pool, _dir) = e2e_pool().await;
     let mut app_state = test_app_state_on_pool(pool.clone()).await;
     seed_scene(&pool, &app_state).await;
     let cache_src: Arc<dyn ThingCacheSource> = Arc::new(ThingCacheAdapter(app_state.device_cache.clone()));
-    // policy=Off：门控 timer 首 tick，测试窗口内仅 watch run 落库（watch run
-    // 无工具调用，不过 invoke_action 策略门，Off 不影响被测链路）。
-    app_state
-        .db
-        .save_autonomy_policy(
-            WS,
-            &AutonomyPolicy {
-                mode: AutonomyMode::Off,
-                allowed_actions: vec!["*".to_string()],
-                denied_actions: vec![],
-                max_actions_per_run: 3,
-                max_actions_per_hour: 30,
-            },
-            "test",
-        )
-        .await
-        .expect("save policy");
 
-    // ── 阶段一：注册 → 越限 → 2s 内 watch run ─────────────────────
+    // ── 阶段一：注册 → 越限 → 2s 内 watch wake ───────────────────
     let stack = assemble(&pool, &mut app_state, &cache_src).await;
     let manager = stack.runtime.thing_agents().clone();
     let app = build_router(&app_state);
@@ -410,27 +422,16 @@ async fn watch_hit_wakes_run_within_2s_and_restart_reweaves() {
     // 未越限基线：25 落到 LiveState 后不命中（且强制 armed=true）。
     ingest_temp(&cache_src, &app_state, "25").await;
     wait_live_temp(&manager, "25").await;
-    assert_eq!(watch_run_count(&pool).await, 0, "未越限不得产生 watch run");
+    assert_eq!(stack.wakes.len(), 0, "未越限不得产生 watch wake");
 
-    // 越限：上报时刻起计时，2s 内 watch run 落库（spec §6 秒级唤醒）。
+    // 越限：上报时刻起计时，2s 内 EventWake 到达 Session executor。
     ingest_temp(&cache_src, &app_state, "31").await;
-    let elapsed = wait_watch_runs(&pool, 1, Duration::from_secs(2)).await;
+    let elapsed = wait_wakes(&stack.wakes, 1, Duration::from_secs(2)).await;
     assert!(elapsed < Duration::from_secs(2), "秒级唤醒: {elapsed:?}");
-
-    // E2：被唤醒的 run 报告携带 turn 开头快照实测指标（≤6KB 预算）。
-    let (report,): (String,) = sqlx::query_as(
-        "SELECT report FROM agent_runs WHERE workspace_id = ? AND trigger_type = 'watch' ORDER BY rowid DESC LIMIT 1",
-    )
-    .bind(WS)
-    .fetch_one(&pool)
-    .await
-    .expect("watch run report");
-    let report: Value = serde_json::from_str(&report).unwrap();
-    let snap = &report["snapshot"];
-    assert!(!snap.is_null(), "watch run 必须携带快照指标: {report}");
-    assert!(snap["bytes"].as_u64().unwrap() > 0, "快照字节数必须为正");
-    assert!(snap["bytes"].as_u64().unwrap() <= 6144, "快照不得超过 6KB: {snap}");
-    assert!(snap["devices"].as_u64().unwrap() >= 1, "至少列出 1 台设备");
+    let wake = stack.wakes.snapshot().remove(0);
+    assert_eq!(wake.workspace_id, WS);
+    assert_eq!(wake.trigger, "watch");
+    assert_eq!(wake.dedup_key.as_deref(), Some(format!("watch:{rule_id}").as_str()));
 
     // 账本可回放：watch_hit 落行（rule_id 对得上）。
     assert_eq!(ledger_hit_count(&pool).await, 1, "账本落 watch_hit 一行");
@@ -479,7 +480,8 @@ async fn watch_hit_wakes_run_within_2s_and_restart_reweaves() {
 
     // 再越限：重织的 watch 网 2s 内再次唤醒（值守无人工介入继续）。
     ingest_temp(&cache_src, &app_state, "32").await;
-    wait_watch_runs(&pool, 2, Duration::from_secs(2)).await;
+    wait_wakes(&stack2.wakes, 1, Duration::from_secs(2)).await;
+    assert_eq!(stack2.wakes.snapshot()[0].trigger, "watch");
     assert_eq!(ledger_hit_count(&pool).await, 2, "账本可回放全程：两次命中各一行");
 
     stack2.retire().await;

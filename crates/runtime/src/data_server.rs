@@ -6,6 +6,7 @@ use moka::sync::Cache;
 use tinyiothub_core::driver::{DriverReading, ResultValue, ValueSink};
 use tinyiothub_core::error::Error;
 use tinyiothub_core::event::EventHandler;
+use tinyiothub_core::media::SourceItem;
 use tinyiothub_core::models::event::{
     ContentElement, Event as DomainEvent, EventLevel, EventSource, RichContent, TextFormat, ThingEventType,
 };
@@ -68,6 +69,7 @@ pub struct DataServer {
     zones: Arc<parking_lot::Mutex<Option<Arc<ZoneService>>>>,
     /// E4c 取消留痕：可选账本（组合根注入）+ 进程内计数。
     cancellation: Arc<CancellationRecorder>,
+    job_results: Arc<parking_lot::Mutex<Option<Arc<dyn crate::job::worker_adapter::JobResultSink>>>>,
 }
 
 /// 取消终态的留痕面：账本迟绑定（`run()` 的消费任务在 spawn 前持有 clone），
@@ -108,6 +110,7 @@ impl DataServer {
             sampler: Arc::new(parking_lot::Mutex::new(None)),
             zones: Arc::new(parking_lot::Mutex::new(None)),
             cancellation: Arc::new(CancellationRecorder::default()),
+            job_results: Arc::new(parking_lot::Mutex::new(None)),
         };
         server.initialize_drivers();
         server
@@ -121,6 +124,15 @@ impl DataServer {
     /// 推送驱动的上报句柄（Task 7 注册推送驱动时注入给 `start_push`）。
     pub fn value_sink(&self) -> ValueSink {
         self.value_sink_tx.clone()
+    }
+
+    /// Read source items through the device's exclusive driver worker.
+    pub async fn read_sources(&self, thing_id: &str, sources: Vec<String>) -> Result<Vec<SourceItem>, Error> {
+        let worker = self.workers.get(thing_id).ok_or(Error::NotFound)?;
+        let reply = worker.read_sources(sources)?;
+        reply
+            .await
+            .map_err(|_| Error::DriverError("worker stopped before source read completed".into()))?
     }
 
     /// worker 表句柄（诊断/测试用）。moka `Cache` 克隆是廉价句柄。
@@ -145,6 +157,10 @@ impl DataServer {
     /// 事件/指标，不落账。
     pub fn set_hub_ledger(&self, ledger: Arc<dyn HubLedger>) {
         *self.cancellation.ledger.write() = Some(ledger);
+    }
+
+    pub fn set_job_result_sink(&self, sink: Arc<dyn crate::job::worker_adapter::JobResultSink>) {
+        *self.job_results.lock() = Some(sink);
     }
 
     /// E4c stop：取消该设备当前在途调用（协作式，不等待）。返回取消到的
@@ -240,6 +256,7 @@ impl DataServer {
             let device_cache = self.device_cache.clone();
             let event_bus = self.event_bus.clone();
             let cancellation = self.cancellation.clone();
+            let job_results = self.job_results.clone();
             let zones = self.zones.lock().clone();
             let mut shutdown_rx_consumers = shutdown_rx.resubscribe();
             tokio::spawn(async move {
@@ -250,6 +267,7 @@ impl DataServer {
                     event_bus,
                     zones,
                     cancellation,
+                    job_results,
                     &mut shutdown_rx_consumers,
                 )
                 .await;
@@ -265,6 +283,7 @@ impl DataServer {
         event_bus: Arc<EventBus>,
         zones: Option<Arc<ZoneService>>,
         cancellation: Arc<CancellationRecorder>,
+        job_results: Arc<parking_lot::Mutex<Option<Arc<dyn crate::job::worker_adapter::JobResultSink>>>>,
         shutdown_rx: &mut tokio::sync::broadcast::Receiver<()>,
     ) {
         loop {
@@ -290,7 +309,15 @@ impl DataServer {
                 }
                 maybe = consumers.results.recv() => {
                     let Some(result) = maybe else { break };
-                    Self::consume_worker_result(result, &device_cache, event_bus.clone(), &cancellation).await;
+                    let job_result_sink = { job_results.lock().clone() };
+                    Self::consume_worker_result(
+                        result,
+                        &device_cache,
+                        event_bus.clone(),
+                        &cancellation,
+                        job_result_sink,
+                    )
+                    .await;
                 }
             }
         }
@@ -447,6 +474,7 @@ impl DataServer {
         device_cache: &Arc<dyn ThingCacheSource>,
         event_bus: Arc<EventBus>,
         cancellation: &CancellationRecorder,
+        job_results: Option<Arc<dyn crate::job::worker_adapter::JobResultSink>>,
     ) {
         match result {
             WorkerResult::Command {
@@ -456,6 +484,9 @@ impl DataServer {
                 elapsed_ms,
                 error,
             } => {
+                if let Some(sink) = job_results.as_ref() {
+                    sink.command_finished(&cmd.id, success, error.as_deref()).await;
+                }
                 let Some(device) = device_cache.get(&thing_id) else {
                     return;
                 };
@@ -496,10 +527,14 @@ impl DataServer {
             // 事件 + 账本 + 指标（一次调用一个 outcome）。
             WorkerResult::Cancelled {
                 thing_id,
+                job_id,
                 kind,
                 within_grace,
                 elapsed_ms,
             } => {
+                if let (Some(sink), Some(job_id)) = (job_results.as_ref(), job_id.as_deref()) {
+                    sink.command_cancelled(job_id, within_grace).await;
+                }
                 cancellation.record(within_grace);
                 let Some(device) = device_cache.get(&thing_id) else {
                     tracing::warn!(thing_id = %thing_id, "取消终态丢弃：物不在缓存（已删？）");
@@ -1025,6 +1060,7 @@ impl Clone for DataServer {
             sampler: self.sampler.clone(),
             zones: self.zones.clone(),
             cancellation: self.cancellation.clone(),
+            job_results: self.job_results.clone(),
         }
     }
 }
@@ -1230,11 +1266,73 @@ mod tests {
             self.reads.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
             Ok(vec![])
         }
+        fn read_sources(
+            &mut self,
+            sources: &[String],
+            cancel: &CancelToken,
+        ) -> Result<Vec<tinyiothub_core::media::SourceItem>, Error> {
+            if cancel.is_cancelled() {
+                return Err(Error::Cancelled);
+            }
+            Ok(sources
+                .iter()
+                .map(|source| tinyiothub_core::media::SourceItem {
+                    v: 1,
+                    source: source.clone(),
+                    data_kind: tinyiothub_core::media::DataKind::Values,
+                    seq: 3,
+                    time: chrono::Utc::now(),
+                    text: None,
+                    data: serde_json::Value::Null,
+                    media: None,
+                    error: None,
+                })
+                .collect())
+        }
         fn execute_command(&mut self, _cmd: &ThingCommand, cancel: &CancelToken) -> Result<bool, Error> {
             if cancel.is_cancelled() {
                 return Err(Error::Cancelled);
             }
             Ok(true)
+        }
+    }
+
+    #[tokio::test]
+    async fn read_sources_returns_not_found_for_a_missing_worker() {
+        let server = DataServer::new(Arc::new(VecCache::new(vec![])), Arc::new(EventBus::new()));
+
+        let error = server
+            .read_sources("missing", vec!["camera.front".to_string()])
+            .await
+            .expect_err("missing worker must be reported");
+
+        assert!(matches!(error, Error::NotFound));
+    }
+
+    #[tokio::test]
+    async fn read_sources_locates_the_worker_and_awaits_its_items() {
+        let server = DataServer::new(Arc::new(VecCache::new(vec![])), Arc::new(EventBus::new()));
+        let thing = worker_thing("thing-1");
+        server.register_worker(
+            "thing-1",
+            DriverWrapper::new(Box::new(CountingDriver {
+                thing,
+                mode: DriverMode::Poll,
+                reads: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
+            })),
+        );
+
+        let items = server
+            .read_sources("thing-1", vec!["camera.front".to_string(), "camera.rear".to_string()])
+            .await
+            .expect("registered worker should return source items");
+
+        assert_eq!(items.len(), 2);
+        assert_eq!(items[0].source, "camera.front");
+        assert_eq!(items[0].seq, 3);
+        assert_eq!(items[1].source, "camera.rear");
+        if let Some(worker) = server.workers.get("thing-1") {
+            worker.stop();
         }
     }
 
@@ -1824,6 +1922,7 @@ mod tests {
         DataServer::consume_worker_result(
             WorkerResult::Cancelled {
                 thing_id: "dev-1".to_string(),
+                job_id: None,
                 kind: CancelKind::Execute,
                 within_grace: true,
                 elapsed_ms: 42,
@@ -1831,6 +1930,7 @@ mod tests {
             &cache,
             bus.clone(),
             &server.cancellation,
+            None,
         )
         .await;
 
@@ -1869,6 +1969,7 @@ mod tests {
         DataServer::consume_worker_result(
             WorkerResult::Cancelled {
                 thing_id: "dev-1".to_string(),
+                job_id: None,
                 kind: CancelKind::Read,
                 within_grace: false,
                 elapsed_ms: 1500,
@@ -1876,6 +1977,7 @@ mod tests {
             &cache,
             bus,
             &server.cancellation,
+            None,
         )
         .await;
         let event = tokio::time::timeout(std::time::Duration::from_secs(2), events.recv())

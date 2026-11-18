@@ -91,7 +91,7 @@ mod tests {
 
     async fn test_pool() -> SqlitePool {
         let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
-        sqlx::migrate!("./migrations").run(&pool).await.unwrap();
+        crate::migrations::platform_migrator().run(&pool).await.unwrap();
         pool
     }
 

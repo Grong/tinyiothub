@@ -7,7 +7,7 @@ use std::collections::HashMap;
 use serde_json::json;
 use sqlx::SqlitePool;
 
-use crate::domains::agent::host::handler::ledger::fold_state;
+use crate::domains::agent::session::handlers::ledger::fold_state;
 use crate::domains::marketplace::template_rules::resolve_template_rules;
 use tinyiothub_storage::watch::{LedgerRow, append_ledger, latest_state_changes_at, list_ledger_range};
 
@@ -16,7 +16,7 @@ async fn pool() -> SqlitePool {
     tinyiothub_storage::test_helpers::run_all_migrations(&pool)
         .await
         .unwrap();
-    crate::domains::agent::host::test_utils::seed_test_workspace(&pool, "tenant-e3", "ws-e3").await;
+    crate::domains::agent::session::test_utils::seed_test_workspace(&pool, "tenant-e3", "ws-e3").await;
     for id in ["t1", "t2", "window", "panel"] {
         sqlx::query("INSERT INTO things (id, name, workspace_id, thing_type) VALUES (?, ?, 'ws-e3', 'device')")
             .bind(id)
@@ -147,6 +147,7 @@ async fn template_rules_resolve_then_land_as_watch_and_composite() {
         persistent: i64::from(rule.persistent),
         timeout_secs: i64::from(rule.timeout_secs),
         created_at: rule.created_at.clone(),
+        owner_task_id: rule.owner_task_id.clone(),
     };
     tinyiothub_storage::watch::insert_rule(&pool, &row).await.unwrap();
 
@@ -171,7 +172,7 @@ async fn template_rules_resolve_then_land_as_watch_and_composite() {
         .await
         .unwrap();
     assert_eq!(composites.len(), 1);
-    let parsed: tinyiothub_agent::runtime::thing_agent::seams::composite::CompositeDef =
+    let parsed: crate::domains::agent::thing_agent::seams::composite::CompositeDef =
         serde_json::from_str(&composites[0].definition).unwrap();
     assert_eq!(parsed.name, "storm_guard");
     assert_eq!(parsed.steps.len(), 2);

@@ -11,6 +11,7 @@ pub mod judgment;
 pub mod map;
 pub mod marketplace;
 pub mod mcp;
+pub mod media;
 pub mod notify;
 pub mod tenant;
 pub mod thing;

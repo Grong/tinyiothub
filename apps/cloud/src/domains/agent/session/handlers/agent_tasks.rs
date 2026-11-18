@@ -1,0 +1,392 @@
+// Thing Agent 用户指令端点（T14）
+//
+// Routes (nested under /workspaces by the composition layer — api/mod.rs):
+//   POST /tasks                  {text} + Idempotency-Key → {taskId}（持久 Task）
+//   GET  /runs?limit=&offset=    分页（limit 默认 50 最大 200）
+//   POST /runs/{run_id}/ack      幂等
+//   GET/PUT /policy              三态策略读写（PUT 记 updated_by）
+//
+// 全部 workspace 隔离（verify_workspace_access!）+ admin 角色。
+// admin 判定直接 JOIN roles.is_administrator——user/handler.rs 的
+// AuthHelper::check_role 依赖 user_roles.role_name/is_active 列，
+// 现行 schema 无此二列（查询必失败回落 "user"），不可用。
+
+use axum::{
+    Json, Router,
+    extract::{Extension, Path, Query, State},
+    http::{HeaderMap, StatusCode},
+    response::{IntoResponse, Response},
+    routing::{get, post},
+};
+use serde::{Deserialize, Serialize};
+use tinyiothub_policy::autonomy::{AutonomyPolicy, PermissionMode};
+use tinyiothub_web::api_response::ApiResponse;
+use tinyiothub_web::response::ApiResponseBuilder;
+use tinyiothub_web::security::Claims;
+
+use crate::domains::agent::AgentState;
+
+/// admin 角色判定：用户持有任一 is_administrator 角色。DB 错误 fail-closed。
+/// 共享实现收敛在 handler::is_admin（F9），此处保签名不动宏体。
+async fn is_admin(state: &AgentState, user_id: &str) -> bool {
+    super::is_admin(&state.db, user_id).await
+}
+
+/// workspace 隔离 + admin 角色组合守卫（V5 先例：越权 403 / 不存在 404）。
+macro_rules! verify_agent_admin {
+    ($state:expr, $claims:expr, $id:expr) => {{
+        if let Err(error) = check_agent_admin(&$state, &$claims, &$id).await {
+            return error;
+        }
+    }};
+}
+
+pub(crate) async fn check_agent_admin<T>(
+    state: &AgentState,
+    claims: &Claims,
+    workspace_id: &str,
+) -> Result<(), Json<ApiResponse<T>>> {
+    match state.workspace_service.find_by_id(workspace_id).await {
+        Ok(Some(workspace)) if workspace.tenant_id == claims.tenant_id => {}
+        Ok(Some(_)) => {
+            return Err(ApiResponseBuilder::error_with_code(403, "无权访问此工作空间"));
+        }
+        Ok(None) => {
+            return Err(ApiResponseBuilder::error_with_code(404, "工作空间不存在"));
+        }
+        Err(error) => {
+            tracing::error!("Failed to get workspace: {error}");
+            return Err(ApiResponseBuilder::error("获取工作空间失败"));
+        }
+    }
+    if !is_admin(state, &claims.user_id).await {
+        return Err(ApiResponseBuilder::error_with_code(403, "需要管理员权限"));
+    }
+    Ok(())
+}
+
+pub(crate) async fn check_agent_admin_response(
+    state: &AgentState,
+    claims: &Claims,
+    workspace_id: &str,
+) -> Result<(), Response> {
+    if let Err(error) = check_agent_admin::<serde_json::Value>(state, claims, workspace_id).await {
+        let status =
+            StatusCode::from_u16(error.0.code.clamp(400, 599) as u16).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);
+        return Err((status, error).into_response());
+    }
+    Ok(())
+}
+
+// ── POST /{id}/agent/tasks ──
+
+/// Workspace-scoped agent directive routes (`/workspaces/{id}/agent/*`).
+/// Registered by the composition layer (api/mod.rs) so the workspace module
+/// carries no agent dependency edge (P4.0d).
+pub fn create_workspace_router<S>() -> Router<S>
+where
+    S: Clone + Send + Sync + 'static,
+    AgentState: axum::extract::FromRef<S>,
+{
+    Router::new()
+        .route(
+            "/{id}/agent/tasks",
+            post(create_task).get(crate::domains::agent::runtime::tasks::list_tasks),
+        )
+        .route(
+            "/{id}/agent/tasks/{task_id}",
+            get(crate::domains::agent::runtime::tasks::get_task),
+        )
+        .route(
+            "/{id}/agent/tasks/{task_id}/events",
+            get(crate::domains::agent::runtime::tasks::list_events),
+        )
+        .route(
+            "/{id}/agent/tasks/{task_id}/stream",
+            get(crate::domains::agent::runtime::session_stream::stream_task),
+        )
+        .route(
+            "/{id}/agent/tasks/{task_id}/pause",
+            post(crate::domains::agent::runtime::controls::pause),
+        )
+        .route(
+            "/{id}/agent/tasks/{task_id}/resume",
+            post(crate::domains::agent::runtime::controls::resume),
+        )
+        .route(
+            "/{id}/agent/tasks/{task_id}/cancel",
+            post(crate::domains::agent::runtime::controls::cancel),
+        )
+        .route(
+            "/{id}/agent/tasks/{task_id}/jobs/{job_id}/stop",
+            post(crate::domains::agent::runtime::controls::stop_job),
+        )
+        .route(
+            "/{id}/agent/tasks/{task_id}/approvals/{approval_id}/approve",
+            post(crate::domains::agent::runtime::approvals::approve),
+        )
+        .route(
+            "/{id}/agent/tasks/{task_id}/approvals/{approval_id}/reject",
+            post(crate::domains::agent::runtime::approvals::reject),
+        )
+        .route(
+            "/{id}/agent/effects/{effect_id}/reconcile",
+            post(crate::domains::agent::runtime::approvals::reconcile_effect),
+        )
+        .route("/{id}/agent/runs", get(list_runs))
+        .route("/{id}/agent/runs/{run_id}/ack", post(ack_run))
+        .route("/{id}/agent/policy", get(get_policy).put(update_policy))
+}
+
+#[derive(Debug, Deserialize)]
+pub struct CreateTaskRequest {
+    pub text: String,
+}
+
+pub async fn create_task(
+    State(state): State<AgentState>,
+    Extension(claims): Extension<Claims>,
+    Path(workspace_id): Path<String>,
+    headers: HeaderMap,
+    Json(req): Json<CreateTaskRequest>,
+) -> Response {
+    if let Err(error) = check_agent_admin::<serde_json::Value>(&state, &claims, &workspace_id).await {
+        return error.into_response();
+    }
+
+    let text = req.text.trim();
+    crate::domains::agent::runtime::tasks::create_persistent(&state, &claims, &workspace_id, &headers, text).await
+}
+
+// ── GET /{id}/agent/runs ──
+
+#[derive(Debug, Deserialize)]
+pub struct ListRunsParams {
+    pub limit: Option<u32>,
+    pub offset: Option<u32>,
+}
+
+pub use tinyiothub_storage::agent_runs::AgentRunRow;
+
+pub async fn list_runs(
+    State(state): State<AgentState>,
+    Extension(claims): Extension<Claims>,
+    Path(workspace_id): Path<String>,
+    Query(params): Query<ListRunsParams>,
+) -> Json<ApiResponse<serde_json::Value>> {
+    verify_agent_admin!(state, claims, workspace_id);
+
+    // 本体工具分页先例（tools/thing.rs clamp_limit）：默认 50 最大 200
+    let limit = i64::from(params.limit.unwrap_or(50).clamp(1, 200));
+    let offset = i64::from(params.offset.unwrap_or(0));
+
+    let runs = state.db.list_agent_run_rows(&workspace_id, limit, offset).await;
+
+    match runs {
+        Ok(runs) => ApiResponseBuilder::success(serde_json::json!({
+            "runs": runs,
+            "limit": limit,
+            "offset": offset,
+        })),
+        Err(e) => {
+            tracing::error!(%workspace_id, "Failed to list agent runs: {}", e);
+            ApiResponseBuilder::error("查询运行记录失败")
+        }
+    }
+}
+
+// ── POST /{id}/agent/runs/{run_id}/ack ──
+
+pub async fn ack_run(
+    State(state): State<AgentState>,
+    Extension(claims): Extension<Claims>,
+    Path((workspace_id, run_id)): Path<(String, String)>,
+) -> Json<ApiResponse<serde_json::Value>> {
+    verify_agent_admin!(state, claims, workspace_id);
+
+    // 存在性 + workspace 归属：不存在与跨区统一 404（不泄露存在性）；
+    // 同时取出 problem_key 供 O11 ack 抑制回写（Task 6）。
+    // CEO review F9：DB 错误不得塌缩为 404——事故响应时"运行记录不存在"
+    // 会主动误导排查方向，真实故障是 500。
+    let owner: Option<(String, Option<String>)> = match state.db.find_agent_run_owner(&run_id).await {
+        Ok(owner) => owner,
+        Err(e) => {
+            tracing::error!(run_id = %run_id, error = %e, "find_agent_run_owner failed");
+            return ApiResponseBuilder::error_with_code(500, "数据库查询失败");
+        }
+    };
+    let problem_key = match owner {
+        Some((ref ws, ref pk)) if ws == &workspace_id => pk.clone(),
+        _ => return ApiResponseBuilder::error_with_code(404, "运行记录不存在"),
+    };
+
+    match state.db.ack_agent_run(&run_id, &claims.user_id).await {
+        Ok(first_ack) => {
+            // O11 ack 抑制内存真源同步（Task 6，fix round 1 行级保真）：DB
+            // ack 成功后按 run_id 标记对应 run 条目，心跳桥 7d 内仅当窗口内
+            // 最新 run 已 ack 时抑制投递。
+            if let (Some(pk), Some(orchestrator)) = (&problem_key, state.orchestrator.as_ref()) {
+                orchestrator.mark_problem_acked(&workspace_id, pk, &run_id);
+            }
+            // 幂等：重复确认仍 200，firstAck=false 表示本次未改状态
+            ApiResponseBuilder::success(serde_json::json!({
+                "runId": run_id,
+                "acked": true,
+                "firstAck": first_ack,
+            }))
+        }
+        Err(e) => {
+            tracing::error!(%workspace_id, %run_id, "Failed to ack agent run: {}", e);
+            ApiResponseBuilder::error("确认运行记录失败")
+        }
+    }
+}
+
+// ── GET/PUT /{id}/agent/policy ──
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PolicyView {
+    /// `read_only` | `ask`（`full_access` 仅会话级，工作区策略拒绝）。
+    /// 一版兼容：旧 body 的 `mode` 字段仍被接受（alias）。
+    #[serde(alias = "mode")]
+    pub permission_mode: String,
+    #[serde(default = "default_allowed_actions")]
+    pub allowed_actions: Vec<String>,
+    #[serde(default)]
+    pub denied_actions: Vec<String>,
+    #[serde(default = "default_max_actions_per_run")]
+    pub max_actions_per_run: u32,
+    #[serde(default = "default_max_actions_per_hour")]
+    pub max_actions_per_hour: u32,
+}
+
+fn default_allowed_actions() -> Vec<String> {
+    vec!["*".to_string()]
+}
+
+fn default_max_actions_per_run() -> u32 {
+    3
+}
+
+fn default_max_actions_per_hour() -> u32 {
+    30
+}
+
+impl PolicyView {
+    /// 无持久化行时的默认视图：没有策略行时 gate 拒绝一切写动作，
+    /// 因此对外的等价权限是 `read_only`。
+    fn default_read_only() -> Self {
+        Self {
+            permission_mode: PermissionMode::ReadOnly.as_str().to_string(),
+            allowed_actions: vec!["*".to_string()],
+            denied_actions: vec![],
+            max_actions_per_run: 3,
+            max_actions_per_hour: 30,
+        }
+    }
+}
+
+impl From<AutonomyPolicy> for PolicyView {
+    fn from(p: AutonomyPolicy) -> Self {
+        Self {
+            permission_mode: p.permission_mode.as_str().to_string(),
+            allowed_actions: p.allowed_actions,
+            denied_actions: p.denied_actions,
+            max_actions_per_run: p.max_actions_per_run,
+            max_actions_per_hour: p.max_actions_per_hour,
+        }
+    }
+}
+
+pub async fn get_policy(
+    State(state): State<AgentState>,
+    Extension(claims): Extension<Claims>,
+    Path(workspace_id): Path<String>,
+) -> Json<ApiResponse<PolicyView>> {
+    verify_agent_admin!(state, claims, workspace_id);
+
+    match state.db.load_autonomy_policy(&workspace_id).await {
+        Ok(Some(policy)) => ApiResponseBuilder::success(PolicyView::from(policy)),
+        Ok(None) => ApiResponseBuilder::success(PolicyView::default_read_only()),
+        Err(e) => {
+            tracing::error!(%workspace_id, "Failed to load autonomy policy: {}", e);
+            ApiResponseBuilder::error("读取策略失败")
+        }
+    }
+}
+
+pub async fn update_policy(
+    State(state): State<AgentState>,
+    Extension(claims): Extension<Claims>,
+    Path(workspace_id): Path<String>,
+    Json(req): Json<PolicyView>,
+) -> Json<ApiResponse<PolicyView>> {
+    verify_agent_admin!(state, claims, workspace_id);
+
+    // 一版兼容：旧 body 的字段名是 `mode`（serde alias），值域是
+    // off/diagnose/act。off/diagnose → ReadOnly，act → Ask；`off` 的暂停语义
+    // 属于 schedule API，不在这里表达。
+    let requested = req.permission_mode.trim().to_ascii_lowercase();
+    let normalized = match requested.as_str() {
+        "off" | "diagnose" => "read_only",
+        "act" => "ask",
+        other => other,
+    };
+    let Some(permission_mode) = PermissionMode::parse(normalized) else {
+        return ApiResponseBuilder::error_with_code(
+            400,
+            "无效的 permissionMode，可选: read_only / ask（兼容旧 act/diagnose/off）",
+        );
+    };
+    // `full_access` is session-explicit only; a workspace policy must never
+    // grant it.
+    if permission_mode == PermissionMode::FullAccess {
+        return ApiResponseBuilder::error_with_code(400, "full_access 仅会话级可用");
+    }
+    let policy = AutonomyPolicy {
+        permission_mode,
+        allowed_actions: req.allowed_actions,
+        denied_actions: req.denied_actions,
+        max_actions_per_run: req.max_actions_per_run,
+        max_actions_per_hour: req.max_actions_per_hour,
+    };
+
+    if let Err(e) = state
+        .db
+        .save_autonomy_policy(&workspace_id, &policy, &claims.user_id)
+        .await
+    {
+        tracing::error!(%workspace_id, "Failed to save autonomy policy: {}", e);
+        return ApiResponseBuilder::error("保存策略失败");
+    }
+
+    // One-version compatibility: reflect the policy write on the Assistant
+    // schedule so wake turns use the same permission mode. `enabled` (pause
+    // state) is owned by the schedule API and is never touched here.
+    let assistant_id = crate::domains::agent::session::wake::assistant_agent_id(&workspace_id);
+    match state
+        .db
+        .ensure_assistant_schedule(&workspace_id, &assistant_id, chrono::Utc::now())
+        .await
+    {
+        Ok(_) => {
+            if let Err(e) = state
+                .db
+                .update_assistant_schedule(&workspace_id, None, None, None, None, Some(permission_mode))
+                .await
+            {
+                tracing::warn!(%workspace_id, "Failed to sync permission mode to assistant schedule: {}", e);
+            }
+        }
+        Err(e) => {
+            tracing::warn!(%workspace_id, "Failed to ensure assistant schedule for policy sync: {}", e);
+        }
+    }
+
+    // 旧 O26 `off` kill switch 随 AutonomyMode 退役：没有需要 drain 的 legacy
+    // 队列。暂停 Assistant 请使用 `/workspaces/{id}/agent/schedule`
+    // （enabled=false），不在这里触碰队列。
+
+    ApiResponseBuilder::success(PolicyView::from(policy))
+}

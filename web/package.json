@@ -7,17 +7,19 @@
     "dev": "vite",
     "preview": "vite preview",
     "test": "vitest run --config vitest.config.ts",
-    "type-check": "tsc --noEmit",
-    "lint": "eslint src/",
-    "lint:fix": "eslint src/ --fix",
+    "type-check": "tsc --noEmit && tsc --noEmit -p tsconfig.e2e.json",
+    "lint": "eslint src/ e2e/ playwright.config.ts",
+    "lint:fix": "eslint src/ e2e/ playwright.config.ts --fix",
     "format": "prettier --write \"src/**/*.{ts,js,json,css}\"",
-    "format:check": "prettier --check \"src/**/*.{ts,js,json,css}\""
+    "format:check": "prettier --check \"src/**/*.{ts,js,json,css}\"",
+    "test:browser": "playwright test"
   },
   "dependencies": {
     "@lit-labs/signals": "^0.2.0",
     "@types/three": "^0.184.0",
     "dompurify": "^3.3.3",
     "highlight.js": "^11.11.1",
+    "hls.js": "1.7.3",
     "lit": "^3.3.2",
     "marked": "^17.0.4",
     "signal-polyfill": "^0.2.2",
@@ -25,6 +27,8 @@
     "three": "^0.184.0"
   },
   "devDependencies": {
+    "@axe-core/playwright": "4.10.2",
+    "@playwright/test": "1.56.1",
     "@types/dompurify": "^3.2.0",
     "@types/node": "^22.10.5",
     "@vitest/browser": "^4.0.18",

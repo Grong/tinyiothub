@@ -1,0 +1,196 @@
+use chrono::{DateTime, Utc};
+use serde::{Deserialize, Serialize};
+
+use crate::agent_runs::RunReport;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TaskStatus {
+    Active,
+    WaitingJob,
+    WaitingWatch,
+    NeedsApproval,
+    Paused,
+    Cancelling,
+    Completed,
+    Failed,
+    Cancelled,
+}
+
+impl TaskStatus {
+    pub fn is_terminal(self) -> bool {
+        matches!(self, Self::Completed | Self::Failed | Self::Cancelled)
+    }
+
+    pub fn is_active(self) -> bool {
+        !self.is_terminal()
+    }
+
+    pub fn can_transition_to(self, next: Self) -> bool {
+        match self {
+            Self::Active => matches!(
+                next,
+                Self::Active
+                    | Self::WaitingJob
+                    | Self::WaitingWatch
+                    | Self::NeedsApproval
+                    | Self::Paused
+                    | Self::Cancelling
+                    | Self::Completed
+                    | Self::Failed
+            ),
+            Self::WaitingJob | Self::WaitingWatch => matches!(
+                next,
+                Self::Active | Self::Paused | Self::Cancelling | Self::Completed | Self::Failed
+            ),
+            Self::Paused => matches!(
+                next,
+                Self::Active | Self::WaitingJob | Self::WaitingWatch | Self::NeedsApproval | Self::Cancelling
+            ),
+            Self::Cancelling => matches!(next, Self::Cancelling | Self::Cancelled | Self::Failed),
+            Self::NeedsApproval => matches!(
+                next,
+                Self::Active
+                    | Self::WaitingJob
+                    | Self::WaitingWatch
+                    | Self::Paused
+                    | Self::Cancelling
+                    | Self::Completed
+                    | Self::Failed
+            ),
+            Self::Completed | Self::Failed | Self::Cancelled => false,
+        }
+    }
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Active => "active",
+            Self::WaitingJob => "waiting_job",
+            Self::WaitingWatch => "waiting_watch",
+            Self::NeedsApproval => "needs_approval",
+            Self::Paused => "paused",
+            Self::Cancelling => "cancelling",
+            Self::Completed => "completed",
+            Self::Failed => "failed",
+            Self::Cancelled => "cancelled",
+        }
+    }
+
+    pub fn from_db(value: &str) -> Option<Self> {
+        Some(match value {
+            "active" => Self::Active,
+            "waiting_job" => Self::WaitingJob,
+            "waiting_watch" => Self::WaitingWatch,
+            "needs_approval" => Self::NeedsApproval,
+            "paused" => Self::Paused,
+            "cancelling" => Self::Cancelling,
+            "completed" => Self::Completed,
+            "failed" => Self::Failed,
+            "cancelled" => Self::Cancelled,
+            _ => return None,
+        })
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AgentTask {
+    pub id: String,
+    pub workspace_id: String,
+    pub idempotency_key: String,
+    pub objective: String,
+    pub session_key: Option<String>,
+    pub created_by: String,
+    pub status: TaskStatus,
+    pub current_run_id: Option<String>,
+    pub state_version: i64,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+    pub ended_at: Option<DateTime<Utc>>,
+}
+
+/// 兼容别名（一个版本）：领域内新代码使用 `Task`。
+pub type Task = AgentTask;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum WakeDispatchState {
+    Pending,
+    Dispatched,
+    Dead,
+}
+
+impl WakeDispatchState {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Pending => "pending",
+            Self::Dispatched => "dispatched",
+            Self::Dead => "dead",
+        }
+    }
+
+    pub fn from_db(value: &str) -> Option<Self> {
+        match value {
+            "pending" => Some(Self::Pending),
+            "dispatched" => Some(Self::Dispatched),
+            "dead" => Some(Self::Dead),
+            _ => None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CreateTaskOutcome {
+    pub task: AgentTask,
+    pub deduplicated: bool,
+}
+
+#[derive(Debug, thiserror::Error, PartialEq, Eq)]
+pub enum TaskStoreError {
+    #[error("invalid task: {0}")]
+    Validation(String),
+    #[error("idempotency key already belongs to a different objective")]
+    ObjectiveConflict,
+    #[error("task changed concurrently")]
+    ConcurrentUpdate,
+    #[error("task store unavailable: {0}")]
+    Unavailable(String),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TaskWake {
+    pub task_id: String,
+    pub event_id: String,
+    pub signal_json: String,
+    pub dispatch_state: WakeDispatchState,
+    pub created_at: DateTime<Utc>,
+    pub dispatched_at: Option<DateTime<Utc>>,
+    pub resolved_at: Option<DateTime<Utc>>,
+}
+
+/// Durable intent for the part of a Task Run that has already produced a
+/// report but has not finished teardown. The report is persisted separately by
+/// `finish_run`; the flags record whether that write and its `RunRecorded`
+/// emission already happened, so a retry never repeats either. Requeueing the
+/// wake and staging this row happen in one write, so the router can retry the
+/// exact same Run without re-executing the model or resubmitting device work.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TaskFinalizeIntent {
+    pub task_id: String,
+    pub workspace_id: String,
+    pub wake_event_id: String,
+    pub run_id: String,
+    pub report: RunReport,
+    pub report_persisted: bool,
+    pub report_emitted: bool,
+    pub undelivered: Vec<String>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::TaskStatus;
+
+    #[test]
+    fn paused_task_resumes_to_outstanding_approval() {
+        assert!(TaskStatus::Paused.can_transition_to(TaskStatus::NeedsApproval));
+    }
+}

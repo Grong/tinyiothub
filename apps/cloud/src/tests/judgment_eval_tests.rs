@@ -18,7 +18,7 @@ struct Scenario {
 /// F-E/T-11：eval 与生产同一解析函数（不再手抄副本——改解析规则时
 /// eval 自动跟随，漂移在编译期暴露）。
 fn parse_verdict_loose(text: &str) -> Option<String> {
-    crate::domains::agent::host::judge::judgment_subscriber::parse_verdict(text)
+    crate::domains::agent::session::judge::judgment_subscriber::parse_verdict(text)
         .map(|(p, _fallback)| p.verdict_str().to_string())
 }
 
@@ -27,7 +27,7 @@ fn parse_verdict_loose(text: &str) -> Option<String> {
 #[test]
 fn verdict_with_narrative_parsed_out() {
     let text = "```json\n{\"verdict\": \"noise\", \"reason\": \"正常波动\", \"suggested_action\": null, \"action_category\": \"other\", \"narrative\": \"我检查了温度曲线，看到 24 小时内三次尖峰都自行回落，所以判定是噪声。\"}\n```";
-    let (p, fallback) = crate::domains::agent::host::judge::judgment_subscriber::parse_verdict(text)
+    let (p, fallback) = crate::domains::agent::session::judge::judgment_subscriber::parse_verdict(text)
         .expect("带 narrative 的 verdict 必须解析成功");
     assert!(!fallback, "围栏块不应走宽松 fallback");
     assert_eq!(p.verdict_str(), "noise");
@@ -42,7 +42,7 @@ fn verdict_with_narrative_parsed_out() {
 fn verdict_without_narrative_still_parses() {
     // 严格路径：围栏块、无 narrative → 解析成功、非 fallback、narrative None。
     let fenced = "```json\n{\"verdict\": \"needs_human\", \"reason\": \"根因不明\", \"suggested_action\": null, \"action_category\": \"other\"}\n```";
-    let (p, fallback) = crate::domains::agent::host::judge::judgment_subscriber::parse_verdict(fenced)
+    let (p, fallback) = crate::domains::agent::session::judge::judgment_subscriber::parse_verdict(fenced)
         .expect("旧协议（无 narrative）不得炸");
     assert!(!fallback);
     assert_eq!(p.verdict_str(), "needs_human");
@@ -50,7 +50,7 @@ fn verdict_without_narrative_still_parses() {
 
     // 宽松路径：裸 JSON、无 narrative → 命中 fallback 标记且不炸。
     let bare = "调查完成 {\"verdict\": \"self_healable\", \"reason\": \"重连可恢复\", \"suggested_action\": \"重启模块\", \"action_category\": \"device_reboot\"}";
-    let (p2, fallback2) = crate::domains::agent::host::judge::judgment_subscriber::parse_verdict(bare)
+    let (p2, fallback2) = crate::domains::agent::session::judge::judgment_subscriber::parse_verdict(bare)
         .expect("裸 JSON 无 narrative 不得炸");
     assert!(fallback2, "裸 JSON 必须标 fallback");
     assert_eq!(p2.narrative_str(), None);
@@ -63,19 +63,23 @@ async fn judgment_eval_verdict_accuracy() {
         eprintln!("SKIP: MINIMAX_API_KEY not set");
         return;
     };
-    tinyiothub_agent::pool::set_minimax_settings(tinyiothub_agent::pool::MinimaxSettings {
+    tinyiothub_agent::provider::set_minimax_settings(tinyiothub_agent::provider::MinimaxSettings {
         base_url: std::env::var("MINIMAX_BASE_URL").unwrap_or_else(|_| "https://api.minimaxi.com/v1".to_string()),
         auth_token: api_key,
         model: std::env::var("MINIMAX_MODEL").unwrap_or_else(|_| "MiniMax-M2.5".to_string()),
     });
     let provider: Box<dyn ModelProvider> =
-        tinyiothub_agent::pool::minimax_provider_factory()().expect("provider build");
+        tinyiothub_agent::provider::minimax_provider_factory()().expect("provider build");
 
-    let scenarios: Vec<Scenario> = serde_json::from_str(
+    let document: serde_json::Value = serde_json::from_str(
         &std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/../../evals/scenarios.json"))
             .expect("scenarios.json"),
     )
     .expect("parse scenarios");
+    // `scenarios.json` also carries the same-source Harness eval scenarios; the
+    // judgment suite only consumes its own labeled slice.
+    let scenarios: Vec<Scenario> =
+        serde_json::from_value(document["judgment"].clone()).expect("parse judgment scenarios");
 
     let mut correct = 0usize;
     let mut noise_misses = 0usize; // needs_human 误判 noise —— 0 容忍
@@ -106,7 +110,7 @@ async fn judgment_eval_verdict_accuracy() {
             resolved: false,
             created_at: chrono::Utc::now(),
         };
-        let prompt = tinyiothub_agent::prompt::investigation::alarm_investigation_text(&alarm);
+        let prompt = crate::domains::agent::prompt::investigation::alarm_investigation_text(&alarm);
         let messages = [ChatMessage::user(prompt)];
         let resp = provider
             .chat(

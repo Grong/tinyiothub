@@ -175,33 +175,29 @@ jobs:
         with:
           fetch-depth: 0
 
-      - uses: pnpm/action-setup@v4
-        with:
-          version: 9
-
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
-          cache: pnpm
-          cache-dependency-path: web/pnpm-lock.yaml
+          node-version: 24
+          cache: npm
+          cache-dependency-path: web/package-lock.json
 
       - name: Install dependencies
-        run: pnpm install --frozen-lockfile
+        run: npm ci
 
       - name: Type check
-        run: pnpm type-check
+        run: npm run type-check
 
       - name: Test
-        run: pnpm --if-present test
+        run: npm test
 
       - name: Lint
-        run: pnpm --if-present lint
+        run: npm run lint
 
       - name: Build
-        run: pnpm build
+        run: npm run build
 
       - name: Security audit
-        run: pnpm audit --audit-level=high || echo "No vulnerabilities found or audit not configured"
+        run: npm audit --audit-level=high || echo "No vulnerabilities found or audit not configured"
 
       - name: Detect new TypeScript files
         id: new-ts-files
@@ -250,6 +246,30 @@ jobs:
             fi
           done
           echo "✅ New file frontend architecture check passed"
+
+  browser-check:
+    name: Runtime Browser Check
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install Chromium
+        run: npx playwright install --with-deps chromium
+
+      - name: Runtime browser tests
+        run: npm run test:browser
 
   # -----------------------------------------------------------------------------
   # Commit Message 检查

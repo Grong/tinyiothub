@@ -22,8 +22,8 @@ use axum::{
 };
 use serde::Serialize;
 
-use tinyiothub_agent::runtime::thing_agent::ToolTraceEntry;
-use tinyiothub_agent::runtime::thing_agent::runner::MAX_TOOL_CALLS_PER_RUN;
+use crate::domains::agent::thing_agent::ToolTraceEntry;
+use crate::domains::agent::thing_agent::runner::MAX_TOOL_CALLS_PER_RUN;
 use tinyiothub_web::middleware::workspace::AuthClaims;
 use tinyiothub_web::response::{ApiResponse, ApiResponseBuilder};
 

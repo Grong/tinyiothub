@@ -1939,3 +1939,68 @@ async fn scene_pack_bad_rule_reference_rolls_back_whole_instantiation() {
         .unwrap();
     assert_eq!(rule_count, 0);
 }
+
+// ──────────────────────────────────────────────────────────────
+// E4a P2：场景包驱动节点接入声明（固定能力驱动跳过模板能力 + 提交后物化）
+// ──────────────────────────────────────────────────────────────
+
+#[tokio::test]
+async fn declarative_scene_nodes_skip_template_caps_and_materialize() {
+    use std::sync::Arc;
+
+    let (pool, db) = setup_db().await;
+    let scene_id = seed_standard_templates(&pool).await;
+    let meter_tpl = seed_meter_template(&pool).await;
+    let Some(pkg) = crate::tests::access_declaration_api_test::demo_package() else {
+        eprintln!(
+            "skipping declarative_scene_nodes_skip_template_caps_and_materialize: demo-declarative cdylib not built"
+        );
+        return;
+    };
+    let data = tempfile::tempdir().expect("temp data dir");
+    let access = crate::tests::access_declaration_api_test::access_service(
+        Arc::new(Db::new(pool.clone())),
+        data.path().to_path_buf(),
+    );
+    access.install_dir(WS, pkg.path()).await.expect("install demo package");
+    let hook = crate::domains::driver::declaration::AccessDeclarationHook { access };
+
+    let mut p = params(1, 1, false);
+    let mut meter = extra_meter(&meter_tpl, vec![], 1);
+    meter.driver_name = Some("demo-declarative".to_string());
+    p.extra_nodes = vec![meter];
+
+    SceneInstantiator::instantiate_with_declarations(&db, WS, &scene_id, &p, None, Some(&hook))
+        .await
+        .expect("instantiate with declarations");
+
+    // Declarative driver: template capabilities must not be copied.
+    let energy: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM thing_properties p JOIN things t ON p.thing_id = t.id \
+         WHERE t.workspace_id = ? AND t.category = 'meters' AND p.name = 'energy'",
+    )
+    .bind(WS)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(energy, 0, "declarative scene node must not copy template properties");
+
+    // Declaration materialized after commit; manifest stateFields projected.
+    let meter_thing: String =
+        sqlx::query_scalar("SELECT id FROM things WHERE workspace_id = ? AND category = 'meters' LIMIT 1")
+            .bind(WS)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    let declarations = db.list_device_declarations(WS).await.unwrap();
+    assert!(
+        declarations.iter().any(|d| d.thing_id == meter_thing),
+        "scene node must materialize its declaration"
+    );
+    let level: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM thing_properties WHERE thing_id = ? AND name = 'level'")
+        .bind(&meter_thing)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(level, 1, "manifest stateFields must be projected");
+}

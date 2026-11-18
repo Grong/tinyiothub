@@ -834,6 +834,8 @@ mod tests {
             trace: vec![],
             task_count: None,
             snapshot: None,
+            task_id: None,
+            wake_event_id: None,
         };
         db.insert_agent_run(&report, None, None).await.unwrap();
         let unticketed = db.unticketed_failed_runs("2000-01-01").await.unwrap();
@@ -868,6 +870,8 @@ mod tests {
             trace: vec![],
             task_count: None,
             snapshot: None,
+            task_id: None,
+            wake_event_id: None,
         };
         db.insert_agent_run(&heartbeat_failure, None, None).await.unwrap();
         assert!(
@@ -1016,6 +1020,8 @@ mod statistics_tests {
                 trace: vec![],
                 task_count: None,
                 snapshot: None,
+                task_id: None,
+                wake_event_id: None,
             };
             db.insert_agent_run(&report, None, None).await.unwrap();
         }

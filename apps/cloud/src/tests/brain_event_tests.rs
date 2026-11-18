@@ -220,9 +220,12 @@ async fn brain_events_detail_carries_trace_and_narrative() {
             name: "read_property".to_string(),
             args: serde_json::json!({"p": "temp"}),
             output: Some("26.5".to_string()),
+            evidence: vec![],
         }],
         task_count: None,
         snapshot: None,
+        task_id: None,
+        wake_event_id: None,
     };
     app_state
         .db

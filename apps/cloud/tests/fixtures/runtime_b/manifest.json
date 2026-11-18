@@ -1,0 +1,15 @@
+{
+  "workspaceId": "ws_fixture_b",
+  "devices": [
+    {
+      "id": "dev_zone_b",
+      "name": "Zone B controller",
+      "sources": ["entrance_image", "occupancy", "pump"],
+      "initial": {
+        "entrance_image": "occupied",
+        "occupancy": 1,
+        "pump": "running"
+      }
+    }
+  ]
+}

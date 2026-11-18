@@ -6,11 +6,53 @@ use crate::config::DatabaseConfig;
 #[derive(Debug, Clone)]
 pub struct Db {
     pool: SqlitePool,
+    pub(crate) workspace_stores: crate::harness_workspace::WorkspaceStores,
+    pub(crate) workspace_store_config: DatabaseConfig,
+    pub(crate) workspace_store_root: std::path::PathBuf,
+    #[cfg(test)]
+    pub(crate) workspace_store_test_hooks: Option<std::sync::Arc<crate::harness_workspace::WorkspaceStoreTestHooks>>,
+    #[cfg(test)]
+    pub(crate) harness_transition_test_hooks:
+        Option<std::sync::Arc<crate::harness_effect::tests::HarnessTransitionTestHooks>>,
+    #[cfg(test)]
+    pub(crate) suppression_commit_test_hooks: Option<std::sync::Arc<crate::suppression::SuppressionCommitTestHooks>>,
+    #[cfg(any(test, feature = "testing"))]
+    pub(crate) runtime_projection_probe: Option<std::sync::Arc<crate::runtime_event::RuntimeProjectionProbe>>,
 }
 
 impl Db {
     pub fn new(pool: SqlitePool) -> Self {
-        Self { pool }
+        Self {
+            pool,
+            workspace_stores: Default::default(),
+            workspace_store_config: DatabaseConfig::default(),
+            workspace_store_root: crate::harness_workspace::default_workspace_store_root(),
+            #[cfg(test)]
+            workspace_store_test_hooks: None,
+            #[cfg(test)]
+            harness_transition_test_hooks: None,
+            #[cfg(test)]
+            suppression_commit_test_hooks: None,
+            #[cfg(any(test, feature = "testing"))]
+            runtime_projection_probe: None,
+        }
+    }
+
+    #[cfg(any(test, feature = "testing"))]
+    pub fn with_runtime_projection_probe(
+        &self,
+        probe: std::sync::Arc<crate::runtime_event::RuntimeProjectionProbe>,
+    ) -> Self {
+        let mut db = self.clone();
+        db.runtime_projection_probe = Some(probe);
+        db
+    }
+
+    /// Point at an isolated workspace root while sharing the platform pool.
+    /// Embedders and tests use this to keep Harness generations separate.
+    pub fn with_workspace_store_root(mut self, root: std::path::PathBuf) -> Self {
+        self.workspace_store_root = root;
+        self
     }
 
     /// One-step cloud entry: build the pool (FK pragma on), run embedded
@@ -27,7 +69,10 @@ impl Db {
         crate::migrations::run_migrations(&pool).await?;
         tracing::info!("Database migrations completed successfully");
 
-        Ok(Self::new(pool))
+        Ok(Self {
+            workspace_store_config: config.clone(),
+            ..Self::new(pool)
+        })
     }
 
     pub fn pool(&self) -> &SqlitePool {

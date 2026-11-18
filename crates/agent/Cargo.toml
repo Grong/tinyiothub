@@ -5,19 +5,18 @@ edition.workspace = true
 authors.workspace = true
 license.workspace = true
 repository.workspace = true
-description = "Agent 共性能力运行时 — loop/pool/tools/session/prompt，零 axum/零 sqlx/零存储依赖"
+description = "Agent 共性能力运行时 — generic loop/tool/prompt ports、memory、session、rig，零 axum/零 sqlx/零存储/Device Hub 依赖"
 
 [lib]
 name = "tinyiothub_agent"
 
-# 角色:agent 共性能力运行时（从 apps/cloud/src/domains/agent 抽取）
-# 禁止依赖:axum、sqlx、tinyiothub_storage、apps/* —— 纯运行时平面;规则出处:G 系列计划 Task 11
+# 角色:agent 共性能力运行时（应用与设备实现住 apps/cloud）
+# 禁止依赖:axum、sqlx、tinyiothub_storage、runtime、apps/* —— 纯运行时平面;规则出处:G 系列计划 Task 11
 [dependencies]
 core = { workspace = true }
 llm = { workspace = true }
 policy = { workspace = true }
 skills = { workspace = true }
-runtime = { workspace = true }
 tokio = { workspace = true }
 serde = { workspace = true }
 chrono = { workspace = true }
@@ -30,10 +29,13 @@ tracing = { workspace = true }
 regex = { workspace = true }
 parking_lot = { workspace = true }
 uuid = { workspace = true }
-tokio-util = { workspace = true }
+tokio-util = { workspace = true, features = ["rt"] }
 sha2 = { workspace = true }
 hex = { workspace = true }
 futures = { workspace = true }
+async-stream = { workspace = true }
+reqwest = { workspace = true }
+base64 = { workspace = true }
 hostname = { workspace = true }
 rig-core = "=0.42.0"
 rig-agent = "=0.42.0"
@@ -46,6 +48,7 @@ testing = []
 [dev-dependencies]
 tokio = { workspace = true, features = ["test-util"] }
 tempfile = { workspace = true }
+axum = { workspace = true }
 
 [lints]
 workspace = true

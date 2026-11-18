@@ -1,0 +1,106 @@
+/**
+ * Legacy Runtime hash state (kept for one version).
+ *
+ * The Runtime workbench is gone. These parsers only recognise old deep links so
+ * the app router can redirect them to `#/assistant` (see
+ * assistant-url-state.ts); the builders stay for URL-state regression tests.
+ */
+
+export type RuntimeView = 'loop' | 'flow';
+
+export interface RuntimeHistory {
+  at?: string;
+  event?: string;
+}
+
+export type RuntimeRoute =
+  | { name: 'list' }
+  | { name: 'new' }
+  | {
+      name: 'task';
+      taskId: string;
+      view: RuntimeView;
+      device: string | null;
+      history: RuntimeHistory | null;
+    };
+
+export interface RuntimeTaskUrlState {
+  view?: RuntimeView;
+  device?: string | null;
+  at?: string | null;
+  event?: string | null;
+}
+
+export function splitHashQuery(hash: string): {
+  path: string;
+  params: URLSearchParams;
+} {
+  const queryIndex = hash.indexOf('?');
+  return {
+    path: queryIndex < 0 ? hash : hash.slice(0, queryIndex),
+    params: new URLSearchParams(queryIndex < 0 ? '' : hash.slice(queryIndex + 1)),
+  };
+}
+
+export function decodeHashId(value: string): string | null {
+  try {
+    const id = decodeURIComponent(value);
+    return id ? id : null;
+  } catch {
+    return null;
+  }
+}
+
+export function parseRuntimeHash(hash: string): RuntimeRoute | null {
+  const { path, params } = splitHashQuery(hash);
+  if (path === '#/runtime') return { name: 'list' };
+  if (path === '#/runtime/new') return { name: 'new' };
+  const match = path.match(/^#\/runtime\/tasks\/([^/]+)$/);
+  if (!match) return null;
+  const taskId = decodeHashId(match[1]);
+  if (!taskId) return null;
+  const at = params.get('at');
+  const event = params.get('event');
+  const history: RuntimeHistory = {};
+  if (at) history.at = at;
+  if (event) history.event = event;
+  return {
+    name: 'task',
+    taskId,
+    view: params.get('view') === 'flow' ? 'flow' : 'loop',
+    device: params.get('device') || null,
+    history: at || event ? history : null,
+  };
+}
+
+export function toRuntimeTaskUrl(taskId: string, state: RuntimeTaskUrlState = {}): string {
+  const params = new URLSearchParams();
+  if (state.view === 'flow') params.set('view', 'flow');
+  if (state.device) params.set('device', state.device);
+  if (state.at) params.set('at', state.at);
+  if (state.event) params.set('event', state.event);
+  const query = params.toString();
+  return `#/runtime/tasks/${encodeURIComponent(taskId)}${query ? `?${query}` : ''}`;
+}
+
+export function switchTaskUrl(taskId: string, view: RuntimeView = 'loop'): string {
+  return toRuntimeTaskUrl(taskId, { view });
+}
+
+/** History requires an `at` or `event` cursor; a device selection alone stays live. */
+export function isHistoryState(history: RuntimeHistory | null | undefined): boolean {
+  return Boolean(history?.at || history?.event);
+}
+
+/** Return to live without changing the current Task, view or selected device. */
+export function toLiveRuntimeTaskUrl(
+  taskId: string,
+  state: Pick<RuntimeTaskUrlState, 'view' | 'device'> = {},
+): string {
+  return toRuntimeTaskUrl(taskId, { view: state.view, device: state.device });
+}
+
+export function replaceRuntimeTask(taskId: string, view: RuntimeView = 'loop'): void {
+  window.history.replaceState({}, '', switchTaskUrl(taskId, view));
+  window.dispatchEvent(new HashChangeEvent('hashchange'));
+}

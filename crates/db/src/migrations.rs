@@ -6,6 +6,26 @@
 
 use sqlx::{migrate::Migrator, sqlite::SqlitePool};
 
+pub(crate) fn platform_migrator() -> Migrator {
+    let migrator = sqlx::migrate!("./migrations");
+    let mut platform = Migrator::with_migrations(
+        migrator
+            .iter()
+            // Keep the empty Task 2 marker known to existing platform DBs.
+            .filter(|migration| {
+                migration.version == 20261103000001
+                    || (!migration.description.starts_with("harness_")
+                        && !migration.description.starts_with("harness "))
+            })
+            .cloned()
+            .collect(),
+    );
+    // Known workspace-only IDs may already be recorded by directory-wide test fixtures;
+    // reject_legacy_chain_db still rejects every genuinely unknown applied ID.
+    platform.set_ignore_missing(true);
+    platform
+}
+
 /// Run migrations with full safety checks.
 ///
 /// 1. Back up the database file to `backups/` (only when migrations are actually pending).
@@ -14,7 +34,7 @@ use sqlx::{migrate::Migrator, sqlite::SqlitePool};
 ///    inside a migration script only returns rows; sqlx discards them, so the check must happen
 ///    here).
 pub async fn run_migrations(pool: &SqlitePool) -> Result<(), sqlx::Error> {
-    let migrator = sqlx::migrate!("./migrations");
+    let migrator = platform_migrator();
 
     if pending_migrations_exist(pool, &migrator).await? {
         backup_before_migrate(pool).await?;
@@ -23,7 +43,7 @@ pub async fn run_migrations(pool: &SqlitePool) -> Result<(), sqlx::Error> {
     // CEO review T4：老链库（68 迁移时代的 _sqlx_migrations 行）会在 sqlx 校验期
     // 以 VersionMissing 失败——响亮但文案误导（"恢复备份"会让运维陷入恢复→再崩
     // 死循环）。备份已先行，这里显式检测并给出 Q2 的可行动指引。
-    reject_legacy_chain_db(pool, &migrator).await?;
+    reject_legacy_chain_db(pool).await?;
 
     // FK 加固（2026-08-18 调查）：sqlx 默认 foreign_keys=ON；SQLite 在 FK 开启时
     // DROP TABLE 会先隐式 DELETE FROM 该表，触发子表 ON DELETE CASCADE。
@@ -85,7 +105,7 @@ async fn pending_migrations_exist(pool: &SqlitePool, migrator: &Migrator) -> Res
 /// restore-and-crash loop. The settled decision (db-overhaul Q2) is that legacy
 /// deployments rebuild: no data-migration path exists. The pre-migration backup
 /// has already been written by the time this runs.
-async fn reject_legacy_chain_db(pool: &SqlitePool, migrator: &Migrator) -> Result<(), sqlx::Error> {
+async fn reject_legacy_chain_db(pool: &SqlitePool) -> Result<(), sqlx::Error> {
     let table_exists: bool = sqlx::query_scalar(
         "SELECT EXISTS(
             SELECT 1 FROM sqlite_master
@@ -102,7 +122,10 @@ async fn reject_legacy_chain_db(pool: &SqlitePool, migrator: &Migrator) -> Resul
     let applied: Vec<i64> = sqlx::query_scalar("SELECT version FROM _sqlx_migrations")
         .fetch_all(pool)
         .await?;
-    let known: std::collections::HashSet<i64> = migrator.iter().map(|m| m.version).collect();
+    let known: std::collections::HashSet<i64> = sqlx::migrate!("./migrations")
+        .iter()
+        .map(|migration| migration.version)
+        .collect();
     let mut legacy: Vec<i64> = applied.into_iter().filter(|v| !known.contains(v)).collect();
     legacy.sort_unstable();
 

@@ -193,6 +193,12 @@ view-dispositions .j-countdown {
   color: var(--muted-foreground);
 }
 
+/* 判断执行退役后的说明文字（低强调，与拒绝按钮同一行）。 */
+view-dispositions .j-retired {
+  font-size: 12px;
+  color: var(--muted-foreground);
+}
+
 /* ✓✕ 反馈：图标，无文字；唯一的 auto margin，把时间戳一起推到右上 */
 view-dispositions .j-fb {
   margin-left: auto;

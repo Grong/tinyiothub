@@ -84,7 +84,7 @@ mod tests {
     }"#;
 
     const DYNAMIC_MANIFEST: &str = r#"{
-      "manifestVersion":"1.0",
+      "manifestVersion":"1.1",
       "identity":{"driver":"demo","version":"1.0.0","protocol":"demo","abiVersion":2,"dynamicCapabilities":true},
       "config":{"type":"object"},"tools":[],"stateFields":[],
       "sources":[{"id":"telemetry","kind":"poll","fields":[]}],

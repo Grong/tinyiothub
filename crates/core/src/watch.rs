@@ -96,6 +96,7 @@ pub struct WatchRule {
     pub persistent: bool,
     pub timeout_secs: u32,
     pub created_at: String,
+    pub owner_task_id: Option<String>,
 }
 
 impl WatchRule {
@@ -265,6 +266,7 @@ mod tests {
             persistent: false,
             timeout_secs: 600,
             created_at: "2026-10-20 00:00:00".into(),
+            owner_task_id: None,
         };
         assert!(base.validate().is_ok());
         assert!(

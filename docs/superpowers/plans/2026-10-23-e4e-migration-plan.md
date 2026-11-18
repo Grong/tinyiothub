@@ -214,6 +214,7 @@ cargo run -p driver-check -- --package <staged-package-dir> --profile all
   - **动态能力驱动**（`TemplateBootstrap`）：先拷贝模板行，再由 `describe()` 重物化细化。
 - `mark_stale` 只处理 `source='driver'` 行；`source='template'` 行原样保留。因此模板拷贝出的多余能力**不会自动消失**，需在 drift 报告中单独列出，由模板维护者决定更新/停用。
 - 场景包实例化：对已声明驱动的物跳过能力拷贝（与上述创建路径一致）。这是行为变更，执行阶段需回写场景模板 spec 并在 staging 对比实例化前后能力集。
+  - 实现（2026-10-24）：`SceneInstantiator::instantiate_with_declarations` 在展开后对驱动节点预判创建模式，`Declarative` 节点跳过模板属性/命令（引用模板属性的告警规则跳过并记 warning）；提交后逐物 `materialize`，失败只进 `warnings`、不回滚已提交的树（与安装/升级的 drift-not-rollback 语义一致）。
 
 ### 5.3 maps / `zone_source` 切换
 

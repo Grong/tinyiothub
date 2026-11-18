@@ -7,17 +7,23 @@
 //! - 新类型必须论证为何不属于某个领域 crate
 
 pub mod agent_runs;
+pub mod agent_task;
 pub mod config;
 pub mod constants;
 pub mod cron;
+pub mod device_job;
 pub mod driver;
 pub mod error;
 pub mod event;
+pub mod harness;
 pub mod heartbeat;
+pub mod media;
 pub mod memory;
 pub mod models;
 pub mod notification_types;
 pub mod policy;
+pub mod redaction;
+pub mod task_approval;
 pub mod types;
 pub mod version;
 pub mod watch;

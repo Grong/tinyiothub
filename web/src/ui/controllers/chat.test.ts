@@ -10,6 +10,7 @@ function makeState(): ChatState {
     chatSending: true,
     chatRunId: null,
     chatStream: null,
+    chatThinking: null,
     chatStreamStartedAt: null,
     chatStreamSegments: [],
     toolStreamById: new Map(),
@@ -35,6 +36,43 @@ describe("handleChatEvent runId adoption", () => {
     expect(state.chatStream).toBe("hi");
   });
 
+  it("accumulates thinking deltas and clears them on final", () => {
+    const state = makeState();
+    handleChatEvent(state, {
+      runId: "server-run-1",
+      sessionKey: "agent:ws:a1/s1",
+      state: "thinking",
+      thinking: "先看设备，",
+    });
+    handleChatEvent(state, {
+      runId: "server-run-1",
+      sessionKey: "agent:ws:a1/s1",
+      state: "thinking",
+      thinking: "再看告警。",
+    });
+    expect(state.chatThinking).toBe("先看设备，再看告警。");
+
+    handleChatEvent(state, {
+      runId: "server-run-1",
+      sessionKey: "agent:ws:a1/s1",
+      state: "final",
+      message: { role: "assistant", content: [{ type: "text", text: "done" }] },
+    });
+    expect(state.chatThinking).toBeNull();
+  });
+
+  it("shows the real server error instead of Unknown error", () => {
+    const state = makeState();
+    handleChatEvent(state, {
+      runId: "server-run-1",
+      sessionKey: "agent:ws:a1/s1",
+      state: "error",
+      errorMessage: "HTTP 500: upstream unavailable",
+      source: "system",
+    });
+    expect(state.lastError).toBe("HTTP 500: upstream unavailable");
+  });
+
   it("does not overwrite the adopted runId on later events", () => {
     const state = makeState();
     state.chatRunId = "server-run-1";
@@ -46,6 +84,38 @@ describe("handleChatEvent runId adoption", () => {
     });
     expect(state.chatRunId).toBe("server-run-1");
     expect(state.chatStream).toBeNull();
+  });
+  it("clears failed attempt text and reasoning when a retry starts", () => {
+    const state = makeState();
+    handleChatEvent(state, {
+      runId: "server-run-1",
+      sessionKey: "agent:ws:a1/s1",
+      state: "delta",
+      message: { role: "assistant", content: [{ type: "text", text: "partial" }] },
+    });
+    handleChatEvent(state, {
+      runId: "server-run-1",
+      sessionKey: "agent:ws:a1/s1",
+      state: "thinking",
+      thinking: "failed reasoning",
+    });
+    handleChatEvent(state, {
+      runId: "server-run-1",
+      sessionKey: "agent:ws:a1/s1",
+      state: "retry",
+      attempt: 1,
+      maxRetries: 3,
+      delayMs: 1000,
+      errorMessage: "HTTP 503: unavailable",
+    });
+    handleChatEvent(state, {
+      runId: "server-run-1",
+      sessionKey: "agent:ws:a1/s1",
+      state: "delta",
+      message: { role: "assistant", content: [{ type: "text", text: "recovered" }] },
+    });
+    expect(state.chatStream).toBe("recovered");
+    expect(state.chatThinking).toBeNull();
   });
 });
 

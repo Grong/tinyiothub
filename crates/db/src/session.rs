@@ -42,6 +42,15 @@ pub struct Session {
     pub agent_id: String,
     /// Optional session label/title
     pub label: Option<String>,
+    /// 会话类型："chat" | "scheduled" | "event"
+    #[serde(default = "default_session_kind")]
+    pub kind: String,
+    /// 会话状态："active" | "ended"
+    #[serde(default = "default_session_status")]
+    pub status: String,
+    /// 会话权限模式："read_only" | "ask" | "full_access"
+    #[serde(default = "default_permission_mode")]
+    pub permission_mode: String,
     /// Session creation timestamp (Unix millis)
     pub created_at: i64,
     /// Last update timestamp (Unix millis)
@@ -49,6 +58,18 @@ pub struct Session {
     /// Session metadata (arbitrary JSON)
     #[serde(default)]
     pub metadata: serde_json::Value,
+}
+
+fn default_session_kind() -> String {
+    "chat".to_string()
+}
+
+fn default_session_status() -> String {
+    "active".to_string()
+}
+
+fn default_permission_mode() -> String {
+    "ask".to_string()
 }
 
 impl Session {
@@ -60,10 +81,27 @@ impl Session {
             workspace_id,
             agent_id,
             label: None,
+            kind: default_session_kind(),
+            status: default_session_status(),
+            permission_mode: default_permission_mode(),
             created_at: now,
             updated_at: now,
             metadata: serde_json::Value::Object(serde_json::Map::new()),
         }
+    }
+
+    /// 设置会话类型（用于 scheduled/event 会话；默认 chat）。
+    pub fn with_kind(mut self, kind: impl Into<String>) -> Self {
+        self.kind = kind.into();
+        self.updated_at = chrono::Utc::now().timestamp_millis();
+        self
+    }
+
+    /// 设置会话权限模式；调用方负责校验枚举值。
+    pub fn with_permission_mode(mut self, mode: impl Into<String>) -> Self {
+        self.permission_mode = mode.into();
+        self.updated_at = chrono::Utc::now().timestamp_millis();
+        self
     }
 
     /// Update the label
@@ -118,6 +156,9 @@ fn map_session_row(row: sqlx::sqlite::SqliteRow) -> Result<Session, sqlx::Error>
     let workspace_id: Option<String> = row.try_get("workspace_id").ok();
     let agent_id: String = row.try_get("agent_id")?;
     let label: Option<String> = row.try_get("label").ok();
+    let kind: Option<String> = row.try_get("kind").ok();
+    let status: Option<String> = row.try_get("status").ok();
+    let permission_mode: Option<String> = row.try_get("permission_mode").ok();
 
     let created_at: i64 = row.try_get::<i64, _>("created_at").or_else(|_| {
         row.try_get::<String, _>("created_at").and_then(|s| {
@@ -144,6 +185,9 @@ fn map_session_row(row: sqlx::sqlite::SqliteRow) -> Result<Session, sqlx::Error>
         workspace_id: workspace_id.unwrap_or_default(),
         agent_id,
         label,
+        kind: kind.unwrap_or_else(default_session_kind),
+        status: status.unwrap_or_else(default_session_status),
+        permission_mode: permission_mode.unwrap_or_else(default_permission_mode),
         created_at,
         updated_at,
         metadata,
@@ -186,7 +230,7 @@ pub(crate) async fn get_or_create_session(pool: &SqlitePool, session_key: &str) 
 
 pub(crate) async fn get_session(pool: &SqlitePool, session_key: &str) -> Result<Option<Session>, SessionError> {
     let row = sqlx::query(
-        "SELECT session_key, workspace_id, agent_id, label, created_at, updated_at, metadata \
+        "SELECT session_key, workspace_id, agent_id, label, kind, status, permission_mode, created_at, updated_at, metadata \
          FROM chat_sessions WHERE session_key = ?",
     )
     .bind(session_key)
@@ -207,13 +251,16 @@ pub(crate) async fn create_session(pool: &SqlitePool, session: &Session) -> Resu
         serde_json::to_string(&session.metadata).map_err(|e| SessionError::RepositoryError(e.to_string()))?;
 
     sqlx::query(
-        "INSERT INTO chat_sessions (session_key, workspace_id, agent_id, label, created_at, updated_at, metadata) \
-         VALUES (?, ?, ?, ?, ?, ?, ?)",
+        "INSERT INTO chat_sessions (session_key, workspace_id, agent_id, label, kind, status, permission_mode, created_at, updated_at, metadata) \
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
     )
     .bind(&session.session_key)
     .bind(&session.workspace_id)
     .bind(&session.agent_id)
     .bind(&session.label)
+    .bind(&session.kind)
+    .bind(&session.status)
+    .bind(&session.permission_mode)
     .bind(session.created_at)
     .bind(session.updated_at)
     .bind(&metadata_str)
@@ -230,12 +277,15 @@ pub(crate) async fn update_session(pool: &SqlitePool, session: &Session) -> Resu
 
     let result = sqlx::query(
         "UPDATE chat_sessions \
-         SET workspace_id = ?, agent_id = ?, label = ?, updated_at = ?, metadata = ? \
+         SET workspace_id = ?, agent_id = ?, label = ?, kind = ?, status = ?, permission_mode = ?, updated_at = ?, metadata = ? \
          WHERE session_key = ?",
     )
     .bind(&session.workspace_id)
     .bind(&session.agent_id)
     .bind(&session.label)
+    .bind(&session.kind)
+    .bind(&session.status)
+    .bind(&session.permission_mode)
     .bind(session.updated_at)
     .bind(&metadata_str)
     .bind(&session.session_key)
@@ -288,7 +338,7 @@ pub(crate) async fn list_sessions(
     use sqlx::QueryBuilder;
 
     let mut builder = QueryBuilder::new(
-        "SELECT session_key, workspace_id, agent_id, label, created_at, updated_at, metadata \
+        "SELECT session_key, workspace_id, agent_id, label, kind, status, permission_mode, created_at, updated_at, metadata \
          FROM chat_sessions WHERE 1=1",
     );
 
@@ -617,5 +667,65 @@ mod tests {
         let result = db.delete_session("nonexistent:key").await;
         assert!(result.is_err());
         assert!(matches!(result.unwrap_err(), SessionError::NotFound(_)));
+    }
+
+    #[tokio::test]
+    pub async fn test_session_defaults_to_chat_active() {
+        let db = create_test_db().await;
+        let session = Session::new(
+            "agent:ws:agent1/sess_kind".to_string(),
+            "ws".to_string(),
+            "agent1".to_string(),
+        );
+        assert_eq!(session.kind, "chat");
+        assert_eq!(session.status, "active");
+
+        db.create_session(&session).await.unwrap();
+        let found = db.get_session(&session.session_key).await.unwrap().unwrap();
+        assert_eq!(found.kind, "chat");
+        assert_eq!(found.status, "active");
+    }
+
+    #[tokio::test]
+    pub async fn test_session_persists_explicit_kind() {
+        let db = create_test_db().await;
+        let session = Session::new(
+            "agent:ws:agent1/sess_scheduled".to_string(),
+            "ws".to_string(),
+            "agent1".to_string(),
+        )
+        .with_kind("scheduled");
+        db.create_session(&session).await.unwrap();
+        let found = db.get_session(&session.session_key).await.unwrap().unwrap();
+        assert_eq!(found.kind, "scheduled");
+        assert_eq!(found.status, "active");
+    }
+
+    #[tokio::test]
+    async fn test_session_defaults_to_ask_permission() {
+        let db = create_test_db().await;
+        let session = Session::new(
+            "agent:ws:agent1/sess_perm".to_string(),
+            "ws".to_string(),
+            "agent1".to_string(),
+        );
+        assert_eq!(session.permission_mode, "ask");
+        db.create_session(&session).await.unwrap();
+        let found = db.get_session(&session.session_key).await.unwrap().unwrap();
+        assert_eq!(found.permission_mode, "ask");
+    }
+
+    #[tokio::test]
+    async fn test_session_persists_explicit_permission_mode() {
+        let db = create_test_db().await;
+        let session = Session::new(
+            "agent:ws:agent1/sess_ro".to_string(),
+            "ws".to_string(),
+            "agent1".to_string(),
+        )
+        .with_permission_mode("read_only");
+        db.create_session(&session).await.unwrap();
+        let found = db.get_session(&session.session_key).await.unwrap().unwrap();
+        assert_eq!(found.permission_mode, "read_only");
     }
 }

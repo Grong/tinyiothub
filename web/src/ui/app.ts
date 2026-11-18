@@ -8,6 +8,11 @@ import './components/theme-toggle.js';
 import './components/toast.js';
 import { error as toastError } from './components/toast.js';
 import { thingCache } from '../stores/thing-cache.js';
+import {
+  legacyWorkbenchRedirect,
+  parseAssistantHash,
+  type AssistantHashState,
+} from './views/assistant-url-state.js';
 
 // Public / first-screen views — eagerly loaded
 import './views/login.js';
@@ -16,6 +21,10 @@ import './views/home.js';
 
 // Lazy view loaders — each returns a Promise that resolves once the
 // custom element is registered.
+function viewTag(route: string): string {
+  return `view-${route}`;
+}
+
 const lazyViews: Record<string, () => Promise<void>> = {
   dashboard: () => import('./views/dashboard.js').then(() => {}),
   things: () => import('./views/things.js').then(() => {}),
@@ -35,7 +44,6 @@ const lazyViews: Record<string, () => Promise<void>> = {
   'driver-health': () => import('./views/driver-health.js').then(() => {}),
   'memory-dashboard': () => import('./views/memory-dashboard.js').then(() => {}),
   workspace: () => import('./views/workspace.js').then(() => {}),
-  heartbeat: () => import('./views/heartbeat.js').then(() => {}),
   'ai-ops': () => import('./views/ai-ops.js').then(() => {}),
   'run-detail': () => import('./views/run-detail.js').then(() => {}),
 };
@@ -173,6 +181,8 @@ export class TinyIoTHubApp extends LitElement {
   @state() loadError: string | null = null;
   /** T13：run 详情页 hash 路由参数（#/ai-ops/runs/{id}；id 容忍冒号如 patrol:p1） */
   @state() runDetailId = '';
+  /** Canonical `#/assistant` hash state (session key + timeline focus). */
+  @state() assistantRoute: AssistantHashState | null = null;
   /** E4：处置中心未读角标（needsYou 计数；「例外响亮」的前提是例外能到人） */
   @state() dispositionNeedsYou = 0;
 
@@ -318,6 +328,35 @@ export class TinyIoTHubApp extends LitElement {
   }
 
   handleRoute() {
+    // Canonical assistant hash routes own the chat shell:
+    // #/assistant and #/assistant/sessions/{encoded_session_key}.
+    const assistantState = parseAssistantHash(window.location.hash);
+    if (assistantState) {
+      if (!this.isAuthenticated) {
+        this.navigate('login');
+        return;
+      }
+      this.assistantRoute = assistantState;
+      this.currentRoute = 'chat';
+      this._ensureViewLoaded('chat');
+      return;
+    }
+
+    // One-version compatibility: retired Runtime/Harness deep links redirect
+    // once to #/assistant. A legacy Task id has no stable Task→Session
+    // mapping, so it is intentionally dropped rather than used as a session key.
+    const legacyTarget = legacyWorkbenchRedirect(window.location.hash);
+    if (legacyTarget) {
+      if (!this.isAuthenticated) {
+        this.navigate('login');
+        return;
+      }
+      window.history.replaceState({}, '', legacyTarget);
+      this.handleRoute();
+      return;
+    }
+    this.assistantRoute = null;
+
     // T13：hash 路由 #/ai-ops/runs/{id}（卡片层「查看完整轨迹」链接）。
     // id 容忍冒号（patrol 提案兜底用 brain event id，如 patrol:p1——T12 评审 M-1）。
     const runMatch = window.location.hash.match(/^#\/ai-ops\/runs\/(.+)$/);
@@ -372,7 +411,7 @@ export class TinyIoTHubApp extends LitElement {
     const base = route;
     const loader = lazyViews[base];
     if (!loader) return;
-    const tag = `view-${base}`;
+    const tag = viewTag(base);
     if (customElements.get(tag)) return; // already registered
     this.loadError = null;
     this.loadingRoute = base;
@@ -428,7 +467,6 @@ export class TinyIoTHubApp extends LitElement {
       cron: '定时任务',
       'memory-dashboard': '记忆面板',
       workspace: '工作空间',
-      heartbeat: 'AI 巡检',
       'ai-ops': 'AI 运维',
     };
     // Handle /things/:id (detail page)
@@ -455,7 +493,6 @@ export class TinyIoTHubApp extends LitElement {
       cron: '管理定时执行的任务和作业',
       'memory-dashboard': '查看和管理 Agent 记忆与反思队列',
       workspace: 'AI 驱动的可视化分析与 3D 场景画布',
-      heartbeat: 'AI 自主巡检 — 自动发现物异常，智能分析并执行恢复操作',
       'ai-ops': 'AI 自主运维 — 审批、历史、信任配置与知识管理',
     };
     if (this.currentRoute.startsWith('things/')) return '查看物属性、事件、动作和知识';
@@ -501,7 +538,7 @@ export class TinyIoTHubApp extends LitElement {
         >
           ${this.renderNav()}
         </nav>
-        <div class="content ${this.currentRoute === 'workspace' ? 'content--workspace' : this.currentRoute === 'ai-ops' ? 'content--heartbeat' : ''}" role="main" id="main-content">
+        <div class="content ${this.currentRoute === 'workspace' ? 'content--workspace' : this.currentRoute === 'ai-ops' ? 'content--heartbeat' : this.currentRoute === 'chat' ? 'content--chat' : ''}" role="main" id="main-content">
           ${this.currentRoute.startsWith('things/') || this.currentRoute === 'chat' || this.currentRoute === 'workspace' || this.currentRoute === 'ai-ops' || this.currentRoute === 'run-detail'
             ? nothing
             : html`
@@ -596,9 +633,7 @@ export class TinyIoTHubApp extends LitElement {
   renderNav() {
     return html`
       ${NAV_GROUPS.map((group) => {
-        const visibleItems = group.items.filter(
-          (item) => !item.adminOnly || this.userRole === 'admin',
-        );
+        const visibleItems = group.items.filter((item) => !item.adminOnly || this.userRole === 'admin');
         if (visibleItems.length === 0) return '';
         return html`
           <div class="nav-group">
@@ -613,7 +648,7 @@ export class TinyIoTHubApp extends LitElement {
               ${visibleItems.map(
                 (item) => html`
                   <a
-                    href="/${item.route}"
+                    href=${`/${item.route}`}
                     class="nav-item ${this.currentRoute === item.route ||
                     (item.route === 'things' && (this.currentRoute === 'things' || this.currentRoute.startsWith('things/')))
                       ? 'active'
@@ -650,7 +685,7 @@ export class TinyIoTHubApp extends LitElement {
     if (route === 'home') return html`<view-home></view-home>`;
 
     const base = route.startsWith('things/') ? 'things' : route;
-    const tag = `view-${base}`;
+    const tag = viewTag(base);
     const isReady = !!customElements.get(tag);
     const isLoading = this.loadingRoute === base;
 
@@ -668,7 +703,10 @@ export class TinyIoTHubApp extends LitElement {
     if (base === 'monitoring') return html`<view-monitoring></view-monitoring>`;
     if (base === 'users') return html`<view-users></view-users>`;
     if (base === 'settings') return html`<view-settings></view-settings>`;
-    if (base === 'chat') return html`<view-chat></view-chat>`;
+    if (base === 'chat')
+      return html`<view-chat
+        .initialSessionKey=${this.assistantRoute?.sessionKey ?? ''}
+      ></view-chat>`;
     if (base === 'agents') return html`<view-agents></view-agents>`;
     if (base === 'cron') return html`<view-cron></view-cron>`;
     if (base === 'marketplace') return html`<view-marketplace></view-marketplace>`;

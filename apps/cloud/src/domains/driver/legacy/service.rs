@@ -133,14 +133,58 @@ impl ThingService {
             template_id,
             thing_input.name
         );
-        let created_device = self
-            .apply_template_and_create_thing(template_engine, template_id, thing_input)
-            .await?;
         let template = self.get_template(template_engine, template_id).await?;
-        self.generate_and_create_properties(template_engine, &template, thing_input, &created_device.id)
-            .await;
-        self.generate_and_create_commands(template_engine, &template, thing_input, &created_device.id)
-            .await;
+        // Resolve the effective driver/options exactly as `apply_template` does
+        // (input → template → device_info defaults) *before* inserting, so an
+        // invalid config never leaves a half-bound thing behind.
+        let device_request = template_engine
+            .apply_template(template_id, thing_input)
+            .await
+            .map_err(|e| Error::ValidationError(format!("{}: {}", ERROR_TEMPLATE_APPLICATION_FAILED, e)))?;
+        let workspace = self.ws().unwrap_or_default().to_string();
+        let creation_mode = if let (Some(hook), Some(driver)) = (&self.declaration_hook, &device_request.driver_name) {
+            Some(
+                hook.prepare_creation(&workspace, driver, device_request.driver_options.as_deref())
+                    .await
+                    .map_err(Error::ValidationError)?,
+            )
+        } else {
+            None
+        };
+        if self
+            .db
+            .thing_exists_by_name(self.ws(), &device_request.name)
+            .await
+            .unwrap_or(false)
+        {
+            return Err(Error::ValidationError(ERROR_DEVICE_NAME_EXISTS.to_string()));
+        }
+        let created_device = self.db.create_thing(self.ws(), &device_request).await?;
+        // Fixed-capability drivers declare their own capability set, so
+        // template rows must not pollute it. Dynamic drivers bootstrap from
+        // the template and `describe()` refines it during materialization.
+        if !matches!(
+            creation_mode,
+            Some(crate::domains::thing::hooks::CreationMode::Declarative)
+        ) {
+            self.generate_and_create_properties(template_engine, &template, thing_input, &created_device.id)
+                .await;
+            self.generate_and_create_commands(template_engine, &template, thing_input, &created_device.id)
+                .await;
+        }
+        // E4a：物化失败回滚刚创建的物（MCP 是 AI 建物的主路径）。
+        if let (Some(hook), Some(_)) = (&self.declaration_hook, &device_request.driver_name)
+            && let Err(e) = hook.materialize(&workspace, &created_device.id).await
+        {
+            if let Err(cleanup) = self.db.delete_thing_row(&created_device.id).await {
+                tracing::error!(
+                    thing_id = %created_device.id,
+                    error = %cleanup,
+                    "failed to roll back MCP template-created thing after declaration materialization failure"
+                );
+            }
+            return Err(Error::ValidationError(e));
+        }
         // 加载完整设备信息（含属性、指令）再发布事件
         let complete_device = self
             .load_complete_device(&created_device.id)
@@ -249,27 +293,6 @@ impl ThingService {
             .await
             .map_err(|e| Error::IOError(format!("Failed to get template: {}", e)))?
             .ok_or(Error::NotFound)
-    }
-
-    async fn apply_template_and_create_thing(
-        &self,
-        template_engine: &crate::domains::thing::template::TemplateEngine,
-        template_id: &str,
-        thing_input: &crate::domains::thing::template::types::ThingCreationInput,
-    ) -> Result<Thing, Error> {
-        if self
-            .db
-            .thing_exists_by_name(self.ws(), &thing_input.name)
-            .await
-            .unwrap_or(false)
-        {
-            return Err(Error::ValidationError(ERROR_DEVICE_NAME_EXISTS.to_string()));
-        }
-        let device_request = template_engine
-            .apply_template(template_id, thing_input)
-            .await
-            .map_err(|e| Error::ValidationError(format!("{}: {}", ERROR_TEMPLATE_APPLICATION_FAILED, e)))?;
-        self.db.create_thing(self.ws(), &device_request).await
     }
 
     async fn generate_and_create_properties(

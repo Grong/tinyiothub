@@ -309,6 +309,19 @@ mod tests {
 
     // ── prompt tests ──
 
+    /// Restored from the deleted `agent::host::reflect` shim: the shipped
+    /// reflection template must keep teaching the FACT| / NO_FACTS contract.
+    #[test]
+    fn prompt_template_loaded() {
+        let instruction = include_str!("../../../memory/templates/REFLECTION_PROMPT.md");
+        assert!(
+            instruction.contains("FACT|"),
+            "prompt must contain FACT| format instruction"
+        );
+        assert!(instruction.contains("NO_FACTS"));
+        assert!(instruction.len() > 50);
+    }
+
     #[test]
     fn prompt_instruction_after_data() {
         let instruction = "Extract facts using FACT| format.\nFACT|zone|confidence|fact\nNO_FACTS for no facts";

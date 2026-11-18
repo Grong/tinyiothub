@@ -12,7 +12,7 @@ vi.mock("./client.js", () => ({
   getWorkspaceId: vi.fn(() => "ws-1"),
 }));
 vi.mock("./judgments.js", () => ({
-  judgmentApi: { approve: vi.fn(), reject: vi.fn() },
+  judgmentApi: { feedback: vi.fn(), reject: vi.fn() },
 }));
 
 import { apiGet, apiPost } from "./client.js";
@@ -105,9 +105,9 @@ describe("brainEventApi.summary / detail", () => {
 });
 
 describe("approve / reject 按 source 路由", () => {
-  it("alarm 源走 judgmentApi", async () => {
-    await brainEventApi.approve(row);
-    expect(judgmentApi.approve).toHaveBeenCalledWith("j1");
+  it("alarm 判断执行已退役：approve 拒绝派发，reject 仍走 judgmentApi", async () => {
+    await expect(brainEventApi.approve(row)).rejects.toThrow(/已退役/);
+    expect(apiPost).not.toHaveBeenCalled();
     await brainEventApi.reject(row, "现在不能重启");
     expect(judgmentApi.reject).toHaveBeenCalledWith("j1", "现在不能重启");
   });

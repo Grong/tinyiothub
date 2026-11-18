@@ -11,6 +11,7 @@ pub fn declaration_from_thing(thing: &Thing, driver: &str, version: &str) -> Dev
         .unwrap_or_default()
         .iter()
         .map(|p| StateFieldDecl {
+            key: None,
             name: p.name.clone(),
             data_type: p.data_type.clone().unwrap_or_else(|| "string".into()),
             unit: p.unit.clone(),
@@ -44,7 +45,11 @@ pub fn declaration_from_thing(thing: &Thing, driver: &str, version: &str) -> Dev
         })
         .collect();
     DeviceDeclaration {
-        manifest_version: "1.0".into(),
+        manifest_version: format!(
+            "{}.{}",
+            tinyiothub_core::driver::manifest::MANIFEST_MAJOR,
+            tinyiothub_core::driver::manifest::MANIFEST_MINOR
+        ),
         driver: driver.into(),
         driver_version: version.into(),
         state_fields,
@@ -105,6 +110,18 @@ mod tests {
             }]),
             ..Default::default()
         }
+    }
+
+    #[test]
+    fn emitted_declarations_are_1_1_while_legacy_1_0_is_accepted() {
+        let emitted = declaration_from_thing(&thing(), "simulator", "2.0.0");
+        assert_eq!(emitted.manifest_version, "1.1");
+        let legacy: tinyiothub_core::driver::declaration::DeviceDeclaration =
+            serde_json::from_value(serde_json::json!({
+                "manifestVersion":"1.0","driver":"simulator","driverVersion":"2.0.0"
+            }))
+            .expect("legacy declaration");
+        assert_eq!(legacy.manifest_version, "1.0");
     }
 
     #[test]

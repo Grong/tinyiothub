@@ -14,6 +14,52 @@ use super::provider::{port_messages_to_rig, rig_messages_to_port};
 /// Constraints #6）：rig 会话内存按会话 id 召回最近 N 条。
 const RECALL_LIMIT: usize = 20;
 
+const CONVERSATION_CONTENT_FORMAT: &str = "tinyiothub.conversation-content/v1";
+
+#[derive(serde::Serialize, serde::Deserialize)]
+struct StoredConversationContent {
+    format: String,
+    content: String,
+    attachments: Vec<tinyiothub_core::media::MediaAttachment>,
+}
+
+fn encode_conversation_content(message: &crate::port::provider::ChatMessage) -> Result<String, serde_json::Error> {
+    if message.attachments.is_empty() {
+        return Ok(message.content.clone());
+    }
+    serde_json::to_string(&StoredConversationContent {
+        format: CONVERSATION_CONTENT_FORMAT.into(),
+        content: message.content.clone(),
+        attachments: message.attachments.clone(),
+    })
+}
+
+fn decode_conversation_content(
+    role: String,
+    content: String,
+) -> Result<crate::port::provider::ChatMessage, MemoryError> {
+    let value = serde_json::from_str::<serde_json::Value>(&content).ok();
+    if value
+        .as_ref()
+        .and_then(|value| value.get("format"))
+        .and_then(serde_json::Value::as_str)
+        == Some(CONVERSATION_CONTENT_FORMAT)
+    {
+        let stored: StoredConversationContent = serde_json::from_value(value.unwrap_or(serde_json::Value::Null))
+            .map_err(|error| MemoryError::backend(format!("invalid stored conversation content: {error}")))?;
+        return Ok(crate::port::provider::ChatMessage {
+            role,
+            content: stored.content,
+            attachments: stored.attachments,
+        });
+    }
+    Ok(crate::port::provider::ChatMessage {
+        role,
+        content,
+        attachments: vec![],
+    })
+}
+
 /// rig 会话消息在 port Memory 里的 key 约定：key = 角色（user/assistant/…）。
 const fn conversation_key(role: &str) -> &str {
     role
@@ -58,14 +104,12 @@ impl ConversationMemory for PortMemoryAsConversation {
             entries.reverse();
             let port: Vec<crate::port::provider::ChatMessage> = entries
                 .into_iter()
-                .map(|e| crate::port::provider::ChatMessage {
-                    role: e.key,
-                    content: e.content,
-                })
-                .collect();
+                .map(|entry| decode_conversation_content(entry.key, entry.content))
+                .collect::<Result<_, _>>()?;
             // recall 窗口切断 tool_call/tool_result 配对会产生孤儿引用，
             // 严格 provider（MiniMax/Anthropic）400 拒整轮——回放前清洗。
-            Ok(port_messages_to_rig(&super::provider::sanitize_tool_pairing(port)))
+            port_messages_to_rig(&super::provider::sanitize_tool_pairing(port))
+                .map_err(|error| MemoryError::backend(error.to_string()))
         })
     }
 
@@ -75,11 +119,13 @@ impl ConversationMemory for PortMemoryAsConversation {
         messages: Vec<Message>,
     ) -> WasmBoxedFuture<'a, Result<(), MemoryError>> {
         Box::pin(async move {
-            for port in rig_messages_to_port(&messages) {
+            for port in rig_messages_to_port(&messages).map_err(|error| MemoryError::backend(error.to_string()))? {
+                let content =
+                    encode_conversation_content(&port).map_err(|error| MemoryError::backend(error.to_string()))?;
                 self.inner
                     .store(
                         conversation_key(&port.role),
-                        &port.content,
+                        &content,
                         MemoryCategory::Conversation,
                         Some(conversation_id),
                     )

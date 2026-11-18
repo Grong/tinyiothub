@@ -25,14 +25,29 @@ export type ToolStreamEntry = {
 export type ChatEventPayload = {
   runId: string;
   sessionKey: string;
-  state: "delta" | "final" | "aborted" | "error" | "tool_call_start" | "tool_call_delta" | "tool_call_end" | "tool_result";
+  state:
+    | "delta"
+    | "thinking"
+    | "final"
+    | "aborted"
+    | "error"
+    | "retry"
+    | "tool_call_start"
+    | "tool_call_delta"
+    | "tool_call_end"
+    | "tool_result";
   message?: ChatMessage;
   errorMessage?: string;
+  source?: string;
+  attempt?: number;
+  maxRetries?: number;
+  delayMs?: number;
   a2ui?: string;
   toolName?: string;
   toolArgs?: string;
   toolResults?: Array<{ toolName: string; toolArgs: string; result: string }>;
   result?: string;
+  thinking?: string;
 };
 
 export type ChatState = {
@@ -44,6 +59,7 @@ export type ChatState = {
   chatRunId: string | null;
   // 流式文本（当前正在接收的）
   chatStream: string | null;
+  chatThinking: string | null;
   chatStreamStartedAt: number | null;
   // 已 committed 的流式文本片段（工具调用之前的文本）
   chatStreamSegments: Array<{ text: string; ts: number }>;
@@ -71,6 +87,7 @@ export function createChatState(sessionKey: string, agentId: string): ChatState 
     chatSending: false,
     chatRunId: null,
     chatStream: null,
+    chatThinking: null,
     chatStreamStartedAt: null,
     chatStreamSegments: [],
     toolStreamById: new Map(),
@@ -101,6 +118,7 @@ export async function loadChatHistory(state: ChatState): Promise<void> {
       return !isSilentReply(m);
     });
     state.chatStream = null;
+    state.chatThinking = null;
     state.chatStreamStartedAt = null;
     state.chatStreamSegments = [];
     state.toolStreamById = new Map();
@@ -141,6 +159,7 @@ export function sendChatMessage(
   state.lastError = null;
   state.chatRunId = null;
   state.chatStream = "";
+  state.chatThinking = null;
   state.chatStreamStartedAt = now;
   state.chatStreamSegments = [];
   state.toolStreamById = new Map();
@@ -240,6 +259,12 @@ export function handleChatEvent(state: ChatState, payload: ChatEventPayload): vo
   }
 
   switch (payload.state) {
+    case "thinking": {
+      const text = payload.thinking ?? "";
+      if (text) state.chatThinking = (state.chatThinking || "") + text;
+      break;
+    }
+
     case "delta": {
       const text = extractText(payload.message);
       if (text && !isSilentReplyText(text)) {
@@ -294,6 +319,7 @@ export function handleChatEvent(state: ChatState, payload: ChatEventPayload): vo
       state.lastA2uiSurfaceId = undefined;
       state.a2uiChunks = [];
       state.chatStream = null;
+      state.chatThinking = null;
       state.chatStreamSegments = [];
       state.toolStreamById = new Map();
       state.toolStreamOrder = [];
@@ -319,6 +345,7 @@ export function handleChatEvent(state: ChatState, payload: ChatEventPayload): vo
         }
       }
       state.chatStream = null;
+      state.chatThinking = null;
       state.chatStreamSegments = [];
       state.toolStreamById = new Map();
       state.toolStreamOrder = [];
@@ -328,9 +355,16 @@ export function handleChatEvent(state: ChatState, payload: ChatEventPayload): vo
       break;
     }
 
+    case "retry": {
+      state.chatStream = null;
+      state.chatThinking = null;
+      break;
+    }
+
     case "error": {
       state.lastError = payload.errorMessage || "Unknown error";
       state.chatStream = null;
+      state.chatThinking = null;
       state.chatStreamSegments = [];
       state.toolStreamById = new Map();
       state.toolStreamOrder = [];

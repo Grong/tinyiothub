@@ -1,9 +1,10 @@
 //! Task 10（C6 读侧兼容视角）：get_logs 读侧切换 agent_runs 的 handler 级测试。
 //!
-//! - 切换后主查询读 agent_runs（trigger 前缀 heartbeat:），RunReport 行经
-//!   纯函数适配器映射为 ExecutionRecord（前端 ai-ops 契约形状不变）；
-//!   提案/auto_executed 明细仍按 tick_id=run_id 从 agent_actions 联结。
-//! - 兼容期 fallback：agent_runs 查空且旧 agent_actions 锚行仍在时回旧查询。
+//! - 主查询读 agent_runs（trigger 前缀 heartbeat:），RunReport 行经纯函数
+//!   适配器映射为 ExecutionRecord（前端 ai-ops 契约形状不变）；提案/
+//!   auto_executed 明细仍按 tick_id=run_id 从 agent_actions 联结。
+//! - legacy agent_actions 锚行回退分支已随 AutonomyMode/heartbeat 退役删除：
+//!   无 run 行时返回空时间线，不再读取 agent_actions 锚行。
 
 use axum::{body::Body, http::Request};
 use serde_json::{Value, json};
@@ -186,37 +187,24 @@ async fn get_logs_maps_failed_run_and_empty_trace() {
     assert_eq!(log["trace"], json!([]), "无 trace → 空数组不炸: {log}");
 }
 
-/// 兼容期 fallback：agent_runs 查空（旧 tick 未迁移/无 run 行）且
-/// agent_actions 有锚行时，回旧查询组装（双读，切换完成后删）。
+/// 退役后的旧锚行不再驱动时间线：无 agent_runs 行时返回空列表。
 #[tokio::test]
-async fn get_logs_falls_back_to_legacy_agent_actions_when_no_runs() {
+async fn get_logs_ignores_legacy_agent_actions_without_runs() {
     let (app, pool) = app().await;
-    let ts = "2026-07-20 10:00:00";
-    seed_legacy_anchor(&pool, "summary", json!({"taskCount": 2, "result": "legacy ok"}), ts).await;
-    // 旧明细行按 created_at 分组（旧装配逻辑）
-    sqlx::query(
-        "INSERT INTO agent_actions (id, workspace_id, agent_id, event_type, action_type, content, created_at) \
-         VALUES (?, ?, ?, 'heartbeat', 'proposal', ?, ?)",
+    seed_legacy_anchor(
+        &pool,
+        "summary",
+        json!({"taskCount": 2, "result": "legacy ok"}),
+        "2026-07-20 10:00:00",
     )
-    .bind(uuid::Uuid::new_v4().to_string())
-    .bind(WS)
-    .bind(format!("__heartbeat__:{WS}"))
-    .bind(
-        json!({"proposalId": "lp1", "status": "pending", "toolName": "reboot", "thingId": "dev_9",
-               "deviceName": "", "summary": "重启", "reason": "卡顿", "risk": "low"})
-        .to_string(),
-    )
-    .bind(ts)
-    .execute(&pool)
-    .await
-    .expect("seed legacy proposal");
+    .await;
 
     let logs = get_logs(app).await;
-    let arr = logs.as_array().unwrap();
-    assert_eq!(arr.len(), 1, "fallback 必须给出旧锚行组装结果: {logs}");
-    assert_eq!(arr[0]["result"], "legacy ok");
-    assert_eq!(arr[0]["taskCount"], 2);
-    assert_eq!(arr[0]["pendingProposals"][0]["toolName"], "reboot");
+    assert_eq!(
+        logs.as_array().expect("logs array").len(),
+        0,
+        "legacy agent_actions anchors must not drive the timeline: {logs}"
+    );
 }
 
 /// 双读优先级：agent_runs 有行时旧锚行不再出现（新源为准，不重复）。

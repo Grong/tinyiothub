@@ -51,8 +51,8 @@ CLI 验收详情（`driver-check --profile all`）：
 2. **E4c 资源与取消**：多资源 claim/lease、busy 持有者、lease 到期释放；`stop_device` 尚未接在途取消（ABI cancel 手柄与 `long_task` 协作已就绪，1s 宽限/cancelled_unknown 待接）。
 3. **E4d 空间**：maps/places 数据模型与 API、坐标/trust 列、point-in-polygon、zone 权威切换 flag；E4a 只解析/校验 `placement`，物化不含坐标列。
 4. **E4e 全套验收**：本期仅交付 core/materialization/migration 三个 profile；lifecycle/telemetry/tools/streaming/resources/cancel/placement/manual、`--interactive`、五级报告与 test hub 仍待实现。
-5. **场景/MCP 建物回填**：MCP `create_thing` 的模板路径走 `domains::driver::legacy::service::create_thing_from_template`，直接按模板写属性/命令，未经过声明物化；另无 pre-E4a 存量物的声明回填/开关，调用校验当前无条件 fail-closed。
-6. **UI 直连调用绕过**：`POST /v1/things/{id}/actions/{name}/invoke` 只校验注册动作与参数 schema，不经过 `AccessService` 的声明校验（未声明工具/越界拒绝/超时钳制不生效），待 E4e/final 统一。
+5. ~~**场景/MCP 建物回填**~~（2026-10-24 已交付）：MCP `create_thing_from_template` 现在先 `prepare_creation`、固定能力驱动跳过模板能力拷贝，再 `materialize`（失败回滚物）；场景包在提交后 best-effort 物化驱动节点（失败进 warnings）；pre-E4a 存量物可用 `POST /v1/drivers/rematerialize` 回填，迁移期用 `GET/PUT /v1/drivers/enforcement` 开关（`workspaces.declaration_enforcement`，默认 1）。
+6. ~~**UI 直连调用绕过**~~（2026-10-24 已交付）：`POST /v1/things/{id}/actions/{name}/invoke` 已接入 `AccessService::validate`（未声明工具/参数越界 422，声明服务不可用 503）；开关关闭时仅放行“无声明”存量物，有声明物的未声明动作仍拒绝。超时钳制的强制生效仍归 E4b。
 7. **plugin-sdk v2 迁移**：trait/FFI 与 README 仍是 v1 签名，动态驱动需自行导出 `tinyiothub_driver_vtable_v2`。
 8. **driver-check cdylib 前置**：E2E 与 CLI 均要求先构建 demo-declarative；pre-push 钩子目前不构建它。
 9. **Task 1-12 结转 minor**（详见 SDD ledger）：rehydrate 在 `DataServer::new` 之后执行，既有动态物可能需重启才恢复轮询；`DataServer::create_driver` 不释放 ref_count；旧版本目录不清理；安装失败返回 HTTP 200；物化失败可能留下孤儿物；声明缓存无失效；投影写入非事务；嵌套对象 schema 未递归校验等。

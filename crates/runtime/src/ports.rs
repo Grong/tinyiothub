@@ -10,13 +10,60 @@
 
 use async_trait::async_trait;
 
+use tinyiothub_core::agent_task::TaskWake;
+use tinyiothub_core::device_job::{DeviceJob, DeviceJobError, DeviceJobState};
 use tinyiothub_core::driver::declaration::{AcceptanceReportRecord, DeviceDeclarationRecord, DriverDeclarationRecord};
 use tinyiothub_core::driver::manifest::{ManifestTool, StateFieldDecl};
+use tinyiothub_core::media::{MediaError, MediaEvidenceRecord};
 use tinyiothub_core::models::spatial::{MapRecord, PlaceKind, PlaceRecord, ThingPosition};
 use tinyiothub_core::models::thing::Thing;
 use tinyiothub_core::models::thing_command::ThingCommand;
 use tinyiothub_core::models::thing_property::ThingProperty;
 use tinyiothub_core::watch::WatchRule;
+
+#[async_trait]
+pub trait MediaEvidenceStore: Send + Sync {
+    async fn insert_or_get(&self, row: &MediaEvidenceRecord) -> Result<MediaEvidenceRecord, MediaError>;
+    async fn get(&self, evidence_id: &str) -> Result<Option<MediaEvidenceRecord>, MediaError>;
+    async fn delete_expired(&self, now: chrono::DateTime<chrono::Utc>) -> Result<Vec<MediaEvidenceRecord>, MediaError>;
+    async fn storage_is_referenced(&self, path: &str) -> Result<bool, MediaError>;
+}
+
+/// Persistent Device Job lifecycle. Terminal updates and their Task wake are
+/// one storage transaction; active stop requests survive process restart.
+#[async_trait]
+pub trait DeviceJobStore: Send + Sync {
+    async fn create_job(&self, job: &DeviceJob) -> Result<(), DeviceJobError>;
+    async fn get_job(&self, workspace_id: &str, job_id: &str) -> Result<Option<DeviceJob>, DeviceJobError>;
+    async fn get_job_by_id(&self, job_id: &str) -> Result<Option<DeviceJob>, DeviceJobError>;
+    async fn get_task_job(
+        &self,
+        workspace_id: &str,
+        task_id: &str,
+        job_id: &str,
+    ) -> Result<Option<DeviceJob>, DeviceJobError>;
+    async fn get_job_by_tool_call(
+        &self,
+        workspace_id: &str,
+        tool_call_id: &str,
+    ) -> Result<Option<DeviceJob>, DeviceJobError>;
+    async fn submit_approved_job(&self, job: &DeviceJob) -> Result<(Option<DeviceJob>, bool), DeviceJobError>;
+    async fn mark_running(&self, job_id: &str, driver_call_id: &str) -> Result<DeviceJob, DeviceJobError>;
+    async fn finish_job(
+        &self,
+        job_id: &str,
+        state: DeviceJobState,
+        result: &serde_json::Value,
+        wake: Option<&TaskWake>,
+    ) -> Result<bool, DeviceJobError>;
+    async fn update_progress(&self, job_id: &str, progress: &serde_json::Value) -> Result<bool, DeviceJobError>;
+    async fn request_stop(&self, workspace_id: &str, task_id: &str, job_id: &str) -> Result<DeviceJob, DeviceJobError>;
+    async fn active_jobs(
+        &self,
+        workspace_id: Option<&str>,
+        unknown_only: bool,
+    ) -> Result<Vec<DeviceJob>, DeviceJobError>;
+}
 
 /// Read-side queries for device commands (cron `device_command` executor).
 #[async_trait]
@@ -85,6 +132,8 @@ pub trait WatchRuleStore: Send + Sync {
     async fn list_all(&self) -> Result<Vec<WatchRule>, String>;
     async fn insert(&self, rule: &WatchRule) -> Result<(), String>;
     async fn delete(&self, workspace_id: &str, id: &str) -> Result<bool, String>;
+    async fn complete_task_watch(&self, workspace_id: &str, id: &str, wake: &TaskWake) -> Result<bool, String>;
+    async fn delete_task_watches(&self, workspace_id: &str, task_id: &str) -> Result<usize, String>;
 }
 
 /// E4a 包级声明持久源：安装/升级写穿，启动重织读全量。

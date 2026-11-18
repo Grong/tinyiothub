@@ -1023,6 +1023,199 @@ view-home .showcase-item__desc {
   line-height: 1.6;
 }
 
+view-home .showcase-roadmap {
+  margin: 18px 0 0;
+  padding-left: 14px;
+  border-left: 2px solid rgba(0, 212, 255, 0.35);
+  font-size: 12.5px;
+  line-height: 1.7;
+  color: var(--home-text-secondary);
+}
+
+view-home .showcase-roadmap b {
+  font-weight: 600;
+  color: var(--home-text-primary);
+}
+
+/* ================================
+   Accent card (middle layer)
+   ================================ */
+
+view-home .feature-card--accent {
+  background: rgba(0, 212, 255, 0.05);
+  box-shadow:
+    inset 0 0 0 1px rgba(0, 212, 255, 0.3),
+    var(--home-shadow-1);
+}
+
+view-home .feature-card--accent .step-num {
+  color: var(--home-accent-cyan);
+  border-color: rgba(0, 212, 255, 0.4);
+}
+
+/* ================================
+   Contact
+   ================================ */
+
+view-home .contact-section {
+  padding: 0 32px 24px;
+  position: relative;
+  z-index: 1;
+}
+
+view-home .contact-card {
+  max-width: 1280px;
+  margin: 0 auto;
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 56px;
+  align-items: center;
+  padding: 56px;
+  border-radius: 24px;
+  background: var(--home-surface-dark);
+  box-shadow:
+    var(--home-shadow-1),
+    var(--home-shadow-2),
+    var(--home-shadow-inset);
+}
+
+view-home .contact-title {
+  font-size: clamp(28px, 3vw, 38px);
+  font-weight: 700;
+  color: var(--home-text-primary);
+  margin: 12px 0 12px;
+  letter-spacing: 0;
+}
+
+view-home .contact-desc {
+  font-size: 16px;
+  color: var(--home-text-tertiary);
+  margin: 0 0 28px;
+  max-width: 460px;
+}
+
+view-home .contact-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  max-width: 460px;
+}
+
+view-home .contact-item {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  width: 100%;
+  padding: 14px 18px;
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  color: var(--home-text-primary);
+  font: inherit;
+  text-align: left;
+  text-decoration: none;
+  cursor: pointer;
+  transition:
+    background 0.2s ease,
+    border-color 0.2s ease,
+    transform 0.2s ease;
+}
+
+view-home .contact-item:hover {
+  background: rgba(255, 255, 255, 0.07);
+  border-color: rgba(0, 212, 255, 0.35);
+  transform: translateY(-1px);
+}
+
+view-home .contact-item__icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  color: var(--home-accent-cyan);
+  flex-shrink: 0;
+}
+
+view-home .contact-item__icon svg {
+  width: 20px;
+  height: 20px;
+}
+
+view-home .contact-item__body {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  flex: 1;
+  min-width: 0;
+}
+
+view-home .contact-item__label {
+  font-size: 12px;
+  color: var(--home-text-muted);
+  letter-spacing: 0.04em;
+}
+
+view-home .contact-item__value {
+  font-size: 15px;
+  font-weight: 500;
+  color: var(--home-text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+view-home .contact-item__action {
+  flex-shrink: 0;
+  font-size: 12px;
+  color: var(--home-accent-cyan);
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: rgba(0, 212, 255, 0.1);
+}
+
+view-home .contact-hours {
+  margin: 18px 0 0;
+  font-size: 13px;
+  color: var(--home-text-dim);
+}
+
+view-home .contact-qr {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  padding: 18px;
+  border-radius: 18px;
+  background: #fff;
+}
+
+view-home .contact-qr img {
+  display: block;
+  width: 176px;
+  height: 176px;
+  object-fit: contain;
+  border-radius: 8px;
+}
+
+view-home .contact-qr__fallback {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 176px;
+  height: 176px;
+  border: 1px dashed rgba(0, 0, 0, 0.25);
+  border-radius: 8px;
+  color: #6b7280;
+  font-size: 13px;
+}
+
+view-home .contact-qr__caption {
+  font-size: 13px;
+  font-weight: 500;
+  color: #4b5563;
+}
+
 /* ================================
    CTA
    ================================ */
@@ -1521,6 +1714,64 @@ view-home .reveal-delay-3 { transition-delay: 0.3s; }
   color: rgba(31, 41, 55, 0.55);
 }
 
+:root[data-theme="light"] view-home .showcase-roadmap {
+  border-left-color: rgba(0, 140, 180, 0.45);
+  color: rgba(31, 41, 55, 0.55);
+}
+
+:root[data-theme="light"] view-home .showcase-roadmap b {
+  color: #111827;
+}
+
+:root[data-theme="light"] view-home .feature-card--accent {
+  background: rgba(0, 152, 255, 0.05);
+  box-shadow:
+    inset 0 0 0 1px rgba(0, 152, 255, 0.3),
+    var(--home-shadow-light-1);
+}
+
+:root[data-theme="light"] view-home .contact-card {
+  background: var(--home-surface-light);
+  box-shadow:
+    var(--home-shadow-light-1),
+    var(--home-shadow-light-2),
+    var(--home-shadow-light-inset);
+}
+
+:root[data-theme="light"] view-home .contact-title {
+  color: #111827;
+}
+
+:root[data-theme="light"] view-home .contact-desc {
+  color: rgba(31, 41, 55, 0.6);
+}
+
+:root[data-theme="light"] view-home .contact-item {
+  background: rgba(255, 255, 255, 0.75);
+  border-color: rgba(31, 41, 55, 0.12);
+}
+
+:root[data-theme="light"] view-home .contact-item:hover {
+  background: #fff;
+  border-color: rgba(0, 152, 255, 0.45);
+}
+
+:root[data-theme="light"] view-home .contact-item__label {
+  color: rgba(31, 41, 55, 0.45);
+}
+
+:root[data-theme="light"] view-home .contact-item__value {
+  color: #111827;
+}
+
+:root[data-theme="light"] view-home .contact-hours {
+  color: rgba(31, 41, 55, 0.45);
+}
+
+:root[data-theme="light"] view-home .contact-qr {
+  border: 1px solid rgba(31, 41, 55, 0.08);
+}
+
 :root[data-theme="light"] view-home .cta-inner {
   background: var(--home-surface-light);
   border: none;
@@ -1720,6 +1971,17 @@ view-home .reveal-delay-3 { transition-delay: 0.3s; }
   }
   view-home .cta-section {
     padding: 0 20px 80px;
+  }
+  view-home .contact-section {
+    padding: 0 20px 16px;
+  }
+  view-home .contact-card {
+    grid-template-columns: 1fr;
+    gap: 32px;
+    padding: 36px 24px;
+  }
+  view-home .contact-qr {
+    justify-self: center;
   }
   view-home .cta-inner {
     padding: 48px 24px;

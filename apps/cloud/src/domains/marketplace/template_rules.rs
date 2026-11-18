@@ -7,9 +7,9 @@
 
 use std::collections::HashMap;
 
+use crate::domains::agent::thing_agent::seams::composite::{COMPOSITE_V, CompositeDef, CompositeOp, CompositeStep};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use tinyiothub_agent::runtime::thing_agent::seams::composite::{COMPOSITE_V, CompositeDef, CompositeOp, CompositeStep};
 use tinyiothub_core::watch::{CompareOp, HealthLevel, WatchCondition, WatchRule};
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
@@ -173,6 +173,7 @@ pub fn resolve_template_rules(
                 persistent: rule.persistent,
                 timeout_secs: rule.timeout_secs,
                 created_at: chrono::Utc::now().to_rfc3339(),
+                owner_task_id: None,
             };
             if let Err(e) = watch.validate() {
                 report.references.push(ReferenceIssue {

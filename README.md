@@ -1,38 +1,59 @@
 # TinyIoTHub
 
-AI 时代的万物互联底座。以「物」为本体的轻量级 AIoT 平台 — 实现万物智能只需三步：**① 构建物 ② 通过驱动更新实时数据 ③ 剩下的交给 AI**。
+**给设备写 harness。** 设备接入是底座，真正的东西是中间那层 agent 运行环境。
 
-> **项目状态**：早期开发阶段（v0.x）。核心平台（物模型、告警、事件、AI Agent、MCP）可用；
-> 部分协议驱动仍在开发中，API 在 1.0 前可能有破坏性变更。欢迎试用与反馈。
+> Claude Code 给代码写 harness——skills、todo、子代理、审批。TinyIoTHub 把同一套东西写给物理世界：
+> 一个常驻 Assistant 被设备事件和定时 tick 唤醒，查本体、做决策、按权限模式操作设备；
+> 动手前过审批，动手后回读属性验证，全程进审计账本。
+
+> **项目状态**：v0.x，正在从 Workflow-first 迁移到统一 Session Loop。Harness 层与设备接入均可用；
+> Modbus/ONVIF/SNMP 驱动仍在开发；旧执行路径尚未删净，API 在 1.0 前可能有破坏性变更。欢迎试用与反馈。
 
 **官方网站**: https://tinyiothub.com  
 **仓库地址**: https://github.com/Grong/tinyiothub  
 **Docker Hub**: https://hub.docker.com/r/grong/tinyiothub
 
+## 这是什么
+
+三层结构，价值在中间那层：
+
+| 层 | 内容 | 竞争状态 |
+|---|---|---|
+| 应用 | 巡检、故障诊断、心跳监控、你自己写的 `SKILL.md`；节能 / 视频分析在路线图上 | 场景可复制 |
+| **Harness** | Session Loop · Skill · Todo · Ask · Subagent · 安全层 | **差异化所在** |
+| 设备 | MQTT / Modbus / ONVIF / SNMP · 物本体与层级树 | 底座，必须够用 |
+
+设备接入是前提，应用是产物，**harness 是产品本体**。场景差异写进 `SKILL.md`，不写进循环——新增一个「空压机巡检」不需要改 Rust。
+
 ## 特性
 
-**设备接入**
+**Harness**
+- 统一 Session Loop：`SessionRunner` 是一次 Assistant Turn 的唯一执行入口，对话、定时巡检、事件处置共用同一条循环
+- 触发与执行分离：`TriggerRouter` 只产生 wake 不执行 Turn——30 秒扫描到期 Schedule 与设备事件，每 workspace 至多一个在途 wake，事件按 workspace+trigger 做 3/min 去重
+- Skill 渐进披露：`SKILL.md` 只把 name + description 放进上下文，正文调用时才注入；支持 `/skill-name` 直接触发
+- `todo_write`：模型自维护待办，整体替换、同一时间只允许一个 `in_progress`，前端实时渲染
+- `ask_user`：1–4 个问题、每题 2–4 个选项、可多选，阻塞当前 turn 等你决定；无人在线则暂停该任务并通知，不静默失败
+- `spawn_subagent`：同步派生子代理，上下文隔离、只做一层、返回 `status / summary / evidence_refs / recommended_actions`
+- 安全层：policy / trust / approval，Effect 与 Decision 单赢家，unknown 状态停下对账，动作可恢复且不重复
+- 权限三档：`read_only` 只看 / `ask` 写入需批准（默认）/ `full_access` 会话内免逐次批准——**都不绕过联锁与 e-stop**
+- 可见性：`session_events` 是唯一 UI 时间线（session / turn / skill / todo / question / subagent / tool / approval 全量事件），全局 HUD 显示 Assistant 状态、设备在线离线、告警、待你回答、待你审批、下次唤醒
+- 零配置可运行：新 workspace 建好即有内置技能与默认职责；改 `AGENTS.md` 就是「告诉大脑注意什么、干什么活」
+
+**设备与本体**
 - 物本体模型：设备、空间、产线统一为层级化「物」，属性/事件/操作 + 知识文档
 - 协议支持：MQTT 可用；Modbus RTU/TCP、ONVIF、SNMP 驱动开发中（驱动框架与 SDK 已就绪）
 - AI 驱动匹配（实验性）：描述设备类型，辅助匹配或生成驱动代码
 - 物模板：JSON 模板一键创建，支持 DTDL / WoT 模型导入与 DTDL 导出
-
-**智能运维**
 - L0-L3 分级自愈引擎：system/device/task 三级探针，自动故障检测与恢复
-- 自治运维（Thing Agent Loop）：AI 被设备事件/定时巡检/用户指令唤醒，查本体、做决策、经三态策略门（off/diagnose/act）自主操作设备，行动后回读验证并留全量审计
 - 规则引擎：阈值、范围、变化、持续时间、组合五种条件类型
-- 心跳探针：定期自检网关与子设备，提前发现隐患；诊断结论自动转交自治 Loop 处置
+- 心跳探针：定期自检网关与子设备存活，诊断结论转交 Assistant 处置
 - Cron 定时任务：Workspace 隔离，执行记录与统计
 
-**AI 原生**
+**接入与部署**
 - 自然语言交互：用日常语言配置设备、查询状态、排查故障
 - MCP Server：内嵌 Model Context Protocol 服务，Claude Desktop、Cursor 直接连接
 - A2UI 聊天界面：SSE 流式对话，Agent 技能调用
-- 设备自发现：AI 辅助识别设备类型并推荐驱动
-
-**部署灵活**
-- 单进程部署：~80MB 内存占用，无需外部数据库
-- SQLite 存储：零依赖，自动迁移
+- 单进程部署：~80MB 内存占用，无需外部数据库；SQLite 零依赖，自动迁移
 - 开源 MIT 协议：可私有化部署，可商用
 - Lit 3 前端：Web Components，轻量快速
 
@@ -83,6 +104,8 @@ tinyiothub/
 ```
 
 **注意：本项目采用 relay 范式（buzz-relay 模型）：apps/cloud 拥有全部行为，crates/ 为互不惊扰的能力库，依赖方向 `apps/* → crates/* → core` 单向不可逆。详细架构见 [AGENTS.md](AGENTS.md)。**
+
+Harness 的落位：能力层在 `crates/agent`（port / adapters / harness / memory，零 axum、零 sqlx），编排层在 `apps/cloud/src/domains/agent/session/`——`runner.rs` 是 Turn 的执行入口，`trigger.rs` 只产 wake，`tools/` 放 `todo_write` / `ask_user` / `spawn_subagent`，`todos.rs` / `questions.rs` / `approvals.rs` 管会话内状态与阻塞，`hud.rs` 提供全局投影。安全与效果内核在 `crates/policy`、`crates/agent/src/port`（Effect / Decision / 恢复）。设计规范见 [docs/superpowers/specs/2026-11-07-assistant-harness-design.md](docs/superpowers/specs/2026-11-07-assistant-harness-design.md)。
 
 ## 快速开始
 
@@ -285,35 +308,40 @@ export const loadUsers = task(async (params?: { page?: number; pageSize?: number
 ### 整体架构
 
 ```
-┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐
-│   Lit 3 UI      │    │   REST API      │    │   MQTT Client   │
-│   (web/)        │    │ (apps/cloud/)   │    │   (rumqttc)     │
-└─────────────────┘    └─────────────────┘    └─────────────────┘
-         │                       │                       │
-         └───────────────────────┼───────────────────────┘
-                                 │
-         ┌─────────────────────────────────────────────────────┐
-         │              Application Layer                      │
-         │  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐ │
-         │  │ Data Server │  │Message Server│  │  Scheduler  │ │
-         │  └─────────────┘  └─────────────┘  └─────────────┘ │
-         └─────────────────────────────────────────────────────┘
-                                 │
-         ┌─────────────────────────────────────────────────────┐
-         │               Domain Layer                          │
-         │  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐ │
-         │  │   Device    │  │    Alarm    │  │    Event    │ │
-         │  │   Domain    │  │   Domain    │  │   Domain    │ │
-         │  └─────────────┘  └─────────────┘  └─────────────┘ │
-         └─────────────────────────────────────────────────────┘
-                                 │
-         ┌─────────────────────────────────────────────────────┐
-         │            Infrastructure Layer                     │
-         │  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐ │
-         │  │   Config    │  │  Hardware   │  │ Persistence │ │
-         │  │  System     │  │ Abstraction │  │   (SQLite)  │ │
-         │  └─────────────┘  └─────────────┘  └─────────────┘ │
-         └─────────────────────────────────────────────────────┘
+        Lit 3 UI  ── REST /api/v1 ── MCP /mcp ── MQTT Client
+                          │
+                          ▼
+        apps/cloud   (the relay — 全部行为与编排)
+          domains/: thing · auth · user · tenant · event · alarm
+                    driver · notify · agent/session · mcp · admin
+                          │ 单向依赖
+                          ▼
+        crates/*     (capability libs — 只提供能力，不编排)
+          agent · runtime · db · web · policy · skills · memory
+          scheduler · llm · authn · plugin-sdk
+                          │
+                          ▼
+        core         (纯值类型 — 零 I/O、零 API 语义)
+```
+
+一次 Assistant Turn 在 `apps/cloud/src/domains/agent/session/` 内的流转：
+
+```
+Trigger(chat / schedule / event) → TriggerRouter → Wake → SessionRunner
+                                                          │
+                                      ┌───────────────────┼───────────────────┐
+                                      ▼                   ▼                   ▼
+                                 Skill 正文            todo_write          ask_user
+                                 (按需注入)           (模型自维护)        (阻塞等回答)
+                                      │                   │                   │
+                                      └───────────────────┼───────────────────┘
+                                                          ▼
+                                                 工具层（安全边界）
+                                    policy · trust · approval · Effect/Decision
+                                          unknown 对账 · 回读验证
+                                                          │
+                                                          ▼
+                                                 session_events（唯一时间线）
 ```
 
 ### 后端目录结构 (apps/cloud/)
@@ -322,16 +350,22 @@ export const loadUsers = task(async (params?: { page?: number; pageSize?: number
 apps/cloud/
 ├── src/
 │   ├── main.rs               # 薄入口（<200 行）：读配置 → 建 AppState → 组装 router → serve
+│   ├── lib.rs                # 模块注册（deny(unsafe_code)）
 │   ├── bootstrap.rs          # 启动逻辑（日志、驱动重载、设备缓存预热）
-│   ├── api/                  # 路由挂载 + HTTP 中间件（WorkspaceScope, auth）
-│   ├── modules/marketplace/  # 市场客户端（仅 HTTP DTO 契约，无编译期依赖）
-│   ├── shared/               # 组合层胶水（app_state, config, service_manager）
-│   ├── tests/                # 集成测试
-│   ├── lib.rs                # 库入口
-│   └── server.rs             # Axum 服务器启动
-├── templates/                # 技能模板
-├── Cargo.toml                # Rust 项目配置
-└── README.md                 # 后端说明
+│   ├── state.rs              # AppState — 唯一共享状态
+│   ├── router.rs             # build_router：全部路由挂载在一处
+│   ├── api/                  # HTTP 中间件与抽取器（WorkspaceScope / auth）
+│   ├── domains/              # 全部业务行为，一域一目录
+│   │   ├── thing/  auth/  user/  tenant/  event/  alarm/
+│   │   ├── driver/  notify/  mcp/  admin/
+│   │   └── agent/            # harness 编排层
+│   │       ├── session/      # SessionRunner · TriggerRouter · tools · todo · ask · subagent · HUD
+│   │       └── prompt/       # 统一 prompt builder
+│   ├── shared/               # 组合层胶水（service_manager / paths / initialization）
+│   └── tests/                # 集成测试
+├── templates/                # 技能模板（SKILL.md）
+├── Cargo.toml
+└── README.md
 ```
 
 业务行为代码位于 `apps/cloud/src/domains/<domain>/`（thing, auth, user, tenant, event,
@@ -466,11 +500,18 @@ web/
 - `GET /api/v1/agents` - 获取 Agent 列表
 - `GET /api/v1/agents/{id}/config` - 获取 Agent 配置
 - `PUT /api/v1/agents/{id}/config` - 更新 Agent 配置
-- `GET /api/v1/agents/{id}/heartbeat/config` - 获取心跳配置
-- `PUT /api/v1/agents/{id}/heartbeat/config` - 更新心跳配置
-- `GET /api/v1/agents/{id}/heartbeat/logs` - 获取心跳执行日志
-- `GET /api/v1/agents/{id}/heartbeat/tasks` - 获取心跳任务列表
-- `PUT /api/v1/agents/{id}/heartbeat/tasks` - 更新心跳任务
+- `GET /api/v1/workspaces/{workspace_id}/agent/hud` - Assistant 全局 HUD（状态/设备/告警/待答/待批/调度）
+- `GET /api/v1/workspaces/{workspace_id}/agent/schedule` - 获取 Assistant 调度
+- `PUT /api/v1/workspaces/{workspace_id}/agent/schedule` - 更新 Assistant 调度（启用状态/间隔/提示词；权限模式走 `/agent/policy`）
+- `POST /api/v1/judgments/{id}/approve` - 已退役（410）：报警处置由 Assistant 会话承接，请在 Assistant 中确认设备写操作
+- `GET /api/v1/workspaces/{workspace_id}/agent/tasks` - 获取 Task 列表
+- `POST /api/v1/workspaces/{workspace_id}/agent/tasks` - 创建 Task
+- `GET /api/v1/workspaces/{workspace_id}/agent/tasks/{task_id}/stream` - Task SSE 流
+- `GET /api/v1/chat/sessions` - 获取 Assistant 会话列表
+- `POST /api/v1/chat/sessions/{session_key}/label` - 更新会话标签
+- `DELETE /api/v1/chat/sessions/{session_key}` - 删除会话
+- `GET /api/v1/chat/sessions/{session_key}/events` - 获取会话事件
+- `GET /api/v1/chat/sessions/{session_key}/events/stream` - 会话事件 SSE
 - `GET /api/v1/agents/{id}/files` - 列出工作空间文件
 - `GET /api/v1/agents/{id}/files/{name}` - 读取工作空间文件
 - `PUT /api/v1/agents/{id}/files/{name}` - 写入工作空间文件
@@ -640,10 +681,11 @@ thing/{thing_id}/event/{event_name}   # 物事件上报（节流 60/分钟，err
 
 ## 最新动态
 
+- **Harness 统一循环**：对话、定时巡检、事件处置合并为唯一 Session Loop；`TriggerRouter` 只产 wake 不执行；Workflow 声明式执行退役（[设计](docs/superpowers/specs/2026-11-07-assistant-harness-design.md)）
+- **主流 harness primitive 落地**：`SKILL.md` 渐进披露、`todo_write`、`ask_user`、`spawn_subagent`；Plan mode 待做
+- **会话时间线 + 全局 HUD**：`session_events` 作为唯一 UI 时间线；HUD 常驻显示 Assistant 状态、设备、告警、待答、待批、下次唤醒
 - **物本体（Thing Ontology）**: 设备泛化为「物」— 层级树、物模板蓝图、属性/事件/操作、LLM 本体摘要，全新 `/api/things` API（v0.4.5.0）
-- **沉浸式工作空间**: 3D 数字孪生场景 + AI 数据洞察面板，可折叠执行过程，玻璃拟态 UI
 - **A2UI 协议**: 27 种动态 UI 组件（设备卡片、数据图表、Scene3D 等），AI 实时渲染仪表盘
-- **工作空间资源管理**: 场景模型、设备模型、图片、文档的上传与管理，语义搜索
 - **Cron 定时任务**: 统一调度服务，Workspace 隔离，执行记录与统计
 
 

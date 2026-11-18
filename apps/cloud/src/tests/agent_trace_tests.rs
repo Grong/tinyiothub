@@ -8,8 +8,8 @@ use axum::{
 use serde_json::Value;
 use tower::ServiceExt;
 
-use tinyiothub_agent::runtime::thing_agent::runner::MAX_TOOL_CALLS_PER_RUN;
-use tinyiothub_agent::runtime::thing_agent::{ActiveRunRegistry, RunContext, ToolTraceEntry};
+use crate::domains::agent::thing_agent::runner::MAX_TOOL_CALLS_PER_RUN;
+use crate::domains::agent::thing_agent::{ActiveRunRegistry, RunContext, ToolTraceEntry};
 
 use crate::test_utils::{
     auth_header, create_test_token, response_parts, seed_test_workspace, setup_test_app_with_pool,
@@ -30,6 +30,7 @@ fn entry(id: &str, name: &str, output: Option<&str>) -> ToolTraceEntry {
         name: name.to_string(),
         args: serde_json::json!({"k": 1}),
         output: output.map(str::to_owned),
+        evidence: vec![],
     }
 }
 
@@ -54,6 +55,8 @@ fn ended_report(
         trace,
         task_count: None,
         snapshot: None,
+        task_id: None,
+        wake_event_id: None,
     }
 }
 
@@ -71,7 +74,9 @@ async fn trace_live_from_registry() {
         .trace
         .push(entry("c1", "read_property", Some("26.5")));
     ctx.inner.write().await.trace.push(entry("c2", "invoke_action", None));
-    let _guard = registry.register(ctx).expect("容量内");
+    let _guard = registry
+        .register(ctx, tokio_util::sync::CancellationToken::new())
+        .expect("容量内");
     app_state.set_active_runs(registry);
 
     let app = crate::api::create_router(&app_state);
@@ -158,7 +163,9 @@ async fn trace_cross_workspace_404() {
 
     let registry = ActiveRunRegistry::new(8);
     let ctx = RunContext::new("run_live_x".into(), "ws-other-999".into(), "timer".into());
-    let _guard = registry.register(ctx).expect("容量内");
+    let _guard = registry
+        .register(ctx, tokio_util::sync::CancellationToken::new())
+        .expect("容量内");
     app_state.set_active_runs(registry);
     let report = ended_report("run_done_x", "ws-other-999", vec![entry("c1", "t", None)]);
     app_state.db.insert_agent_run(&report, None, None).await.unwrap();
@@ -205,16 +212,15 @@ async fn judgments_list_carries_run_id() {
     assert_eq!(rows[0]["runId"], "run-j-1", "JudgmentDto 必须带 runId");
 }
 
-/// 心跳执行历史的 trace 透出（investigate 断口修复）：anchor content 含
-/// trace（T9 起落库）→ get_logs 必须透到 HeartbeatLogEntry，不得丢弃。
+/// 心跳执行历史的 trace 透出（investigate 断口修复）：统一内核 run report
+/// 含 trace（T9 起落库）→ get_logs 必须透到 HeartbeatLogEntry，不得丢弃。
 #[tokio::test]
-async fn heartbeat_logs_carry_anchor_trace() {
+async fn heartbeat_logs_carry_run_trace() {
     let (app_state, pool) = setup_test_app_with_pool().await;
     seed_test_workspace(&pool, "tenant-1", "ws-default-001").await;
 
-    let content = serde_json::json!({
-        "taskCount": 2,
-        "result": "巡检完成，温度正常",
+    let report = serde_json::json!({
+        "task_count": 2,
         "trace": [{
             "id": "c1",
             "name": "read_property",
@@ -223,10 +229,12 @@ async fn heartbeat_logs_carry_anchor_trace() {
         }],
     });
     sqlx::query(
-        "INSERT INTO agent_actions (id, workspace_id, agent_id, event_type, action_type, content, tick_id, created_at)
-         VALUES ('hb-trace-1', 'ws-default-001', 'agent1', 'heartbeat', 'summary', ?, 'tick-1', '2026-10-12 10:00:00')",
+        "INSERT INTO agent_runs
+             (id, workspace_id, trigger_type, trigger_context, outcome, summary, report, created_at)
+         VALUES ('hb-trace-1', 'ws-default-001', 'heartbeat', 'heartbeat:ws-default-001',
+                 'acted', '巡检完成，温度正常', ?, '2026-10-12 10:00:00')",
     )
-    .bind(content.to_string())
+    .bind(report.to_string())
     .execute(&pool)
     .await
     .unwrap();

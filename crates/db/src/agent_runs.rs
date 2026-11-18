@@ -238,20 +238,27 @@ pub(crate) async fn count_problem_runs(
 /// 进程刚启动时无在飞 run，`known_active` 为防御性排除集（预热窗口
 /// 已有完成报告的 run_id）。逐行条件更新（status 仍为 'running' 才
 /// 生效），启动期执行一次，行数有界。返回标记行数。
+///
+/// This only reconciles the autonomous agent-loop run history. Task/Run/Wake
+/// fact-plane reconciliation is the workspace Harness sweep
+/// (`Db::harness_interrupt_unfinished_runs`, Task 19C4); the retired platform
+/// `agent_tasks` / `task_wake_outbox` / `task_finalize_intents` tables are not
+/// consulted and no `runtime.v1` Run lifecycle event is written.
 pub(crate) async fn interrupt_zombie_running_runs(pool: &SqlitePool, known_active: &[String]) -> Result<u64> {
-    let rows: Vec<(String,)> = sqlx::query_as("SELECT id FROM agent_runs WHERE status = 'running'")
+    let rows: Vec<String> = sqlx::query_scalar("SELECT id FROM agent_runs WHERE status = 'running'")
         .fetch_all(pool)
         .await?;
     let mut marked = 0u64;
-    for (id,) in rows {
+    for id in rows {
         if known_active.iter().any(|k| k == &id) {
             continue;
         }
-        let result = sqlx::query("UPDATE agent_runs SET status = 'interrupted' WHERE id = ? AND status = 'running'")
+        let affected = sqlx::query("UPDATE agent_runs SET status = 'interrupted' WHERE id = ? AND status = 'running'")
             .bind(&id)
             .execute(pool)
-            .await?;
-        marked += result.rows_affected();
+            .await?
+            .rows_affected();
+        marked += affected;
     }
     Ok(marked)
 }
@@ -337,8 +344,10 @@ impl Db {
         count_problem_runs(self.pool(), workspace_id, problem_key, since_hours).await
     }
 
-    /// 僵尸 run reconcile：status='running' 且不在 `known_active` 认领集
-    /// 的行标记 'interrupted'，返回标记行数。
+    /// 僵尸 run reconcile：status='running' 的行标记 'interrupted'，返回标记行数。
+    /// 排除两类：`known_active`（进程仍认领的 run）与存活 finalize intent 引用的
+    /// run（wake 未解析且 Task 非终止）——后者必须保持 running，才能让重启后的
+    /// teardown 重试完成原始 Run，而不必重跑模型。
     pub async fn interrupt_zombie_running_agent_runs(&self, known_active: &[String]) -> Result<u64> {
         interrupt_zombie_running_runs(self.pool(), known_active).await
     }
@@ -386,6 +395,8 @@ mod tests {
             trace: vec![],
             task_count: None,
             snapshot: None,
+            task_id: None,
+            wake_event_id: None,
         }
     }
 
@@ -433,6 +444,7 @@ mod tests {
             name: "read_property".to_string(),
             args: serde_json::json!({"p": "temp"}),
             output: Some("26.5".to_string()),
+            evidence: vec![],
         }];
         db.insert_agent_run(&report, None, None).await.expect("insert");
 
@@ -790,6 +802,20 @@ mod tests {
         assert_eq!(status_of("ghost").await, "interrupted");
         assert_eq!(status_of("owned").await, "running", "registry 认领的 run 不判僵尸");
         assert_eq!(status_of("done").await, "completed", "completed 行不动");
+        // Task 19C4: this autonomous-loop reconcile is not the Task/Run fact
+        // plane and writes no runtime.v1 Run lifecycle event.
+        let interrupted_events: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM hub_ledger
+             WHERE workspace_id = 'ws_1' AND kind = 'runtime.v1'
+               AND json_extract(payload, '$.eventType') = 'run.interrupted'",
+        )
+        .fetch_one(&pool)
+        .await
+        .expect("count interrupted events");
+        assert_eq!(
+            interrupted_events, 0,
+            "autonomous zombie reconcile must not write a runtime.v1 Run event"
+        );
 
         // 幂等：同一认领集再次 reconcile 无行可标。
         let marked = db
@@ -873,6 +899,8 @@ mod tests {
             trace: vec![],
             task_count: None,
             snapshot: None,
+            task_id: None,
+            wake_event_id: None,
         };
 
         let json = serde_json::to_string(&report).expect("serialize");
@@ -972,6 +1000,9 @@ pub struct AgentRunRow {
     pub acked_by: Option<String>,
     pub created_at: String,
 }
+
+/// 兼容别名（一个版本）：领域内新代码使用 `RunRow`。
+pub type RunRow = AgentRunRow;
 
 /// 心跳 run 行（get_logs 读侧新源，Task 10/C6）：workspace 内 trigger 前缀
 /// `heartbeat:` 的 run，最新在前，limit 截断。列元组 = (id, trigger,

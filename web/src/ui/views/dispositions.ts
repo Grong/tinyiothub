@@ -6,8 +6,9 @@
  * - 每个事件 = 独立卡片，两行结构（标题行 + 理由行；需行动的理由不截断）。
  * - tab 默认「需要你」；「全部/巡检/报警/指令」按来源过滤，留给审计回看。
  * - 徽章渲染用 BADGE_MAP[ev.status]（覆盖全部状态词，含 patrol_ok）。
- * - 变更路由（P0）：alarm 源走 /judgments，patrol 源走 /heartbeat/approvals；
- *   动作审批（批准/拒绝）在卡片动作区；判断反馈（✓/✕）仅 alarm 源——
+ * - 变更路由（P0）：alarm 源走 /judgments（批准执行已退役：处置在 Assistant
+ *   会话确认），patrol 源走 /heartbeat/approvals；动作审批在卡片动作区；
+ *   判断反馈（✓/✕）仅 alarm 源——
  *   审批只影响处置流不写 feedback（F14）；alarm 拒绝必填原因；点错必填原因。
  * - 列表行无 evidence：证据懒加载，展开才调 /brain-events/{id}。
  * - 展开区统一为进度时间线（T12，设计 D3/D5/D8/D9/D10）：investigating=live 轮询
@@ -45,10 +46,15 @@ const TRACE_MAX_RETRIES = 3;
 const TAB_LABELS: Record<BrainEventTab, string> = {
   needs_you: "需要你",
   all: "全部",
-  patrol: "巡检",
+  session: "会话",
   alarm: "报警",
+  // 一版兼容：旧页签后端仍映射到 session，但不再渲染。
+  patrol: "巡检",
   directive: "指令",
 };
+
+/** 渲染的页签（legacy patrol/directive 仅保留类型兼容）。 */
+const VISIBLE_TABS: BrainEventTab[] = ["needs_you", "all", "session", "alarm"];
 
 /** 状态徽章（导出供测试）：覆盖 brain_events 全部状态词，含 patrol_tick 行的 patrol_ok。 */
 export const BADGE_MAP: Record<BrainEventStatus, string> = {
@@ -63,6 +69,7 @@ export const BADGE_MAP: Record<BrainEventStatus, string> = {
   budget_skipped: "未受理",
   dispatch_suppressed: "未受理",
   patrol_ok: "巡检正常",
+  info: "事件",
 };
 
 /** 「需要你」= 待审批 + 需人工（F3/F15①，导出供测试）。 */
@@ -488,7 +495,7 @@ export class DispositionsView extends LitElement {
   private renderTabs(): TemplateResult {
     return html`
       <div class="disp-tabs" role="tablist">
-        ${(Object.keys(TAB_LABELS) as BrainEventTab[]).map((t) => {
+        ${VISIBLE_TABS.map((t) => {
           const count = tabCount(this.summary, t);
           return html`
             <button
@@ -610,7 +617,12 @@ export class DispositionsView extends LitElement {
         ${ev.status === "awaiting_approval"
           ? html`
               <div class="j-actions" @click=${(e: Event) => e.stopPropagation()}>
-                <button class="btn primary btn-small" ?disabled=${pending} @click=${() => this.approve(ev)}>批准执行</button>
+                ${ev.source === "patrol"
+                  ? html`<button class="btn primary btn-small" ?disabled=${pending} @click=${() => this.approve(ev)}>
+                      批准执行
+                    </button>`
+                  : html`<span class="j-retired">执行已并入 Assistant，请在会话中确认。</span>
+                      <a class="j-btn-text" href="#/assistant">前往 Assistant →</a>`}
                 <button class="btn btn-small" ?disabled=${pending} @click=${() => this.reject(ev)}>拒绝</button>
                 ${expandable
                   ? html`<button class="j-btn-text" @click=${() => this.toggleExpand(ev)}>轨迹</button>`

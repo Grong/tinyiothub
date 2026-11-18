@@ -5,7 +5,6 @@
 
 mod access_declaration_api_test;
 mod agent_handler_tests;
-mod agent_loop_e2e_tests;
 mod agent_persist_tests;
 mod agent_startup_tests;
 mod agent_tasks_api_tests;
@@ -48,12 +47,12 @@ mod role_handler_tests;
 mod scene_instantiate_test;
 mod seed_profile_e2e_tests;
 mod spatial_api_tests;
+mod suppression_api_tests;
 mod system_handler_tests;
 mod tag_handler_tests;
 mod template_copy_test;
 mod template_handler_tests;
 mod tenant_handler_tests;
-mod thing_agent_loop_tests;
 mod thing_event_broadcast_tests;
 mod thing_event_pipeline_tests;
 mod thing_handler_tests;

@@ -9,7 +9,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 pub const MANIFEST_MAJOR: u32 = 1;
-pub const MANIFEST_MINOR: u32 = 0;
+pub const MANIFEST_MINOR: u32 = 1;
 pub const MANIFEST_FILE: &str = "driver.manifest.json";
 pub const DRIVER_ABI_V2: u32 = 2;
 pub const MAX_INSTANCE_STATE_FIELDS: usize = 256;
@@ -167,6 +167,8 @@ pub struct StateFieldDecl {
     pub required: bool,
     #[serde(default)]
     pub source: Option<String>,
+    #[serde(default)]
+    pub key: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
@@ -174,6 +176,8 @@ pub struct StateFieldDecl {
 pub struct SourceDecl {
     pub id: String,
     pub kind: String,
+    #[serde(default)]
+    pub data_kind: crate::media::DataKind,
     #[serde(default)]
     pub fields: Vec<String>,
     #[serde(default = "default_interval_ms")]
@@ -628,6 +632,17 @@ mod tests {
             validate_manifest(&m),
             Err(ManifestError::UnknownSourceField { .. })
         ));
+    }
+
+    #[test]
+    fn manifest_1_1_accepts_media_and_state_key() {
+        let manifest: DriverManifest = serde_json::from_value(json!({
+            "manifestVersion":"1.1","identity":{"driver":"fixture","version":"1.0.0","protocol":"fixture","abiVersion":2},
+            "sources":[{"id":"front","kind":"callback","dataKind":"image"}],
+            "stateFields":[{"name":"zone","type":"string","key":"zone"}]
+        })).expect("1.1 manifest");
+        assert_eq!(manifest.sources[0].data_kind, crate::media::DataKind::Image);
+        assert_eq!(manifest.state_fields[0].key.as_deref(), Some("zone"));
     }
 
     #[test]

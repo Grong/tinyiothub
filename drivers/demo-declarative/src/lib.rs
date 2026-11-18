@@ -250,6 +250,7 @@ mod tests {
     fn manifest_is_valid() {
         let m: tinyiothub_core::driver::manifest::DriverManifest =
             serde_json::from_str(include_str!("../driver.manifest.json")).unwrap();
+        assert_eq!(m.manifest_version, "1.1");
         tinyiothub_core::driver::manifest::validate_manifest(&m).unwrap();
     }
 

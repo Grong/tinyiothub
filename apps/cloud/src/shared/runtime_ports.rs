@@ -7,17 +7,98 @@
 use std::sync::Arc;
 
 use async_trait::async_trait;
+use tinyiothub_core::agent_task::TaskWake;
+use tinyiothub_core::device_job::{DeviceJob, DeviceJobError, DeviceJobState};
 use tinyiothub_core::models::spatial::{MapRecord, PlaceKind, PlaceRecord, ThingPosition};
 use tinyiothub_core::models::thing::Thing;
 use tinyiothub_core::models::thing_command::ThingCommand;
 use tinyiothub_core::models::thing_property::ThingProperty;
 use tinyiothub_runtime::ports::{
-    DerivedPropertyQueries, EventRetentionStore, MapStore, ThingCacheSource, ThingCommandQueries,
+    DerivedPropertyQueries, DeviceJobStore, EventRetentionStore, MapStore, ThingCacheSource, ThingCommandQueries,
 };
 use tinyiothub_storage::Db;
 use tinyiothub_storage::cache::ThingCache;
 
-/// `ThingCache` → `ThingCacheSource`（全部方法同步直转）。
+/// `Db` → `MediaEvidenceStore`；SQL 仅留在 db crate。
+pub struct DbMediaEvidenceStore {
+    db: Db,
+    recorder: Option<crate::domains::agent::runtime::stream::RuntimeRecorder>,
+}
+
+impl DbMediaEvidenceStore {
+    pub fn new(db: Db) -> Self {
+        Self { db, recorder: None }
+    }
+
+    pub fn with_recorder(mut self, recorder: crate::domains::agent::runtime::stream::RuntimeRecorder) -> Self {
+        self.recorder = Some(recorder);
+        self
+    }
+}
+
+#[async_trait]
+impl tinyiothub_runtime::ports::MediaEvidenceStore for DbMediaEvidenceStore {
+    async fn insert_or_get(
+        &self,
+        row: &tinyiothub_core::media::MediaEvidenceRecord,
+    ) -> Result<tinyiothub_core::media::MediaEvidenceRecord, tinyiothub_core::media::MediaError> {
+        let (stored, event) = match self.db.put_media_evidence_and_event(row).await {
+            Ok(value) => value,
+            Err(error) => {
+                tracing::warn!(
+                    metric = "runtime_evidence_failure",
+                    workspace_id = %row.workspace_id,
+                    device_id = %row.device_id,
+                    mime = %row.mime,
+                    %error,
+                    "media evidence persistence failed"
+                );
+                return Err(error);
+            }
+        };
+        tracing::info!(
+            metric = "runtime_evidence_stored",
+            workspace_id = %stored.workspace_id,
+            evidence_id = %stored.id,
+            device_id = %stored.device_id,
+            size_bytes = stored.size_bytes,
+            mime = %stored.mime,
+            "media evidence stored"
+        );
+        if let (Some(recorder), Some(event)) = (&self.recorder, event) {
+            recorder.publish(event);
+        }
+        Ok(stored)
+    }
+
+    async fn get(
+        &self,
+        evidence_id: &str,
+    ) -> Result<Option<tinyiothub_core::media::MediaEvidenceRecord>, tinyiothub_core::media::MediaError> {
+        self.db.get_media_evidence(evidence_id).await
+    }
+
+    async fn delete_expired(
+        &self,
+        now: chrono::DateTime<chrono::Utc>,
+    ) -> Result<Vec<tinyiothub_core::media::MediaEvidenceRecord>, tinyiothub_core::media::MediaError> {
+        let deleted = self.db.delete_expired_media(now).await?;
+        if !deleted.is_empty() {
+            tracing::info!(
+                metric = "runtime_evidence_expired",
+                count = deleted.len(),
+                bytes = deleted.iter().map(|row| row.size_bytes).sum::<u64>(),
+                "expired media evidence removed"
+            );
+        }
+        Ok(deleted)
+    }
+
+    async fn storage_is_referenced(&self, path: &str) -> Result<bool, tinyiothub_core::media::MediaError> {
+        self.db.media_storage_is_referenced(path).await
+    }
+}
+
 pub struct ThingCacheAdapter(pub Arc<ThingCache>);
 
 impl ThingCacheSource for ThingCacheAdapter {
@@ -56,6 +137,301 @@ impl ThingCommandQueries for ThingCommandQueriesAdapter {
             .find_thing_command_by_thing_and_name(thing_id, name)
             .await
             .map_err(|e| e.to_string())
+    }
+}
+
+/// Legacy platform `DeviceJobStore` — test-only parity reference.
+///
+/// Task 19C3 moved every production `DeviceJobStore` operation to
+/// [`WorkspaceDeviceJobStore`]. This adapter still writes the platform
+/// `device_jobs` table (and its test-only runtime events) so unit tests can
+/// compare legacy semantics against the workspace store on the same fixtures.
+/// It is not compiled into the production binary.
+#[cfg(test)]
+pub struct DbDeviceJobStore {
+    db: Db,
+    recorder: Option<crate::domains::agent::runtime::stream::RuntimeRecorder>,
+}
+
+#[cfg(test)]
+impl DbDeviceJobStore {
+    pub fn new(db: Db) -> Self {
+        Self { db, recorder: None }
+    }
+
+    pub fn with_recorder(mut self, recorder: crate::domains::agent::runtime::stream::RuntimeRecorder) -> Self {
+        self.recorder = Some(recorder);
+        self
+    }
+
+    fn publish(&self, event: tinyiothub_storage::runtime_event::RuntimeEvent) {
+        if let Some(recorder) = &self.recorder {
+            recorder.publish(event);
+        }
+    }
+}
+
+#[cfg(test)]
+#[async_trait]
+impl DeviceJobStore for DbDeviceJobStore {
+    async fn create_job(&self, job: &DeviceJob) -> Result<(), DeviceJobError> {
+        let event = self.db.create_job_and_event(job).await?;
+        self.publish(event);
+        Ok(())
+    }
+
+    async fn get_job(&self, workspace_id: &str, job_id: &str) -> Result<Option<DeviceJob>, DeviceJobError> {
+        self.db.get_job(workspace_id, job_id).await
+    }
+
+    async fn get_job_by_id(&self, job_id: &str) -> Result<Option<DeviceJob>, DeviceJobError> {
+        self.db.get_job_by_id(job_id).await
+    }
+
+    async fn get_task_job(
+        &self,
+        workspace_id: &str,
+        task_id: &str,
+        job_id: &str,
+    ) -> Result<Option<DeviceJob>, DeviceJobError> {
+        self.db.get_task_job(workspace_id, task_id, job_id).await
+    }
+
+    async fn get_job_by_tool_call(
+        &self,
+        workspace_id: &str,
+        tool_call_id: &str,
+    ) -> Result<Option<DeviceJob>, DeviceJobError> {
+        self.db.get_job_by_tool_call(workspace_id, tool_call_id).await
+    }
+
+    async fn submit_approved_job(&self, job: &DeviceJob) -> Result<(Option<DeviceJob>, bool), DeviceJobError> {
+        if let Some(tool_call_id) = job.tool_call_id.as_deref()
+            && let Some(existing) = self.db.get_job_by_tool_call(&job.workspace_id, tool_call_id).await?
+        {
+            let matches = existing.device_id == job.device_id
+                && existing.tool == job.tool
+                && existing.args_json == job.args_json
+                && existing.task_id == job.task_id
+                && existing.run_id == job.run_id;
+            if !matches {
+                return Err(DeviceJobError::ExecutionConflict);
+            }
+            return Ok((Some(existing), false));
+        }
+        self.create_job(job).await?;
+        Ok((Some(job.clone()), true))
+    }
+
+    async fn mark_running(&self, job_id: &str, driver_call_id: &str) -> Result<DeviceJob, DeviceJobError> {
+        let (job, event) = self.db.mark_running_and_event(job_id, driver_call_id).await?;
+        self.publish(event);
+        Ok(job)
+    }
+
+    async fn finish_job(
+        &self,
+        job_id: &str,
+        state: DeviceJobState,
+        result: &serde_json::Value,
+        wake: Option<&TaskWake>,
+    ) -> Result<bool, DeviceJobError> {
+        let (finished, event) = self.db.finish_job_and_event(job_id, state, result, wake).await?;
+        if let Some(event) = event {
+            self.publish(event);
+        }
+        Ok(finished)
+    }
+
+    async fn update_progress(&self, job_id: &str, progress: &serde_json::Value) -> Result<bool, DeviceJobError> {
+        let (revision, event) = self.db.update_progress_revision_and_event(job_id, progress).await?;
+        if let Some(event) = event {
+            self.publish(event);
+        }
+        Ok(revision.is_some())
+    }
+
+    async fn request_stop(&self, workspace_id: &str, task_id: &str, job_id: &str) -> Result<DeviceJob, DeviceJobError> {
+        let (job, event) = self.db.request_stop_and_event(workspace_id, task_id, job_id).await?;
+        self.publish(event);
+        Ok(job)
+    }
+
+    async fn active_jobs(
+        &self,
+        workspace_id: Option<&str>,
+        unknown_only: bool,
+    ) -> Result<Vec<DeviceJob>, DeviceJobError> {
+        self.db.active_jobs(workspace_id, unknown_only).await
+    }
+}
+
+/// `DeviceJobStore` backed by the owning workspace Harness generation.
+///
+/// Task 19C3 made the workspace `device_jobs` the only Job truth: every
+/// operation reads or writes the Job's workspace, and no Job id prefix is
+/// special. Job-id-only operations resolve the owner through
+/// `Db::find_workspace_for_job`; the job→workspace map is a validated
+/// performance hint, never a policy bypass:
+///
+/// - it is populated only after a full scan that saw zero unreadable
+///   workspaces, or by a successful create;
+/// - a cache hit is confirmed with a scoped row read, and a missing row drops
+///   the entry and rescans;
+/// - creating the same id in another workspace invalidates the entry, so the
+///   next id-only lookup still reports the duplicate error.
+pub struct WorkspaceDeviceJobStore {
+    db: Arc<Db>,
+    workspaces: dashmap::DashMap<String, String>,
+}
+
+impl WorkspaceDeviceJobStore {
+    pub fn new(db: Arc<Db>) -> Self {
+        Self {
+            db,
+            workspaces: dashmap::DashMap::new(),
+        }
+    }
+
+    async fn workspace_for_job(&self, job_id: &str) -> Result<Option<String>, DeviceJobError> {
+        if let Some(workspace_id) = self.workspaces.get(job_id).map(|entry| entry.value().clone()) {
+            match self.db.get_workspace_job(&workspace_id, job_id).await {
+                Ok(Some(_)) => return Ok(Some(workspace_id)),
+                // A removed row or an unreadable cached generation invalidates
+                // the hint; the full scan applies the duplicate/fail-closed
+                // policy again.
+                Ok(None) | Err(_) => {
+                    self.workspaces.remove(job_id);
+                }
+            }
+        }
+        let owner = self.db.find_workspace_for_job(job_id).await?;
+        if owner.skipped == 0
+            && let Some(workspace_id) = &owner.workspace_id
+        {
+            self.workspaces.insert(job_id.to_string(), workspace_id.clone());
+        }
+        Ok(owner.workspace_id)
+    }
+
+    /// Remember a created Job only when the id has no conflicting cached
+    /// owner. A duplicate id in another workspace removes the hint so the next
+    /// id-only resolution rescans and reports the ambiguity.
+    fn remember_created(&self, job: &DeviceJob) {
+        use dashmap::mapref::entry::Entry;
+        match self.workspaces.entry(job.id.clone()) {
+            Entry::Occupied(entry) => {
+                if entry.get() != &job.workspace_id {
+                    entry.remove();
+                }
+            }
+            Entry::Vacant(entry) => {
+                entry.insert(job.workspace_id.clone());
+            }
+        }
+    }
+}
+
+#[async_trait]
+impl DeviceJobStore for WorkspaceDeviceJobStore {
+    async fn create_job(&self, job: &DeviceJob) -> Result<(), DeviceJobError> {
+        self.db.create_workspace_job(job).await?;
+        self.remember_created(job);
+        Ok(())
+    }
+
+    async fn get_job(&self, workspace_id: &str, job_id: &str) -> Result<Option<DeviceJob>, DeviceJobError> {
+        self.db.get_workspace_job(workspace_id, job_id).await
+    }
+
+    async fn get_job_by_id(&self, job_id: &str) -> Result<Option<DeviceJob>, DeviceJobError> {
+        let Some(workspace_id) = self.workspace_for_job(job_id).await? else {
+            return Ok(None);
+        };
+        self.db.get_workspace_job(&workspace_id, job_id).await
+    }
+
+    async fn get_task_job(
+        &self,
+        workspace_id: &str,
+        task_id: &str,
+        job_id: &str,
+    ) -> Result<Option<DeviceJob>, DeviceJobError> {
+        self.db.get_workspace_task_job(workspace_id, task_id, job_id).await
+    }
+
+    async fn get_job_by_tool_call(
+        &self,
+        workspace_id: &str,
+        tool_call_id: &str,
+    ) -> Result<Option<DeviceJob>, DeviceJobError> {
+        self.db.get_workspace_job_by_tool_call(workspace_id, tool_call_id).await
+    }
+
+    async fn submit_approved_job(&self, job: &DeviceJob) -> Result<(Option<DeviceJob>, bool), DeviceJobError> {
+        if let Some(tool_call_id) = job.tool_call_id.as_deref()
+            && let Some(existing) = self
+                .db
+                .get_workspace_job_by_tool_call(&job.workspace_id, tool_call_id)
+                .await?
+        {
+            let matches = existing.device_id == job.device_id
+                && existing.tool == job.tool
+                && existing.args_json == job.args_json
+                && existing.task_id == job.task_id
+                && existing.run_id == job.run_id;
+            if !matches {
+                return Err(DeviceJobError::ExecutionConflict);
+            }
+            return Ok((Some(existing), false));
+        }
+        self.create_job(job).await?;
+        Ok((Some(job.clone()), true))
+    }
+
+    async fn mark_running(&self, job_id: &str, driver_call_id: &str) -> Result<DeviceJob, DeviceJobError> {
+        let Some(workspace_id) = self.workspace_for_job(job_id).await? else {
+            return Err(DeviceJobError::NotFound);
+        };
+        self.db
+            .mark_workspace_job_running(&workspace_id, job_id, driver_call_id)
+            .await
+    }
+
+    async fn finish_job(
+        &self,
+        job_id: &str,
+        state: DeviceJobState,
+        result: &serde_json::Value,
+        wake: Option<&TaskWake>,
+    ) -> Result<bool, DeviceJobError> {
+        let Some(workspace_id) = self.workspace_for_job(job_id).await? else {
+            return Err(DeviceJobError::NotFound);
+        };
+        self.db
+            .finish_workspace_job(&workspace_id, job_id, state, result, wake)
+            .await
+    }
+
+    async fn update_progress(&self, job_id: &str, progress: &serde_json::Value) -> Result<bool, DeviceJobError> {
+        let Some(workspace_id) = self.workspace_for_job(job_id).await? else {
+            return Err(DeviceJobError::NotFound);
+        };
+        self.db
+            .update_workspace_job_progress(&workspace_id, job_id, progress)
+            .await
+    }
+
+    async fn request_stop(&self, workspace_id: &str, task_id: &str, job_id: &str) -> Result<DeviceJob, DeviceJobError> {
+        self.db.request_workspace_job_stop(workspace_id, task_id, job_id).await
+    }
+
+    async fn active_jobs(
+        &self,
+        workspace_id: Option<&str>,
+        unknown_only: bool,
+    ) -> Result<Vec<DeviceJob>, DeviceJobError> {
+        self.db.active_workspace_jobs(workspace_id, unknown_only).await
     }
 }
 
@@ -299,16 +675,16 @@ impl ApprovalTimeoutAdapter {
         };
         tracing::info!(judgment_id = %judgment.id, problem_key, run_id = %report.run_id,
             "reprojecting stale judgment from completed run (RunRecorded event was lost)");
-        let event = tinyiothub_agent::runtime::events::AgentEvent {
+        let event = crate::domains::agent::events::AgentEvent {
             seq: 0,
             occurred_at: chrono::Utc::now(),
-            kind: tinyiothub_agent::runtime::events::AgentEventKind::RunRecorded {
+            kind: crate::domains::agent::events::AgentEventKind::RunRecorded {
                 report: Box::new(report),
                 problem_key: Some(problem_key),
                 dedup_key: None,
             },
         };
-        crate::domains::agent::host::judge::judgment_subscriber::project(
+        crate::domains::agent::session::judge::judgment_subscriber::project(
             &event,
             &self.db,
             &self.sse,
@@ -633,15 +1009,58 @@ impl tinyiothub_runtime::ports::HubLedger for HubLedgerAdapter {
 /// tag（property|health|availability），condition 列存完整 condition JSON；
 /// 读回按 JSON 反序列化重构 `WatchCondition`（core 的 WatchRule 无 serde
 /// derive，按字段映射，不回改 core）。
-pub struct WatchRuleStoreAdapter(pub Db);
+pub struct WatchRuleStoreAdapter {
+    db: Db,
+    recorder: Option<crate::domains::agent::runtime::stream::RuntimeRecorder>,
+}
+
+impl WatchRuleStoreAdapter {
+    pub fn new(db: Db) -> Self {
+        Self { db, recorder: None }
+    }
+
+    pub fn with_recorder(mut self, recorder: crate::domains::agent::runtime::stream::RuntimeRecorder) -> Self {
+        self.recorder = Some(recorder);
+        self
+    }
+
+    fn publish(&self, event: tinyiothub_storage::runtime_event::RuntimeEvent) {
+        if let Some(recorder) = &self.recorder {
+            recorder.publish(event);
+        }
+    }
+}
 
 #[async_trait]
 impl tinyiothub_runtime::ports::WatchRuleStore for WatchRuleStoreAdapter {
     async fn list_all(&self) -> Result<Vec<tinyiothub_core::watch::WatchRule>, String> {
-        let rows = tinyiothub_storage::watch::list_rules(self.0.pool())
+        let rows = tinyiothub_storage::watch::list_rules(self.db.pool())
             .await
             .map_err(|e| e.to_string())?;
+        // M5: only a Task proven terminal (or owned by a readable workspace
+        // where it is absent) is dropped. A Task in an unreadable workspace is
+        // unverifiable, so its rule is kept and the reweave can retry later.
+        // Avoid the all-workspace scan when no rule is Task-owned (the common
+        // chat-watch case). Task-owned reweave still needs the fleet scan until
+        // the port grows a workspace-scoped variant (deferred L9).
+        let ownership = if rows.iter().any(|row| row.owner_task_id.is_some()) {
+            self.db
+                .harness_task_ownership_sweep(None)
+                .await
+                .map_err(|e| e.to_string())?
+        } else {
+            tinyiothub_storage::harness_task::TaskOwnershipSweep::default()
+        };
         rows.iter()
+            .filter(|row| {
+                row.owner_task_id.as_ref().is_none_or(|task_id| {
+                    if let Some(owner) = ownership.nonterminal.get(task_id) {
+                        owner == &row.workspace_id
+                    } else {
+                        ownership.unreadable_workspaces.contains(&row.workspace_id)
+                    }
+                })
+            })
             .map(|row| {
                 let condition: tinyiothub_core::watch::WatchCondition = serde_json::from_str(&row.condition)
                     .map_err(|e| format!("watch_rule {} condition JSON 损坏: {e}", row.id))?;
@@ -652,12 +1071,24 @@ impl tinyiothub_runtime::ports::WatchRuleStore for WatchRuleStoreAdapter {
                     persistent: row.persistent != 0,
                     timeout_secs: row.timeout_secs as u32,
                     created_at: row.created_at.clone(),
+                    owner_task_id: row.owner_task_id.clone(),
                 })
             })
             .collect()
     }
 
     async fn insert(&self, rule: &tinyiothub_core::watch::WatchRule) -> Result<(), String> {
+        if let Some(task_id) = rule.owner_task_id.as_deref() {
+            let task = self
+                .db
+                .harness_get_task(&rule.workspace_id, task_id)
+                .await
+                .map_err(|e| e.to_string())?
+                .ok_or_else(|| "watch owner Task does not exist in this workspace".to_string())?;
+            if task.status.is_terminal() {
+                return Err("watch owner Task is terminal".to_string());
+            }
+        }
         let condition = serde_json::to_value(&rule.condition).map_err(|e| e.to_string())?;
         let kind = condition
             .get("type")
@@ -672,17 +1103,1128 @@ impl tinyiothub_runtime::ports::WatchRuleStore for WatchRuleStoreAdapter {
             persistent: i64::from(rule.persistent),
             timeout_secs: i64::from(rule.timeout_secs),
             created_at: rule.created_at.clone(),
+            owner_task_id: rule.owner_task_id.clone(),
         };
-        tinyiothub_storage::watch::insert_rule(self.0.pool(), &row)
+        let event = tinyiothub_storage::watch::insert_rule_and_event(self.db.pool(), &row)
             .await
-            .map_err(|e| e.to_string())
+            .map_err(|e| e.to_string())?;
+        self.publish(event);
+        Ok(())
     }
 
     async fn delete(&self, workspace_id: &str, id: &str) -> Result<bool, String> {
-        let affected = tinyiothub_storage::watch::delete_rule(self.0.pool(), workspace_id, id)
+        let event = tinyiothub_storage::watch::delete_rule_and_event(self.db.pool(), workspace_id, id)
             .await
             .map_err(|e| e.to_string())?;
-        Ok(affected > 0)
+        let deleted = event.is_some();
+        if let Some(event) = event {
+            self.publish(event);
+        }
+        Ok(deleted)
+    }
+
+    async fn complete_task_watch(
+        &self,
+        workspace_id: &str,
+        id: &str,
+        wake: &tinyiothub_core::agent_task::TaskWake,
+    ) -> Result<bool, String> {
+        // Wake-first crash-safe order (M3): the workspace wake is an
+        // INSERT OR IGNORE row before the platform rule is deleted. A crash
+        // between the two can at worst leave a duplicate/idempotent wake; the
+        // one-shot continuation is never lost.
+        let inserted = self.db.harness_record_wake(wake).await.map_err(|error| {
+            format!("watch {id}: workspace completion wake failed: {error}; watch rule left in place")
+        })?;
+        let (completed, event) =
+            tinyiothub_storage::watch::complete_task_watch_and_event(self.db.pool(), workspace_id, id, wake)
+                .await
+                .map_err(|e| e.to_string())?;
+        if !completed {
+            // The rule was already retired. Undo only the wake this call
+            // newly inserted; a pre-existing wake (for example from a crash
+            // after the wake write) must survive.
+            if inserted {
+                match self
+                    .db
+                    .harness_remove_pending_wake(workspace_id, &wake.task_id, &wake.event_id)
+                    .await
+                {
+                    Ok(_) => {}
+                    Err(remove_error) => {
+                        // Never leave a pending wake for a rule that no longer
+                        // exists: mark it dead so it cannot spuriously wake the
+                        // Task (M3 removal-failure fallback).
+                        match self
+                            .db
+                            .harness_mark_wake_dead_in(
+                                workspace_id,
+                                &wake.task_id,
+                                &wake.event_id,
+                                "completion_rule_missing",
+                            )
+                            .await
+                        {
+                            Ok(()) => {
+                                return Err(format!(
+                                    "watch {id}: rule already retired; removing the newly inserted wake failed ({remove_error}); wake marked dead"
+                                ));
+                            }
+                            Err(dead_error) => {
+                                return Err(format!(
+                                    "watch {id}: rule already retired; removing the newly inserted wake failed ({remove_error}); marking it dead also failed ({dead_error})"
+                                ));
+                            }
+                        }
+                    }
+                }
+            }
+            return Ok(false);
+        }
+        // Publish only after the rule delete and the wake are both durable.
+        if let Some(event) = event {
+            self.publish(event);
+        }
+        Ok(true)
+    }
+
+    async fn delete_task_watches(&self, workspace_id: &str, task_id: &str) -> Result<usize, String> {
+        let events = tinyiothub_storage::watch::delete_task_watches_and_events(self.db.pool(), workspace_id, task_id)
+            .await
+            .map_err(|e| e.to_string())?;
+        let count = events.len();
+        for event in events {
+            self.publish(event);
+        }
+        Ok(count)
+    }
+}
+
+#[cfg(test)]
+mod runtime_job_event_tests {
+    use super::*;
+    use tinyiothub_runtime::ports::{DeviceJobStore, MediaEvidenceStore, WatchRuleStore};
+
+    async fn fixture() -> (
+        Arc<Db>,
+        crate::domains::agent::runtime::stream::RuntimeRecorder,
+        Arc<crate::domains::agent::runtime::stream::RuntimeStreamHub>,
+    ) {
+        let pool = sqlx::SqlitePool::connect("sqlite::memory:").await.expect("pool");
+        tinyiothub_storage::test_helpers::run_all_migrations(&pool)
+            .await
+            .expect("migrations");
+        let root = std::env::temp_dir().join(format!("tinyiothub-runtime-ports-{}", uuid::Uuid::new_v4()));
+        let db = Arc::new(Db::new(pool).with_workspace_store_root(root.join("data/agents")));
+        tinyiothub_storage::seed::seed_system(&db).await.expect("seed");
+        sqlx::query("INSERT INTO workspaces (id, name, tenant_id, created_at, updated_at) VALUES ('ws-job','ws-job','tenant-default-001','2025-01-01','2025-01-01')")
+            .execute(db.pool())
+            .await
+            .expect("workspace");
+        // The test-gated platform Job/evidence writers still carry foreign
+        // keys to the retired platform Task row; this fixture is test-only.
+        sqlx::query(
+            "INSERT INTO agent_tasks
+                 (id, workspace_id, idempotency_key, objective, created_by, status,
+                  state_version, created_at, updated_at)
+             VALUES ('task-1', 'ws-job', 'job-event', 'inspect', 'user-1', 'active', 0, 'now', 'now')",
+        )
+        .execute(db.pool())
+        .await
+        .expect("platform task fixture");
+        let now = chrono::Utc::now();
+        db.harness_create_task_with_wake(
+            &tinyiothub_core::agent_task::AgentTask {
+                id: "task-1".into(),
+                workspace_id: "ws-job".into(),
+                idempotency_key: "job-event".into(),
+                objective: "inspect".into(),
+                session_key: None,
+                created_by: "user-1".into(),
+                status: tinyiothub_core::agent_task::TaskStatus::Active,
+                current_run_id: None,
+                state_version: 0,
+                created_at: now,
+                updated_at: now,
+                ended_at: None,
+            },
+            &tinyiothub_core::agent_task::TaskWake {
+                task_id: "task-1".into(),
+                event_id: "job-event-create".into(),
+                signal_json: serde_json::json!({"workspace_id":"ws-job"}).to_string(),
+                dispatch_state: tinyiothub_core::agent_task::WakeDispatchState::Pending,
+                created_at: now,
+                dispatched_at: None,
+                resolved_at: None,
+            },
+        )
+        .await
+        .expect("task");
+        let hub = Arc::new(crate::domains::agent::runtime::stream::RuntimeStreamHub::default());
+        let recorder = crate::domains::agent::runtime::stream::RuntimeRecorder::new(db.clone(), hub.clone());
+        (db, recorder, hub)
+    }
+
+    fn job() -> DeviceJob {
+        DeviceJob {
+            id: "job-event".into(),
+            workspace_id: "ws-job".into(),
+            device_id: "device-1".into(),
+            tool: "inspect".into(),
+            args_json: serde_json::json!({}),
+            state: DeviceJobState::Accepted,
+            stop_requested_at: None,
+            progress_json: None,
+            result_json: None,
+            task_id: Some("task-1".into()),
+            run_id: None,
+            tool_call_id: Some("call-1".into()),
+            driver_call_id: None,
+            timeout_ms: 1_000,
+            started_at: chrono::Utc::now(),
+            ended_at: None,
+        }
+    }
+
+    fn approved_job() -> DeviceJob {
+        let mut job = job();
+        job.id = "approved-job".into();
+        job.tool_call_id = Some("call-approved".into());
+        job
+    }
+
+    async fn workspace_db(root: &std::path::Path, db: &Db) -> Db {
+        let workspace_db = Db::new(db.pool().clone()).with_workspace_store_root(root.join("data/agents"));
+        workspace_db
+            .create_workspace_store("ws-job")
+            .await
+            .expect("workspace store");
+        workspace_db
+    }
+
+    /// Task 19C3 decision 3: `job:`-prefixed legacy ids are ordinary ids and
+    /// both `job:` and `effect:` Jobs live in the workspace generation. No
+    /// platform `device_jobs` or legacy runtime Job event is written.
+    #[tokio::test]
+    async fn job_prefixed_and_effect_ids_both_use_the_workspace_store() {
+        let (db, _recorder, _hub) = fixture().await;
+        let root = std::env::temp_dir().join(format!("tinyiothub-runtime-ports-{}", uuid::Uuid::new_v4()));
+        let workspace_db = workspace_db(&root, &db).await;
+        let store = WorkspaceDeviceJobStore::new(Arc::new(workspace_db.clone()));
+
+        for (id, tool_call_id) in [("job:run-1:dev-1:1", "call-legacy"), ("effect:effect-1", "call-effect")] {
+            let mut job = job();
+            job.id = id.into();
+            job.tool_call_id = Some(tool_call_id.into());
+            store.create_job(&job).await.expect("workspace create");
+
+            let wake = TaskWake {
+                task_id: "task-1".into(),
+                event_id: format!("device_job:{id}:done"),
+                signal_json: serde_json::json!({"workspace_id":"ws-job","kind":"device_job_terminal"}).to_string(),
+                dispatch_state: tinyiothub_core::agent_task::WakeDispatchState::Pending,
+                created_at: chrono::Utc::now(),
+                dispatched_at: None,
+                resolved_at: None,
+            };
+            assert!(
+                store
+                    .finish_job(id, DeviceJobState::Done, &serde_json::json!({"ok": true}), Some(&wake))
+                    .await
+                    .expect("workspace finish")
+            );
+            assert!(
+                workspace_db
+                    .get_workspace_job("ws-job", id)
+                    .await
+                    .expect("workspace read")
+                    .is_some(),
+                "{id} must live in the workspace generation"
+            );
+            let platform_jobs: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM device_jobs WHERE id = ?")
+                .bind(id)
+                .fetch_one(db.pool())
+                .await
+                .expect("platform job count");
+            assert_eq!(platform_jobs, 0, "no platform Job write for {id}");
+            let wakes: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM task_wake_outbox WHERE event_id = ?")
+                .bind(&wake.event_id)
+                .fetch_one(
+                    &workspace_db
+                        .workspace_pool_for_testing("ws-job")
+                        .await
+                        .expect("workspace pool"),
+                )
+                .await
+                .expect("workspace wake");
+            assert_eq!(wakes, 1, "the TaskWake lives in the workspace outbox");
+        }
+
+        let platform_wakes: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM task_wake_outbox WHERE event_id LIKE 'device_job:%'")
+                .fetch_one(db.pool())
+                .await
+                .expect("platform wake count");
+        assert_eq!(platform_wakes, 0, "no platform wake is written");
+        let events = db
+            .runtime_events_after("ws-job", None, Some("task-1"), 100)
+            .await
+            .expect("runtime events");
+        assert!(
+            events.iter().all(|event| event.job_id.is_none()),
+            "decision 2: workspace Jobs write no legacy runtime Job event"
+        );
+        let _ = tokio::fs::remove_dir_all(&root).await;
+    }
+
+    /// Per-method parity: the workspace store reproduces the legacy store's
+    /// observable Job lifecycle on the same fixture and the same Job ids
+    /// (create/get/getById/getTaskJob/getByToolCall/submitApproved/mark/
+    /// progress/stop/active/finish/replay).
+    #[tokio::test]
+    async fn workspace_store_matches_legacy_store_semantics() {
+        let (db, _recorder, _hub) = fixture().await;
+        let root = std::env::temp_dir().join(format!("tinyiothub-runtime-parity-{}", uuid::Uuid::new_v4()));
+        let workspace_db = workspace_db(&root, &db).await;
+        let legacy = DbDeviceJobStore::new((*db).clone());
+        let workspace = WorkspaceDeviceJobStore::new(Arc::new(workspace_db.clone()));
+
+        let mut shared_job = job();
+        shared_job.id = "job:run-1:dev-1:1".into();
+        shared_job.tool_call_id = Some("call-1".into());
+
+        legacy.create_job(&shared_job).await.expect("legacy create");
+        workspace.create_job(&shared_job).await.expect("workspace create");
+
+        for (store, job) in [
+            (&legacy as &dyn DeviceJobStore, &shared_job),
+            (&workspace as &dyn DeviceJobStore, &shared_job),
+        ] {
+            assert_eq!(
+                store.get_job("ws-job", &job.id).await.expect("get").expect("job").state,
+                job.state,
+                "{}: create/get parity",
+                job.id
+            );
+            assert_eq!(
+                store.get_job_by_id(&job.id).await.expect("get by id").expect("job").id,
+                job.id,
+                "get_job_by_id parity"
+            );
+            assert_eq!(
+                store
+                    .get_task_job("ws-job", "task-1", &job.id)
+                    .await
+                    .expect("get task job")
+                    .expect("job")
+                    .id,
+                job.id,
+                "get_task_job parity"
+            );
+            assert!(
+                store
+                    .get_task_job("ws-job", "task-other", &job.id)
+                    .await
+                    .expect("wrong task")
+                    .is_none()
+            );
+            assert_eq!(
+                store
+                    .get_job_by_tool_call("ws-job", "call-1")
+                    .await
+                    .expect("get by tool call")
+                    .expect("job")
+                    .id,
+                job.id,
+                "get_job_by_tool_call parity"
+            );
+            assert!(
+                store
+                    .get_job_by_tool_call("ws-job", "call-missing")
+                    .await
+                    .expect("missing tool call")
+                    .is_none()
+            );
+
+            let approved = approved_job();
+            let (created, inserted) = store.submit_approved_job(&approved).await.expect("approved submit");
+            assert!(inserted);
+            assert_eq!(created.map(|job| job.id), Some("approved-job".into()));
+            let (replayed, inserted) = store.submit_approved_job(&approved).await.expect("approved replay");
+            assert!(!inserted, "a retried approved submission must not insert twice");
+            assert_eq!(replayed.map(|job| job.id), Some("approved-job".into()));
+            let mut conflicting = approved.clone();
+            conflicting.args_json = serde_json::json!({"speed": 99});
+            assert!(matches!(
+                store.submit_approved_job(&conflicting).await,
+                Err(DeviceJobError::ExecutionConflict)
+            ));
+            assert_eq!(
+                store
+                    .get_job_by_tool_call("ws-job", "call-approved")
+                    .await
+                    .expect("approved lookup")
+                    .expect("approved job")
+                    .args_json,
+                serde_json::json!({}),
+                "a conflicting retry must not overwrite the approved Job"
+            );
+
+            let running = store.mark_running(&job.id, "driver-1").await.expect("mark running");
+            assert_eq!(running.state, DeviceJobState::Running);
+            assert_eq!(running.driver_call_id.as_deref(), Some("driver-1"));
+            assert!(matches!(
+                store.mark_running(&job.id, "driver-2").await,
+                Err(DeviceJobError::Conflict(_))
+            ));
+
+            assert!(
+                store
+                    .update_progress(&job.id, &serde_json::json!({"percent": 50}))
+                    .await
+                    .expect("progress")
+            );
+            assert!(
+                !store
+                    .update_progress(&job.id, &serde_json::json!({"percent": 50}))
+                    .await
+                    .expect("same revision")
+            );
+
+            let first = store.request_stop("ws-job", "task-1", &job.id).await.expect("stop");
+            let second = store
+                .request_stop("ws-job", "task-1", &job.id)
+                .await
+                .expect("stop replay");
+            assert_eq!(first.stop_requested_at, second.stop_requested_at);
+            assert!(matches!(
+                store.request_stop("ws-job", "task-2", &job.id).await,
+                Err(DeviceJobError::NotFound)
+            ));
+
+            let active = store.active_jobs(Some("ws-job"), false).await.expect("active");
+            assert_eq!(active.len(), 2, "the lifecycle Job and the approved Job are both live");
+            let ids: Vec<&str> = active.iter().map(|active| active.id.as_str()).collect();
+            assert!(ids.contains(&job.id.as_str()));
+            assert!(ids.contains(&"approved-job"));
+
+            let wake = TaskWake {
+                task_id: "task-1".into(),
+                event_id: format!("device_job:{}:done", job.id),
+                signal_json: serde_json::json!({"workspace_id":"ws-job"}).to_string(),
+                dispatch_state: tinyiothub_core::agent_task::WakeDispatchState::Pending,
+                created_at: chrono::Utc::now(),
+                dispatched_at: None,
+                resolved_at: None,
+            };
+            assert!(
+                store
+                    .finish_job(
+                        &job.id,
+                        DeviceJobState::Done,
+                        &serde_json::json!({"ok": true}),
+                        Some(&wake)
+                    )
+                    .await
+                    .expect("finish")
+            );
+            assert!(
+                !store
+                    .finish_job(
+                        &job.id,
+                        DeviceJobState::Done,
+                        &serde_json::json!({"ok": true}),
+                        Some(&wake)
+                    )
+                    .await
+                    .expect("finish replay")
+            );
+            let terminal = store.get_job("ws-job", &job.id).await.expect("get").expect("terminal");
+            assert_eq!(terminal.state, DeviceJobState::Done);
+            assert_eq!(terminal.result_json, Some(serde_json::json!({"ok": true})));
+            assert!(terminal.ended_at.is_some());
+            let remaining = store.active_jobs(Some("ws-job"), false).await.expect("active");
+            assert_eq!(remaining.len(), 1);
+            assert_eq!(remaining[0].id, "approved-job", "only the terminal Job left the sweep");
+        }
+        let _ = tokio::fs::remove_dir_all(&root).await;
+    }
+
+    async fn two_workspace_store(
+        db: &Db,
+        root: &std::path::Path,
+        first: &str,
+        second: &str,
+    ) -> (WorkspaceDeviceJobStore, Db) {
+        for workspace_id in [first, second] {
+            sqlx::query(
+                "INSERT OR IGNORE INTO workspaces (id, name, tenant_id, created_at, updated_at)
+                 VALUES (?, ?, 'tenant-default-001', '2025-01-01', '2025-01-01')",
+            )
+            .bind(workspace_id)
+            .bind(workspace_id)
+            .execute(db.pool())
+            .await
+            .expect("workspace row");
+        }
+        let workspace_db = Db::new(db.pool().clone()).with_workspace_store_root(root.join("data/agents"));
+        workspace_db.create_workspace_store(first).await.expect("first store");
+        workspace_db.create_workspace_store(second).await.expect("second store");
+        let store = WorkspaceDeviceJobStore::new(Arc::new(workspace_db.clone()));
+        (store, workspace_db)
+    }
+
+    /// H1: a duplicate Job id in two workspaces must keep erroring on every
+    /// job-id-only port, including a mutating call. The adapter has no cache
+    /// that can return a first match.
+    #[tokio::test]
+    async fn duplicate_job_ids_are_rejected_by_job_id_ports() {
+        let (db, _recorder, _hub) = fixture().await;
+        let root = std::env::temp_dir().join(format!("tinyiothub-runtime-dup-{}", uuid::Uuid::new_v4()));
+        let (store, _workspace_db) = two_workspace_store(&db, &root, "ws-job", "ws-other").await;
+
+        let mut first = job();
+        first.id = "job-dup".into();
+        first.task_id = Some("task-1".into());
+        first.tool_call_id = Some("call-a".into());
+        let mut second = job();
+        second.id = "job-dup".into();
+        second.workspace_id = "ws-other".into();
+        second.task_id = Some("task-2".into());
+        second.tool_call_id = Some("call-b".into());
+        store.create_job(&first).await.expect("first job");
+        store.create_job(&second).await.expect("second job");
+        assert!(
+            !store.workspaces.contains_key("job-dup"),
+            "a duplicate create must invalidate the validated hint"
+        );
+
+        assert!(matches!(
+            store.get_job_by_id("job-dup").await,
+            Err(DeviceJobError::Storage(message)) if message.contains("more than one workspace")
+        ));
+        assert!(matches!(
+            store.mark_running("job-dup", "driver-1").await,
+            Err(DeviceJobError::Storage(_))
+        ));
+        assert!(matches!(
+            store
+                .update_progress("job-dup", &serde_json::json!({"percent": 50}))
+                .await,
+            Err(DeviceJobError::Storage(_))
+        ));
+        assert!(matches!(
+            store
+                .finish_job("job-dup", DeviceJobState::Done, &serde_json::json!({}), None)
+                .await,
+            Err(DeviceJobError::Storage(_))
+        ));
+        for (workspace_id, row) in [("ws-job", &first), ("ws-other", &second)] {
+            let stored = store.get_job(workspace_id, &row.id).await.expect("read").expect("row");
+            assert_eq!(stored.state, DeviceJobState::Accepted, "{workspace_id} row unchanged");
+        }
+        let _ = tokio::fs::remove_dir_all(&root).await;
+    }
+
+    /// One unreadable workspace must not stall a readable Job in another
+    /// workspace: the lookup fails closed only when there is no readable
+    /// match. An unrelated corrupt workspace therefore permits the readable
+    /// Job's mutations, while a Job that may live in the corrupt store refuses.
+    #[tokio::test]
+    async fn unreadable_workspace_does_not_block_a_readable_job() {
+        let (db, _recorder, _hub) = fixture().await;
+        let root = std::env::temp_dir().join(format!("tinyiothub-runtime-unreadable-{}", uuid::Uuid::new_v4()));
+        let (store, workspace_db) = two_workspace_store(&db, &root, "ws-job", "ws-corrupt").await;
+
+        let mut readable = job();
+        readable.id = "job-readable".into();
+        readable.task_id = Some("task-1".into());
+        readable.tool_call_id = Some("call-readable".into());
+        let mut hidden = job();
+        hidden.id = "job-hidden".into();
+        hidden.workspace_id = "ws-corrupt".into();
+        hidden.task_id = Some("task-hidden".into());
+        hidden.tool_call_id = Some("call-hidden".into());
+        store.create_job(&readable).await.expect("readable job");
+        store.create_job(&hidden).await.expect("hidden job");
+        workspace_db
+            .mark_workspace_unavailable("ws-corrupt", "injected corruption")
+            .await
+            .expect("mark unavailable");
+
+        assert!(
+            matches!(store.get_job_by_id("job-hidden").await, Err(DeviceJobError::Storage(_))),
+            "a point read must not fail open while the owner could be unreadable"
+        );
+        assert_eq!(
+            store
+                .get_job_by_id("job-readable")
+                .await
+                .expect("unique readable match")
+                .expect("job")
+                .id,
+            "job-readable"
+        );
+
+        let running = store
+            .mark_running("job-readable", "driver-1")
+            .await
+            .expect("an unrelated unreadable workspace must not block mark_running");
+        assert_eq!(running.state, DeviceJobState::Running);
+        assert!(
+            store
+                .update_progress("job-readable", &serde_json::json!({"percent": 50}))
+                .await
+                .expect("unrelated unreadable workspace must not block progress")
+        );
+        let wake = TaskWake {
+            task_id: "task-1".into(),
+            event_id: "device_job:job-readable:done".into(),
+            signal_json: serde_json::json!({"workspace_id":"ws-job"}).to_string(),
+            dispatch_state: tinyiothub_core::agent_task::WakeDispatchState::Pending,
+            created_at: chrono::Utc::now(),
+            dispatched_at: None,
+            resolved_at: None,
+        };
+        assert!(
+            store
+                .finish_job(
+                    "job-readable",
+                    DeviceJobState::Done,
+                    &serde_json::json!({"ok": true}),
+                    Some(&wake)
+                )
+                .await
+                .expect("an unrelated unreadable workspace must not block finish_job")
+        );
+        assert_eq!(
+            store
+                .get_job("ws-job", "job-readable")
+                .await
+                .expect("read")
+                .expect("job")
+                .state,
+            DeviceJobState::Done
+        );
+        assert!(
+            matches!(
+                store.mark_running("job-hidden", "driver-hidden").await,
+                Err(DeviceJobError::Storage(_))
+            ),
+            "a Job that may live in the unreadable workspace must refuse"
+        );
+
+        // Task 19C3 Low: the assertions above are served by the hint warmed by
+        // `create_job`. Repeat them cold: the full scan must still resolve the
+        // unique readable match, must fail closed for the ambiguous id, and
+        // must not cache a result produced while a workspace was skipped.
+        store.workspaces.clear();
+        assert_eq!(
+            store
+                .get_job_by_id("job-readable")
+                .await
+                .expect("cold unique readable match")
+                .expect("job")
+                .id,
+            "job-readable"
+        );
+        assert!(
+            !store.workspaces.contains_key("job-readable"),
+            "a scan that skipped an unreadable workspace must not cache the hint"
+        );
+        assert!(
+            matches!(store.get_job_by_id("job-hidden").await, Err(DeviceJobError::Storage(_))),
+            "a cold lookup must not fail open while the owner could be unreadable"
+        );
+        let _ = tokio::fs::remove_dir_all(&root).await;
+    }
+
+    /// The job→workspace map is a validated hint: a clean scan or a create
+    /// populates it; a hit is confirmed by a scoped read; a missing row drops
+    /// the entry and rescans instead of reporting a stale Job.
+    #[tokio::test]
+    async fn validated_mapping_hit_and_miss_rescan() {
+        let (db, _recorder, _hub) = fixture().await;
+        let root = std::env::temp_dir().join(format!("tinyiothub-runtime-cache-{}", uuid::Uuid::new_v4()));
+        let workspace_db = workspace_db(&root, &db).await;
+        let store = WorkspaceDeviceJobStore::new(Arc::new(workspace_db.clone()));
+        let mut cached = job();
+        cached.id = "job-cache".into();
+        store.create_job(&cached).await.expect("create");
+        assert!(
+            store.workspaces.contains_key("job-cache"),
+            "a successful create warms the mapping"
+        );
+
+        assert!(store.get_job_by_id("job-cache").await.expect("hit").is_some());
+        assert!(
+            store.workspaces.contains_key("job-cache"),
+            "a validated hit keeps the mapping"
+        );
+
+        let pool = workspace_db
+            .workspace_pool_for_testing("ws-job")
+            .await
+            .expect("workspace pool");
+        sqlx::query("DELETE FROM device_jobs WHERE id = 'job-cache'")
+            .execute(&pool)
+            .await
+            .expect("remove row");
+        assert!(
+            store.get_job_by_id("job-cache").await.expect("rescan").is_none(),
+            "a missing row must drop the hint and rescan, not return a stale Job"
+        );
+        assert!(
+            !store.workspaces.contains_key("job-cache"),
+            "the invalidated mapping is removed"
+        );
+        let _ = tokio::fs::remove_dir_all(&root).await;
+    }
+
+    #[tokio::test]
+    async fn shared_evidence_adapter_publishes_the_exact_persisted_event() {
+        let (db, recorder, hub) = fixture().await;
+        let mut published = hub.subscribe("ws-job");
+        let store = DbMediaEvidenceStore::new((*db).clone()).with_recorder(recorder);
+        let now = chrono::Utc::now();
+        store
+            .insert_or_get(&tinyiothub_core::media::MediaEvidenceRecord {
+                id: "evidence-live".into(),
+                workspace_id: "ws-job".into(),
+                task_id: Some("task-1".into()),
+                run_id: None,
+                tool_call_id: Some("call-1".into()),
+                job_id: None,
+                device_id: "device-1".into(),
+                source_id: "camera".into(),
+                source_seq: 4,
+                media_time: now,
+                mime: "image/jpeg".into(),
+                size_bytes: 12,
+                sha256: "abc".into(),
+                storage_path: "private/evidence-live".into(),
+                dedup_key: "evidence-live-dedup".into(),
+                created_at: now,
+                expires_at: now + chrono::Duration::days(1),
+            })
+            .await
+            .expect("persist evidence");
+
+        let persisted = db
+            .runtime_event_by_id("ws-job", "evidence:evidence-live:created")
+            .await
+            .expect("query persisted event")
+            .expect("persisted event");
+        let event = published.recv().await.expect("expected live evidence event");
+        assert_eq!(event, persisted);
+        assert_eq!(event.device_id.as_deref(), Some("device-1"));
+        assert_eq!(event.source_id.as_deref(), Some("camera"));
+        assert!(event.data.get("storagePath").is_none());
+    }
+
+    #[tokio::test]
+    async fn shared_job_adapter_records_ordered_facts_with_stable_ids() {
+        let (db, recorder, hub) = fixture().await;
+        let mut published = hub.subscribe("ws-job");
+        let store = DbDeviceJobStore::new((*db).clone()).with_recorder(recorder);
+        store.create_job(&job()).await.expect("create");
+        store.mark_running("job-event", "driver-1").await.expect("running");
+        store
+            .update_progress("job-event", &serde_json::json!({"percent":50}))
+            .await
+            .expect("progress");
+        store
+            .update_progress("job-event", &serde_json::json!({"percent":75}))
+            .await
+            .expect("next progress revision");
+        assert!(
+            !store
+                .update_progress("job-event", &serde_json::json!({"percent":75}))
+                .await
+                .expect("same revision retry")
+        );
+        let first_stop = store.request_stop("ws-job", "task-1", "job-event").await.expect("stop");
+        let second_stop = store
+            .request_stop("ws-job", "task-1", "job-event")
+            .await
+            .expect("stop replay");
+        assert_eq!(first_stop.stop_requested_at, second_stop.stop_requested_at);
+        assert!(
+            store
+                .finish_job(
+                    "job-event",
+                    DeviceJobState::CancelledUnknown,
+                    &serde_json::json!({"reason":"cancel_unknown"}),
+                    None,
+                )
+                .await
+                .expect("finish")
+        );
+        assert!(
+            !store
+                .finish_job(
+                    "job-event",
+                    DeviceJobState::CancelledUnknown,
+                    &serde_json::json!({"reason":"cancel_unknown"}),
+                    None,
+                )
+                .await
+                .expect("finish replay")
+        );
+        let events = db
+            .runtime_events_after("ws-job", None, Some("task-1"), 20)
+            .await
+            .expect("events")
+            .into_iter()
+            .filter(|event| event.job_id.is_some())
+            .collect::<Vec<_>>();
+        let ids: Vec<&str> = events.iter().map(|event| event.event_id.as_str()).collect();
+        assert_eq!(
+            ids,
+            [
+                "job:job-event:accepted",
+                "job:job-event:running",
+                "job:job-event:progress:v1",
+                "job:job-event:progress:v2",
+                "job:job-event:stop_requested",
+                "job:job-event:cancelled_unknown",
+            ]
+        );
+        assert_eq!(events[2].data["revision"], 1);
+        assert_eq!(events[2].data["progress"]["percent"], 50);
+        assert_eq!(events[3].data["revision"], 2);
+        assert_eq!(events[3].data["progress"]["percent"], 75);
+        // The live fan-out may repeat a replay event; the replaced SSE reader
+        // deduplicated by cursor. Persisted identity is what the UI sees.
+        let mut streamed_ids: Vec<String> = Vec::new();
+        for _ in 0..=events.len() {
+            let event = published.recv().await.expect("every persisted revision is published");
+            if !streamed_ids.contains(&event.event_id) {
+                streamed_ids.push(event.event_id);
+            }
+        }
+        assert_eq!(streamed_ids, ids);
+        assert!(events.iter().all(|event| event.task_id.as_deref() == Some("task-1")));
+        assert!(events.iter().all(|event| event.job_id.as_deref() == Some("job-event")));
+        assert!(
+            events
+                .iter()
+                .all(|event| event.device_id.as_deref() == Some("device-1"))
+        );
+    }
+
+    #[tokio::test]
+    async fn watch_adapter_records_create_and_completion_for_owner_task() {
+        let (db, recorder, _hub) = fixture().await;
+        let store = WatchRuleStoreAdapter::new((*db).clone()).with_recorder(recorder);
+        let rule = tinyiothub_core::watch::WatchRule {
+            id: "watch-event".into(),
+            workspace_id: "ws-job".into(),
+            condition: tinyiothub_core::watch::WatchCondition::Availability {
+                thing_id: "device-1".into(),
+                online: true,
+            },
+            persistent: false,
+            timeout_secs: 60,
+            created_at: chrono::Utc::now().to_rfc3339(),
+            owner_task_id: Some("task-1".into()),
+        };
+        store.insert(&rule).await.expect("insert watch");
+        let wake = tinyiothub_core::agent_task::TaskWake {
+            task_id: "task-1".into(),
+            event_id: "watch-complete".into(),
+            signal_json: serde_json::json!({"workspace_id":"ws-job"}).to_string(),
+            dispatch_state: tinyiothub_core::agent_task::WakeDispatchState::Pending,
+            created_at: chrono::Utc::now(),
+            dispatched_at: None,
+            resolved_at: None,
+        };
+        assert!(
+            store
+                .complete_task_watch("ws-job", "watch-event", &wake)
+                .await
+                .expect("complete")
+        );
+        let events = db
+            .runtime_events_after("ws-job", None, Some("task-1"), 20)
+            .await
+            .expect("events")
+            .into_iter()
+            .filter(|event| event.event_type.starts_with("watch."))
+            .collect::<Vec<_>>();
+        let ids: Vec<&str> = events.iter().map(|event| event.event_id.as_str()).collect();
+        assert_eq!(ids, ["watch:watch-event:created", "watch:watch-event:completed"]);
+        assert_eq!(events[0].event_type, "watch.created");
+        assert_eq!(events[1].event_type, "watch.completed");
+        assert!(events.iter().all(|event| event.task_id.as_deref() == Some("task-1")));
+
+        // Task 19C4 M3/L4: the continuation wake is a workspace fact.
+        let workspace = db.workspace_pool_for_testing("ws-job").await.expect("workspace pool");
+        let wakes: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM task_wake_outbox WHERE task_id = 'task-1' AND event_id = 'watch-complete'",
+        )
+        .fetch_one(&workspace)
+        .await
+        .expect("workspace wake");
+        assert_eq!(wakes, 1, "the one-shot hit must record the workspace wake");
+
+        // A second completion (already retired) must not insert another wake.
+        let mut replay_wake = wake.clone();
+        replay_wake.event_id = "watch-complete-replay".into();
+        assert!(
+            !store
+                .complete_task_watch("ws-job", "watch-event", &replay_wake)
+                .await
+                .expect("idempotent completion")
+        );
+        let wakes: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM task_wake_outbox WHERE task_id = 'task-1' AND event_id = 'watch-complete'",
+        )
+        .fetch_one(&workspace)
+        .await
+        .expect("workspace wake count");
+        assert_eq!(wakes, 1, "completed == false must not keep a replay wake");
+        let total: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM task_wake_outbox WHERE task_id = 'task-1'")
+            .fetch_one(&workspace)
+            .await
+            .expect("total wake count");
+        assert_eq!(
+            total, 2,
+            "the fixture create wake plus the completion wake only; the replay wake was removed"
+        );
+    }
+
+    /// Task 19C4 M3 crash window: the wake is written before the platform
+    /// delete. If a previous attempt crashed after that write, a later
+    /// completion that finds the rule already retired must not remove the
+    /// pre-existing wake.
+    #[tokio::test]
+    async fn preexisting_wake_survives_an_already_retired_completion() {
+        let (db, recorder, _hub) = fixture().await;
+        let store = WatchRuleStoreAdapter::new((*db).clone()).with_recorder(recorder);
+        let wake = tinyiothub_core::agent_task::TaskWake {
+            task_id: "task-1".into(),
+            event_id: "watch:watch-crash:hit".into(),
+            signal_json: serde_json::json!({"workspace_id":"ws-job"}).to_string(),
+            dispatch_state: tinyiothub_core::agent_task::WakeDispatchState::Pending,
+            created_at: chrono::Utc::now(),
+            dispatched_at: None,
+            resolved_at: None,
+        };
+        assert!(db.harness_record_wake(&wake).await.expect("pre-crash wake"));
+        assert!(
+            !store
+                .complete_task_watch("ws-job", "watch-crash", &wake)
+                .await
+                .expect("already retired"),
+            "no rule exists"
+        );
+        let workspace = db.workspace_pool_for_testing("ws-job").await.expect("workspace pool");
+        let wakes: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM task_wake_outbox WHERE task_id = 'task-1' AND event_id = 'watch:watch-crash:hit'",
+        )
+        .fetch_one(&workspace)
+        .await
+        .expect("workspace wake");
+        assert_eq!(wakes, 1, "a pre-existing wake must survive completed == false");
+    }
+
+    /// Task 19C4 M3 removal-failure fallback: if the newly inserted wake
+    /// cannot be deleted after an already-retired completion, it is marked
+    /// dead instead of staying pending forever.
+    #[tokio::test]
+    async fn failed_completion_wake_removal_marks_the_wake_dead() {
+        let (db, recorder, _hub) = fixture().await;
+        let store = WatchRuleStoreAdapter::new((*db).clone()).with_recorder(recorder);
+        let workspace = db.workspace_pool_for_testing("ws-job").await.expect("workspace pool");
+        sqlx::query(
+            "CREATE TRIGGER fail_wake_delete BEFORE DELETE ON task_wake_outbox
+             BEGIN SELECT RAISE(ABORT, 'injected removal failure'); END",
+        )
+        .execute(&workspace)
+        .await
+        .expect("failure trigger");
+        let wake = tinyiothub_core::agent_task::TaskWake {
+            task_id: "task-1".into(),
+            event_id: "watch:watch-remove-fail:hit".into(),
+            signal_json: serde_json::json!({"workspace_id":"ws-job"}).to_string(),
+            dispatch_state: tinyiothub_core::agent_task::WakeDispatchState::Pending,
+            created_at: chrono::Utc::now(),
+            dispatched_at: None,
+            resolved_at: None,
+        };
+        let error = store
+            .complete_task_watch("ws-job", "watch-remove-fail", &wake)
+            .await
+            .expect_err("removal failure must surface");
+        assert!(error.contains("wake marked dead"), "{error}");
+        let state: String = sqlx::query_scalar(
+            "SELECT dispatch_state FROM task_wake_outbox
+             WHERE task_id = 'task-1' AND event_id = 'watch:watch-remove-fail:hit'",
+        )
+        .fetch_one(&workspace)
+        .await
+        .expect("wake row");
+        assert_eq!(state, "dead", "the orphan wake must not stay pending");
+    }
+
+    /// Task 19C4 M3: if the workspace wake cannot be written, the platform rule
+    /// is left untouched and the engine re-arms the one-shot for retry.
+    #[tokio::test]
+    async fn watch_completion_leaves_the_rule_when_the_workspace_wake_fails() {
+        let (db, recorder, _hub) = fixture().await;
+        let store = WatchRuleStoreAdapter::new((*db).clone()).with_recorder(recorder);
+        let rule = tinyiothub_core::watch::WatchRule {
+            id: "watch-fail".into(),
+            workspace_id: "ws-job".into(),
+            condition: tinyiothub_core::watch::WatchCondition::Availability {
+                thing_id: "device-1".into(),
+                online: true,
+            },
+            persistent: false,
+            timeout_secs: 60,
+            created_at: chrono::Utc::now().to_rfc3339(),
+            owner_task_id: Some("task-1".into()),
+        };
+        store.insert(&rule).await.expect("insert watch");
+        db.mark_workspace_unavailable("ws-job", "injected workspace failure")
+            .await
+            .expect("mark unavailable");
+        let wake = tinyiothub_core::agent_task::TaskWake {
+            task_id: "task-1".into(),
+            event_id: "watch:watch-fail:hit".into(),
+            signal_json: serde_json::json!({"workspace_id":"ws-job"}).to_string(),
+            dispatch_state: tinyiothub_core::agent_task::WakeDispatchState::Pending,
+            created_at: chrono::Utc::now(),
+            dispatched_at: None,
+            resolved_at: None,
+        };
+        let error = store
+            .complete_task_watch("ws-job", "watch-fail", &wake)
+            .await
+            .expect_err("workspace wake must fail");
+        assert!(error.contains("rule left in place"), "{error}");
+        assert!(
+            !error.contains("rule restored"),
+            "the message must not claim a restore that never happened: {error}"
+        );
+        let stored = tinyiothub_storage::watch::find_rule(db.pool(), "ws-job", "watch-fail")
+            .await
+            .expect("platform rule lookup");
+        assert!(
+            stored.is_some(),
+            "the one-shot rule must still exist because the wake was written first"
+        );
+        // No `watch.completed` event may be published before the wake exists.
+        let completed_events: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM hub_ledger
+             WHERE kind = 'runtime' || '.v1'
+               AND json_extract(payload, '$.eventType') = 'watch.completed'",
+        )
+        .fetch_one(db.pool())
+        .await
+        .expect("completed events");
+        assert_eq!(completed_events, 0);
+    }
+    #[tokio::test]
+    async fn watch_adapter_publishes_and_replays_cancellation_and_generic_deletion() {
+        let (db, recorder, hub) = fixture().await;
+        let store = WatchRuleStoreAdapter::new((*db).clone()).with_recorder(recorder);
+        let mut published = hub.subscribe("ws-job");
+        let rule = |id: &str| tinyiothub_core::watch::WatchRule {
+            id: id.into(),
+            workspace_id: "ws-job".into(),
+            condition: tinyiothub_core::watch::WatchCondition::Availability {
+                thing_id: "device-1".into(),
+                online: true,
+            },
+            persistent: false,
+            timeout_secs: 60,
+            created_at: chrono::Utc::now().to_rfc3339(),
+            owner_task_id: Some("task-1".into()),
+        };
+        store.insert(&rule("watch-cancel-1")).await.expect("first watch");
+        store.insert(&rule("watch-cancel-2")).await.expect("second watch");
+        for id in ["watch-cancel-1", "watch-cancel-2"] {
+            let event = published.recv().await.expect("expected live creation");
+            assert_eq!(event.event_id, format!("watch:{id}:created"));
+        }
+        assert_eq!(
+            store
+                .delete_task_watches("ws-job", "task-1")
+                .await
+                .expect("cancel watches"),
+            2
+        );
+        for id in ["watch-cancel-1", "watch-cancel-2"] {
+            let event = published.recv().await.expect("expected live cancellation");
+            assert_eq!(event.event_id, format!("watch:{id}:deleted"));
+            assert_eq!(event.event_type, "watch.deleted");
+        }
+        store.insert(&rule("watch-generic")).await.expect("generic watch");
+        published.recv().await.expect("generic watch event");
+        assert!(store.delete("ws-job", "watch-generic").await.expect("generic delete"));
+        let event = published.recv().await.expect("expected live generic deletion");
+        assert_eq!(event.event_id, "watch:watch-generic:deleted");
+        assert!(
+            !store
+                .delete("ws-job", "watch-generic")
+                .await
+                .expect("idempotent delete")
+        );
+        assert_eq!(
+            store
+                .delete_task_watches("ws-job", "task-1")
+                .await
+                .expect("empty cancel"),
+            0
+        );
+        let replayed = db
+            .runtime_events_after("ws-job", None, Some("task-1"), 20)
+            .await
+            .expect("persisted replay")
+            .into_iter()
+            .filter(|event| event.event_type == "watch.deleted")
+            .map(|event| event.event_id)
+            .collect::<Vec<_>>();
+        assert_eq!(
+            replayed,
+            [
+                "watch:watch-cancel-1:deleted",
+                "watch:watch-cancel-2:deleted",
+                "watch:watch-generic:deleted",
+            ]
+        );
+    }
+
+    #[tokio::test]
+    async fn approved_job_submission_replays_the_existing_tool_call() {
+        let (db, _, _) = fixture().await;
+        let store = DbDeviceJobStore::new(db.as_ref().clone());
+        let job = DeviceJob {
+            id: "approved-job".into(),
+            workspace_id: "ws-job".into(),
+            device_id: "device-1".into(),
+            tool: "set_speed".into(),
+            args_json: serde_json::json!({"speed": 1}),
+            state: tinyiothub_core::device_job::DeviceJobState::Accepted,
+            stop_requested_at: None,
+            progress_json: None,
+            result_json: None,
+            task_id: Some("task-1".into()),
+            run_id: Some("run-1".into()),
+            tool_call_id: Some("call-approved".into()),
+            driver_call_id: None,
+            timeout_ms: 5_000,
+            started_at: chrono::Utc::now(),
+            ended_at: None,
+        };
+        let (first, inserted) = store.submit_approved_job(&job).await.expect("first submit");
+        assert!(inserted);
+        let (second, inserted) = store.submit_approved_job(&job).await.expect("replay");
+        assert!(!inserted, "a retried approved submission must not insert twice");
+        assert_eq!(second.map(|job| job.id), Some("approved-job".into()));
+        assert_eq!(first.map(|job| job.id), Some("approved-job".into()));
     }
 }
 
@@ -1126,6 +2668,8 @@ mod approval_timeout_tests {
             trace: vec![],
             task_count: None,
             snapshot: None,
+            task_id: None,
+            wake_event_id: None,
         };
         db.insert_agent_run(&report, Some("alarm:t1:r1"), None).await.unwrap();
 
@@ -1216,6 +2760,7 @@ mod watch_ports_tests {
             persistent: true,
             timeout_secs: 600,
             created_at: "2026-10-20T00:00:00Z".into(),
+            owner_task_id: None,
         }
     }
 
@@ -1313,7 +2858,7 @@ mod watch_ports_tests {
     #[tokio::test]
     async fn rule_insert_then_list_all_visible() {
         let db = fixture_db().await;
-        let adapter = WatchRuleStoreAdapter(db.clone());
+        let adapter = WatchRuleStoreAdapter::new(db.clone());
         let rule = sample_rule("r1", "ws1");
         WatchRuleStore::insert(&adapter, &rule).await.unwrap();
 
@@ -1335,11 +2880,109 @@ mod watch_ports_tests {
         assert_eq!(got.created_at, "2026-10-20T00:00:00Z");
     }
 
+    async fn watch_rebuild_fixture() -> tinyiothub_storage::Db {
+        let pool = sqlx::SqlitePool::connect("sqlite::memory:").await.unwrap();
+        tinyiothub_storage::test_helpers::run_all_migrations(&pool)
+            .await
+            .unwrap();
+        let root = std::env::temp_dir().join(format!("tinyiothub-runtime-ports-watch-{}", uuid::Uuid::new_v4()));
+        let db = tinyiothub_storage::Db::new(pool).with_workspace_store_root(root.join("data/agents"));
+        tinyiothub_storage::seed::seed_system(&db).await.unwrap();
+        sqlx::query("INSERT INTO workspaces (id, name, tenant_id, created_at, updated_at) VALUES ('ws1','ws1','tenant-default-001','2025-01-01','2025-01-01')")
+            .execute(db.pool())
+            .await
+            .unwrap();
+        for (task_id, status) in [
+            ("task-active", tinyiothub_core::agent_task::TaskStatus::Active),
+            ("task-paused", tinyiothub_core::agent_task::TaskStatus::Paused),
+            ("task-terminal", tinyiothub_core::agent_task::TaskStatus::Completed),
+        ] {
+            let now = chrono::Utc::now();
+            let task = tinyiothub_core::agent_task::AgentTask {
+                id: task_id.into(),
+                workspace_id: "ws1".into(),
+                idempotency_key: task_id.into(),
+                objective: "watch pump".into(),
+                session_key: Some(format!("agent:ws1:default/{task_id}")),
+                created_by: "user-1".into(),
+                status: tinyiothub_core::agent_task::TaskStatus::Active,
+                current_run_id: None,
+                state_version: 0,
+                created_at: now,
+                updated_at: now,
+                ended_at: None,
+            };
+            let wake = tinyiothub_core::agent_task::TaskWake {
+                task_id: task_id.into(),
+                event_id: format!("create:{task_id}"),
+                signal_json: serde_json::json!({"workspace_id": "ws1"}).to_string(),
+                dispatch_state: tinyiothub_core::agent_task::WakeDispatchState::Pending,
+                created_at: now,
+                dispatched_at: None,
+                resolved_at: None,
+            };
+            db.harness_create_task_with_wake(&task, &wake).await.unwrap();
+            if status != tinyiothub_core::agent_task::TaskStatus::Active {
+                db.harness_transition_task("ws1", task_id, 0, status, None)
+                    .await
+                    .unwrap();
+            }
+            let mut rule = sample_rule(&format!("rule-{task_id}"), "ws1");
+            rule.owner_task_id = Some(task_id.into());
+            let condition = serde_json::to_value(&rule.condition).unwrap();
+            tinyiothub_storage::watch::insert_rule(
+                db.pool(),
+                &tinyiothub_storage::watch::WatchRuleRow {
+                    id: rule.id,
+                    workspace_id: rule.workspace_id,
+                    kind: "property".into(),
+                    condition: condition.to_string(),
+                    persistent: 1,
+                    timeout_secs: 600,
+                    created_at: rule.created_at,
+                    owner_task_id: rule.owner_task_id,
+                },
+            )
+            .await
+            .unwrap();
+        }
+        db
+    }
+
+    #[tokio::test]
+    async fn rebuild_lists_only_watches_whose_owner_task_is_nonterminal() {
+        let db = watch_rebuild_fixture().await;
+        let adapter = WatchRuleStoreAdapter::new(db);
+        let restored = WatchRuleStore::list_all(&adapter).await.unwrap();
+        let ids: Vec<&str> = restored.iter().map(|rule| rule.id.as_str()).collect();
+        assert_eq!(ids, ["rule-task-active", "rule-task-paused"]);
+    }
+
+    /// Task 19C4 M5: an unreadable owner workspace is "unverifiable", not
+    /// "proven terminal", so its Task-owned rules must be kept for a later
+    /// retry instead of being silently dropped.
+    #[tokio::test]
+    async fn rebuild_keeps_task_rules_when_the_owner_workspace_is_unreadable() {
+        let db = watch_rebuild_fixture().await;
+        db.mark_workspace_unavailable("ws1", "injected unreadable store")
+            .await
+            .unwrap();
+        let adapter = WatchRuleStoreAdapter::new(db);
+        let restored = WatchRuleStore::list_all(&adapter).await.unwrap();
+        let mut ids: Vec<&str> = restored.iter().map(|rule| rule.id.as_str()).collect();
+        ids.sort_unstable();
+        assert_eq!(
+            ids,
+            ["rule-task-active", "rule-task-paused", "rule-task-terminal"],
+            "an unreadable owner workspace must not make its rules look terminal"
+        );
+    }
+
     /// delete 跨工作区落空（多租户隔离），本工作区删得掉。
     #[tokio::test]
     async fn rule_delete_cross_workspace_misses() {
         let db = fixture_db().await;
-        let adapter = WatchRuleStoreAdapter(db.clone());
+        let adapter = WatchRuleStoreAdapter::new(db.clone());
         WatchRuleStore::insert(&adapter, &sample_rule("r1", "ws1"))
             .await
             .unwrap();

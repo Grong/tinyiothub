@@ -36,6 +36,11 @@ export class ApiError extends Error {
   }
 }
 
+export interface ApiRequestOptions {
+  headers?: Record<string, string>;
+  signal?: AbortSignal;
+}
+
 // HTTP 请求选项
 interface RequestOptions {
   method?: 'GET' | 'POST' | 'PUT' | 'DELETE' | 'PATCH';
@@ -163,11 +168,14 @@ export class ApiClient {
   static async post<T>(
     endpoint: string,
     data?: any,
+    options: ApiRequestOptions = {},
   ): Promise<ApiResponse<KeysToCamelCase<T>>> {
     const snakeData = data ? keysToSnakeCase(data) : undefined;
     const response = await request<ApiResponse<T>>(endpoint, {
       method: 'POST',
       body: snakeData,
+      headers: options.headers,
+      signal: options.signal,
     });
     if (response.code !== 0) {
       throw new ApiError(response.code, response.msg || '请求失败', response);

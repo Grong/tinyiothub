@@ -1,3 +1,12 @@
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RetryNotice {
+    /// 1-based retry number; the initial request is not counted as a retry.
+    pub attempt: u32,
+    pub max_retries: u32,
+    pub delay_ms: u64,
+    pub error: String,
+}
+
 /// Streaming events emitted during an agent turn.
 ///
 /// Consumers that pattern-match on [`TurnEvent::ToolCall`] or
@@ -22,6 +31,7 @@ pub enum TurnEvent {
         id: String,
         name: String,
         output: String,
+        attachments: Vec<tinyiothub_core::media::MediaAttachment>,
     },
     /// The agent is waiting for the operator to approve, deny, or always-allow
     /// a tool call. The transport (e.g. gateway WebSocket) is expected to
@@ -37,6 +47,8 @@ pub enum TurnEvent {
         /// How long the channel will wait before auto-denying.
         timeout_secs: u64,
     },
+    /// A recoverable model request failed and will be retried after the delay.
+    Retry(RetryNotice),
     /// Per-LLM-call token usage and cost.
     ///
     /// Emitted once per LLM response the agent loop processes; a single turn

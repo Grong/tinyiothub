@@ -9,6 +9,26 @@ use tracing::{error, info, warn};
 
 use crate::shared::error::Error;
 
+/// `WorkspaceSnapshotProvider` over the existing thing-agent manager. It only
+/// forwards to the manager's current `workspace_snapshot`; `None` stays `None`
+/// so the Source degrades to `source_unavailable` instead of faking an empty
+/// workspace.
+struct LiveWorkspaceSnapshotProvider {
+    manager: Arc<crate::domains::agent::thing_agent::ThingAgentManager>,
+}
+
+#[async_trait::async_trait]
+impl crate::domains::agent::session::suppression::registry::WorkspaceSnapshotProvider
+    for LiveWorkspaceSnapshotProvider
+{
+    async fn workspace_snapshot(
+        &self,
+        workspace_id: &str,
+    ) -> Option<tinyiothub_runtime::watch::live_state::WorkspaceSnapshot> {
+        self.manager.workspace_snapshot(workspace_id).await
+    }
+}
+
 /// 服务状态枚举
 #[derive(Debug, Clone, PartialEq)]
 pub enum ServiceStatus {
@@ -34,14 +54,19 @@ pub struct ServiceManager {
     cron_scheduler: Arc<RwLock<Option<tinyiothub_scheduler::CronSchedulerService>>>,
 
     /// AI orchestrator (set during start_all)
-    orchestrator: Option<Arc<tinyiothub_agent::runtime::orchestrator::Orchestrator>>,
+    orchestrator: Option<Arc<crate::domains::agent::orchestrator::Orchestrator>>,
 
     /// Shared AI event publisher (set during start_all, drained on shutdown)
-    event_publisher: Option<Arc<tinyiothub_agent::runtime::event::bus::AiEventPublisher>>,
+    event_publisher: Option<Arc<crate::domains::agent::event::bus::AiEventPublisher>>,
 
     /// Agent 持久化订阅者关停令牌（Task 9）：cancel 后主循环退出、
     /// 落库重试任务中止；句柄在 service_handles 中随关停排空。
     persistence_shutdown: Option<tokio_util::sync::CancellationToken>,
+
+    /// Plan 2：assistant schedule trigger router。句柄在 service_handles 中
+    /// 排空，但 router 自身只在 cancellation token 取消时退出——shutdown
+    /// 前必须持有一份并 cancel，否则 drain 会空等 10s 超时。
+    trigger_router: Arc<RwLock<Option<Arc<crate::domains::agent::session::TriggerRouter>>>>,
 }
 
 impl ServiceManager {
@@ -58,6 +83,7 @@ impl ServiceManager {
             orchestrator: None,
             event_publisher: None,
             persistence_shutdown: None,
+            trigger_router: Arc::new(RwLock::new(None)),
         }
     }
 
@@ -143,6 +169,35 @@ impl ServiceManager {
             ))),
         ));
         data_server.set_sampler(sampler);
+
+        // Task 19C3: the workspace Harness generation is the only Job truth.
+        // `JobService` still owns arbitration/workers/recovery; only its store
+        // binding changed.
+        let task_jobs = tinyiothub_runtime::job::service::JobService::new(
+            Arc::new(crate::shared::runtime_ports::WorkspaceDeviceJobStore::new(
+                app_state.db.clone(),
+            )),
+            Arc::new(tinyiothub_runtime::job::worker_adapter::DataServerJobWorkers::new(
+                data_server.as_ref().clone(),
+            )),
+            access.clone(),
+            access.clone(),
+            app_state.arbitration.clone(),
+        );
+        // Task 19C1: the single JobService also backs the Harness Effect
+        // dispatcher. The sink still lets JobService own the terminal Job fact;
+        // it then settles the matching workspace Effect.
+        let effect_dispatch = Arc::new(
+            crate::domains::agent::runtime::dispatch::EffectDispatch::new(app_state.db.clone(), task_jobs.clone())
+                .with_stream(app_state.session_stream.clone()),
+        );
+        app_state.effect_dispatch = Some(effect_dispatch.clone());
+        data_server.set_job_result_sink(Arc::new(
+            crate::domains::agent::runtime::dispatch::HarnessJobResultSink::new(
+                task_jobs.clone(),
+                effect_dispatch.clone(),
+            ),
+        ));
 
         // 启动数据服务器
         let shutdown_rx = self.shutdown_tx.subscribe();
@@ -251,21 +306,11 @@ impl ServiceManager {
         // 4. Build and start AI subsystem (AgentRuntime 门面，Task 9 启动顺序)
         #[cfg(not(feature = "harmonyos"))]
         {
-            let heartbeat_task_db = app_state.db.clone();
-
-            // 统一循环心跳默认间隔（HeartbeatConfig::default 同源）；每工作区
-            // 覆盖走统一循环 intervals 共享表。
-            let heartbeat_default_interval = std::time::Duration::from_secs(
-                u64::from(tinyiothub_agent::runtime::heartbeat::types::HeartbeatConfig::default().interval_minutes)
-                    * 60,
-            );
             let event_publisher = Arc::new(
-                tinyiothub_agent::runtime::event::bus::AiEventPublisher::new(app_state.event_bus.clone())
-                    .with_drop_notifier(Arc::new(tinyiothub_agent::runtime::event::bus::LoggingDropNotifier)),
+                crate::domains::agent::event::bus::AiEventPublisher::new(app_state.event_bus.clone())
+                    .with_drop_notifier(Arc::new(crate::domains::agent::event::bus::LoggingDropNotifier)),
             );
 
-            // 遗留文件任务 → DB 一次性迁移必须先于快照装配，否则迁移落库
-            // 的任务不在 restore 预热的内存真源中（start 会跳过）。
             let ws_ids = match app_state.workspace_service.list_all_ids().await {
                 Ok(ids) => ids,
                 Err(e) => {
@@ -273,18 +318,6 @@ impl ServiceManager {
                     Vec::new()
                 }
             };
-            for ws_id in &ws_ids {
-                let workspace_dir = crate::shared::paths::workspace_dir(ws_id);
-                if let Err(e) = crate::domains::agent::host::heartbeat::migrate_file_tasks_to_db(
-                    heartbeat_task_db.as_ref(),
-                    ws_id,
-                    &workspace_dir,
-                )
-                .await
-                {
-                    warn!(%ws_id, "⚠️ Heartbeat task migration failed: {}", e);
-                }
-            }
 
             // ── Task 9 启动顺序（D11-①③，错序即丢事件）──
             // 1. 从 DB 构造 RestoreSnapshot（活跃 heartbeat 配置/任务 +
@@ -299,7 +332,7 @@ impl ServiceManager {
             //    期间及之后的事件不丢。
             // ── Task 14 工具注册点（composition root）──────────────────
             // chat agent 的内建数据工具实现（thing 9 工具 / canvas /
-            // get_skill / dispatch_thing_task）留 cloud（D2），在此显式
+            // get_skill）留 cloud（D2），在此显式
             // 注册进 agent crate 的 ToolRegistry；数据句柄由 provider 闭包
             // 捕获。外部（MCP）工具工厂按需从 MCP_REGISTRY 派生（G3 —
             // 单一事实源，无第二注册静态）。
@@ -307,19 +340,64 @@ impl ServiceManager {
             // E1 Task 10：LiveState 读面迟绑定槽——此处注入 chat/自治两侧工具
             // 上下文，manager 就绪（runtime.thing_agents() 之后）set；未 set 时
             // get_thing_profile 的 live=null。
-            let live_summary_slot = crate::domains::agent::host::tools::thing::LiveSummarySlot::default();
-            let live_summary: Arc<dyn crate::domains::agent::host::tools::thing::LiveSummarySource> =
+            let live_summary_slot = crate::domains::agent::tool::thing::LiveSummarySlot::default();
+            let live_summary: Arc<dyn crate::domains::agent::tool::thing::LiveSummarySource> =
                 Arc::new(live_summary_slot.clone());
             // E2 watch/unwatch：manager 迟绑定槽（与 live_summary_slot 同点 set）。
-            let manager_slot = crate::domains::agent::host::tools::thing::ManagerSlot::default();
-            tool_registry.register_provider(crate::domains::agent::host::tools::chat_builtin_tools_provider(
+            let manager_slot = crate::domains::agent::tool::thing::ManagerSlot::default();
+            let media_store = Arc::new(
+                tinyiothub_runtime::media::evidence::LocalMediaStore::new(
+                    crate::shared::paths::api_data_dir().join("media"),
+                )
+                .await
+                .map_err(|error| Error::IOError(error.to_string()))?,
+            );
+            let evidence = Arc::new(tinyiothub_runtime::media::evidence::EvidenceService::new(
+                media_store,
+                Arc::new(
+                    crate::shared::runtime_ports::DbMediaEvidenceStore::new(app_state.db.as_ref().clone())
+                        .with_recorder(app_state.runtime_recorder.clone()),
+                ),
+            ));
+            app_state.evidence = Some(evidence.clone());
+            // Startup + periodic 7-day media retention. The first pass runs
+            // immediately; the shutdown broadcast ends the loop.
+            {
+                let cleanup = evidence.clone();
+                let shutdown = self.shutdown_tx.subscribe();
+                let handle = tokio::spawn(async move {
+                    cleanup
+                        .cleanup_loop(
+                            // grace: leave freshly orphaned bytes alone for an hour
+                            tokio::time::Duration::from_secs(3600),
+                            // interval: sweep every five minutes
+                            tokio::time::Duration::from_secs(300),
+                            shutdown,
+                        )
+                        .await;
+                    Ok(())
+                });
+                self.service_handles.write().await.push(handle);
+            }
+            // Session 子代理：用 AgentPool 创建一次性子 Agent 执行 spawn_subagent
+            // 请求；与 SessionRunner 共享 Turn 上下文/事件。
+            let subagent_runner: Arc<dyn crate::domains::agent::session::SubagentRunner> = Arc::new(
+                crate::domains::agent::session::chat::subagent::PoolSubagentRunner::new(
+                    app_state.agent_pool.clone(),
+                    app_state.session_runtime.runner.clone(),
+                )
+                .with_system_prompts(app_state.system_prompts.clone()),
+            );
+            app_state.session_runtime.subagents.set(subagent_runner);
+            tool_registry.register_provider(crate::domains::agent::tool::chat_builtin_tools_provider(
                 app_state.db.pool().clone(),
+                app_state.db.clone(),
                 Some(app_state.device_cache.clone()),
                 app_state.pending_actions.clone(),
                 app_state.arbitration.clone(),
                 live_summary.clone(),
                 // E2 ToolExec 接缝默认实现（直通内层工具）。
-                std::sync::Arc::new(tinyiothub_agent::runtime::thing_agent::seams::tool_exec::DefaultToolExec),
+                std::sync::Arc::new(crate::domains::agent::thing_agent::seams::tool_exec::DefaultToolExec),
                 Some(app_state.event_bus.clone()),
                 manager_slot.clone(),
                 // E4a：调用边界校验（声明缺失/未声明操作/参数越界 → 拒绝）。
@@ -337,14 +415,18 @@ impl ServiceManager {
                     .access
                     .clone()
                     .map(|a| a as Arc<dyn tinyiothub_runtime::access::DemandRecorder>),
+                Some(evidence.clone()),
+                Some(task_jobs.clone()),
+                app_state.runtime_recorder.clone(),
+                app_state.session_runtime.clone(),
             ));
             tool_registry.set_external_tool_factory(Arc::new(|| {
-                crate::domains::agent::host::ports::external_tool_registry()
+                crate::domains::agent::session::ports::external_tool_registry()
             }));
 
             // CEO review F11：容量对齐 spec D4 的 4096——256 在中等负载
             // （多 agent 同时 tick + DB 抖动）即可逼入 Lagged→全量重投影循环。
-            let agent_events = Arc::new(tinyiothub_agent::runtime::events::AgentEventBus::new(4096));
+            let agent_events = Arc::new(crate::domains::agent::events::AgentEventBus::new(4096));
             let persist_rx = agent_events.subscribe();
             // 工单订阅者（T5）：与 persist 同一 bus，restore 前取 receiver。
             let ticket_rx = agent_events.subscribe();
@@ -356,29 +438,21 @@ impl ServiceManager {
             let agent_events_supervisor = agent_events.clone();
             let pool = app_state.db.pool().clone();
             let policy_repo = app_state.db.clone();
-            let runtime = Arc::new(tinyiothub_agent::runtime::runtime::AgentRuntime::restore(
+            let runtime = Arc::new(crate::domains::agent::agent_runtime::AgentRuntime::restore(
                 snapshot,
-                tinyiothub_agent::runtime::runtime::RuntimeDeps {
-                    thing_agent_host: Arc::new(
-                        crate::domains::agent::host::thing_agent_host::CloudThingAgentHost::new(
-                            pool.clone(),
-                            app_state.thing_event_bus.clone(),
-                        ),
-                    ),
-                    policy_repo: Arc::new(crate::domains::agent::host::ports::StorageAutonomyPolicyReader::new(
-                        policy_repo.clone(),
-                    )),
+                crate::domains::agent::agent_runtime::RuntimeDeps {
                     agent_provider: Arc::new(
-                        crate::domains::agent::host::autonomous_factory::AutonomousAgentFactory::new(
+                        crate::domains::agent::session::factory::AutonomousAgentFactory::new(
                             pool.clone(),
                             policy_repo,
                             app_state.thing_event_bus.clone(),
                             Arc::new(crate::domains::event::router::ThrottleState::new(60)),
                             app_state.agent_pool.shared_memory(),
                             app_state.agent_pool.observer(),
-                            tinyiothub_agent::pool::minimax_provider_factory(),
+                            tinyiothub_agent::provider::minimax_provider_factory(),
                             tinyiothub_agent::config::AgentRuntimeConfig::default().model,
-                            crate::domains::agent::host::tools::ThingToolContext {
+                            crate::domains::agent::tool::ThingToolContext {
+                                db: Some(app_state.db.clone()),
                                 device_cache: Some(app_state.device_cache.clone()),
                                 data_server: app_state.data_server.clone(),
                                 pending_actions: Some(app_state.pending_actions.clone()),
@@ -398,24 +472,34 @@ impl ServiceManager {
                                     .access
                                     .clone()
                                     .map(|a| a as Arc<dyn tinyiothub_runtime::access::DemandRecorder>),
+                                run_ctx: None,
+                                evidence: Some(evidence.clone()),
+                                jobs: Some(task_jobs.clone()),
+                                runtime_recorder: Some(app_state.runtime_recorder.clone()),
                             },
-                        ),
+                        )
+                        // Resolve capabilities from the same provider port used
+                        // for model calls. Invoking the factory only constructs
+                        // the provider (no network call); failure fails closed
+                        // to an empty capability set.
+                        .with_available_capabilities(crate::domains::agent::tools::resolve_capabilities(
+                            tinyiothub_agent::provider::minimax_provider_factory()()
+                                .map(|provider| provider.supports_vision())
+                                .unwrap_or(false),
+                            Vec::<tinyiothub_skills::registry::Capability>::new(),
+                        )),
                     ),
-                    thing_agent_config: tinyiothub_agent::runtime::thing_agent::ThingAgentManagerConfig {
-                        heartbeat_default_interval,
-                        ..Default::default()
-                    },
                     event_bus: app_state.event_bus.clone(),
-                    drop_notifier: Some(Arc::new(tinyiothub_agent::runtime::event::bus::LoggingDropNotifier)),
+                    drop_notifier: Some(Arc::new(crate::domains::agent::event::bus::LoggingDropNotifier)),
                     agent_events,
-                    ticket_resolutions: Arc::new(crate::domains::agent::host::ports::DbTicketResolutionProvider::new(
-                        app_state.db.clone(),
-                    )),
                 },
             ));
             // 3. 僵尸 reconcile：DB 里 status='running' 但 registry 无主的
             //    run → 'interrupted'。
             crate::bootstrap::reconcile_zombie_runs(&app_state.db, &runtime).await;
+            // Task 14 / Task 9 follow-up: recover in-flight Harness workspace
+            // Runs before the persistence subscriber starts consuming facts.
+            crate::bootstrap::reconcile_harness_runs(&app_state.db).await;
             // 4. 持久化订阅者（restore 前取得的 receiver；shutdown token
             //    编排主循环与心跳重试任务退出）。CEO review T1：改经监管
             //    循环启动——任务 panic/异常退出不再静默，error! + 新 receiver
@@ -428,7 +512,7 @@ impl ServiceManager {
                     let db = app_state.db.clone();
                     let token = persist_shutdown.clone();
                     async move {
-                        crate::domains::agent::host::persist::persist::supervise_persistence_subscriber(
+                        crate::domains::agent::session::persist::persist::supervise_persistence_subscriber(
                             runtime,
                             db,
                             agent_events_supervisor,
@@ -453,7 +537,7 @@ impl ServiceManager {
                 let bus = agent_events_ticket.clone();
                 let token = ticket_shutdown.clone();
                 let handle = tokio::spawn(async move {
-                    crate::domains::agent::host::notify::ticket_subscriber::supervise_ticket_subscriber(
+                    crate::domains::agent::session::notify::ticket_subscriber::supervise_ticket_subscriber(
                         ticket_rx,
                         move || bus.subscribe(),
                         db,
@@ -478,7 +562,7 @@ impl ServiceManager {
                 let bus = agent_events_judgment.clone();
                 let token = judgment_shutdown.clone();
                 let handle = tokio::spawn(async move {
-                    crate::domains::agent::host::judge::judgment_subscriber::supervise_judgment_subscriber(
+                    crate::domains::agent::session::judge::judgment_subscriber::supervise_judgment_subscriber(
                         judgment_rx,
                         move || bus.subscribe(),
                         db,
@@ -495,10 +579,6 @@ impl ServiceManager {
             }
 
             let thing_agent_manager = runtime.thing_agents().clone();
-            // E4b §3.2：turn 开头工作区快照的声明属性读取也计入需求。
-            thing_agent_manager.set_snapshot_demand_sink(Arc::new(
-                crate::shared::access_ports::AccessSnapshotDemandSink(access.clone()),
-            ));
             // E1 Task 10：manager 就绪，LiveState 读面槽封口——此后工具查询
             // 经 watch 命令通道生效（此前 live=null）。
             live_summary_slot.set(thing_agent_manager.clone());
@@ -511,15 +591,6 @@ impl ServiceManager {
             ));
             app_state.workspace_service.set_event_publisher(Arc::new(
                 crate::shared::ai_adapter::WorkspaceAiPublisherAdapter::new(event_publisher.clone()),
-            ));
-            app_state
-                .workspace_service
-                .set_heartbeat_task_db(heartbeat_task_db.clone());
-            // Task 9：runtime 注入 agent hooks —— WorkspaceCreated 种子任务
-            // 在发布事件前同步推入统一循环共享表（D11-⑤：DB 已先写），随后
-            // 的 trigger tick 才能读到任务集。
-            app_state.workspace_service.set_agent_hooks(Arc::new(
-                crate::domains::agent::host::trigger::agent_hooks::AgentHooksImpl::new().with_runtime(runtime.clone()),
             ));
 
             // T15 退役接线：Metrics 所有权自旧 runner 迁出——MemoryService
@@ -548,85 +619,99 @@ impl ServiceManager {
 
             orchestrator.start();
 
-            // T14 用户指令入口：chat 工具 / HTTP 端点经 directive_sink 投递到
-            // 对应工作区的 thing-agent 调度器。
-            app_state.set_directive_sink(thing_agent_manager.clone());
+            // 判断执行指令（judgment execution）已退役：不再向 manager 注入
+            // DirectiveSink；判断批准端点返回 410，由 Assistant 会话承接处置。
             // AI 运行透明化 T5：/agent-runs/{id}/trace 实时分支数据源——与
             // manager 内 PipelineDeps 同一实例（克隆共享 DashMap）。
             app_state.set_active_runs(thing_agent_manager.active_run_registry());
 
-            // 启动补种（2026-09-16）：老工作区（早于 WorkspaceCreated 播种
-            // 功能）heartbeat_tasks 为 0，心跳永不 tick（统一循环 trigger
-            // 空任务抑制）——AI 巡检完全空转。0 任务时补种默认任务：先写
-            // DB，再 reload 统一循环共享表，trigger 随即能读到任务集。
+            // 启动补种：legacy heartbeat tasks 已退役（唤醒步骤由 inspection
+            // 技能承接）；只为已有工作区补齐缺失的 inspection 技能。
             for ws_id in &ws_ids {
-                match app_state.db.list_heartbeat_tasks(ws_id).await {
-                    Ok(tasks) if tasks.is_empty() => {
-                        let defaults: Vec<tinyiothub_core::heartbeat::NewHeartbeatTask> =
-                            crate::domains::agent::host::heartbeat::get_default_tasks()
-                                .into_iter()
-                                .map(|t| tinyiothub_core::heartbeat::NewHeartbeatTask {
-                                    priority: t.priority,
-                                    text: t.text,
-                                    paused: t.paused,
-                                })
-                                .collect();
-                        match app_state.db.replace_heartbeat_tasks(ws_id, &defaults).await {
-                            Ok(()) => match app_state.db.list_heartbeat_tasks(ws_id).await {
-                                Ok(seeded) => {
-                                    runtime.reload_heartbeat_tasks(ws_id, seeded);
-                                    info!(%ws_id, "seeded default heartbeat tasks at boot");
-                                }
-                                Err(e) => {
-                                    tracing::warn!(%ws_id, error = %e, "read back seeded heartbeat tasks failed")
-                                }
-                            },
-                            Err(e) => {
-                                tracing::warn!(%ws_id, error = %e, "seed default heartbeat tasks failed")
-                            }
-                        }
-                    }
-                    Ok(_) => {}
-                    Err(e) => tracing::warn!(%ws_id, error = %e, "list heartbeat tasks failed"),
+                if let Err(error) = crate::domains::agent::session::ensure_inspection_skill(&app_state.db, ws_id).await
+                {
+                    tracing::warn!(%ws_id, %error, "seed inspection skill failed");
                 }
             }
 
-            // Start unified agent loops for existing workspaces（heartbeat
-            // 共享表已由 restore 预热：tasks 非空，trigger 不抑制）。
-            //
-            // E1 Task 8 bootstrap 硬顺序：set_wake_ledger / set_watch_deps /
-            // 限速预热全部先于 start——三者都只影响其后 start 的工作区。
+            // Start the watch engine for existing workspaces（heartbeat 共享表
+            // 已由 restore 预热）。E1 Task 8 bootstrap 硬顺序：set_watch_deps
+            // 先于 start——只影响其后 start 的工作区。
             // E4d：maps/places/position 读面（runtime 经 MapStore 端口，零 db）；
             // 与 DataServer 共用启动时建立的 ZoneService/坐标缓存。
-            thing_agent_manager.set_wake_ledger(hub_ledger.clone());
-            thing_agent_manager.set_watch_deps(tinyiothub_agent::runtime::thing_agent::WatchDeps {
+            thing_agent_manager.set_watch_deps(crate::domains::agent::thing_agent::WatchDeps {
                 cache: Arc::new(crate::shared::runtime_ports::ThingCacheAdapter(
                     app_state.device_cache.clone(),
                 )),
                 ledger: hub_ledger,
-                rules: Arc::new(crate::shared::runtime_ports::WatchRuleStoreAdapter(
-                    (*app_state.db).clone(),
-                )),
+                rules: Arc::new(
+                    crate::shared::runtime_ports::WatchRuleStoreAdapter::new((*app_state.db).clone())
+                        .with_recorder(app_state.runtime_recorder.clone()),
+                ),
                 events: app_state.event_bus.clone(),
                 zones: Some(zone_service),
             });
-            // E1 同键限速预热：DB heartbeat_config JSON 的
-            // rate_limit_per_key_per_min → scheduler 共享表（spec §3 热改
-            // 生效；读失败只记日志，缺省 3/min 兜底）。
+            thing_agent_manager
+                .start_task_runtime(crate::domains::agent::thing_agent::manager::TaskRuntimeDeps {
+                    store: Arc::new(crate::domains::agent::runtime::harness_store::HarnessTaskStore::new(
+                        app_state.db.clone(),
+                    )),
+                    pending_tool_approvals: Some(Arc::new(
+                        crate::domains::agent::thing_agent::approval_port::HarnessPendingToolApproval::new(
+                            app_state.db.clone(),
+                        ),
+                    )),
+                    watches: Arc::new(
+                        crate::shared::runtime_ports::WatchRuleStoreAdapter::new((*app_state.db).clone())
+                            .with_recorder(app_state.runtime_recorder.clone()),
+                    ),
+                    jobs: Some(task_jobs),
+                    harness_task_store: true,
+                    effect_dispatch: Some(effect_dispatch),
+                })
+                .await
+                .map_err(|error| Error::Internal(format!("Task runtime startup failed: {error}")))?;
+            // Plan 2/4A：schedule、报警与 watch 唤醒统一经 TriggerRouter 进入
+            // Session Loop；先建路由并注入 manager，再启动各工作区 watch。
+            let wake_runner = Arc::new(
+                crate::domains::agent::session::WakeRunner::from_runtime(
+                    app_state.db.clone(),
+                    app_state.agent_pool.clone(),
+                    &app_state.session_runtime,
+                )
+                .with_snapshot_provider(Arc::new(LiveWorkspaceSnapshotProvider {
+                    manager: thing_agent_manager.clone(),
+                })),
+            );
+            let trigger_router = Arc::new(crate::domains::agent::session::TriggerRouter::new_with_event_bus(
+                app_state.db.clone(),
+                wake_runner,
+                Some(app_state.event_bus.clone()),
+            ));
+            thing_agent_manager.set_session_router(trigger_router.clone());
+            // Manual suppression API (preflight/wake/reconcile) shares the
+            // same TriggerRouter in-flight slot and WakeRunner. Durable
+            // attempts are allocated before the HTTP 202; execution is async.
+            let suppression_ops: Arc<dyn crate::domains::agent::session::trigger::SuppressionOps> =
+                trigger_router.clone();
+            app_state.suppression_ops = Some(suppression_ops);
+            *self.trigger_router.write().await = Some(trigger_router.clone());
+            let trigger_handle = trigger_router.clone().start();
+            self.service_handles.write().await.push(trigger_handle);
+            // 设备事件（警告级及以上、非 agent 自产）同样经 TriggerRouter
+            // 进入 Session Loop，替代已删除的 ThingEventTrigger。
+            crate::domains::agent::session::trigger::spawn_thing_event_bridge(
+                app_state.thing_event_bus.clone(),
+                trigger_router.clone(),
+                trigger_router.shutdown_token(),
+            );
             for ws_id in &ws_ids {
-                match app_state.db.load_heartbeat_config(ws_id).await {
-                    Ok(Some(cfg)) => {
-                        if let Some(per_min) = cfg.rate_limit_per_key_per_min {
-                            thing_agent_manager.set_wake_rate_limit_per_min(ws_id, per_min);
-                        }
-                    }
-                    Ok(None) => {}
-                    Err(e) => tracing::warn!(%ws_id, error = %e, "load heartbeat config for rate-limit prewarm failed"),
-                }
+                thing_agent_manager.start_workspace_watch(ws_id);
             }
-            for ws_id in &ws_ids {
-                thing_agent_manager.start(ws_id);
-            }
+            // Plan 4A Task 7：TriggerRouter 已同步订阅报警后再关闭 legacy 心跳
+            // 桥的告警派发（顺序保证窗口内不丢告警）。开关已退化为 no-op，
+            // 保留一版以标记 rollout 状态。
+            orchestrator.set_alarm_dispatch(false);
             info!("✅ AI Orchestrator started ({} workspaces)", ws_ids.len());
 
             // Boot race 恢复：AI 接线完成前创建的报警（publisher 未接线时
@@ -755,6 +840,12 @@ impl ServiceManager {
         // 更新状态为关闭中
         *self.status.write().await = ServiceStatus::Stopping;
 
+        // Plan 2：先 cancel schedule trigger router 的 tick 循环，避免
+        // service_handles 排空时等它到 10s 超时。
+        if let Some(router) = self.trigger_router.write().await.take() {
+            router.shutdown();
+        }
+
         // 关闭 Cron 调度器
         if let Some(cron_scheduler) = self.cron_scheduler.write().await.take() {
             cron_scheduler.shutdown();
@@ -876,4 +967,179 @@ pub async fn setup_graceful_shutdown() {
     }
 
     info!("Graceful shutdown signal received");
+}
+
+#[cfg(test)]
+mod tests {
+    use chrono::Utc;
+    use serde_json::json;
+    use tinyiothub_core::agent_task::{AgentTask, TaskStatus, TaskWake, WakeDispatchState};
+    use tinyiothub_core::device_job::{DeviceJob, DeviceJobState};
+
+    use super::ServiceManager;
+
+    async fn seed_task(db: &tinyiothub_storage::Db, task_id: &str, status: TaskStatus) {
+        let now = Utc::now();
+        let task = AgentTask {
+            id: task_id.into(),
+            workspace_id: "ws_1".into(),
+            idempotency_key: format!("key_{task_id}"),
+            objective: "exercise production Task Job composition".into(),
+            session_key: None,
+            created_by: "user-1".into(),
+            status,
+            current_run_id: None,
+            state_version: 0,
+            created_at: now,
+            updated_at: now,
+            ended_at: None,
+        };
+        let wake = TaskWake {
+            task_id: task_id.into(),
+            event_id: format!("seed_{task_id}"),
+            signal_json: json!({"workspace_id":"ws_1"}).to_string(),
+            dispatch_state: WakeDispatchState::Dispatched,
+            created_at: now,
+            dispatched_at: Some(now),
+            resolved_at: Some(now),
+        };
+        // Task 19C3: Tasks and Jobs both live in the workspace generation.
+        db.harness_create_task_with_wake(&task, &wake).await.expect("seed Task");
+    }
+
+    fn job(job_id: &str, task_id: &str) -> DeviceJob {
+        DeviceJob {
+            id: job_id.into(),
+            workspace_id: "ws_1".into(),
+            device_id: "missing_worker".into(),
+            tool: "set_speed".into(),
+            args_json: json!({"speed":2}),
+            state: DeviceJobState::Running,
+            stop_requested_at: None,
+            progress_json: None,
+            result_json: None,
+            task_id: Some(task_id.into()),
+            run_id: Some(format!("run_{task_id}")),
+            tool_call_id: Some(format!("call_{job_id}")),
+            driver_call_id: Some(job_id.into()),
+            timeout_ms: 30_000,
+            started_at: Utc::now(),
+            ended_at: None,
+        }
+    }
+
+    #[tokio::test]
+    async fn production_task_runtime_recovers_stops_and_fails_on_unknown_owned_jobs() {
+        let pool = tinyiothub_storage::test_helpers::test_pool().await;
+        sqlx::query(
+            "INSERT OR IGNORE INTO subscription_plans (id, name, display_name) VALUES ('plan_free','free','Free')",
+        )
+        .execute(&pool)
+        .await
+        .expect("seed plan");
+        sqlx::query("INSERT OR IGNORE INTO tenants (id, name, slug) VALUES ('t1','tenant','t1')")
+            .execute(&pool)
+            .await
+            .expect("seed tenant");
+        sqlx::query("INSERT INTO workspaces (id, name, tenant_id, created_at, updated_at) VALUES ('ws_1', 'workspace', 't1', 'now', 'now')")
+            .execute(&pool)
+            .await
+            .expect("seed workspace");
+        let mut app_state = crate::test_utils::test_app_state_on_pool(pool).await;
+        app_state
+            .db
+            .create_workspace_store("ws_1")
+            .await
+            .expect("workspace harness store");
+        seed_task(&app_state.db, "task_recovery", TaskStatus::Active).await;
+        seed_task(&app_state.db, "task_cancel", TaskStatus::WaitingJob).await;
+        app_state
+            .db
+            .create_workspace_job(&job("job_recovery", "task_recovery"))
+            .await
+            .expect("seed recovery Job");
+
+        let mut services = ServiceManager::new();
+        services
+            .start_all(&mut app_state)
+            .await
+            .expect("start production services");
+
+        let recovered = app_state
+            .db
+            .get_workspace_job("ws_1", "job_recovery")
+            .await
+            .expect("read recovered Job")
+            .expect("recovered Job");
+        assert_eq!(
+            recovered.state,
+            DeviceJobState::Interrupted,
+            "production startup must recover owned Jobs through the real JobService"
+        );
+
+        app_state
+            .db
+            .create_workspace_job(&job("job_cancel", "task_cancel"))
+            .await
+            .expect("seed active cancellation Job");
+        let manager = app_state.thing_agents.clone().expect("production ThingAgentManager");
+        assert!(
+            manager
+                .cancel_task("ws_1", "task_cancel")
+                .await
+                .expect("cancel Task")
+                .accepted
+        );
+        let stopping = app_state
+            .db
+            .get_workspace_job("ws_1", "job_cancel")
+            .await
+            .expect("read stopping Job")
+            .expect("stopping Job");
+        assert!(
+            stopping.stop_requested_at.is_some(),
+            "Task cancellation must issue Job-scoped Stop"
+        );
+        assert_eq!(
+            app_state
+                .db
+                .harness_get_task("ws_1", "task_cancel")
+                .await
+                .expect("read Task")
+                .expect("Task")
+                .status,
+            TaskStatus::Cancelling,
+            "Task must wait for active physical work"
+        );
+
+        app_state
+            .db
+            .finish_workspace_job(
+                "ws_1",
+                "job_cancel",
+                DeviceJobState::CancelledUnknown,
+                &json!({"reason":"driver outcome unknown"}),
+                None,
+            )
+            .await
+            .expect("record unknown physical outcome");
+        assert!(
+            !manager
+                .cancel_task("ws_1", "task_cancel")
+                .await
+                .expect("finish cancellation")
+                .accepted
+        );
+        assert_eq!(
+            app_state
+                .db
+                .harness_get_task("ws_1", "task_cancel")
+                .await
+                .expect("read Task")
+                .expect("Task")
+                .status,
+            TaskStatus::Failed,
+            "cancelled_unknown must fail the owning Task"
+        );
+    }
 }

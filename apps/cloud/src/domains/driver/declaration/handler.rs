@@ -5,10 +5,13 @@
 //! process, so both require an admin role. Every route requires a resolved,
 //! non-empty workspace: the empty string is the built-in namespaced slot.
 
-use axum::extract::{Multipart, Path, State};
+use std::collections::HashSet;
+
+use axum::extract::{Multipart, Path, Query, State};
 use axum::http::StatusCode;
 use axum::routing::{get, post};
 use axum::{Json, Router};
+use serde::Deserialize;
 use serde_json::{Value, json};
 use tinyiothub_core::driver::declaration::AcceptanceReportRecord;
 use tinyiothub_runtime::acceptance::runner::run_profiles;
@@ -23,6 +26,8 @@ pub fn create_router() -> Router<AppState> {
     Router::new()
         .route("/install", post(install_driver))
         .route("/declarations", get(list_declarations))
+        .route("/rematerialize", post(rematerialize))
+        .route("/enforcement", get(get_enforcement).put(set_enforcement))
         .route("/{driver}/declaration", get(get_declaration))
         .route("/{driver}/acceptance", post(run_acceptance))
 }
@@ -248,4 +253,131 @@ async fn run_acceptance(
         tracing::warn!(error = %e, "acceptance report persist failed");
     }
     (StatusCode::OK, Json(json!({"success": true, "report": report})))
+}
+
+#[derive(Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct RematerializeParams {
+    /// `true` = rebind every driver-bound thing; default backfills only the
+    /// things that have no active declaration yet.
+    #[serde(default)]
+    pub all: bool,
+}
+
+/// `POST /v1/drivers/rematerialize` — backfill device declarations for
+/// things created before E4a (or rebind all with `?all=true`). One failure is
+/// reported per thing, never a whole-batch failure: the migration tool must
+/// be resumable.
+async fn rematerialize(
+    State(state): State<AppState>,
+    AuthClaims(claims): AuthClaims,
+    WorkspaceScope(ws): WorkspaceScope,
+    Query(params): Query<RematerializeParams>,
+) -> ApiResult {
+    if let Err(e) = ensure_admin(&state, &claims.user_id).await {
+        return e;
+    }
+    let ws = match scoped_workspace(WorkspaceScope(ws)) {
+        Ok(ws) => ws,
+        Err(e) => return e,
+    };
+    let Some(access) = state.access.clone() else {
+        return access_missing();
+    };
+    let things = match state.db.list_things_with_driver(&ws).await {
+        Ok(rows) => rows,
+        Err(e) => return fail(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()),
+    };
+    let declared: HashSet<String> = match state.db.list_device_declarations(&ws).await {
+        Ok(rows) => rows.into_iter().map(|r| r.thing_id).collect(),
+        Err(e) => return fail(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()),
+    };
+
+    let scanned = things.len();
+    let mut bound = 0usize;
+    let mut skipped = 0usize;
+    let mut failed = Vec::new();
+    for (thing_id, driver) in things {
+        if !params.all && declared.contains(&thing_id) {
+            skipped += 1;
+            continue;
+        }
+        let thing = match access.things.load_thing(&thing_id).await {
+            Ok(Some(thing)) => thing,
+            Ok(None) => {
+                failed.push(json!({"thingId": thing_id, "driver": driver, "error": "thing not found"}));
+                continue;
+            }
+            Err(e) => {
+                failed.push(json!({"thingId": thing_id, "driver": driver, "error": e}));
+                continue;
+            }
+        };
+        match access.bind_thing(&ws, &thing).await {
+            Ok(_) => bound += 1,
+            Err(e) => failed.push(json!({"thingId": thing_id, "driver": driver, "error": e.to_string()})),
+        }
+    }
+
+    (
+        StatusCode::OK,
+        Json(json!({
+            "success": true,
+            "scanned": scanned,
+            "bound": bound,
+            "skipped": skipped,
+            "failed": failed,
+        })),
+    )
+}
+
+async fn get_enforcement(
+    State(state): State<AppState>,
+    AuthClaims(claims): AuthClaims,
+    WorkspaceScope(ws): WorkspaceScope,
+) -> ApiResult {
+    if let Err(e) = ensure_admin(&state, &claims.user_id).await {
+        return e;
+    }
+    let ws = match scoped_workspace(WorkspaceScope(ws)) {
+        Ok(ws) => ws,
+        Err(e) => return e,
+    };
+    let enabled = state
+        .db
+        .get_workspace_declaration_enforcement(&ws)
+        .await
+        .ok()
+        .flatten()
+        .unwrap_or(1)
+        != 0;
+    (StatusCode::OK, Json(json!({"success": true, "enabled": enabled})))
+}
+
+#[derive(Deserialize)]
+pub struct EnforcementBody {
+    pub enabled: bool,
+}
+
+/// `PUT /v1/drivers/enforcement` — migration-window switch. With enforcement
+/// off, things without a declaration are allowed to be invoked; declared
+/// things still reject undeclared tools/invalid params.
+async fn set_enforcement(
+    State(state): State<AppState>,
+    AuthClaims(claims): AuthClaims,
+    WorkspaceScope(ws): WorkspaceScope,
+    Json(body): Json<EnforcementBody>,
+) -> ApiResult {
+    if let Err(e) = ensure_admin(&state, &claims.user_id).await {
+        return e;
+    }
+    let ws = match scoped_workspace(WorkspaceScope(ws)) {
+        Ok(ws) => ws,
+        Err(e) => return e,
+    };
+    match state.db.set_workspace_declaration_enforcement(&ws, body.enabled).await {
+        Ok(0) => fail(StatusCode::NOT_FOUND, format!("workspace '{ws}' not found")),
+        Ok(_) => (StatusCode::OK, Json(json!({"success": true, "enabled": body.enabled}))),
+        Err(e) => fail(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()),
+    }
 }

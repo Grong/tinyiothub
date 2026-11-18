@@ -98,6 +98,7 @@ impl Tool for SlowTool {
             success: true,
             output: "slow tool finished".into(),
             error: None,
+            attachments: vec![],
         })
     }
 }
@@ -124,6 +125,9 @@ fn build_agent() -> AgentLoopHandle {
         workspace_dir: std::env::temp_dir(),
         security_summary: None,
         conversation_memory: false,
+        available_capabilities: vec![],
+        tool_call_ids: None,
+        require_context_budget: false,
         provider_factory: Arc::new(move || Ok(Box::new(scripted.clone()))),
     };
     rig_loop_factory(cfg).expect("build agent")

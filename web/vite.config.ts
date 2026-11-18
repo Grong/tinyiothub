@@ -3,6 +3,8 @@ import { fileURLToPath } from "node:url";
 import { defineConfig } from "vite";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
+const uiPort = Number(process.env.E2E_UI_PORT ?? 5173);
+const fixtureOrigin = `http://localhost:${process.env.E2E_FIXTURE_PORT ?? 3002}`;
 
 export default defineConfig(function () {
   return {
@@ -23,7 +25,7 @@ export default defineConfig(function () {
     },
     server: {
       host: true,
-      port: 5173,
+      port: uiPort,
       strictPort: true,
       hmr: {
         overlay: true,
@@ -33,15 +35,15 @@ export default defineConfig(function () {
       },
       proxy: {
         "/api": {
-          target: "http://localhost:3002",
+          target: fixtureOrigin,
           changeOrigin: true,
         },
         "/v1": {
-          target: "http://localhost:3002",
+          target: fixtureOrigin,
           changeOrigin: true,
         },
         "/uploads": {
-          target: "http://localhost:3002",
+          target: fixtureOrigin,
           changeOrigin: true,
         },
       },

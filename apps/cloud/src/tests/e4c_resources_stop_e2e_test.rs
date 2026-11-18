@@ -23,10 +23,10 @@ use std::time::{Duration, Instant};
 
 use serde_json::{Value, json};
 
+use crate::domains::agent::thing_agent::arbitration::DEVICE_RESOURCE;
+use crate::domains::agent::thing_agent::seams::composite::CompositeDef;
+use crate::domains::agent::thing_agent::{ArbitrationRegistry, DEFAULT_LEASE_TTL, ResourceMode, ResourceSpec};
 use tinyiothub_agent::port::tool::Tool;
-use tinyiothub_agent::runtime::thing_agent::arbitration::DEVICE_RESOURCE;
-use tinyiothub_agent::runtime::thing_agent::seams::composite::CompositeDef;
-use tinyiothub_agent::runtime::thing_agent::{ArbitrationRegistry, DEFAULT_LEASE_TTL, ResourceMode, ResourceSpec};
 use tinyiothub_core::driver::{CancelToken, DriverMode, ResultValue, RetryConfig, ThingDriver};
 use tinyiothub_core::error::Error;
 use tinyiothub_core::models::event::{Event, EventType, ThingEventType};
@@ -44,9 +44,9 @@ use tinyiothub_runtime::ports::HubLedger;
 use tinyiothub_skills::trust::ToolSafety;
 use tinyiothub_storage::cache::ThingCache;
 
-use crate::domains::agent::host::composite::CompositeExecutor;
-use crate::domains::agent::host::tools::thing::PendingActionStore;
-use crate::domains::agent::host::tools::{ThingToolContext, create_thing_tools};
+use crate::domains::agent::tool::composite::CompositeExecutor;
+use crate::domains::agent::tool::thing::PendingActionStore;
+use crate::domains::agent::tool::{ThingToolContext, create_thing_tools};
 use crate::shared::access_ports::{DbAcceptanceStore, DbDeviceStore, DbDriverStore, DbProjectionStore, DbThingSource};
 use crate::shared::runtime_ports::ThingCacheAdapter;
 use crate::test_utils::seed_test_workspace;
@@ -171,6 +171,7 @@ fn thing_tools(
         pool.clone(),
         WS,
         &ThingToolContext {
+            db: None,
             device_cache: None,
             data_server,
             pending_actions: Some(Arc::new(PendingActionStore::new())),
@@ -181,6 +182,10 @@ fn thing_tools(
             access: access.as_ref().map(|a| a.clone() as Arc<dyn AccessCallValidator>),
             demand: None,
             resources: access.map(|a| a as Arc<dyn ResourceResolver>),
+            run_ctx: None,
+            evidence: None,
+            jobs: None,
+            runtime_recorder: None,
         },
     )
 }

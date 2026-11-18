@@ -35,12 +35,15 @@ async fn list_brain_events(
     let tab = match params.tab.as_deref().unwrap_or("needs_you") {
         "needs_you" => BrainEventTab::NeedsYou,
         "all" => BrainEventTab::All,
-        "patrol" => BrainEventTab::Patrol,
+        // 一版兼容：旧巡检/指令 tab 现在读 Session 事件。
+        "patrol" | "directive" | "session" => BrainEventTab::Session,
         "alarm" => BrainEventTab::Alarm,
-        "directive" => BrainEventTab::Directive,
         // fail-closed：未知 tab 响亮 400，不静默返回全量（judgment 域先例）
         _ => {
-            return ApiResponseBuilder::error_with_code(400, "未知 tab（可选：needs_you/all/patrol/alarm/directive）");
+            return ApiResponseBuilder::error_with_code(
+                400,
+                "未知 tab（可选：needs_you/all/session/alarm；一版兼容：patrol/directive）",
+            );
         }
     };
     let limit = params.limit.unwrap_or(20).clamp(1, 100);

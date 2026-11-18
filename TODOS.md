@@ -44,10 +44,10 @@
 - **Context:** `docs/superpowers/plans/2026-10-23-e4e-migration-plan.md` §1.2/§3；`drivers/README.md`。
 - **Effort:** XL（按协议拆分） | **Depends on:** 实际设备/协议栈需求
 
-### P2 — 存量物声明回填与直连调用收口
-- **What:** (1) 场景包/MCP 模板建物走 `describe`/物化；(2) UI 直连 `POST /things/{id}/actions/{name}/invoke` 接入 AccessService 声明校验；(3) pre-E4a 存量物声明回填/开关。
+### ~~P2 — 存量物声明回填与直连调用收口~~（2026-10-24 已交付）
+- **What:** ~~(1) 场景包/MCP 模板建物走 `describe`/物化；(2) UI 直连 `POST /things/{id}/actions/{name}/invoke` 接入 AccessService 声明校验；(3) pre-E4a 存量物声明回填/开关。~~ → 已交付：UI invoke 接入 `AccessService::validate`；MCP 模板与场景包驱动节点走 materialize（固定能力驱动跳过模板能力拷贝；场景包提交后 best-effort，失败进 warnings）；`POST /v1/drivers/rematerialize` 回填、`GET/PUT /v1/drivers/enforcement` 迁移期开关（`workspaces.declaration_enforcement`，默认 1）。无声明物的资源 claim 回落合成 `__device__`。
 - **Why:** E4a 只覆盖 REST 建物与 agent 工具；旁路仍可绕过声明/校验或产生无声明物。
-- **Context:** E4a 执行记录开放项；E4e 迁移计划 §5。
+- **Context:** E4a 执行记录开放项；E4e 迁移计划 §5；实现见 `docs/superpowers/plans/2026-10-24-e4-p2-declaration-closeout.md`。
 - **Effort:** M | **Depends on:** E4 合入
 
 ### P3 — E4d 空间模型收尾
@@ -55,6 +55,37 @@
 - **Why:** E4d 数据/API/zone 权威已交付，渲染与性能/边角校验留有结转。
 - **Context:** E4d spec/执行记录；E3 World TODO (4)。
 - **Effort:** L (UI) + M (backend) | **Depends on:** E4 合入
+
+## Multi-device Agent Runtime — Deferred (from /plan-design-review 2026-10-27)
+
+### P3 — Runtime 主字体的有意图选型
+- **What:** 评估并引入自托管的 UI 主字体候选（如 IBM Plex Sans），保留合适的中文系统回退；验证正文、设备数值、中英文混排与双主题，而非只做全局字体替换。
+- **Why:** 首版沿用系统字体保证交付范围，但默认字体的通用感仍是已接受的视觉缺口。
+- **Pros:** Runtime 能形成更明确的排版声音，同时改善长时间监控中的数字与正文辨识度。
+- **Cons:** 增加字体资产、加载策略、授权与中英文布局回归；收益需要真实页面验证。
+- **Context:** `docs/superpowers/specs/2026-10-26-multi-device-agent-runtime-design.md` §11.3；设计评审 D13/D24 选择本期保留系统栈并记录后续探索。
+- **Depends on / blocked by:** Runtime Workbench 首版落地；真实中英文内容与双主题走查。
+- **Effort:** M (human: ~2d / CC: ~2h，含验证)
+
+### P2 — 含语音视频证据的 WebVTT captions
+- **What:** 为确有语音的证据提供可选 WebVTT 轨及播放器加载/失败状态；字幕来源、语言与有效期必须可读，不假装自动转录。
+- **Why:** 首版只有画面和原声时，听障用户无法获得语音中的等价证据内容。
+- **Pros:** 含语音证据获得等价文本访问，字幕状态也可键盘与读屏理解。
+- **Cons:** 需要字幕来源工作流、媒体元数据与访问控制扩展，以及真实浏览器播放测试。
+- **Context:** 同 spec §5.4/§7.8；设计评审 D22/D25 选择首版显示 `Captions unavailable` 并持久跟踪缺口，不新增固定媒体配额。
+- **Depends on / blocked by:** Runtime 视频播放首版落地；实际含语音证据与可信字幕来源。
+- **Effort:** M (human: ~2d / CC: ~2h，不含字幕内容生产)
+
+## Harness Core — Deferred (from /plan-ceo-review 2026-11-03)
+
+### P3 — Workflow 配置版本 diff、导出/导入与回滚
+- **What:** 为 WorkflowDefinition 提供 canonical JSON diff、脱敏导出、同 workspace 导入（默认 disabled）和从历史内容创建新版本的回滚；只影响未来调度。
+- **Why:** 配置演进需要可审查、可分享和可恢复手段；当前 enabled/version 只能固定 active Run，缺少完整配置生命周期。
+- **Pros:** 导入重新校验且不会自动调度，回滚不改写历史、不取消在途 Task/Effect，复用统一 schema 和版本固定契约。
+- **Cons:** 需要维护 canonical diff、敏感字段处理与失效引用校验；本期不支持跨 workspace 分享，避免设备选择与策略被错误复用。
+- **Context:** 用户 XD6=B 在 Harness Core CEO 评审选择延期。设计见 `docs/superpowers/specs/2026-11-02-agent-harness-core-design.md` X5；先让统一 schema 和持续 Workflow 垂直切片稳定，避免过早固化导入导出格式。
+- **Depends on / blocked by:** Harness T1 持续 Workflow 与 T5 原子事务合同落地，配置 schema 与脱敏策略稳定。
+- **Effort:** M (human: ~2d / CC: ~2h)
 
 ## Thing Rename Follow-ups — Deferred (PR-3, from /superpowers plan 2026-08-31)
 
@@ -808,3 +839,66 @@ Source: `/plan-eng-review` on `main` (2026-06-15)
 - **What:** ①`updatePropertyDef` 签名放宽 `expression: string | null` 并移除调用侧 cast（things-detail.ts:287）；②解绑弹窗 expando 状态改正式 state（T5 M-4）；③extra 属性缺 name 时跳过+告警（scene_instantiator parse_extra_properties，当前静默落空串）；④显式 driver 的 driver_options IS NULL 断言锁（scene_instantiate_test）。
 - **Why:** 各任务评审 Minor 分诊可延期；②④为测试/状态健壮性收紧。
 - **Effort:** S | **Depends on:** —
+
+## AI 视觉证据与视频 — Deferred (from /autoplan 2026-11-13)
+
+### P3 — 多帧与预报警画面评估
+- **What:** 仅当单帧试点的无法确认比例、重复失败或误排除风险触发阈值时，评估多帧、短时预报警缓冲及相应保留策略。
+- **Why:** 首版已批准单帧；提前建设会增加媒体存储、隐私与模型成本，且没有真实样本证明必要。
+- **Pros:** 以实测决定演进，数据契约已保留序列元数据。
+- **Cons:** 需要新标注样本、存储/带宽预算和重新评审安全边界。
+- **Context:** 从 `docs/designs/video-perception-streaming.md` 的 The Assignment、三组对照和停止信号开始；不要把单帧试点误称为通用安全证明。
+- **Depends on / blocked by:** 单帧真实摄像头试点与人工复核结果。
+
+### P3 — 自动摄像头发现
+- **What:** 在受控网络内评估 ONVIF/GB28181 自动发现、去重和显式确认入库。
+- **Why:** 当前创建流程要求用户选择模板并填写参数；自动发现不是 AI 证据或实时播放闭环的阻塞项。
+- **Pros:** 降低大规模接入配置成本。
+- **Cons:** 增加网络扫描、重复设备、凭证和跨网段安全风险。
+- **Context:** 复用真实驱动、创建 intent 和出站允许清单；不得绕过现有模板向导直接创建设备。
+- **Depends on / blocked by:** 视频创建链路稳定及真实部署规模证据。
+
+### P3 — 显式观察绑定（条件性备选）
+- **What:** 只有共享位置标签在试点中被证明误关联或维护成本不可接受时，才另议显式 subject↔camera 绑定。
+- **Why:** 用户当前明确选择标签发现且不新增持久化观察绑定表；本项不是默认方向。
+- **Pros:** 可能提高复杂现场的拓扑精度。
+- **Cons:** 引入第二套关系真相、迁移和权限维护成本。
+- **Context:** 先分析误关联、标签漂移和运营成本；任何提案必须保留多摄像头、证据出处与失败安全语义。
+- **Depends on / blocked by:** 标签方案试点失败证据与新的用户设计决策。
+
+### P3 — HLS 备用播放开放
+- **What:** 在固定 ZLMediaKit 版本上验证清单、分片、密钥全部子请求的短期授权后，才考虑开放 HLS。
+- **Why:** 首版允许 WebRTC-only；未经验证的 HLS 子资源鉴权会形成旁路。
+- **Pros:** 可增加浏览器兼容与分发选择。
+- **Cons:** 增加凭证传播、缓存、日志和回收复杂度。
+- **Context:** 从播放 lease、on_play/on_publish Hook、Referrer-Policy 和负向浏览器测试开始；鉴权不全时继续隐藏入口。
+- **Depends on / blocked by:** 选定媒体版本的真实浏览器鉴权证据。
+
+## Assistant 无变化抑制 — Deferred (from /autoplan 2026-11-13)
+
+### P3 — Phase 2 增量输入与覆盖回收协议
+- **What:** 仅在 Phase 0/1 数据证明需要后，独立设计增量 Source 输入、analyzedWork、requiredAcks、覆盖确认与物理 tombstone 释放。
+- **Why:** 首版薄 skip 门已保留完整 Turn 输入语义；提前加入增量覆盖与回收会把两类正确性风险耦合。
+- **Pros:** 可能进一步降低输入 token 与保留成本。
+- **Cons:** 需要新的跨存储恢复、容量与语义覆盖证明，复杂度高。
+- **Context:** 从 `docs/designs/assistant-turn-state-diff.md` 的 Delivery Decision 和 Deferred 开始；必须先取得 shadow 收益、Source veto、错误 skip 和最大工作量数据。
+- **Effort:** L（human）/ M（CC+gstack） | **Priority:** P3
+- **Depends on / blocked by:** Phase 0/1 shadow 与 canary 实测达标及独立设计批准。
+
+### P3 — Source revision 事件驱动即时唤醒
+- **What:** 评估 Source revision 变化直接触发唤醒，定时调度只作为对账兜底。
+- **Why:** 可能同时降低模型成本与五分钟异常延迟。
+- **Pros:** 比单纯降低轮询成本更接近及时行动的目标。
+- **Cons:** 需要事件去重、风暴背压、唤醒语义与调度恢复的新验证。
+- **Context:** 复用 Phase 0/1 的 Source revision 契约；首版只保留扩展点，不实现。
+- **Effort:** M（human）/ S（CC+gstack） | **Priority:** P3
+- **Depends on / blocked by:** 薄 skip 门稳定及延迟/成本收益评估。
+
+### P3 — 连续无变化时动态延长调度间隔
+- **What:** 根据连续 skip 与 Source veto 指标评估动态延长 scheduled 间隔。
+- **Why:** 可能进一步减少唤醒与审计开销，但与首版 skip 同时上线会混淆调度行为。
+- **Pros:** 降低长期空闲工作区的轮询成本。
+- **Cons:** 增加异常发现延迟与调度恢复复杂度。
+- **Context:** 先观察连续 skip 长度、reconciliation 和外部事件唤醒覆盖率，再决定是否独立设计。
+- **Effort:** M（human）/ S（CC+gstack） | **Priority:** P3
+- **Depends on / blocked by:** Phase 1 上线指标与独立批准。

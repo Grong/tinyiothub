@@ -311,16 +311,25 @@ pub(crate) async fn save_trust_config_fenced(
     Ok(result.rows_affected() > 0)
 }
 
+pub(crate) async fn load_heartbeat_config_json(
+    pool: &SqlitePool,
+    workspace_id: &str,
+) -> Result<Option<String>, RepoError> {
+    sqlx::query_scalar("SELECT heartbeat_config FROM workspaces WHERE id = ?")
+        .bind(workspace_id)
+        .fetch_optional(pool)
+        .await
+        .map_err(|e| RepoError::Database(e.to_string()))
+}
+
 pub(crate) async fn load_heartbeat_config(
     pool: &SqlitePool,
     workspace_id: &str,
 ) -> Result<Option<crate::heartbeat::WorkspaceHeartbeatConfig>, RepoError> {
-    let row: Option<(String,)> = sqlx::query_as("SELECT heartbeat_config FROM workspaces WHERE id = ?")
-        .bind(workspace_id)
-        .fetch_optional(pool)
-        .await
-        .map_err(|e| RepoError::Database(e.to_string()))?;
-    Ok(row.and_then(|(json,)| crate::heartbeat::WorkspaceHeartbeatConfig::from_db_json(Some(&json))))
+    let json = load_heartbeat_config_json(pool, workspace_id).await?;
+    Ok(crate::heartbeat::WorkspaceHeartbeatConfig::from_db_json(
+        json.as_deref(),
+    ))
 }
 
 pub(crate) async fn save_heartbeat_config(
@@ -328,8 +337,9 @@ pub(crate) async fn save_heartbeat_config(
     workspace_id: &str,
     config: &crate::heartbeat::WorkspaceHeartbeatConfig,
 ) -> Result<(), RepoError> {
+    let merged = serde_json::to_value(config).map_err(|e| RepoError::Serialization(e.to_string()))?;
     sqlx::query("UPDATE workspaces SET heartbeat_config = ? WHERE id = ?")
-        .bind(config.to_db_json())
+        .bind(merged.to_string())
         .bind(workspace_id)
         .execute(pool)
         .await
@@ -590,6 +600,11 @@ impl Db {
         load_heartbeat_config(self.pool(), workspace_id).await
     }
 
+    /// 读取原始心跳 JSON，供运行时功能开关使用。
+    pub async fn load_heartbeat_config_json(&self, workspace_id: &str) -> Result<Option<String>, RepoError> {
+        load_heartbeat_config_json(self.pool(), workspace_id).await
+    }
+
     /// 写入工作区心跳开关/间隔配置。
     pub async fn save_heartbeat_config(
         &self,
@@ -839,8 +854,8 @@ mod tests {
             .await
             .expect("insert_result must succeed against the real schema");
 
-        // Same query as the legacy fallback branch of get_logs
-        // (workspace_heartbeat.rs legacy_logs_from_agent_actions, Task 10)
+        // Same query the retired legacy get_logs fallback used
+        // (removed in Plan 4B Batch 2 with AutonomyMode/heartbeat retirement).
         let rows: Vec<(String, String, String)> = sqlx::query_as(
             "SELECT action_type, content, created_at FROM agent_actions \
              WHERE workspace_id = ? AND event_type = 'heartbeat' \
@@ -933,6 +948,7 @@ mod tests {
             name: "read_property".into(),
             args: serde_json::json!({"thingId": "dev_1", "p": "temperature"}),
             output: Some("26.5".into()),
+            evidence: vec![],
         }];
         db.insert_heartbeat_result("ws_1", &result)
             .await

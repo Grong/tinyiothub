@@ -1,10 +1,18 @@
 //! brain_events 投影查询（AI 大脑 P0 Task 2）：feed/summary/detail 全部读
-//! Task 1 的 brain_events 只读视图（judgments ∪ agent_actions ∪ agent_runs）。
+//! Task 1 的 brain_events 只读视图。
+//!
+//! Legacy cleanup (Batch 4) narrowed the feed to two live sources:
+//! - `judgments` (view rows with `source = 'alarm'`)
+//! - `session` (recent Harness events read from the workspace store and merged
+//!   in [`Db::list_brain_events`])
+//!
+//! `agent_actions` / `agent_runs` view branches are no longer surfaced by list
+//! queries. The view itself stays in place for one version so legacy
+//! `source:id` detail lookups (`patrol:`, `directive:`, `tick:`) keep working.
 //!
 //! 语义移植自 judgment::list_judgments_feed（48h 窗 / 折叠 / 置顶 / 元组游标），
 //! 差异点：
-//! - 折叠仅 alarm 源生效（thing+rule join thing_alarms via alarm_id）；
-//!   patrol/directive 按 id 各自成组不折叠
+//! - 折叠仅 alarm 源生效（thing+rule join thing_alarms via alarm_id）
 //! - 「需要你」口径含工单认领态：awaiting_approval，或 escalated 且
 //!   （无工单 / 工单仍 open）；已被认领（claimed 及以后）不算
 //! - list 不载 evidence_json（性能评审裁决）；证据由 detail 单独取
@@ -13,9 +21,12 @@ use serde::{Deserialize, Serialize};
 use sqlx::{Row, SqlitePool};
 
 use crate::database::Db;
-use crate::error::Result;
+use crate::error::{DbError, Result};
 
-/// feed 页签：需要你 / 全部 / 巡检 / 报警 / 指令。
+/// feed 页签：需要你 / 全部 / 会话 / 报警。
+///
+/// `Patrol` / `Directive` remain as one-version aliases for `Session`; they no
+/// longer read their old `agent_actions` / `agent_runs` sources.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum BrainEventTab {
@@ -24,6 +35,17 @@ pub enum BrainEventTab {
     Patrol,
     Alarm,
     Directive,
+    Session,
+}
+
+impl BrainEventTab {
+    /// Whether this tab merges recent session (Harness) events.
+    pub fn includes_session(self) -> bool {
+        matches!(
+            self,
+            BrainEventTab::All | BrainEventTab::Patrol | BrainEventTab::Directive | BrainEventTab::Session
+        )
+    }
 }
 
 /// 列表行（20 列；无 evidence_json/action_params——列表不载证据与动作参数）。
@@ -49,6 +71,37 @@ pub struct BrainEvent {
     pub judged_at: Option<String>,
     pub state_entered_at: Option<String>,
     pub resolved_at: Option<String>,
+}
+
+impl BrainEvent {
+    /// Project one Harness/Session event into the brain feed row shape.
+    ///
+    /// Session events are informational: they carry no verdict, alarm, ticket or
+    /// judgment timestamps, and always use `status = "info"`.
+    pub fn from_session(workspace_id: &str, event: tinyiothub_core::harness::HarnessEvent) -> Self {
+        Self {
+            id: format!("session:{}", event.event_id),
+            workspace_id: workspace_id.to_string(),
+            source: "session".to_string(),
+            alarm_id: None,
+            thing_id: None,
+            title: event.event_type.clone(),
+            verdict: None,
+            reason: String::new(),
+            suggested_action: None,
+            action_category: None,
+            risk: None,
+            run_id: event.run_id.clone(),
+            tick_id: None,
+            ticket_id: None,
+            status: "info".to_string(),
+            triage_mode: String::new(),
+            created_at: event.occurred_at.to_rfc3339(),
+            judged_at: None,
+            state_entered_at: None,
+            resolved_at: None,
+        }
+    }
 }
 
 /// 详情 = 列表行 + 完整证据 + 工具调用轨迹 + judgment 叙述。
@@ -91,13 +144,14 @@ const NEEDS_YOU_COND: &str = "(status = 'awaiting_approval' OR (status = 'escala
 fn tab_filter(tab: BrainEventTab) -> &'static str {
     match tab {
         BrainEventTab::NeedsYou => {
-            " AND (status = 'awaiting_approval' OR (status = 'escalated' AND \
+            " AND source = 'alarm' AND (status = 'awaiting_approval' OR (status = 'escalated' AND \
             (ticket_id IS NULL OR (SELECT t.state FROM tickets t WHERE t.id = brain_events.ticket_id) = 'open')))"
         }
-        BrainEventTab::All => "",
-        BrainEventTab::Patrol => " AND source IN ('patrol','patrol_tick')",
-        BrainEventTab::Alarm => " AND source = 'alarm'",
-        BrainEventTab::Directive => " AND source = 'directive'",
+        // Judgments are the only live legacy source.
+        BrainEventTab::All | BrainEventTab::Alarm => " AND source = 'alarm'",
+        // Legacy patrol/directive tabs are aliases for session events; their
+        // old agent_actions/agent_runs rows are no longer listed.
+        BrainEventTab::Patrol | BrainEventTab::Directive | BrainEventTab::Session => " AND 1 = 0",
     }
 }
 
@@ -127,18 +181,25 @@ fn row_to_brain_event(row: sqlx::sqlite::SqliteRow) -> Result<BrainEvent> {
 }
 
 /// feed 页查询：workspace 隔离 + tab 筛选 + 48h 窗口（RFC3339 字符串比较；needs_you tab 除外）。
-/// - 首页（before=None）：alarm 源同 thing+rule 折叠最新（window function）+ 需要你置顶
+/// - 首页（before=None）：alarm 源同 thing+rule 折叠最新（window function）
+/// - 非合并 tab（needs_you/alarm）：需要你置顶（X6：escalated 先于
+///   awaiting_approval）
+/// - 合并 tab（all/session/legacy patrol/directive）：严格按 `(created_at, id)`
+///   倒序，与 [`Db::list_brain_events`] 的 session 合并顺序一致——否则分页
+///   游标会跨过被置顶挤出首页的行
 /// - 后续页（before=Some）：纯时间流（折叠/置顶不参与，同 judgment feed 语义）
-/// - 游标：(created_at, id) 元组比较，同秒多行不丢
+/// - 游标：(created_at, id) 元组由 [`Db::list_brain_events`] 在 workspace 作用域
+///   内解析后传入，同秒多行不丢；session 游标同样适用
 pub(crate) async fn list_brain_events(
     pool: &SqlitePool,
     workspace_id: &str,
     tab: BrainEventTab,
-    before: Option<&str>, // 游标：上一页最后一条 brain event id
+    before: Option<(&str, &str)>, // 游标：(created_at, id)，由调用方按 workspace 解析
     limit: i64,
 ) -> Result<Vec<BrainEvent>> {
     let since = (chrono::Utc::now() - chrono::Duration::hours(48)).to_rfc3339();
     let filter = tab_filter(tab);
+    let merged = tab.includes_session();
     // needs_you 无时间窗——陈旧未认领恰恰最该被看见；其余 tab 保持 48h 窗防膨胀。
     let window = if tab == BrainEventTab::NeedsYou {
         ""
@@ -148,8 +209,13 @@ pub(crate) async fn list_brain_events(
 
     let sql = if before.is_none() {
         // 折叠：仅 alarm 源按 thing+rule 分组取最新；非 alarm 行按 id 各自成组（rn 恒 1）。
-        // 置顶：需要你（pin=0）在前；需要你内部 escalated（要人动手）排在
-        // awaiting_approval（等点头）前（X6，v3 既定排序）；其余按 created_at DESC, id DESC。
+        // 非合并 tab 保留置顶顺序（需要你 pin=0 在前，escalated 再先于
+        // awaiting_approval）；合并 tab 必须与 merge 顺序一致，只按时间倒序。
+        let order = if merged {
+            "created_at DESC, id DESC"
+        } else {
+            "pin, CASE WHEN pin = 0 AND status = 'escalated' THEN 0 ELSE 1 END, created_at DESC, id DESC"
+        };
         format!(
             "SELECT * FROM (
                SELECT {LIST_COLS},
@@ -164,20 +230,18 @@ pub(crate) async fn list_brain_events(
                FROM brain_events
                WHERE workspace_id = ?{window}{filter}
              ) WHERE rn = 1
-             ORDER BY pin,
-               CASE WHEN pin = 0 AND status = 'escalated' THEN 0 ELSE 1 END,
-               created_at DESC, id DESC
+             ORDER BY {order}
              LIMIT ?"
         )
     } else {
         // 后续页：纯时间流（不折叠不置顶）。元组游标：同秒行按 id 续翻。
-        // 游标子查询加 workspace 过滤(2026-10-16 ship 评审):他 workspace 的
-        // id 作游标时子查询不再回行——存在性/时间戳弱 oracle 堵死。
+        // 游标时间戳由调用方在 workspace 作用域内解析（session 游标来自
+        // workspace store，legacy 游标来自本视图）——他 workspace 的 id 解析
+        // 不到时间戳，调用方直接返回空页。
         format!(
             "SELECT {LIST_COLS} FROM brain_events
              WHERE workspace_id = ?{window}{filter}
-               AND (created_at < (SELECT created_at FROM brain_events WHERE id = ? AND workspace_id = ?)
-                    OR (created_at = (SELECT created_at FROM brain_events WHERE id = ? AND workspace_id = ?) AND id < ?))
+               AND (created_at < ? OR (created_at = ? AND id < ?))
              ORDER BY created_at DESC, id DESC
              LIMIT ?"
         )
@@ -187,10 +251,8 @@ pub(crate) async fn list_brain_events(
     if tab != BrainEventTab::NeedsYou {
         q = q.bind(since);
     }
-    if let Some(b) = before {
-        // 游标子查询绑定序:子查询1(id, ws)、子查询2(id, ws)、元组 id——
-        // 与 SQL 文本中 ? 的出现顺序一致。
-        q = q.bind(b).bind(workspace_id).bind(b).bind(workspace_id).bind(b);
+    if let Some((cursor_created_at, cursor_id)) = before {
+        q = q.bind(cursor_created_at).bind(cursor_created_at).bind(cursor_id);
     }
     let rows = q.bind(limit).fetch_all(pool).await?;
     rows.into_iter().map(row_to_brain_event).collect()
@@ -279,7 +341,7 @@ pub(crate) async fn brain_events_summary(pool: &SqlitePool, workspace_id: &str) 
                      AND status IN ('resolved','self_closed','dismissed','investigation_failed','budget_skipped')
                     THEN 1 ELSE 0 END) AS digested_today,
            SUM(CASE WHEN {NEEDS_YOU_COND} THEN 1 ELSE 0 END) AS needs_you
-         FROM brain_events WHERE workspace_id = ?"
+         FROM brain_events WHERE workspace_id = ? AND source = 'alarm'"
     )))
     .bind(workspace_id)
     .fetch_one(pool)
@@ -326,6 +388,16 @@ pub(crate) async fn brain_events_summary(pool: &SqlitePool, workspace_id: &str) 
 // ── Db 门面 ──
 
 impl Db {
+    /// List the feed. Legacy judgment rows are read from the `brain_events`
+    /// view first (source-narrowed to `alarm`); when the tab opts in, recent
+    /// Harness/Session events are merged, sorted deterministically by
+    /// `(created_at, id)` descending and sliced to `limit`.
+    ///
+    /// The invariant that makes per-source `limit` fetches lossless is that
+    /// both sources use the *same* `(created_at, id)` descending order; there
+    /// is no pin/priority reordering on a merged tab. A page cursor is the
+    /// same tuple, so each source's next page continues exactly where the
+    /// merged page ended.
     pub async fn list_brain_events(
         &self,
         workspace_id: &str,
@@ -333,10 +405,93 @@ impl Db {
         before: Option<&str>,
         limit: i64,
     ) -> Result<Vec<BrainEvent>> {
-        list_brain_events(self.pool(), workspace_id, tab, before, limit).await
+        let limit = limit.max(1);
+        // Resolve the cursor inside this workspace. Unknown/foreign cursors
+        // yield an empty page (the old SQL sub-query returned NULL).
+        let cursor = match before {
+            Some(cursor) => match self.brain_event_cursor_created_at(workspace_id, cursor).await? {
+                Some(created_at) => Some((created_at, cursor)),
+                None => return Ok(Vec::new()),
+            },
+            None => None,
+        };
+        let before_pair = cursor.as_ref().map(|(created_at, id)| (created_at.as_str(), *id));
+        let mut events = list_brain_events(self.pool(), workspace_id, tab, before_pair, limit).await?;
+        if !tab.includes_session() {
+            return Ok(events);
+        }
+
+        // A workspace without a registered harness store simply has no session
+        // events; keep the judgment feed readable in that case. With a cursor,
+        // paginate the session source by the same tuple so a limit page is
+        // filled even when many newer session rows exist.
+        let session_page = match &cursor {
+            Some((cursor_created_at, cursor_id)) => {
+                self.recent_session_events_before(workspace_id, cursor_created_at, cursor_id, limit)
+                    .await
+            }
+            None => self.recent_session_events(workspace_id, limit).await,
+        };
+        let session_events = match session_page {
+            Ok(events) => events,
+            Err(DbError::NotFound { .. }) => Vec::new(),
+            Err(error) => return Err(error),
+        };
+
+        let mut session_events: Vec<BrainEvent> = session_events
+            .into_iter()
+            .map(|event| BrainEvent::from_session(workspace_id, event))
+            .collect();
+
+        if let Some((cursor_created_at, cursor_id)) = &cursor {
+            session_events.retain(|event| {
+                event.created_at < *cursor_created_at
+                    || (event.created_at == *cursor_created_at && event.id.as_str() < *cursor_id)
+            });
+        }
+
+        events.extend(session_events);
+        events.sort_by(|a, b| b.created_at.cmp(&a.created_at).then_with(|| b.id.cmp(&a.id)));
+        events.truncate(limit as usize);
+        Ok(events)
+    }
+
+    /// Resolve the `(created_at, id)` cursor timestamp for either a legacy
+    /// `source:id` view row or a `session:<event_id>` Harness event.
+    async fn brain_event_cursor_created_at(&self, workspace_id: &str, cursor: &str) -> Result<Option<String>> {
+        if let Some(event_id) = cursor.strip_prefix("session:") {
+            return Ok(self
+                .session_event_by_id(workspace_id, event_id)
+                .await?
+                .map(|event| event.occurred_at.to_rfc3339()));
+        }
+        // Legacy view ids keep their `source:id` shape (alarm:, patrol:,
+        // directive:, tick:).
+        Ok(
+            sqlx::query_scalar("SELECT created_at FROM brain_events WHERE id = ? AND workspace_id = ?")
+                .bind(cursor)
+                .bind(workspace_id)
+                .fetch_optional(self.pool())
+                .await?,
+        )
     }
 
     pub async fn brain_event_detail(&self, workspace_id: &str, id: &str) -> Result<Option<BrainEventDetail>> {
+        // Session rows are not in the platform view; project them directly.
+        if let Some(event_id) = id.strip_prefix("session:") {
+            let Some(event) = self.session_event_by_id(workspace_id, event_id).await? else {
+                return Ok(None);
+            };
+            let evidence_json = serde_json::to_string(&event.payload_json).unwrap_or_else(|_| "{}".to_string());
+            let brain_event = BrainEvent::from_session(workspace_id, event);
+            return Ok(Some(BrainEventDetail {
+                event: brain_event,
+                evidence_json,
+                trace: Vec::new(),
+                narrative: None,
+            }));
+        }
+        // Legacy `source:id` prefixes still resolve through the view.
         brain_event_detail(self.pool(), workspace_id, id).await
     }
 
@@ -349,7 +504,59 @@ impl Db {
 mod tests {
     use super::*;
     use crate::judgment::{JudgmentStatus, JudgmentVerdict};
-    use chrono::Utc;
+    use chrono::{DateTime, Utc};
+    use tinyiothub_core::harness::{ExecutionMode, HarnessEventInput};
+
+    /// Workspace store fixture for session-event merge tests.
+    struct SessionFeedFixture {
+        root: std::path::PathBuf,
+        db: Db,
+    }
+
+    impl SessionFeedFixture {
+        async fn new() -> Self {
+            let root = std::env::temp_dir().join(format!("tinyiothub-brain-session-{}", uuid::Uuid::new_v4()));
+            let pool = crate::test_helpers::test_pool().await;
+            let db = Db::new(pool).with_workspace_store_root(root.join("data/agents"));
+            crate::seed::seed_system(&db).await.expect("seed platform registry");
+            sqlx::query(
+                "INSERT INTO workspaces (id, name, tenant_id, created_at, updated_at) VALUES ('ws-session', 'workspace', 'tenant-default-001', 'now', 'now')",
+            )
+            .execute(db.pool())
+            .await
+            .expect("insert workspace");
+            db.create_workspace_store("ws-session")
+                .await
+                .expect("create workspace store");
+            Self { root, db }
+        }
+
+        async fn close(self) {
+            self.db
+                .close_workspace_store("ws-session")
+                .await
+                .expect("close workspace store");
+            self.db.pool().close().await;
+            let _ = tokio::fs::remove_dir_all(&self.root).await;
+        }
+    }
+
+    fn session_input(event_id: &str, occurred_at: DateTime<Utc>) -> HarnessEventInput {
+        HarnessEventInput {
+            event_id: event_id.to_string(),
+            workspace_id: "ws-session".to_string(),
+            session_id: "session-merge".to_string(),
+            execution_mode: ExecutionMode::Production,
+            run_id: Some("run-session".to_string()),
+            task_id: Some("task-session".to_string()),
+            event_type: "run.started".to_string(),
+            occurred_at,
+            cause_id: None,
+            schema_v: 1,
+            payload_digest: format!("digest-{event_id}"),
+            payload_json: serde_json::json!({"event": event_id}),
+        }
+    }
 
     async fn test_db() -> Db {
         let pool = sqlx::SqlitePool::connect("sqlite::memory:").await.unwrap();
@@ -542,7 +749,8 @@ mod tests {
             .await
             .unwrap();
 
-        // 两条 patrol 提案（不同 proposalId，同 thing）——不应折叠
+        // 两条 patrol 提案（不同 proposalId，同 thing）——Batch 4 收窄后
+        // 不再出现在 list 源里（视图仍在，detail 一版兼容）。
         for p in ["p1", "p2"] {
             sqlx::query(
                 "INSERT INTO agent_actions (id, workspace_id, agent_id, event_type, action_type, content, created_at)
@@ -562,9 +770,7 @@ mod tests {
         let alarm_rows: Vec<_> = feed.iter().filter(|e| e.source == "alarm").collect();
         assert_eq!(alarm_rows.len(), 1, "同 thing+rule 折叠为一条");
         assert_eq!(alarm_rows[0].id, format!("alarm:{j2}"), "折叠保留最新");
-        let patrol_rows: Vec<_> = feed.iter().filter(|e| e.source == "patrol").collect();
-        assert_eq!(patrol_rows.len(), 2, "patrol 不折叠");
-        assert_eq!(feed.len(), 3);
+        assert_eq!(feed.len(), 1, "patrol/directive 源不再进入 list");
     }
 
     /// 同秒多行元组游标不丢行（Utc::now() 锚定，48h 窗口不漂移）。
@@ -659,9 +865,10 @@ mod tests {
         assert!(db.brain_event_detail("ws2", &feed[0].id).await.unwrap().is_none());
     }
 
-    /// directive 分类规则：problem_key IS NULL 且 trigger_type='user' 的 run 才出现。
+    /// Batch 4 收窄：旧 directive/patrol 源不再出现在 list；旧 `source:id`
+    /// detail 仍可解析（一版兼容）。
     #[tokio::test]
-    async fn directive_classification_rule() {
+    async fn legacy_directive_hidden_from_list_but_detail_resolves() {
         let db = test_db().await;
         let now = Utc::now().to_rfc3339();
         sqlx::query(
@@ -672,28 +879,24 @@ mod tests {
         .execute(db.pool())
         .await
         .unwrap();
-        sqlx::query(
-            "INSERT INTO agent_runs (id, workspace_id, trigger_type, outcome, summary, report, problem_key, created_at)
-             VALUES ('r-alarm','ws1','user','success','报警调查','{}','alarm:x',?)",
-        )
-        .bind(&now)
-        .execute(db.pool())
-        .await
-        .unwrap();
-        let feed = db
-            .list_brain_events("ws1", BrainEventTab::Directive, None, 10)
-            .await
-            .unwrap();
-        let ids: Vec<&str> = feed.iter().map(|e| e.id.as_str()).collect();
-        assert!(ids.contains(&"directive:r-user"), "用户指令 run 出现在 directive tab");
-        assert!(!ids.contains(&"directive:r-alarm"), "problem_key 非空的不出现");
+
+        // 旧 tab=directive 现在读 session（本库无 harness store → 空）。
+        for tab in [BrainEventTab::Directive, BrainEventTab::Patrol, BrainEventTab::Session] {
+            let feed = db.list_brain_events("ws1", tab, None, 10).await.unwrap();
+            assert!(feed.is_empty(), "{tab:?} 不再返回 legacy directive/patrol 行: {feed:?}");
+        }
+
+        // 旧 id 前缀仍可解析。
+        let detail = db.brain_event_detail("ws1", "directive:r-user").await.unwrap().unwrap();
+        assert_eq!(detail.event.source, "directive");
+        assert_eq!(detail.event.id, "directive:r-user");
     }
 
     /// 提案行投影 tick_id（Task 2 视图重建）：同 tick 锚行（summary）插 tick_id=t1、
-    /// 提案行手工带 tick_id=t1（Task 9 才由写入方填——此处手工 INSERT 模拟），
-    /// 断言提案行 tick_id == Some("t1")、tick 聚合行 tick_id 为 NULL。
+    /// 提案行手工带 tick_id=t1（Task 9 才由写入方填——此处手工 INSERT 模拟）。
+    /// Batch 4 起 list 不再返回 patrol 源，改用 legacy detail 断言投影。
     #[tokio::test]
-    async fn proposal_row_projects_tick_id() {
+    async fn legacy_proposal_detail_projects_tick_id() {
         let db = test_db().await;
         let now = Utc::now().to_rfc3339();
         // tick 锚行（action_type='summary'）。
@@ -718,14 +921,20 @@ mod tests {
         .await
         .expect("proposal insert");
 
+        // list 不再包含 patrol 源。
         let feed = db.list_brain_events("ws1", BrainEventTab::All, None, 10).await.unwrap();
-        let proposal = feed.iter().find(|e| e.id == "patrol:p1").expect("提案行存在");
-        assert_eq!(proposal.tick_id.as_deref(), Some("t1"), "提案行投影 tick_id");
-        let tick_row = feed
-            .iter()
-            .find(|e| e.source == "patrol_tick")
+        assert!(feed.iter().all(|e| e.source == "alarm"), "仅 judgment 源: {feed:?}");
+
+        // legacy detail 仍透出 tick_id 投影。
+        let proposal = db.brain_event_detail("ws1", "patrol:p1").await.unwrap().unwrap();
+        assert_eq!(proposal.event.tick_id.as_deref(), Some("t1"), "提案行投影 tick_id");
+
+        let tick_id: String = sqlx::query_scalar("SELECT id FROM brain_events WHERE source = 'patrol_tick' LIMIT 1")
+            .fetch_one(db.pool())
+            .await
             .expect("tick 聚合行存在");
-        assert!(tick_row.tick_id.is_none(), "tick 聚合行 tick_id 保持 NULL");
+        let tick_row = db.brain_event_detail("ws1", &tick_id).await.unwrap().unwrap();
+        assert!(tick_row.event.tick_id.is_none(), "tick 聚合行 tick_id 保持 NULL");
     }
 
     /// Task 6：judgment 类 detail 透出 trace——evidence.trace_run_id（引用式，
@@ -753,9 +962,12 @@ mod tests {
                 name: "read_property".to_string(),
                 args: serde_json::json!({"p": "temp"}),
                 output: Some("26.5".to_string()),
+                evidence: vec![],
             }],
             task_count: None,
             snapshot: None,
+            task_id: None,
+            wake_event_id: None,
         };
         db.insert_agent_run(&report, Some("alarm:t1:-"), None).await.unwrap();
 
@@ -879,12 +1091,12 @@ mod tests {
         assert!(detail3.trace.is_empty(), "tick_id 悬空 → 空 trace 不炸");
 
         // tick 聚合行（tick_id 恒 NULL）→ 空 trace 不炸。
-        let feed = db.list_brain_events("ws1", BrainEventTab::All, None, 20).await.unwrap();
-        let tick_row = feed
-            .iter()
-            .find(|e| e.source == "patrol_tick")
+        // Batch 4 起 list 不再返回 patrol_tick；从视图取 id 走 legacy detail。
+        let tick_id: String = sqlx::query_scalar("SELECT id FROM brain_events WHERE source = 'patrol_tick' LIMIT 1")
+            .fetch_one(db.pool())
+            .await
             .expect("tick 聚合行存在");
-        let detail4 = db.brain_event_detail("ws1", &tick_row.id).await.unwrap().unwrap();
+        let detail4 = db.brain_event_detail("ws1", &tick_id).await.unwrap().unwrap();
         assert!(detail4.trace.is_empty(), "tick 聚合行 trace 为空不炸");
     }
 
@@ -980,5 +1192,245 @@ mod tests {
 
         let all = db.list_brain_events("ws1", BrainEventTab::All, None, 10).await.unwrap();
         assert!(all.is_empty(), "all tab 保持 48h 窗——72h 前事件不出现");
+    }
+
+    /// Batch 4 review regression: a merged tab must fetch judgments in the same
+    /// `(created_at, id)` order it merges with. A pinned (awaiting_approval)
+    /// oldest row must not displace the 20th-newest row from page 1, or the
+    /// cursor skips a reachable row forever.
+    #[tokio::test]
+    async fn merged_feed_preserves_every_row_when_oldest_is_pinned() {
+        let db = test_db().await;
+        let base = Utc::now() - chrono::Duration::minutes(60);
+
+        // Oldest row is the only pinned one (awaiting_approval).
+        let pinned = db
+            .insert_judgment("ws1", None, None, Some("oldest"), "annotate")
+            .await
+            .unwrap();
+        db.judge_judgment(
+            &pinned,
+            JudgmentVerdict::SelfHealable,
+            "r",
+            "{}",
+            Some("a"),
+            Some("other"),
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+        sqlx::query("UPDATE judgments SET created_at = ? WHERE id = ?")
+            .bind(base.to_rfc3339())
+            .bind(&pinned)
+            .execute(db.pool())
+            .await
+            .unwrap();
+
+        // 20 newer, resolved rows, each with its own thing so folding keeps them.
+        let mut newer = Vec::new();
+        for index in 0..20 {
+            let id = db
+                .insert_judgment("ws1", None, None, Some(&format!("t{index}")), "annotate")
+                .await
+                .unwrap();
+            db.judge_judgment(&id, JudgmentVerdict::Noise, "r", "{}", None, None, None, None)
+                .await
+                .unwrap();
+            let created_at = (base + chrono::Duration::minutes(index + 1)).to_rfc3339();
+            sqlx::query("UPDATE judgments SET created_at = ? WHERE id = ?")
+                .bind(&created_at)
+                .bind(&id)
+                .execute(db.pool())
+                .await
+                .unwrap();
+            newer.push(format!("alarm:{id}"));
+        }
+
+        let page1 = db.list_brain_events("ws1", BrainEventTab::All, None, 20).await.unwrap();
+        let expected: Vec<String> = newer.iter().rev().cloned().collect();
+        assert_eq!(
+            page1.iter().map(|event| event.id.clone()).collect::<Vec<_>>(),
+            expected,
+            "merged page 1 is strictly the 20 newest, regardless of pin"
+        );
+
+        let page2 = db
+            .list_brain_events("ws1", BrainEventTab::All, Some(&page1[19].id), 20)
+            .await
+            .unwrap();
+        assert_eq!(
+            page2.iter().map(|event| event.id.clone()).collect::<Vec<_>>(),
+            vec![format!("alarm:{pinned}")],
+            "the pinned oldest row is reachable on page 2"
+        );
+        assert!(
+            page1.iter().all(|left| page2.iter().all(|right| left.id != right.id)),
+            "pages must not overlap"
+        );
+
+        // Non-merging tab keeps the pin-first experience.
+        let alarm = db
+            .list_brain_events("ws1", BrainEventTab::Alarm, None, 20)
+            .await
+            .unwrap();
+        assert_eq!(
+            alarm[0].id,
+            format!("alarm:{pinned}"),
+            "alarm tab pins awaiting_approval"
+        );
+    }
+
+    /// The session source must use the merged id order (`'session:' || event_id`)
+    /// as its tiebreak, not insertion `seq`. Inserting ids in reverse lexical
+    /// order makes the difference observable.
+    #[tokio::test]
+    async fn session_same_timestamp_tiebreak_matches_merged_id_order() {
+        let fixture = SessionFeedFixture::new().await;
+        let ts = Utc::now();
+        for event_id in ["event-e", "event-d", "event-c", "event-b", "event-a"] {
+            fixture
+                .db
+                .append_session_event(&session_input(event_id, ts))
+                .await
+                .unwrap();
+        }
+
+        let page1 = fixture
+            .db
+            .list_brain_events("ws-session", BrainEventTab::Session, None, 2)
+            .await
+            .unwrap();
+        assert_eq!(
+            page1.iter().map(|event| event.id.as_str()).collect::<Vec<_>>(),
+            vec!["session:event-e", "session:event-d"],
+            "same timestamp sorts by merged id, not seq"
+        );
+        let page2 = fixture
+            .db
+            .list_brain_events("ws-session", BrainEventTab::Session, Some(&page1[1].id), 2)
+            .await
+            .unwrap();
+        assert_eq!(
+            page2.iter().map(|event| event.id.as_str()).collect::<Vec<_>>(),
+            vec!["session:event-c", "session:event-b"]
+        );
+        let page3 = fixture
+            .db
+            .list_brain_events("ws-session", BrainEventTab::Session, Some(&page2[1].id), 2)
+            .await
+            .unwrap();
+        assert_eq!(
+            page3.iter().map(|event| event.id.as_str()).collect::<Vec<_>>(),
+            vec!["session:event-a"]
+        );
+
+        fixture.close().await;
+    }
+
+    /// Batch 4 merge contract: judgments (alarm) + recent session events are
+    /// merged, sorted deterministically by `(created_at, id)` descending and
+    /// sliced after the merge. Legacy `patrol`/`directive` tabs alias session.
+    #[tokio::test]
+    async fn session_events_merge_slice_and_alias_tabs() {
+        let fixture = SessionFeedFixture::new().await;
+        let db = &fixture.db;
+        let ws = "ws-session";
+        let now = Utc::now();
+
+        // Judgment is the oldest row.
+        let j = db
+            .insert_judgment(ws, None, None, Some("t1"), "annotate")
+            .await
+            .unwrap();
+        sqlx::query("UPDATE judgments SET created_at = ? WHERE id = ?")
+            .bind((now - chrono::Duration::minutes(10)).to_rfc3339())
+            .bind(&j)
+            .execute(db.pool())
+            .await
+            .unwrap();
+
+        // Session events at -3m, -2m, -1m.
+        for (event_id, minutes) in [("session-e1", 3), ("session-e2", 2), ("session-e3", 1)] {
+            db.append_session_event(&session_input(event_id, now - chrono::Duration::minutes(minutes)))
+                .await
+                .unwrap();
+        }
+
+        // All: merge + newest-first, then slice.
+        let all = db.list_brain_events(ws, BrainEventTab::All, None, 10).await.unwrap();
+        let ids: Vec<String> = all.iter().map(|event| event.id.clone()).collect();
+        assert_eq!(
+            ids,
+            vec![
+                "session:session-e3".to_string(),
+                "session:session-e2".to_string(),
+                "session:session-e1".to_string(),
+                format!("alarm:{j}"),
+            ],
+            "merged deterministic ordering"
+        );
+        let limited = db.list_brain_events(ws, BrainEventTab::All, None, 2).await.unwrap();
+        assert_eq!(
+            limited.iter().map(|event| event.id.as_str()).collect::<Vec<_>>(),
+            vec!["session:session-e3", "session:session-e2"],
+            "limit applies after merge"
+        );
+
+        // Session tab and legacy patrol/directive aliases return the same rows.
+        for tab in [BrainEventTab::Session, BrainEventTab::Patrol, BrainEventTab::Directive] {
+            let feed = db.list_brain_events(ws, tab, None, 2).await.unwrap();
+            assert_eq!(
+                feed.iter().map(|event| event.id.as_str()).collect::<Vec<_>>(),
+                vec!["session:session-e3", "session:session-e2"],
+                "{tab:?} aliases session"
+            );
+            assert!(feed.iter().all(|event| event.source == "session"));
+        }
+
+        // Alarm tab never merges session rows.
+        let alarm = db.list_brain_events(ws, BrainEventTab::Alarm, None, 10).await.unwrap();
+        assert_eq!(alarm.len(), 1);
+        assert_eq!(alarm[0].id, format!("alarm:{j}"));
+
+        // Tuple cursor for a session row: only strictly older merged rows.
+        let page = db
+            .list_brain_events(ws, BrainEventTab::All, Some("session:session-e2"), 10)
+            .await
+            .unwrap();
+        assert_eq!(
+            page.iter().map(|event| event.id.clone()).collect::<Vec<_>>(),
+            vec!["session:session-e1".to_string(), format!("alarm:{j}")],
+            "session cursor slices the merged stream"
+        );
+
+        // Backward pagination fills a limit-sized page even though the newest
+        // session rows (e3/e2) are all newer than the cursor.
+        let first_page = db.list_brain_events(ws, BrainEventTab::All, None, 2).await.unwrap();
+        assert_eq!(
+            first_page.iter().map(|event| event.id.as_str()).collect::<Vec<_>>(),
+            vec!["session:session-e3", "session:session-e2"]
+        );
+        let second_page = db
+            .list_brain_events(ws, BrainEventTab::All, Some(&first_page[1].id), 2)
+            .await
+            .unwrap();
+        assert_eq!(
+            second_page.iter().map(|event| event.id.as_str()).collect::<Vec<_>>(),
+            vec!["session:session-e1", &format!("alarm:{j}")],
+            "cursor-aware session page must not be emptied by newer rows"
+        );
+
+        // Session detail projects payload evidence.
+        let detail = db.brain_event_detail(ws, "session:session-e1").await.unwrap().unwrap();
+        assert_eq!(detail.event.source, "session");
+        assert_eq!(detail.event.status, "info");
+        assert_eq!(detail.event.run_id.as_deref(), Some("run-session"));
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(&detail.evidence_json).unwrap(),
+            serde_json::json!({"event": "session-e1"})
+        );
+
+        fixture.close().await;
     }
 }

@@ -184,10 +184,10 @@ use sqlx::SqlitePool;
 use tinyiothub_core::agent_runs::{Outcome, RunReport};
 use tinyiothub_storage::Db;
 
-use tinyiothub_agent::runtime::heartbeat::types::HeartbeatConfig;
-use tinyiothub_agent::runtime::runtime::AgentRuntime;
-use tinyiothub_agent::runtime::snapshot::{ProblemMetaRow, RestoreSnapshot, WorkspaceHeartbeatState};
-use tinyiothub_agent::runtime::thing_agent::registry::COMPLETED_CAPACITY;
+use crate::domains::agent::agent_runtime::AgentRuntime;
+use crate::domains::agent::heartbeat::types::HeartbeatConfig;
+use crate::domains::agent::snapshot::{ProblemMetaRow, RestoreSnapshot, WorkspaceHeartbeatState};
+use crate::domains::agent::thing_agent::registry::COMPLETED_CAPACITY;
 
 /// 启动顺序第 1 步：从 DB 装配 AgentRuntime 恢复快照。
 ///
@@ -328,6 +328,44 @@ pub async fn reconcile_zombie_runs(db: &Db, runtime: &AgentRuntime) {
         Ok(0) => {}
         Ok(n) => info!(marked = n, "startup zombie reconcile: running runs marked interrupted"),
         Err(e) => warn!(error = %e, "startup zombie reconcile failed"),
+    }
+}
+
+/// Task 14 / Task 9 follow-up: Harness workspace crash recovery.
+///
+/// The durable writer [`Db::interrupt_harness_run`] marks a Run
+/// `interrupted` and writes `run.interrupted` with the last persisted seq in
+/// one transaction. Startup now has a production caller: every registered
+/// workspace that already owns a Harness store is reconciled. A workspace
+/// without a store is skipped, so recovery never creates empty stores.
+pub async fn reconcile_harness_runs(db: &Db) {
+    let now = chrono::Utc::now();
+    match db.recover_restore_journals().await {
+        Ok(outcomes) if !outcomes.is_empty() => {
+            info!(count = outcomes.len(), "startup restore journal recovery completed");
+        }
+        Ok(_) => {}
+        Err(error) => warn!(%error, "startup restore journal recovery failed"),
+    }
+    match db.find_all_workspace_ids().await {
+        Ok(workspace_ids) => {
+            for workspace_id in workspace_ids {
+                match db.recover_interrupted_harness_runs(&workspace_id, now).await {
+                    Ok(events) if !events.is_empty() => {
+                        info!(
+                            %workspace_id,
+                            runs = events.len(),
+                            "startup Harness recovery: in-flight runs marked interrupted"
+                        );
+                    }
+                    Ok(_) => {}
+                    Err(error) => {
+                        warn!(%workspace_id, %error, "startup Harness recovery failed");
+                    }
+                }
+            }
+        }
+        Err(error) => warn!(%error, "startup Harness recovery: list workspaces failed"),
     }
 }
 

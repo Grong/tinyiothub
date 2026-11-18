@@ -18,6 +18,8 @@ pub mod agent_runs;
 pub mod alarm;
 /// Alarm rule persistence and row types (Task 11 split from alarm.rs).
 pub mod alarm_rule;
+/// Assistant schedule persistence (per-workspace wake timing).
+pub mod assistant_schedule;
 /// Event audit log persistence (audit_logs, lazily created table).
 pub mod audit_log;
 /// Auth-owned tables (token blacklist, sms codes, social bindings/configs).
@@ -38,6 +40,8 @@ pub mod cron_run;
 pub mod database;
 /// E4b sampling demand snapshot (watch rules, derived refs, alarm rules).
 pub mod demand;
+/// Persistent Device Job lifecycle and terminal wake outbox.
+pub mod device_job;
 /// E4a driver/device declarations + projection writes.
 pub mod driver_declaration;
 /// Driver installation persistence.
@@ -48,11 +52,24 @@ pub mod edge;
 pub mod error;
 /// Event + real-time status persistence and query types.
 pub mod event;
+pub mod harness_command;
+pub mod harness_effect;
+pub mod harness_event;
+/// Workspace-backed Device Job lifecycle + unknown-outcome dispositions (19C3).
+pub mod harness_job;
+pub mod harness_runtime_api;
+pub mod harness_simulation;
+pub mod harness_snapshot;
+pub mod harness_supervisor;
+pub mod harness_task;
+pub mod harness_workflow;
+mod harness_workspace;
 /// Heartbeat task/result/trust persistence and row types.
 pub mod heartbeat;
 pub mod judgment;
 /// E4d spatial persistence (maps / places / thing position / zone_source).
 pub mod map;
+pub mod media_evidence;
 /// Agent memory persistence.
 pub mod memory;
 /// Embedded migrations runner.
@@ -72,12 +89,18 @@ pub mod policy;
 pub mod pool;
 /// Role persistence and row types.
 pub mod role;
+/// Runtime rollout drain gauges and unknown-Job dispositions.
+pub mod runtime_admin;
+/// Ordered runtime event envelopes and Harness Task projections.
+pub mod runtime_event;
 /// Scene package template types (recursive thing node definitions, name-pattern renderer).
 pub mod scene_template;
 /// Two-tier seed module (system + demo), applied at bootstrap.
 pub mod seed;
 /// Session persistence and row types.
 pub mod session;
+/// Durable Assistant suppression state, fences and skip commits.
+pub mod suppression;
 /// system_settings key-value storage (event security config).
 pub mod ticket;
 
@@ -89,6 +112,7 @@ pub mod settings;
 pub mod sql_security;
 /// Tag + tag binding persistence and row types.
 pub mod tag;
+pub mod task_approval;
 /// Tenant + API key persistence and row types.
 pub mod tenant;
 /// Thing persistence (things 表唯一入口：Thing 视图 + 原 device.rs 全部内容).

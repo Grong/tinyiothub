@@ -246,7 +246,18 @@ pub async fn test_app_state_on_pool(pool: sqlx::SqlitePool) -> AppState {
 
     let device_cache = Arc::new(ThingCache::new());
 
-    AppState::new(device_cache, pool, settings)
+    let mut state = AppState::new(device_cache, pool, settings);
+    // Workspace Harness generations are files, not rows in the shared
+    // in-memory platform pool. Give every AppState its own root so parallel
+    // tests that reuse a workspace ID cannot observe each other's Tasks.
+    let workspace_root = std::env::temp_dir().join(format!(
+        "tinyiothub-cloud-test-{}-{}",
+        std::process::id(),
+        uuid::Uuid::new_v4()
+    ));
+    let pool = state.db.pool().clone();
+    state.db = Arc::new(tinyiothub_storage::Db::new(pool).with_workspace_store_root(workspace_root));
+    state
 }
 
 fn test_jwt_service() -> tinyiothub_authn::jwt::JwtService {

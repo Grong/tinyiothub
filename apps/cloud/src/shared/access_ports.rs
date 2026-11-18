@@ -97,7 +97,7 @@ impl ThingDeclarationSource for DbThingSource {
 /// （经 AccessService，与 sampler / 读工具同一实例）。
 pub struct AccessSnapshotDemandSink(pub Arc<tinyiothub_runtime::access::service::AccessService>);
 
-impl tinyiothub_agent::runtime::thing_agent::SnapshotDemandSink for AccessSnapshotDemandSink {
+impl crate::domains::agent::thing_agent::SnapshotDemandSink for AccessSnapshotDemandSink {
     fn record_read(&self, workspace_id: &str, thing_id: &str, property: &str) {
         self.0.record_read(workspace_id, thing_id, property);
     }
@@ -165,6 +165,7 @@ mod tests {
                     persistent: 0,
                     timeout_secs: 600,
                     created_at: "2026-10-21T00:00:00Z".into(),
+                    owner_task_id: None,
                 },
             )
             .await

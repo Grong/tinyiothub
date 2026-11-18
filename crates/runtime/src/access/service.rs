@@ -769,11 +769,16 @@ impl super::resources::ResourceResolver for AccessService {
         thing_id: &str,
         tool_name: &str,
     ) -> Result<Vec<super::resources::ResourceClaim>, String> {
-        let decl = self
+        // 无声明的存量物（迁移期 enforcement off）沿用 E1 合成设备资源
+        // （仍然每设备互斥），与 resolve_properties 的既有语义一致。开关 ON
+        // 时 `validate` 已先拒绝，不会走到这里。
+        let Some(decl) = self
             .load_declaration(workspace_id, thing_id)
             .await
             .map_err(|e| e.to_string())?
-            .ok_or_else(|| format!("no declaration for thing '{thing_id}'"))?;
+        else {
+            return Ok(vec![super::resources::device_claim()]);
+        };
         let tool = decl
             .tools
             .iter()

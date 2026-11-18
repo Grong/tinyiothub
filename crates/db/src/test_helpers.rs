@@ -29,7 +29,7 @@ pub async fn test_pool() -> sqlx::SqlitePool {
         .await
         .expect("baseline schema applies cleanly");
     // 借 Migrator 的编译期内嵌枚举递增迁移——migrations/ 里的新文件自动覆盖。
-    let migrator = sqlx::migrate!("./migrations");
+    let migrator = crate::migrations::platform_migrator();
     let baseline_version = migrator.iter().map(|m| m.version).min().unwrap_or(0);
     let mut conn = pool.acquire().await.expect("acquire migration connection");
     sqlx::query("PRAGMA foreign_keys = OFF")
@@ -64,4 +64,59 @@ pub async fn fixture_pool_seeded() -> (sqlx::SqlitePool, crate::Db) {
     crate::seed::seed_system(&db).await.expect("seed_system");
     crate::seed::seed_demo(&db).await.expect("seed_demo");
     (pool, db)
+}
+
+#[cfg(any(test, feature = "testing"))]
+pub struct WorkspaceFixture {
+    pub db: crate::Db,
+    pub root: std::path::PathBuf,
+    pub workspace_id: String,
+}
+
+#[cfg(any(test, feature = "testing"))]
+impl WorkspaceFixture {
+    pub fn database_path(&self) -> std::path::PathBuf {
+        self.root
+            .join("data/agents")
+            .join(&self.workspace_id)
+            .join("harness/harness.db")
+    }
+
+    pub async fn workspace_pool(&self) -> sqlx::SqlitePool {
+        self.db
+            .workspace_pool_for_testing(&self.workspace_id)
+            .await
+            .expect("workspace pool")
+    }
+
+    pub async fn close(self) {
+        self.db
+            .close_workspace_store(&self.workspace_id)
+            .await
+            .expect("close workspace");
+        self.db.pool().close().await;
+        let _ = tokio::fs::remove_dir_all(self.root).await;
+    }
+}
+
+#[cfg(any(test, feature = "testing"))]
+pub async fn fixture_workspace(workspace_id: &str) -> WorkspaceFixture {
+    let root = std::env::temp_dir().join(format!("tinyiothub-workspace-test-{}", uuid::Uuid::new_v4()));
+    let pool = test_pool().await;
+    let mut db = crate::Db::new(pool);
+    db.workspace_store_root = root.join("data/agents");
+    crate::seed::seed_system(&db).await.expect("seed_system");
+    sqlx::query(
+        "INSERT INTO workspaces (id, name, tenant_id, created_at, updated_at) VALUES (?, 'workspace', 'tenant-default-001', 'now', 'now')",
+    )
+    .bind(workspace_id)
+    .execute(db.pool())
+    .await
+    .expect("insert workspace");
+    db.create_workspace_store(workspace_id).await.expect("create workspace");
+    WorkspaceFixture {
+        db,
+        root,
+        workspace_id: workspace_id.to_string(),
+    }
 }

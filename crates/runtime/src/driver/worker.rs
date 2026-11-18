@@ -31,12 +31,14 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 
+use dashmap::DashSet;
 use parking_lot::{Mutex, RwLock};
 use tokio::sync::{mpsc, oneshot, watch};
 use tokio::task::JoinHandle;
 
 use tinyiothub_core::driver::{CancelToken, DriverMode, DriverReading, PropertyChangeSource, ResultValue, ValueSink};
 use tinyiothub_core::error::Error;
+use tinyiothub_core::media::SourceItem;
 use tinyiothub_core::models::thing::{Thing, ThingStatus};
 use tinyiothub_core::models::thing_command::ThingCommand;
 
@@ -56,50 +58,77 @@ const CANCEL_GRACE: Duration = Duration::from_secs(1);
 /// worker 在每次 read/execute 前写入新 token 并置 in-flight；调用返回后清空并
 /// 读取取消时间。`cancel_current` 只取消当前 token、记录时刻，不打断调用——
 /// 驱动自行在检查点协作退出。
+struct ActiveCall {
+    job_id: Option<String>,
+    token: CancelToken,
+}
+
 #[derive(Clone, Default)]
 struct CancelSlot {
-    current_token: Arc<Mutex<Option<CancelToken>>>,
+    current: Arc<Mutex<Option<ActiveCall>>>,
     cancel_requested_at: Arc<Mutex<Option<Instant>>>,
     in_flight: Arc<AtomicBool>,
+    stopped_jobs: Arc<DashSet<String>>,
+    known_jobs: Arc<DashSet<String>>,
 }
 
 impl CancelSlot {
-    /// 开始一次调用：安装新 token、清空上一轮的取消时刻、置 in-flight。
-    fn begin(&self) -> CancelToken {
+    fn begin(&self, job_id: Option<String>) -> CancelToken {
         let token = CancelToken::new();
-        // 锁序固定为 current_token → cancel_requested_at（与 cancel_current 一致）。
-        let mut slot = self.current_token.lock();
-        *slot = Some(token.clone());
+        let mut slot = self.current.lock();
+        *slot = Some(ActiveCall {
+            job_id,
+            token: token.clone(),
+        });
         *self.cancel_requested_at.lock() = None;
         self.in_flight.store(true, Ordering::SeqCst);
         token
     }
 
-    /// 结束当前调用：原子取走 token、置 in-flight=false，再判定是否取消。
-    ///
-    /// 取走发生在任何结果处理之前：此后的 `cancel_current` 看到空槽位返回
-    /// false，不会把已完成的调用误标为取消。若调用期间 token 被取消，返回自
-    /// 首次取消时刻起的耗时（缺时刻时 0）。
     fn finish(&self, token: &CancelToken) -> Option<Duration> {
-        let mut slot = self.current_token.lock();
+        let mut slot = self.current.lock();
         let current = slot.take();
         self.in_flight.store(false, Ordering::SeqCst);
-        let cancelled = current.is_some_and(|installed| installed.is_cancelled()) && token.is_cancelled();
+        let cancelled = current.is_some_and(|installed| installed.token.is_cancelled()) && token.is_cancelled();
         let requested_at = self.cancel_requested_at.lock().take();
         cancelled.then(|| requested_at.map_or(Duration::ZERO, |at| at.elapsed()))
     }
 
-    /// 取消在途调用；返回是否确有在途调用。
-    ///
-    /// 重复取消保留首次时刻，避免 elapsed/宽限期被后一次调用重置。
     fn cancel_current(&self) -> bool {
-        let slot = self.current_token.lock();
-        let Some(token) = slot.as_ref() else {
+        let slot = self.current.lock();
+        let Some(active) = slot.as_ref() else {
             return false;
         };
         self.cancel_requested_at.lock().get_or_insert_with(Instant::now);
-        token.cancel();
+        active.token.cancel();
         self.in_flight.load(Ordering::SeqCst)
+    }
+
+    fn cancel_job(&self, job_id: &str) -> bool {
+        self.stopped_jobs.insert(job_id.to_owned());
+        let slot = self.current.lock();
+        let Some(active) = slot.as_ref() else {
+            return false;
+        };
+        if active.job_id.as_deref() != Some(job_id) {
+            return false;
+        }
+        self.cancel_requested_at.lock().get_or_insert_with(Instant::now);
+        active.token.cancel();
+        true
+    }
+
+    fn was_stopped(&self, job_id: &str) -> bool {
+        self.stopped_jobs.contains(job_id)
+    }
+
+    fn complete_job(&self, job_id: &str) {
+        self.stopped_jobs.remove(job_id);
+        self.known_jobs.remove(job_id);
+    }
+
+    fn has_job(&self, job_id: &str) -> bool {
+        self.known_jobs.contains(job_id)
     }
 
     fn in_flight(&self) -> bool {
@@ -122,11 +151,17 @@ pub struct CommandOutcome {
 ///
 /// `Read` / `SetDemand` / `Stop` 走各自的无阻塞 `watch` 槽位；`Execute` 走
 /// 有界 FIFO 队列。枚举保留完整命令面供外部按契约引用。
+#[allow(clippy::large_enum_variant)] // Preserve the established worker command layout.
 pub enum WorkerCommand {
     Read {
         sources: Vec<String>,
     },
+    ReadSources {
+        sources: Vec<String>,
+        done: oneshot::Sender<Result<Vec<SourceItem>, Error>>,
+    },
     Execute {
+        job_id: Option<String>,
         cmd: ThingCommand,
         /// E4c：调用方已持有的资源租约随命令移交 worker——claim 覆盖排队
         /// 与真实执行窗口，而不是在入队（`execute_command` 返回）时释放。
@@ -172,6 +207,7 @@ pub enum WorkerResult {
     /// （事件/账本）必须能分辨（Issue 8）。
     Cancelled {
         thing_id: String,
+        job_id: Option<String>,
         kind: CancelKind,
         within_grace: bool,
         elapsed_ms: u64,
@@ -236,42 +272,79 @@ impl WorkerHandle {
         self.read_tx.send_replace(Some(sources));
     }
 
+    /// Queue a correlated source read without coalescing it with polling reads.
+    pub fn read_sources(
+        &self,
+        sources: Vec<String>,
+    ) -> Result<oneshot::Receiver<Result<Vec<SourceItem>, Error>>, Error> {
+        let (done, reply) = oneshot::channel();
+        self.queue_depth.fetch_add(1, Ordering::Relaxed);
+        match self.exec_tx.try_send(WorkerCommand::ReadSources { sources, done }) {
+            Ok(()) => Ok(reply),
+            Err(error) => {
+                self.queue_depth.fetch_sub(1, Ordering::Relaxed);
+                let message = match error {
+                    mpsc::error::TrySendError::Full(_) => "busy",
+                    mpsc::error::TrySendError::Closed(_) => "worker stopped",
+                };
+                Err(Error::DriverError(message.to_string()))
+            }
+        }
+    }
+
     /// 提交命令执行。队列（32）已满时返回 `DriverError("busy")`。
-    ///
-    /// 不携带资源租约：调用方在入队后自行释放（旧行为；claim 只覆盖准入）。
     pub fn submit_execute(&self, cmd: ThingCommand) -> Result<(), Error> {
         self.submit_execute_with_lease(cmd, None)
     }
 
-    /// 提交命令执行并移交资源租约（E4c）：worker 在调用真正结束（成功/
-    /// 失败/取消）后 Drop，claim 因此覆盖排队 + 执行窗口。
-    ///
-    /// 入队失败时租约随 `TrySendError` 立即释放，不会泄漏 claim。
+    /// 提交命令执行并移交资源租约（E4c）。
     pub fn submit_execute_with_lease(&self, cmd: ThingCommand, lease: Option<ResourceLease>) -> Result<(), Error> {
         self.submit_execute_with_lease_and_done(cmd, lease, None)
     }
 
-    /// 同 [`Self::submit_execute_with_lease`]，并可选地在执行终态时通过
-    /// `done` 回报一次（composite Call 步骤据此等待 worker 真正完成）。
-    ///
-    /// 入队失败时租约与 `done` 随命令一起释放/丢弃，等待方得到 channel 关闭。
+    /// 提交带稳定 Job 身份的命令，供 queued/in-flight 单 Job Stop 使用。
+    pub fn submit_job(&self, cmd: ThingCommand, job_id: &str, lease: Option<ResourceLease>) -> Result<(), Error> {
+        self.submit_inner(Some(job_id.to_owned()), cmd, lease, None)
+    }
+
     pub(crate) fn submit_execute_with_lease_and_done(
         &self,
         cmd: ThingCommand,
         lease: Option<ResourceLease>,
         done: Option<oneshot::Sender<CommandOutcome>>,
     ) -> Result<(), Error> {
-        // 先加再发：避免 worker 抢先取出并减计数导致瞬时下溢。
+        self.submit_inner(None, cmd, lease, done)
+    }
+
+    fn submit_inner(
+        &self,
+        job_id: Option<String>,
+        cmd: ThingCommand,
+        lease: Option<ResourceLease>,
+        done: Option<oneshot::Sender<CommandOutcome>>,
+    ) -> Result<(), Error> {
+        if let Some(ref id) = job_id {
+            self.cancel.known_jobs.insert(id.clone());
+        }
         self.queue_depth.fetch_add(1, Ordering::Relaxed);
-        match self.exec_tx.try_send(WorkerCommand::Execute { cmd, lease, done }) {
+        match self.exec_tx.try_send(WorkerCommand::Execute {
+            job_id,
+            cmd,
+            lease,
+            done,
+        }) {
             Ok(()) => Ok(()),
-            Err(mpsc::error::TrySendError::Full(_)) => {
+            Err(error @ mpsc::error::TrySendError::Full(_)) | Err(error @ mpsc::error::TrySendError::Closed(_)) => {
                 self.queue_depth.fetch_sub(1, Ordering::Relaxed);
-                Err(Error::DriverError("busy".to_string()))
-            }
-            Err(mpsc::error::TrySendError::Closed(_)) => {
-                self.queue_depth.fetch_sub(1, Ordering::Relaxed);
-                Err(Error::DriverError("worker stopped".to_string()))
+                let message = match &error {
+                    mpsc::error::TrySendError::Full(_) => "busy",
+                    mpsc::error::TrySendError::Closed(_) => "worker stopped",
+                };
+                let command = error.into_inner();
+                if let WorkerCommand::Execute { job_id: Some(id), .. } = command {
+                    self.cancel.known_jobs.remove(&id);
+                }
+                Err(Error::DriverError(message.to_string()))
             }
         }
     }
@@ -316,6 +389,21 @@ impl WorkerHandle {
     /// 后 worker 会上报 [`WorkerResult::Cancelled`]。
     pub fn cancel_current(&self) -> bool {
         self.cancel.cancel_current()
+    }
+
+    /// 请求停止指定 Job；仅当前 in-flight ID 匹配时返回 true。
+    /// queued Job 会记录停止请求并在领取时直接形成取消终态。
+    pub fn cancel_job(&self, job_id: &str) -> bool {
+        self.cancel.cancel_job(job_id)
+    }
+
+    pub(crate) fn has_job(&self, job_id: &str) -> bool {
+        self.cancel.has_job(job_id)
+    }
+
+    /// Acknowledge that the Job's terminal projection has been persisted.
+    pub(crate) fn complete_job(&self, job_id: &str) {
+        self.cancel.complete_job(job_id);
     }
 
     /// 是否有 read/execute 正在驱动内执行。
@@ -473,10 +561,40 @@ async fn run_worker(
                     counters.queue_depth.fetch_sub(1, Ordering::Relaxed);
                 }
                 match cmd {
-                    Some(WorkerCommand::Execute { cmd, lease, done }) => {
-                        // `done` 在驱动调用真正返回后才发送（成功/失败/取消），
-                        // 等待方因此覆盖完整执行窗口。
-                        let outcome = execute_and_report(&mut driver, &cmd, &results, &cancel, lease);
+                    Some(WorkerCommand::ReadSources { sources, done }) => {
+                        let token = cancel.begin(None);
+                        let result = driver.inner_driver_mut().read_sources(&sources, &token);
+                        let result = if report_if_cancelled(
+                            &cancel,
+                            &token,
+                            &thing_id,
+                            None,
+                            CancelKind::Read,
+                            &results,
+                        ) {
+                            Err(Error::Cancelled)
+                        } else {
+                            result
+                        };
+                        let _ = done.send(result);
+                    }
+                    Some(WorkerCommand::Execute { job_id, cmd, lease, done }) => {
+                        let outcome = if job_id.as_deref().is_some_and(|id| cancel.was_stopped(id)) {
+                            let _ = results.send(WorkerResult::Cancelled {
+                                thing_id: thing_id.clone(),
+                                job_id: job_id.clone(),
+                                kind: CancelKind::Execute,
+                                within_grace: true,
+                                elapsed_ms: 0,
+                            });
+                            CommandOutcome {
+                                success: false,
+                                error: None,
+                                cancelled: true,
+                            }
+                        } else {
+                            execute_and_report(&mut driver, &cmd, job_id.as_deref(), &results, &cancel, lease)
+                        };
                         if let Some(done) = done {
                             let _ = done.send(outcome);
                         }
@@ -513,9 +631,9 @@ async fn run_worker(
                 let was_online = driver.is_online();
                 // 每次读使用新 token；调用期间 stop 可通过 WorkerHandle::cancel_current
                 // 取消它，返回后至多上报一次 Cancelled。
-                let token = cancel.begin();
+                let token = cancel.begin(None);
                 let outcome = driver.read_data_once_with(&token);
-                if report_if_cancelled(&cancel, &token, &thing_id, CancelKind::Read, &results) {
+                if report_if_cancelled(&cancel, &token, &thing_id, None, CancelKind::Read, &results) {
                     // 已取消：本次调用只有 Cancelled 一个结果。
                     continue;
                 }
@@ -639,6 +757,7 @@ fn report_if_cancelled(
     cancel: &CancelSlot,
     token: &CancelToken,
     thing_id: &str,
+    job_id: Option<&str>,
     kind: CancelKind,
     results: &mpsc::UnboundedSender<WorkerResult>,
 ) -> bool {
@@ -647,6 +766,7 @@ fn report_if_cancelled(
     };
     let _ = results.send(WorkerResult::Cancelled {
         thing_id: thing_id.to_string(),
+        job_id: job_id.map(str::to_owned),
         kind,
         within_grace: elapsed <= CANCEL_GRACE,
         elapsed_ms: elapsed.as_millis() as u64,
@@ -662,15 +782,16 @@ fn report_if_cancelled(
 fn execute_and_report(
     driver: &mut DriverWrapper,
     cmd: &ThingCommand,
+    job_id: Option<&str>,
     results: &mpsc::UnboundedSender<WorkerResult>,
     cancel: &CancelSlot,
     lease: Option<ResourceLease>,
 ) -> CommandOutcome {
     let _lease = lease;
     let thing_id = driver.thing().id.clone();
-    let token = cancel.begin();
+    let token = cancel.begin(job_id.map(str::to_owned));
     let outcome = driver.execute_command_with(cmd, &token);
-    if report_if_cancelled(cancel, &token, &thing_id, CancelKind::Execute, results) {
+    if report_if_cancelled(cancel, &token, &thing_id, job_id, CancelKind::Execute, results) {
         // 已取消：只上报 Cancelled，不再产生 Command 结果。
         return CommandOutcome {
             success: false,
@@ -727,7 +848,10 @@ mod tests {
         events: Mutex<Vec<String>>,
         /// 假驱动在 execute 时自报的 thing 属性当前值（验证 worker 写回）。
         observed_value: Mutex<Option<String>>,
+        source_requests: Mutex<Vec<Vec<String>>>,
+        source_error: AtomicBool,
         read_started: Notify,
+        source_read_started: Notify,
         execute_started: Notify,
     }
 
@@ -787,6 +911,36 @@ mod tests {
                 "float".to_string(),
                 Some("42".to_string()),
             )])
+        }
+
+        fn read_sources(
+            &mut self,
+            sources: &[String],
+            cancel: &CancelToken,
+        ) -> Result<Vec<tinyiothub_core::media::SourceItem>, Error> {
+            self.log.source_requests.lock().unwrap().push(sources.to_vec());
+            self.log.source_read_started.notify_one();
+            let _ = self.release_rx.lock().unwrap().recv();
+            if cancel.is_cancelled() {
+                return Err(Error::Cancelled);
+            }
+            if self.log.source_error.load(Ordering::SeqCst) {
+                return Err(Error::DriverError("source read failed".into()));
+            }
+            Ok(sources
+                .iter()
+                .map(|source| tinyiothub_core::media::SourceItem {
+                    v: 1,
+                    source: source.clone(),
+                    data_kind: tinyiothub_core::media::DataKind::Values,
+                    seq: 1,
+                    time: chrono::Utc::now(),
+                    text: None,
+                    data: serde_json::Value::Null,
+                    media: None,
+                    error: None,
+                })
+                .collect())
         }
 
         fn execute_command(&mut self, _cmd: &ThingCommand, cancel: &CancelToken) -> Result<bool, Error> {
@@ -1020,6 +1174,80 @@ mod tests {
         })
         .await
         .expect("condition should become true");
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn source_reads_have_independent_correlated_replies() {
+        let h = make(DriverMode::Poll);
+
+        let first = h
+            .handle
+            .read_sources(vec!["camera.front".to_string()])
+            .expect("first source read should queue");
+        h.log.source_read_started.notified().await;
+        let second = h
+            .handle
+            .read_sources(vec!["camera.rear".to_string()])
+            .expect("second source read should queue independently");
+
+        h.release.send(()).unwrap();
+        let first_items = first.await.expect("first reply").expect("first items");
+        assert_eq!(first_items.len(), 1);
+        assert_eq!(first_items[0].source, "camera.front");
+
+        h.release.send(()).unwrap();
+        let second_items = second.await.expect("second reply").expect("second items");
+        assert_eq!(second_items.len(), 1);
+        assert_eq!(second_items[0].source, "camera.rear");
+        assert_eq!(
+            *h.log.source_requests.lock().unwrap(),
+            vec![vec!["camera.front".to_string()], vec!["camera.rear".to_string()]]
+        );
+        assert_eq!(
+            h.log.reads.load(Ordering::SeqCst),
+            0,
+            "source reads must not poll read_data"
+        );
+        assert_eq!(h.handle.reads_coalesced(), 0);
+
+        h.handle.stop();
+        wait_finished(&h.handle).await;
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn source_read_returns_the_driver_error_to_its_caller() {
+        let h = make(DriverMode::Poll);
+        h.log.source_error.store(true, Ordering::SeqCst);
+        let reply = h
+            .handle
+            .read_sources(vec!["camera.front".to_string()])
+            .expect("source read should queue");
+        h.log.source_read_started.notified().await;
+        h.release.send(()).unwrap();
+
+        let error = reply.await.expect("reply").expect_err("driver failure");
+        assert!(matches!(error, Error::DriverError(message) if message == "source read failed"));
+
+        h.handle.stop();
+        wait_finished(&h.handle).await;
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn source_read_observes_worker_cancellation() {
+        let h = make(DriverMode::Poll);
+        let reply = h
+            .handle
+            .read_sources(vec!["camera.front".to_string()])
+            .expect("source read should queue");
+        h.log.source_read_started.notified().await;
+
+        assert!(h.handle.cancel_current());
+        h.release.send(()).unwrap();
+        let error = reply.await.expect("reply").expect_err("cancelled source read");
+        assert!(matches!(error, Error::Cancelled));
+
+        h.handle.stop();
+        wait_finished(&h.handle).await;
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -1333,6 +1561,7 @@ mod tests {
                 kind,
                 within_grace,
                 elapsed_ms,
+                ..
             } => {
                 assert_eq!(thing_id, "thing-1");
                 assert_eq!(kind, CancelKind::Read, "读取消必须标记 kind=read");
@@ -1630,6 +1859,85 @@ mod tests {
 
         h.handle.stop();
         wait_finished(&h.handle).await;
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn queued_stop_never_calls_driver() {
+        let mut h = make_cancel_with(CancelOptions {
+            gate_execute: true,
+            ..CancelOptions::default()
+        });
+        h.handle.submit_execute(cmd(0)).expect("blocking command accepted");
+        h.log.execute_started.notified().await;
+        h.handle.submit_job(cmd(1), "job_1", None).expect("job queued");
+        let calls_before_stop = h.log.executes.load(Ordering::SeqCst);
+
+        assert!(!h.handle.cancel_job("job_1"), "queued job is not in flight");
+        h.release.send(()).expect("release blocking command");
+        match h.result_rx.recv().await.expect("blocking command result") {
+            WorkerResult::Command { .. } => {}
+            other => panic!("expected blocking Command, got {other:?}"),
+        }
+        match h.result_rx.recv().await.expect("queued cancellation") {
+            WorkerResult::Cancelled {
+                job_id,
+                kind,
+                within_grace,
+                ..
+            } => {
+                assert_eq!(job_id.as_deref(), Some("job_1"));
+                assert_eq!(kind, CancelKind::Execute);
+                assert!(within_grace);
+            }
+            other => panic!("expected queued Cancelled, got {other:?}"),
+        }
+        assert_eq!(
+            h.log.executes.load(Ordering::SeqCst),
+            calls_before_stop + 1,
+            "only the blocking command may enter the driver; the stopped queued job must not"
+        );
+        assert!(
+            h.handle.has_job("job_1"),
+            "tracking must survive until projection acknowledgment"
+        );
+        h.handle.complete_job("job_1");
+        assert!(!h.handle.has_job("job_1"));
+        h.handle.stop();
+        wait_finished(&h.handle).await;
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn in_flight_stop_cancels_only_matching_job() {
+        let mut a = make_cancel_with(CancelOptions {
+            gate_execute: true,
+            ..CancelOptions::default()
+        });
+        let mut b = make_cancel_with(CancelOptions {
+            gate_execute: true,
+            ..CancelOptions::default()
+        });
+        a.handle.submit_job(cmd(1), "job_a", None).expect("job A accepted");
+        b.handle.submit_job(cmd(2), "job_b", None).expect("job B accepted");
+        a.log.execute_started.notified().await;
+        b.log.execute_started.notified().await;
+
+        assert!(a.handle.cancel_job("job_a"));
+        assert!(!a.handle.cancel_job("job_b"));
+        a.release.send(()).expect("release job A");
+        b.release.send(()).expect("release job B");
+
+        match a.result_rx.recv().await.expect("job A result") {
+            WorkerResult::Cancelled { job_id, .. } => assert_eq!(job_id.as_deref(), Some("job_a")),
+            other => panic!("expected job A Cancelled, got {other:?}"),
+        }
+        match b.result_rx.recv().await.expect("job B result") {
+            WorkerResult::Command { success, .. } => assert!(success, "job B must execute normally"),
+            other => panic!("expected job B Command, got {other:?}"),
+        }
+        a.handle.stop();
+        b.handle.stop();
+        wait_finished(&a.handle).await;
+        wait_finished(&b.handle).await;
     }
 
     /// 可重试配置下的协作取消：取消是终态，驱动只被调用一次且仍在宽限期内。

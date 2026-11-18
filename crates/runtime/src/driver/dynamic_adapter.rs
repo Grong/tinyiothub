@@ -11,6 +11,7 @@ use tinyiothub_core::driver::declaration::DeviceDeclaration;
 use tinyiothub_core::driver::dynamic::{CancelHandle, DriverDone, DriverVTableV2};
 use tinyiothub_core::driver::{ResultValue, ThingDriver};
 use tinyiothub_core::error::Error;
+use tinyiothub_core::media::SourceItem;
 use tinyiothub_core::models::thing::Thing;
 use tinyiothub_core::models::thing_command::ThingCommand;
 
@@ -40,6 +41,61 @@ const CALL_TIMEOUT: Duration = Duration::from_secs(5);
 /// Spec §2.3: `describe()` must return within 2 s and at most 256 KiB.
 pub(crate) const DESCRIBE_TIMEOUT: Duration = Duration::from_secs(2);
 pub(crate) const MAX_JSON_OUTPUT_BYTES: usize = 256 * 1024;
+
+/// Source responses can contain base64 media. Twelve MiB accommodates the
+/// 8 MiB decoded-image run budget after base64 expansion plus JSON envelope.
+const MAX_READ_RESPONSE_BYTES: usize = 12 * 1024 * 1024;
+
+#[cfg(test)]
+thread_local! {
+    static OWNED_SOURCE_RESPONSE_CONVERSIONS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct SourceResponsePreflight<'a> {
+    #[serde(default)]
+    data_kind: tinyiothub_core::media::DataKind,
+    #[serde(default, borrow)]
+    media: Option<SourceMediaPreflight<'a>>,
+}
+
+#[derive(serde::Deserialize)]
+struct SourceMediaPreflight<'a> {
+    bytes: &'a str,
+}
+
+fn decoded_base64_len(encoded: &str) -> Option<usize> {
+    let padding = encoded
+        .as_bytes()
+        .iter()
+        .rev()
+        .take_while(|byte| **byte == b'=')
+        .count();
+    let significant = encoded.len().checked_sub(padding)?;
+    let decoded = (significant / 4).checked_mul(3)?;
+    match significant % 4 {
+        0 => Some(decoded),
+        2 => decoded.checked_add(1),
+        3 => decoded.checked_add(2),
+        _ => None,
+    }
+}
+
+fn own_source_response(bytes: &[u8], own: impl FnOnce(&[u8]) -> String) -> Result<String, Error> {
+    let items: Vec<SourceResponsePreflight<'_>> = serde_json::from_slice(bytes)?;
+    for item in &items {
+        if item.data_kind == tinyiothub_core::media::DataKind::Image
+            && let Some(media) = &item.media
+            && decoded_base64_len(media.bytes).is_some_and(|size| size > crate::media::evidence::MAX_IMAGE_BYTES)
+        {
+            return Err(Error::ValidationError(
+                tinyiothub_core::media::MediaError::ImageTooLarge.to_string(),
+            ));
+        }
+    }
+    Ok(own(bytes))
+}
 
 /// Convert a driver-allocated out-string into an owned `String`, enforcing
 /// the output cap and always releasing the driver's allocation.
@@ -138,9 +194,10 @@ pub(crate) fn describe_with_timeout(
 /// `CancelHandle::ctx` never points at a borrowed stack temporary — drivers
 /// may poll it from worker threads, including after `call` has timed out.
 struct DoneState {
-    tx: mpsc::Sender<(i32, Option<String>)>,
+    tx: mpsc::Sender<Result<String, Error>>,
     free: extern "C" fn(*mut c_char),
     token: Box<CancelToken>,
+    max_output_bytes: Option<usize>,
 }
 
 extern "C" fn done_cb(user_data: *mut c_void, status: i32, out_json: *mut c_char) {
@@ -149,16 +206,59 @@ extern "C" fn done_cb(user_data: *mut c_void, status: i32, out_json: *mut c_char
     // Destructure so the owned token clone is dropped *before* `tx.send` wakes
     // the receiver. This makes reclamation observable as soon as the call
     // returns (and keeps E4b lifecycle accounting deterministic).
-    let DoneState { tx, free, token } = *state;
+    let DoneState {
+        tx,
+        free,
+        token,
+        max_output_bytes,
+    } = *state;
     let json = if out_json.is_null() {
         None
     } else {
-        let s = unsafe { CStr::from_ptr(out_json).to_string_lossy().into_owned() };
+        // SAFETY: the ABI contract says a non-null out-pointer is a
+        // NUL-terminated allocation owned by the driver until free_string.
+        let bytes = unsafe { CStr::from_ptr(out_json) }.to_bytes();
+        if let Some(limit) = max_output_bytes
+            && bytes.len() > limit
+        {
+            free(out_json);
+            drop(token);
+            let _ = tx.send(Err(Error::DriverError(format!(
+                "driver callback output exceeds {limit} bytes"
+            ))));
+            return;
+        }
+        let body = if status == 0 && max_output_bytes.is_some() {
+            own_source_response(bytes, |bytes| {
+                #[cfg(test)]
+                OWNED_SOURCE_RESPONSE_CONVERSIONS.with(|count| count.set(count.get() + 1));
+                String::from_utf8_lossy(bytes).into_owned()
+            })
+        } else {
+            Ok(String::from_utf8_lossy(bytes).into_owned())
+        };
         free(out_json);
-        Some(s)
+        match body {
+            Ok(body) => Some(body),
+            Err(error) => {
+                drop(token);
+                let _ = tx.send(Err(error));
+                return;
+            }
+        }
+    };
+    let result = match (status, json) {
+        (0, Some(body)) => Ok(body),
+        (2, _) => Err(Error::Cancelled),
+        (1, Some(body)) => Err(Error::DriverError(format!(
+            "driver callback status 1: {}",
+            truncate_body(&body)
+        ))),
+        (1, None) => Err(Error::DriverError("driver callback status 1".into())),
+        (code, _) => Err(Error::DriverError(format!("driver callback status {code}"))),
     };
     drop(token);
-    let _ = tx.send((status, json));
+    let _ = tx.send(result);
 }
 
 extern "C" fn cancel_is_cancelled(ctx: *mut c_void) -> i32 {
@@ -227,11 +327,22 @@ impl DynamicThingDriver {
         cancel: &CancelToken,
         timeout: Duration,
     ) -> Result<String, Error> {
+        self.call_with_timeout_and_limit(invoke, cancel, timeout, None)
+    }
+
+    fn call_with_timeout_and_limit(
+        &self,
+        invoke: impl FnOnce(*mut CancelHandle, DriverDone, *mut c_void) -> i32,
+        cancel: &CancelToken,
+        timeout: Duration,
+        max_output_bytes: Option<usize>,
+    ) -> Result<String, Error> {
         let (tx, rx) = mpsc::channel();
         let state = Box::new(DoneState {
             tx,
             free: self.vtable.free_string,
             token: Box::new(cancel.clone()),
+            max_output_bytes,
         });
         // `Box::into_raw` keeps the heap allocation (and the token inside it)
         // at a stable address. The handle must never point at the borrowed
@@ -249,14 +360,7 @@ impl DynamicThingDriver {
             return Err(Error::DriverError(format!("driver call returned {rc}")));
         }
         match rx.recv_timeout(timeout) {
-            Ok((0, Some(json))) => Ok(json),
-            Ok((2, _)) => Err(Error::Cancelled),
-            Ok((1, Some(body))) => Err(Error::DriverError(format!(
-                "driver callback status 1: {}",
-                truncate_body(&body)
-            ))),
-            Ok((1, None)) => Err(Error::DriverError("driver callback status 1".into())),
-            Ok((code, _)) => Err(Error::DriverError(format!("driver callback status {code}"))),
+            Ok(result) => result,
             Err(_) => Err(Error::DriverError("driver callback timed out".into())),
         }
     }
@@ -303,6 +407,29 @@ impl ThingDriver for DynamicThingDriver {
         )?;
 
         serde_json::from_str(&result_json).map_err(|e| Error::DriverError(format!("read_data JSON parse error: {e}")))
+    }
+
+    fn read_sources(&mut self, sources: &[String], cancel: &CancelToken) -> Result<Vec<SourceItem>, Error> {
+        if cancel.is_cancelled() {
+            return Err(Error::Cancelled);
+        }
+        let config_c = self.config_json()?;
+        let sources_json = serde_json::to_string(sources)
+            .map_err(|e| Error::DriverError(format!("source IDs serialize error: {e}")))?;
+        let sources_c = std::ffi::CString::new(sources_json)
+            .map_err(|e| Error::DriverError(format!("invalid source IDs JSON: {e}")))?;
+
+        let result_json = self.call_with_timeout_and_limit(
+            |handle, done, user_data| {
+                (self.vtable.read_async)(self.ctx, config_c.as_ptr(), sources_c.as_ptr(), handle, done, user_data)
+            },
+            cancel,
+            CALL_TIMEOUT,
+            Some(MAX_READ_RESPONSE_BYTES),
+        )?;
+
+        serde_json::from_str(&result_json)
+            .map_err(|e| Error::DriverError(format!("read_sources JSON parse error: {e}")))
     }
 
     fn execute_command(&mut self, cmd: &ThingCommand, cancel: &CancelToken) -> Result<bool, Error> {
@@ -518,6 +645,97 @@ mod tests {
         free_string: stub_free_string,
     };
 
+    #[derive(Default)]
+    struct SourceRequestLog(std::sync::Mutex<Vec<String>>);
+
+    extern "C" fn read_source_items(
+        ctx: *mut c_void,
+        _config: *const c_char,
+        sources: *const c_char,
+        _cancel: *mut CancelHandle,
+        done: DriverDone,
+        user_data: *mut c_void,
+    ) -> i32 {
+        // SAFETY: the test keeps SourceRequestLog alive for the synchronous call,
+        // and sources is a valid NUL-terminated JSON string supplied by the adapter.
+        let requested = unsafe { CStr::from_ptr(sources) }
+            .to_str()
+            .ok()
+            .and_then(|json| serde_json::from_str::<Vec<String>>(json).ok())
+            .unwrap_or_default();
+        // SAFETY: ctx points at the test's SourceRequestLog.
+        unsafe { &*(ctx as *const SourceRequestLog) }
+            .0
+            .lock()
+            .expect("source request log")
+            .extend(requested);
+        done(
+            user_data,
+            0,
+            leak_json(
+                r#"[
+                    {"v":1,"source":"camera.front","dataKind":"image","seq":7,"time":"2026-10-27T10:00:00Z","data":{}},
+                    {"v":1,"source":"camera.rear","dataKind":"detections","seq":8,"time":"2026-10-27T10:00:01Z","data":{"count":2}}
+                ]"#,
+            ),
+        );
+        0
+    }
+
+    extern "C" fn read_source_items_huge(
+        _ctx: *mut c_void,
+        _config: *const c_char,
+        _sources: *const c_char,
+        _cancel: *mut CancelHandle,
+        done: DriverDone,
+        user_data: *mut c_void,
+    ) -> i32 {
+        let response = "x".repeat(MAX_READ_RESPONSE_BYTES + 1);
+        done(user_data, 0, leak_json(&response));
+        0
+    }
+
+    extern "C" fn read_source_image_response(
+        ctx: *mut c_void,
+        _config: *const c_char,
+        _sources: *const c_char,
+        _cancel: *mut CancelHandle,
+        done: DriverDone,
+        user_data: *mut c_void,
+    ) -> i32 {
+        // SAFETY: each test keeps the response String alive for the synchronous call.
+        let response = unsafe { &*(ctx as *const String) };
+        done(user_data, 0, leak_json(response));
+        0
+    }
+
+    static SOURCE_VTABLE: DriverVTableV2 = DriverVTableV2 {
+        version: 2,
+        read_async: read_source_items,
+        execute_async: read_ok,
+        set_demand: stub_set_demand,
+        describe: stub_describe,
+        free_string: stub_free_string,
+    };
+
+    static HUGE_SOURCE_VTABLE: DriverVTableV2 = DriverVTableV2 {
+        version: 2,
+        read_async: read_source_items_huge,
+        execute_async: read_ok,
+        set_demand: stub_set_demand,
+        describe: stub_describe,
+        free_string: stub_free_string,
+    };
+
+    static SOURCE_IMAGE_VTABLE: DriverVTableV2 = DriverVTableV2 {
+        version: 2,
+        read_async: read_source_image_response,
+        execute_async: read_ok,
+        set_demand: stub_set_demand,
+        describe: stub_describe,
+        free_string: stub_free_string,
+    };
+
     fn test_driver(vtable: &'static DriverVTableV2) -> DynamicThingDriver {
         let thing = Thing {
             id: "stub-1".to_string(),
@@ -630,6 +848,151 @@ mod tests {
         assert!(
             started.elapsed() < Duration::from_millis(150),
             "describe must not wait for the hung driver"
+        );
+    }
+
+    #[test]
+    fn read_sources_forwards_actual_ids_and_parses_source_items() {
+        let log = SourceRequestLog::default();
+        let thing = Thing {
+            id: "stub-1".to_string(),
+            name: "stub-1".to_string(),
+            ..Thing::default()
+        };
+        let mut driver = DynamicThingDriver::for_test(
+            thing,
+            (&log as *const SourceRequestLog).cast_mut().cast(),
+            &SOURCE_VTABLE,
+        );
+        let sources = vec!["camera.front".to_string(), "camera.rear".to_string()];
+
+        let items = driver
+            .read_sources(&sources, &CancelToken::new())
+            .expect("source items should parse");
+
+        assert_eq!(
+            *log.0.lock().expect("source request log"),
+            vec!["camera.front".to_string(), "camera.rear".to_string()]
+        );
+        assert_eq!(items.len(), 2);
+        assert_eq!(items[0].source, "camera.front");
+        assert_eq!(items[0].data_kind, tinyiothub_core::media::DataKind::Image);
+        assert_eq!(items[0].seq, 7);
+        assert_eq!(items[1].source, "camera.rear");
+        assert_eq!(items[1].data["count"], 2);
+    }
+
+    #[test]
+    fn source_image_limit_is_enforced_before_owned_response_allocation() {
+        use std::cell::Cell;
+
+        let encoded = "A".repeat((crate::media::evidence::MAX_IMAGE_BYTES / 3 + 1) * 4);
+        let response = format!(
+            r#"[{{"v":1,"source":"camera.front","dataKind":"image","seq":7,"time":"2026-10-27T10:00:00Z","data":{{}},"media":{{"mime":"image/png","bytes":"{encoded}"}}}}]"#
+        );
+        assert!(response.len() <= MAX_READ_RESPONSE_BYTES);
+        let owned = Cell::new(false);
+
+        let error = own_source_response(response.as_bytes(), |bytes| {
+            owned.set(true);
+            String::from_utf8_lossy(bytes).into_owned()
+        })
+        .expect_err("an oversized image must be rejected before response ownership");
+
+        assert!(error.to_string().contains("2 MiB"), "{error}");
+        assert!(!owned.get(), "the owned response conversion must not run");
+    }
+
+    fn source_image_response(bytes: &[u8], byte_array: bool) -> String {
+        use base64::Engine as _;
+
+        let encoded = if byte_array {
+            serde_json::to_string(bytes).expect("byte array")
+        } else {
+            format!("\"{}\"", base64::engine::general_purpose::STANDARD.encode(bytes))
+        };
+        format!(
+            r#"[{{"v":1,"source":"camera.front","dataKind":"image","seq":7,"time":"2026-10-27T10:00:00Z","data":{{}},"media":{{"mime":"image/png","bytes":{encoded}}}}}]"#
+        )
+    }
+
+    fn source_image_driver(response: &String) -> DynamicThingDriver {
+        let thing = Thing {
+            id: "stub-1".to_string(),
+            name: "stub-1".to_string(),
+            ..Thing::default()
+        };
+        DynamicThingDriver::for_test(
+            thing,
+            (response as *const String).cast_mut().cast(),
+            &SOURCE_IMAGE_VTABLE,
+        )
+    }
+
+    #[test]
+    fn read_sources_preserves_exactly_two_mib_base64_image() {
+        let mut expected = vec![0xa5; crate::media::evidence::MAX_IMAGE_BYTES];
+        expected[..8].copy_from_slice(&[0x89, b'P', b'N', b'G', 0x0d, 0x0a, 0x1a, 0x0a]);
+        let response = source_image_response(&expected, false);
+        assert!(response.len() <= MAX_READ_RESPONSE_BYTES);
+        OWNED_SOURCE_RESPONSE_CONVERSIONS.with(|count| count.set(0));
+        let mut driver = source_image_driver(&response);
+
+        let items = driver
+            .read_sources(&["camera.front".to_string()], &CancelToken::new())
+            .expect("an exactly 2 MiB base64 image must reach final SourceItem deserialization");
+
+        let actual = items[0].media.as_ref().expect("image media");
+        assert_eq!(actual.bytes, expected);
+        OWNED_SOURCE_RESPONSE_CONVERSIONS.with(|count| assert_eq!(count.get(), 1));
+    }
+
+    #[test]
+    fn read_sources_rejects_two_mib_plus_one_before_owned_allocation() {
+        let response = source_image_response(&vec![0xa5; crate::media::evidence::MAX_IMAGE_BYTES + 1], false);
+        assert!(response.len() <= MAX_READ_RESPONSE_BYTES);
+        OWNED_SOURCE_RESPONSE_CONVERSIONS.with(|count| count.set(0));
+        let mut driver = source_image_driver(&response);
+
+        let error = driver
+            .read_sources(&["camera.front".to_string()], &CancelToken::new())
+            .expect_err("a 2 MiB+1 image must be rejected");
+
+        assert!(error.to_string().contains("2 MiB"), "{error}");
+        OWNED_SOURCE_RESPONSE_CONVERSIONS.with(|count| {
+            assert_eq!(
+                count.get(),
+                0,
+                "response ownership and final image allocation must not run"
+            );
+        });
+    }
+
+    #[test]
+    fn read_sources_rejects_noncanonical_byte_array_before_owned_allocation() {
+        let response = source_image_response(&[0x89, b'P', b'N', b'G'], true);
+        OWNED_SOURCE_RESPONSE_CONVERSIONS.with(|count| count.set(0));
+        let mut driver = source_image_driver(&response);
+
+        driver
+            .read_sources(&["camera.front".to_string()], &CancelToken::new())
+            .expect_err("Source image bytes have one canonical base64 representation");
+
+        OWNED_SOURCE_RESPONSE_CONVERSIONS.with(|count| assert_eq!(count.get(), 0));
+    }
+
+    #[test]
+    fn read_sources_rejects_oversized_callback_before_string_conversion() {
+        let mut driver = test_driver(&HUGE_SOURCE_VTABLE);
+
+        let error = driver
+            .read_sources(&["camera.front".to_string()], &CancelToken::new())
+            .expect_err("oversized source response must be rejected");
+
+        assert!(error.to_string().contains("exceeds"), "{error}");
+        assert!(
+            error.to_string().contains(&MAX_READ_RESPONSE_BYTES.to_string()),
+            "{error}"
         );
     }
 

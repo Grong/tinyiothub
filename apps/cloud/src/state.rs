@@ -6,11 +6,11 @@
 
 use std::sync::Arc;
 
+use crate::domains::agent::pool::AgentPool;
 use crate::domains::auth::redis::RedisClient;
 use crate::domains::driver::legacy::{
     ThingMonitoringService, ThingPerformanceService, ThingQueryService, ThingService,
 };
-use tinyiothub_agent::pool::AgentPool;
 
 use crate::domains::notify::channels::NotificationChannelFactory;
 use crate::domains::notify::service::NotificationManager;
@@ -55,6 +55,10 @@ pub struct AppState {
     /// 启动时注入；None = 未装配（测试/降级路径），相关路由返回错误。
     pub access: Option<Arc<tinyiothub_runtime::access::service::AccessService>>,
 
+    /// Runtime image evidence and browser-direct playback composition.
+    pub evidence: Option<Arc<tinyiothub_runtime::media::evidence::EvidenceService>>,
+    pub playback_provider: Arc<dyn crate::domains::media::playback::PlaybackProvider>,
+
     /// E4d 空间读取服务（maps/places/position → zone）。CRUD 写入后经
     /// [`tinyiothub_runtime::maps::ZoneService::invalidate`] 清工作区缓存；
     /// None = 未装配（测试/降级路径），CRUD 直接落库并依赖 5s TTL。
@@ -98,11 +102,30 @@ pub struct AppState {
     /// 事件总线 - 事件发布和订阅
     pub event_bus: Arc<EventBus>,
 
+    /// Durable Task runtime stream hub.
+    pub runtime_stream: Arc<crate::domains::agent::runtime::stream::RuntimeStreamHub>,
+    /// Workspace-Harness Task SSE tail (Task 19B cutover).
+    pub session_stream: Arc<crate::domains::agent::runtime::session_stream::SessionStreamHub>,
+    /// Production Harness Effect dispatcher (Task 19C1).
+    pub effect_dispatch: Option<Arc<crate::domains::agent::runtime::dispatch::EffectDispatch>>,
+    /// Shared runtime event recorder for Task/Run/Job/watch facts.
+    pub runtime_recorder: crate::domains::agent::runtime::stream::RuntimeRecorder,
+
     /// 报警服务 - 报警规则和报警管理
     pub alarm_service: Arc<crate::domains::alarm::service::AlarmService>,
 
     /// Agent Pool — central agent lifecycle manager
     pub agent_pool: Arc<AgentPool>,
+
+    /// 统一 Session 运行时（事件、Todo、待答问题、子代理槽）。
+    pub session_runtime: Arc<crate::domains::agent::session::SessionRuntime>,
+
+    /// 手动 suppression 操作端口（preflight/wake/reconcile）——ServiceManager
+    /// 装配到 live TriggerRouter/WakeRunner；None = 未接线（端点 503）。
+    pub suppression_ops: Option<Arc<dyn crate::domains::agent::session::trigger::SuppressionOps>>,
+    /// Loopback-fixture only: allow synthetic gate evidence. Never set by a
+    /// client request; production keeps this false.
+    pub suppression_gate_allow_synthetic: bool,
 
     /// 用户服务 - CRUD 操作
     pub user_service: Arc<crate::domains::user::UserService>,
@@ -117,7 +140,7 @@ pub struct AppState {
     pub tag_service: Arc<crate::domains::thing::tag::TagService>,
 
     /// AI subsystem orchestrator (set during async startup)
-    pub orchestrator: Option<Arc<tinyiothub_agent::runtime::orchestrator::Orchestrator>>,
+    pub orchestrator: Option<Arc<crate::domains::agent::orchestrator::Orchestrator>>,
 
     /// 统一循环 heartbeat 最近 tick 完成时间表（Task 12 透出，T13 bootstrap
     /// 注入同一张表）——get_config 的 last_tick 唯一读源（T15 起）。
@@ -126,7 +149,7 @@ pub struct AppState {
     /// 统一循环管理器（T13 bootstrap 装配注入）——heartbeat handler 的
     /// enabled/interval/trust/tasks 读写源（T15 起唯一）。
     /// None = AI 子系统未接线（测试/降级路径），handler 返回 503。
-    pub thing_agents: Option<Arc<tinyiothub_agent::runtime::thing_agent::ThingAgentManager>>,
+    pub thing_agents: Option<Arc<crate::domains::agent::thing_agent::ThingAgentManager>>,
 
     /// Agent MemoryService（set during async startup）—— Task 6 起由 cloud 侧
     /// 自持（memory profile compile / weekly digest handler），不再经
@@ -140,7 +163,7 @@ pub struct AppState {
     pub permission_service: Arc<crate::domains::user::permission::PermissionService>,
 
     /// 会话服务 - Agent 聊天会话管理
-    pub session_service: Arc<crate::domains::agent::host::SessionService>,
+    pub session_service: Arc<crate::domains::agent::session::index::SessionService>,
 
     /// 缓存的系统信息对象，避免每次请求重新扫描
     pub sysinfo_system: Arc<std::sync::Mutex<sysinfo::System>>,
@@ -157,13 +180,13 @@ pub struct AppState {
     /// 用户指令投递入口（T14）—— HTTP 端点 / chat 工具经此向
     /// thing-agent loop 投递 WakeSignal。T15 用 ThingAgentManager 实现
     /// 并注入；None 时指令入口返回 503。
-    pub directive_sink: Option<Arc<dyn tinyiothub_agent::runtime::thing_agent::DirectiveSink>>,
+    pub directive_sink: Option<Arc<dyn crate::domains::agent::thing_agent::DirectiveSink>>,
 
     /// 进行中 agent run 注册表（AI 运行透明化 T5）—— /agent-runs/{id}/trace
     /// 实时分支数据源，与 ThingAgentManager 内 PipelineDeps 共享同一实例
     /// （克隆共享 DashMap）。None = 未接线（测试/降级路径），trace 端点
     /// 只剩 DB 分支。
-    pub active_runs: Option<tinyiothub_agent::runtime::thing_agent::ActiveRunRegistry>,
+    pub active_runs: Option<crate::domains::agent::thing_agent::ActiveRunRegistry>,
 
     /// Agent 记忆存储 - 持久化 agent 记忆到 SQLite
     pub memory_store: Arc<MemoryStore>,
@@ -210,14 +233,25 @@ pub struct AppState {
     /// 进程启动时间（G3，替代 health::START_TIME 全局静态）
     pub started_at: std::time::SystemTime,
     /// 待确认动作暂存（G3，替代 PENDING_ACTIONS 全局静态）
-    pub pending_actions: std::sync::Arc<crate::domains::agent::host::tools::thing::PendingActionStore>,
+    pub pending_actions: std::sync::Arc<crate::domains::agent::tool::thing::PendingActionStore>,
     /// E1 仲裁（Task 9）：每设备互斥锁注册表，跨 chat/自治 run 共享
-    pub arbitration: std::sync::Arc<tinyiothub_agent::runtime::thing_agent::ArbitrationRegistry>,
+    pub arbitration: std::sync::Arc<crate::domains::agent::thing_agent::ArbitrationRegistry>,
     /// 驱动心跳状态/配置（G3，替代 HEARTBEAT_STATUS/CONFIG 双全局静态）
     pub driver_heartbeat_status:
         std::sync::Arc<tokio::sync::RwLock<crate::domains::driver::heartbeat::types::HeartbeatStatus>>,
     pub driver_heartbeat_config:
         std::sync::Arc<tokio::sync::RwLock<crate::domains::driver::heartbeat::types::HeartbeatConfig>>,
+}
+
+impl axum::extract::FromRef<AppState> for crate::domains::media::MediaState {
+    fn from_ref(state: &AppState) -> Self {
+        crate::domains::media::MediaState {
+            db: state.db.clone(),
+            workspace_access: state.workspace_access.clone(),
+            evidence: state.evidence.clone(),
+            playback_provider: state.playback_provider.clone(),
+        }
+    }
 }
 
 impl axum::extract::FromRef<AppState> for std::sync::Arc<tinyiothub_authn::jwt::JwtService> {
@@ -270,6 +304,10 @@ impl AppState {
 
         // 创建事件总线
         let event_bus = Arc::new(EventBus::new());
+        let runtime_stream = Arc::new(crate::domains::agent::runtime::stream::RuntimeStreamHub::default());
+        let session_stream = Arc::new(crate::domains::agent::runtime::session_stream::SessionStreamHub::default());
+        let runtime_recorder =
+            crate::domains::agent::runtime::stream::RuntimeRecorder::new(database.clone(), runtime_stream.clone());
 
         // 创建报警服务
         let alarm_service = Arc::new(crate::domains::alarm::service::AlarmService::new(database.clone()));
@@ -329,7 +367,7 @@ impl AppState {
         // Register the agent crate's config ports (minimax provider settings
         // + default model) — the agent crate no longer reads cloud's global
         // config directly (P4-Task22).
-        tinyiothub_agent::pool::set_minimax_settings(tinyiothub_agent::pool::MinimaxSettings {
+        tinyiothub_agent::provider::set_minimax_settings(tinyiothub_agent::provider::MinimaxSettings {
             base_url: minimax_config.base_url.clone(),
             auth_token: minimax_config.auth_token.clone(),
             model: minimax_config.model.clone(),
@@ -354,19 +392,25 @@ impl AppState {
         // 此后端影响。observer 暂保持 NoopObserver —— 观测接线待 phase 2
         // hooks 完成（已知降级，本任务接受）。
         let agents_base_dir = crate::shared::paths::agents_base_dir();
-        let agent_memory: Arc<dyn tinyiothub_agent::port::memory::Memory> =
-            Arc::new(crate::domains::agent::host::persist::memory::jsonl::JsonlMemory::new(
+        let agent_memory: Arc<dyn tinyiothub_agent::port::memory::Memory> = Arc::new(
+            crate::domains::agent::session::persist::memory::jsonl::JsonlMemory::new(
                 agents_base_dir.join("agent_memory.jsonl"),
-            ));
+            ),
+        );
         let agent_observer = Arc::new(tinyiothub_agent::port::observer::NoopObserver);
         let agent_pool: Arc<AgentPool> = Arc::new(
             AgentPool::new(
                 &agent_settings,
                 agent_memory,
                 agent_observer,
-                tinyiothub_agent::pool::minimax_provider_factory(),
+                tinyiothub_agent::provider::minimax_provider_factory(),
             )
             .expect("failed to build AgentPool"),
+        );
+
+        let session_runtime = Arc::new(
+            crate::domains::agent::session::SessionRuntime::new(database.clone(), session_stream.clone())
+                .with_system_prompts(settings.agent.system_prompts.clone()),
         );
 
         alarm_service.set_device_cache(device_cache.clone());
@@ -392,7 +436,9 @@ impl AppState {
         ));
 
         // 会话服务 - 用于 Agent 聊天会话管理
-        let session_service = Arc::new(crate::domains::agent::host::SessionService::new(database.clone()));
+        let session_service = Arc::new(crate::domains::agent::session::index::SessionService::new(
+            database.clone(),
+        ));
 
         // === 网关配对服务 ===
         let (mqtt_tx, mqtt_rx) =
@@ -448,20 +494,20 @@ impl AppState {
             }
         });
 
-        let pending_actions: std::sync::Arc<crate::domains::agent::host::tools::thing::PendingActionStore> =
+        let pending_actions: std::sync::Arc<crate::domains::agent::tool::thing::PendingActionStore> =
             std::sync::Arc::new(dashmap::DashMap::new());
         // F7：周期清扫超期确认 token——take 时的懒清扫只盖住有确认流量的路径。
         // handle 刻意 drop（不 let _：clippy let_underscore_future 拒绝）：任务
         // 进程级生命周期，关停随 tokio runtime 一起 abort。
-        drop(crate::domains::agent::host::tools::thing::spawn_pending_action_sweeper_default(pending_actions.clone()));
+        drop(crate::domains::agent::tool::thing::spawn_pending_action_sweeper_default(pending_actions.clone()));
 
         // E1 仲裁（Task 9）：每设备互斥锁注册表——chat 工具与自治 run 共享
         // 同一份，TTL 过期自动恢复，无清扫任务（acquire 时懒判定）。
-        let arbitration = std::sync::Arc::new(tinyiothub_agent::runtime::thing_agent::ArbitrationRegistry::default());
+        let arbitration = std::sync::Arc::new(crate::domains::agent::thing_agent::ArbitrationRegistry::default());
 
         // Thing action hooks（G5a）—— agent 侧实现 thing 域 trait，注入给 thing handler
         let thing_action_hooks: Arc<dyn crate::domains::thing::hooks::ThingActionHooks> = Arc::new(
-            crate::domains::agent::host::trigger::thing_action_hooks::AgentThingActionHooks::new(
+            crate::domains::agent::session::triggers::thing_action_hooks::AgentThingActionHooks::new(
                 database.pool().clone(),
                 pending_actions.clone(),
             ),
@@ -518,7 +564,9 @@ impl AppState {
             data_server: None,     // DataServer 由 ServiceManager 设置
             derived_manager: None, // DerivedDriverManager 由 ServiceManager 设置
             access: None,          // AccessService 由 ServiceManager 设置
-            zones: None,           // ZoneService 由 ServiceManager 设置
+            evidence: None,
+            playback_provider: Arc::new(crate::domains::media::playback::UnavailablePlaybackProvider),
+            zones: None, // ZoneService 由 ServiceManager 设置
             device_service,
             device_query_service,
             monitoring_service,
@@ -528,11 +576,18 @@ impl AppState {
             notification_manager,
             redis,
             event_bus,
+            runtime_stream,
+            session_stream,
+            effect_dispatch: None,
+            runtime_recorder,
             sse_manager,
             sse_token_manager,
             secure_event_service,
             alarm_service,
             agent_pool,
+            session_runtime,
+            suppression_ops: None,
+            suppression_gate_allow_synthetic: false,
             orchestrator: None,
             heartbeat_last_ticks: None,
             thing_agents: None, // T13 bootstrap 装配时注入
@@ -557,13 +612,13 @@ impl AppState {
     }
 
     /// 注入用户指令投递入口（T15 闭环接线调用）
-    pub fn set_directive_sink(&mut self, sink: Arc<dyn tinyiothub_agent::runtime::thing_agent::DirectiveSink>) {
+    pub fn set_directive_sink(&mut self, sink: Arc<dyn crate::domains::agent::thing_agent::DirectiveSink>) {
         self.directive_sink = Some(sink);
     }
 
     /// 注入进行中 run 注册表（AI 运行透明化 T5；service_manager 在
     /// set_directive_sink 同点调用，与 manager 共享同一实例）。
-    pub fn set_active_runs(&mut self, registry: tinyiothub_agent::runtime::thing_agent::ActiveRunRegistry) {
+    pub fn set_active_runs(&mut self, registry: crate::domains::agent::thing_agent::ActiveRunRegistry) {
         self.active_runs = Some(registry);
     }
 
@@ -852,14 +907,14 @@ impl crate::domains::user::RoleChecker for EventSecurityRoleChecker {
 /// tears down the per-workspace Agent via cloud's `AgentPool` (agent plane,
 /// not yet extracted).
 pub struct AgentPoolLifecycle {
-    pub pool: Arc<tinyiothub_agent::pool::AgentPool>,
+    pub pool: Arc<crate::domains::agent::pool::AgentPool>,
     /// AgentPool 不持有存储句柄（Task 7）—— 生命周期 CRUD 的 db 由 cloud 注入。
     pub db_pool: sqlx::SqlitePool,
 }
 
 impl AgentPoolLifecycle {
     pub async fn create_agent(&self, workspace_id: &str, name: &str) -> Result<String, String> {
-        crate::domains::agent::host::config::service::create_agent(
+        crate::domains::agent::session::config::service::create_agent(
             &self.db_pool,
             &tinyiothub_agent::config::AgentConfig {
                 workspace_id: workspace_id.to_string(),
@@ -872,7 +927,7 @@ impl AgentPoolLifecycle {
     }
 
     pub async fn delete_agent(&self, agent_id: &str) -> Result<(), String> {
-        crate::domains::agent::host::config::service::delete_agent(&self.db_pool, agent_id)
+        crate::domains::agent::session::config::service::delete_agent(&self.db_pool, agent_id)
             .await
             .map_err(|e| e.to_string())?;
         self.pool.invalidate(agent_id);
@@ -1061,6 +1116,13 @@ impl axum::extract::FromRef<AppState> for crate::domains::agent::AgentState {
             access: state.access.clone(),
             data_server: state.data_server.clone(),
             event_bus: state.event_bus.clone(),
+            runtime_stream: state.runtime_stream.clone(),
+            session_stream: state.session_stream.clone(),
+            effect_dispatch: state.effect_dispatch.clone(),
+            runtime_recorder: state.runtime_recorder.clone(),
+            session_runtime: state.session_runtime.clone(),
+            suppression_ops: state.suppression_ops.clone(),
+            suppression_gate_allow_synthetic: state.suppression_gate_allow_synthetic,
         }
     }
 }

@@ -270,6 +270,21 @@ pub async fn thing_id_by_name(
         .await
 }
 
+/// Workspace 内带驱动的设备物（声明回填用）：`(thing_id, driver_name)`。
+pub async fn list_things_with_driver(
+    pool: &SqlitePool,
+    workspace_id: &str,
+) -> std::result::Result<Vec<(String, String)>, sqlx::Error> {
+    sqlx::query_as(
+        "SELECT id, driver_name FROM things \
+         WHERE workspace_id = ? AND thing_type = 'device' \
+           AND driver_name IS NOT NULL AND driver_name <> ''",
+    )
+    .bind(workspace_id)
+    .fetch_all(pool)
+    .await
+}
+
 /// Recursive descendant count (depth ≤ 10), optionally filtered by thing_type.
 pub async fn count_descendants(
     pool: &SqlitePool,
@@ -1163,6 +1178,14 @@ impl Db {
         name: &str,
     ) -> std::result::Result<Option<ThingRow>, sqlx::Error> {
         find_thing_row_by_name(self.pool(), workspace_id, name).await
+    }
+
+    /// Workspace 内带驱动的设备物（声明回填用）：`(thing_id, driver_name)`。
+    pub async fn list_things_with_driver(
+        &self,
+        workspace_id: &str,
+    ) -> std::result::Result<Vec<(String, String)>, sqlx::Error> {
+        list_things_with_driver(self.pool(), workspace_id).await
     }
 
     /// 分页列出 things（动态 WHERE）。

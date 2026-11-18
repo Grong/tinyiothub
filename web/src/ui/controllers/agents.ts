@@ -2,9 +2,8 @@ import { apiGet, apiPost, apiPut } from "../../api/client.js";
 import type { AgentsListResult, ToolCatalogGroup } from "../types.js";
 import type { Skill, CreateSkillRequest, UpdateSkillRequest } from "../../api/client.js";
 import { listSkills, createSkill, updateSkill, deleteSkill } from "../../api/client.js";
-import type { HeartbeatConfig, HeartbeatLogsResponse, HeartbeatTask, PendingProposal } from "../views/agents-heartbeat-tab.js";
 
-export type AgentsPanel = "overview" | "tools" | "skills" | "heartbeat";
+export type AgentsPanel = "overview" | "tools" | "skills";
 
 export type AgentConfig = {
   model?: string;
@@ -43,11 +42,6 @@ export type AgentsState = {
   editingSkill?: Skill | null;
   skillDraft?: string;
   pendingDelete?: string | null;
-  heartbeatConfig?: HeartbeatConfig | null;
-  heartbeatLogs?: HeartbeatLogsResponse["logs"];
-  heartbeatApprovals?: PendingProposal[];
-  heartbeatLoading?: boolean;
-  heartbeatError?: string | null;
 };
 
 export function createAgentsState(): AgentsState {
@@ -187,111 +181,3 @@ export async function updateSkillApi(state: AgentsState, name: string, data: Upd
     return false;
   }
 }
-
-export async function loadHeartbeatConfig(state: AgentsState, workspaceId: string): Promise<void> {
-  state.heartbeatLoading = true;
-  state.heartbeatError = null;
-  try {
-    const res = await apiGet<HeartbeatConfig>(`/workspaces/${workspaceId}/heartbeat/config`);
-    if (res.result) {
-      // Parse tasks if it's a JSON string (same as templates/things pattern)
-      if (typeof res.result.tasks === "string") {
-        res.result.tasks = JSON.parse(res.result.tasks);
-      }
-    }
-    state.heartbeatConfig = res.result || null;
-  } catch (err) {
-    state.heartbeatError = String(err);
-  } finally {
-    state.heartbeatLoading = false;
-  }
-}
-
-export async function loadHeartbeatLogs(state: AgentsState, workspaceId: string): Promise<void> {
-  try {
-    const res = await apiGet<HeartbeatLogsResponse>(`/workspaces/${workspaceId}/heartbeat/logs`);
-    state.heartbeatLogs = res.result?.logs ?? undefined;
-  } catch (err) {
-    state.heartbeatError = String(err);
-  }
-}
-
-export async function updateHeartbeatConfig(
-  state: AgentsState,
-  workspaceId: string,
-  enabled?: boolean,
-  intervalMinutes?: number
-): Promise<boolean> {
-  try {
-    await apiPut(`/workspaces/${workspaceId}/heartbeat/config`, {
-      enabled,
-      intervalMinutes,
-    });
-    // Reload config to get the latest state
-    await loadHeartbeatConfig(state, workspaceId);
-    return true;
-  } catch (err) {
-    state.heartbeatError = String(err);
-    return false;
-  }
-}
-
-export async function updateHeartbeatTasks(
-  state: AgentsState,
-  workspaceId: string,
-  tasks: HeartbeatTask[]
-): Promise<boolean> {
-  try {
-    await apiPut(`/workspaces/${workspaceId}/heartbeat/tasks`, { tasks });
-    // Reload config to get the updated tasks list
-    await loadHeartbeatConfig(state, workspaceId);
-    return true;
-  } catch (err) {
-    state.heartbeatError = String(err);
-    return false;
-  }
-}
-
-export interface ApprovalsResponse {
-  proposals: PendingProposal[];
-}
-
-export async function loadApprovals(state: AgentsState, workspaceId: string): Promise<void> {
-  try {
-    const res = await apiGet<ApprovalsResponse>(`/workspaces/${workspaceId}/heartbeat/approvals`);
-    state.heartbeatApprovals = res.result?.proposals ?? [];
-  } catch (err) {
-    console.warn("Failed to load heartbeat approvals:", err);
-  }
-}
-
-export async function approveProposal(
-  state: AgentsState,
-  workspaceId: string,
-  proposalId: string,
-): Promise<boolean> {
-  try {
-    await apiPost(`/workspaces/${workspaceId}/heartbeat/approvals/${proposalId}/approve`);
-    await loadApprovals(state, workspaceId);
-    return true;
-  } catch (err) {
-    state.heartbeatError = String(err);
-    return false;
-  }
-}
-
-export async function rejectProposal(
-  state: AgentsState,
-  workspaceId: string,
-  proposalId: string,
-): Promise<boolean> {
-  try {
-    await apiPost(`/workspaces/${workspaceId}/heartbeat/approvals/${proposalId}/reject`);
-    await loadApprovals(state, workspaceId);
-    return true;
-  } catch (err) {
-    state.heartbeatError = String(err);
-    return false;
-  }
-}
-

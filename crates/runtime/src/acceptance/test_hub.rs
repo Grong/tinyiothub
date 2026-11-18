@@ -738,6 +738,7 @@ mod tests {
             driver: "demo".into(),
             driver_version: "1.0.0".into(),
             state_fields: vec![StateFieldDecl {
+                key: None,
                 name: "level".into(),
                 data_type: "integer".into(),
                 unit: None,

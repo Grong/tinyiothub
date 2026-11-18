@@ -108,6 +108,8 @@ pub struct ToolTraceEntry {
     pub args: serde_json::Value,
     /// `None` = no paired ToolResult (cancelled in flight / stream ended).
     pub output: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub evidence: Vec<crate::media::EvidenceRef>,
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -141,7 +143,15 @@ pub struct RunReport {
     /// None = 未注入（空快照/装配失败/旧报告）。
     #[serde(default)]
     pub snapshot: Option<SnapshotMetrics>,
+    /// Persistent Task and wake identity; legacy autonomous Runs have neither.
+    #[serde(default)]
+    pub task_id: Option<String>,
+    #[serde(default)]
+    pub wake_event_id: Option<String>,
 }
+
+/// 兼容别名（一个版本）：领域内新代码使用 `Run`。
+pub type Run = RunReport;
 
 /// E2 turn 开头快照的实测指标（T5：中文预算基线进 run trace）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
@@ -183,6 +193,8 @@ mod tests {
         assert!(report.trace.is_empty());
         assert_eq!(report.end_reason, None);
         assert_eq!(report.thing_id, None);
+        assert_eq!(report.task_id, None);
+        assert_eq!(report.wake_event_id, None);
     }
 
     /// trace 字段的序列化往返：含未配对 output=None 的条目。
@@ -193,6 +205,7 @@ mod tests {
             name: "read_property".into(),
             args: serde_json::json!({"p": "temperature"}),
             output: None,
+            evidence: vec![],
         };
         let v = serde_json::to_value(&entry).expect("serialize");
         assert_eq!(v["output"], serde_json::Value::Null);

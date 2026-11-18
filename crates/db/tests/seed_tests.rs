@@ -126,6 +126,88 @@ async fn seed_demo_creates_env01_with_properties() {
 }
 
 #[tokio::test]
+async fn seed_demo_creates_utility_and_safety_scenario_devices() {
+    let pool = test_helpers::test_pool().await;
+    let db = Db::new(pool);
+    seed::seed_system(&db).await.unwrap();
+    seed::seed_demo(&db).await.unwrap();
+
+    let devices: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM things WHERE id IN (
+            'device-water-main', 'device-water-zone-a',
+            'device-power-lighting', 'device-power-hvac',
+            'device-light-workshop', 'device-light-corridor', 'device-light-outdoor',
+            'device-fire-smoke-a', 'device-fire-heat-a',
+            'device-security-entrance',
+            'device-access-entrance', 'device-access-workshop'
+        )",
+    )
+    .fetch_one(db.pool())
+    .await
+    .unwrap();
+    assert_eq!(devices, 12);
+
+    let energy_properties: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM thing_properties
+         WHERE thing_id IN (
+            'device-power-lighting', 'device-power-hvac',
+            'device-light-workshop', 'device-light-corridor', 'device-light-outdoor'
+         ) AND name IN ('active_power', 'power', 'energy_today')",
+    )
+    .fetch_one(db.pool())
+    .await
+    .unwrap();
+    assert_eq!(energy_properties, 10);
+}
+
+#[tokio::test]
+async fn seed_demo_adds_energy_and_safety_tags() {
+    let pool = test_helpers::test_pool().await;
+    let db = Db::new(pool);
+    seed::seed_system(&db).await.unwrap();
+    seed::seed_demo(&db).await.unwrap();
+    seed::seed_demo(&db).await.unwrap();
+
+    let tags: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM tags WHERE id IN (
+            'tag-device-009', 'tag-device-010', 'tag-device-011',
+            'tag-device-012', 'tag-device-013', 'tag-device-014',
+            'tag-device-015', 'tag-device-016', 'tag-device-017'
+        )",
+    )
+    .fetch_one(db.pool())
+    .await
+    .unwrap();
+    assert_eq!(tags, 9);
+
+    let bindings: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM tag_bindings WHERE id BETWEEN 'binding-020' AND 'binding-037'")
+            .fetch_one(db.pool())
+            .await
+            .unwrap();
+    assert_eq!(bindings, 18);
+
+    let lighting: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM tag_bindings b JOIN tags t ON t.id = b.tag_id
+         WHERE b.target_id IN ('device-light-workshop', 'device-light-corridor', 'device-light-outdoor')
+           AND t.name = '照明'",
+    )
+    .fetch_one(db.pool())
+    .await
+    .unwrap();
+    assert_eq!(lighting, 3);
+
+    let hvac: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM tag_bindings b JOIN tags t ON t.id = b.tag_id
+         WHERE b.target_id = 'device-power-hvac' AND t.name IN ('电力仪表', '暖通')",
+    )
+    .fetch_one(db.pool())
+    .await
+    .unwrap();
+    assert_eq!(hvac, 2);
+}
+
+#[tokio::test]
 async fn seed_demo_is_idempotent() {
     let pool = test_helpers::test_pool().await;
     let db = Db::new(pool);
@@ -137,17 +219,17 @@ async fn seed_demo_is_idempotent() {
         .fetch_one(db.pool())
         .await
         .unwrap();
-    assert_eq!(things, 8);
+    assert_eq!(things, 20);
 
     let props: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM thing_properties")
         .fetch_one(db.pool())
         .await
         .unwrap();
-    assert_eq!(props, 35);
+    assert_eq!(props, 95);
 
     let actions: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM thing_actions")
         .fetch_one(db.pool())
         .await
         .unwrap();
-    assert_eq!(actions, 15);
+    assert_eq!(actions, 38);
 }

@@ -39,6 +39,7 @@ const LEDGER_MAX_ATTEMPTS: usize = 3;
 pub struct WatchHit {
     pub workspace_id: String,
     pub rule_id: String,
+    pub owner_task_id: Option<String>,
     pub summary: ThingLiveSummary,
     pub current_value: serde_json::Value,
     pub health: Health,
@@ -190,8 +191,17 @@ impl WatchEngine {
             });
             self.append_ledger(&rule.workspace_id, "watch_timeout", Some(&thing_id), payload)
                 .await;
+            tracing::info!(
+                metric = "runtime_watch_timeout",
+                workspace_id = %rule.workspace_id,
+                rule_id = %rule.id,
+                thing_id = %thing_id,
+                "watch timeout"
+            );
             self.remove_rule(&id);
-            self.delete_persisted(&rule.workspace_id, &id).await;
+            if let Err(error) = self.retire_persisted(&rule, "timeout", None, None, None).await {
+                tracing::warn!(rule_id = %rule.id, %error, "timed-out watch retirement failed");
+            }
         }
     }
 
@@ -211,8 +221,17 @@ impl WatchEngine {
             let payload = json!({ "v": 1, "rule_id": rule.id, "reason": "thing_deleted" });
             self.append_ledger(&rule.workspace_id, "watch_expired", Some(thing_id), payload)
                 .await;
+            tracing::info!(
+                metric = "runtime_watch_expired",
+                workspace_id = %rule.workspace_id,
+                rule_id = %rule.id,
+                thing_id = %thing_id,
+                "watch expired"
+            );
             self.remove_rule(&id);
-            self.delete_persisted(&rule.workspace_id, &id).await;
+            if let Err(error) = self.retire_persisted(&rule, "invalid", None, None, None).await {
+                tracing::warn!(rule_id = %rule.id, %error, "invalidated watch retirement failed");
+            }
         }
     }
 
@@ -307,9 +326,22 @@ impl WatchEngine {
         });
         self.append_ledger(&rule.workspace_id, "watch_hit", Some(&thing_id), payload)
             .await;
+        tracing::info!(
+            metric = "runtime_watch_hit",
+            workspace_id = %rule.workspace_id,
+            rule_id = %rule.id,
+            thing_id = %thing_id,
+            owner_task_id = ?rule.owner_task_id,
+            persistent = rule.persistent,
+            "watch hit"
+        );
+        let wake_value = Some(current_value.to_string());
+        let wake_health = Some(health_str(summary.health).to_string());
+        let wake_zone = Some(summary.zone.clone());
         let hit = WatchHit {
             workspace_id: rule.workspace_id.clone(),
             rule_id: rule.id.clone(),
+            owner_task_id: rule.owner_task_id.clone(),
             health: summary.health,
             zone: summary.zone.clone(),
             summary,
@@ -325,16 +357,80 @@ impl WatchEngine {
                 w.armed = false;
             }
         } else {
-            self.remove_rule(rule_id);
-            self.delete_persisted(&rule.workspace_id, rule_id).await;
+            match self
+                .retire_persisted(&rule, "hit", wake_value, wake_health, wake_zone)
+                .await
+            {
+                Ok(()) => {
+                    self.remove_rule(rule_id);
+                }
+                Err(error) => {
+                    // The platform rule was restored (or the workspace write
+                    // failed before deletion): keep the one-shot armed so the
+                    // continuation is retried instead of dying silently.
+                    tracing::warn!(
+                        rule_id = %rule.id,
+                        %error,
+                        "one-shot watch retirement failed; re-arming"
+                    );
+                    self.last_hit_at.remove(rule_id);
+                    if let Some(watch) = self.rules.get_mut(rule_id) {
+                        watch.armed = true;
+                    }
+                }
+            }
         }
     }
 
-    /// 退役写穿（C-2）：内存摘除后 best-effort 删持久源行——失败只 warn，
-    /// 不阻断值守链路（重启重织时宽松 upsert 兜底，限额泄漏可手动 DELETE）。
-    async fn delete_persisted(&self, workspace_id: &str, rule_id: &str) {
-        if let Err(e) = self.store.delete(workspace_id, rule_id).await {
-            tracing::warn!(rule_id, error = %e, "watch 规则退役写穿失败（DB 行残留，下次重启重织兜底）");
+    /// 退役写穿：Task one-shot watch 的删除与 wake 跨两个 DB；任一步失败都要
+    /// 让调用方重新武装规则，不能静默丢掉 continuation wake。
+    async fn retire_persisted(
+        &self,
+        rule: &WatchRule,
+        outcome: &str,
+        current_value: Option<String>,
+        health: Option<String>,
+        zone: Option<String>,
+    ) -> Result<(), String> {
+        let result = if let Some(task_id) = rule.owner_task_id.as_deref()
+            && !rule.persistent
+        {
+            let signal = json!({
+                "workspace_id": rule.workspace_id,
+                "priority": "Normal",
+                "dedup_key": format!("task:{task_id}:watch:{}:{outcome}", rule.id),
+                "source": {
+                    "Watch": {
+                        "rule_id": rule.id,
+                        "summary": format!("watch {} {outcome}", rule.id),
+                        "current_value": current_value,
+                        "health": health,
+                        "zone": zone,
+                    }
+                }
+            });
+            let wake = tinyiothub_core::agent_task::TaskWake {
+                task_id: task_id.to_string(),
+                event_id: format!("watch:{}:{outcome}", rule.id),
+                signal_json: signal.to_string(),
+                dispatch_state: tinyiothub_core::agent_task::WakeDispatchState::Pending,
+                created_at: Utc::now(),
+                dispatched_at: None,
+                resolved_at: None,
+            };
+            self.store
+                .complete_task_watch(&rule.workspace_id, &rule.id, &wake)
+                .await
+        } else {
+            self.store.delete(&rule.workspace_id, &rule.id).await
+        };
+        match result {
+            Ok(false) if rule.owner_task_id.is_some() => {
+                tracing::debug!(rule_id = %rule.id, "Task watch already retired");
+                Ok(())
+            }
+            Ok(_) => Ok(()),
+            Err(e) => Err(e),
         }
     }
 
@@ -451,6 +547,8 @@ mod tests {
     #[derive(Default)]
     struct StubRuleStore {
         rules: Mutex<HashMap<String, WatchRule>>,
+        wakes: Mutex<Vec<tinyiothub_core::agent_task::TaskWake>>,
+        fail_complete: std::sync::atomic::AtomicBool,
     }
 
     impl StubRuleStore {
@@ -470,6 +568,35 @@ mod tests {
         }
         async fn delete(&self, _workspace_id: &str, id: &str) -> Result<bool, String> {
             Ok(self.rules.lock().unwrap().remove(id).is_some())
+        }
+        async fn complete_task_watch(
+            &self,
+            workspace_id: &str,
+            id: &str,
+            wake: &tinyiothub_core::agent_task::TaskWake,
+        ) -> Result<bool, String> {
+            if self.fail_complete.load(std::sync::atomic::Ordering::SeqCst) {
+                return Err("injected completion failure".to_string());
+            }
+            let removed = self
+                .rules
+                .lock()
+                .unwrap()
+                .remove(id)
+                .filter(|rule| {
+                    rule.workspace_id == workspace_id && rule.owner_task_id.as_deref() == Some(&wake.task_id)
+                })
+                .is_some();
+            if removed {
+                self.wakes.lock().unwrap().push(wake.clone());
+            }
+            Ok(removed)
+        }
+        async fn delete_task_watches(&self, workspace_id: &str, task_id: &str) -> Result<usize, String> {
+            let mut rules = self.rules.lock().unwrap();
+            let before = rules.len();
+            rules.retain(|_, rule| rule.workspace_id != workspace_id || rule.owner_task_id.as_deref() != Some(task_id));
+            Ok(before - rules.len())
         }
     }
 
@@ -544,6 +671,14 @@ mod tests {
             persistent,
             timeout_secs: 600,
             created_at: "2026-10-20 00:00:00".into(),
+            owner_task_id: None,
+        }
+    }
+
+    fn task_rule(id: &str, thing_id: &str, task_id: &str) -> WatchRule {
+        WatchRule {
+            owner_task_id: Some(task_id.into()),
+            ..rule(id, gt30(thing_id), false)
         }
     }
 
@@ -614,6 +749,73 @@ mod tests {
         engine.on_property_change("w1", "t1", "温度", "32").await;
         assert!(rx.try_recv().is_err());
         assert!(!engine.remove_rule("r1"));
+    }
+
+    /// M3: a failed cross-database retirement must keep the one-shot rule and
+    /// re-arm it so the continuation is retried, not silently lost.
+    #[tokio::test]
+    async fn task_watch_completion_failure_rearms_the_rule() {
+        let (_cache, mut engine, mut rx, _ledger, store) = setup(vec![thing("t1")]);
+        let rule = task_rule("r1", "t1", "task1");
+        store.insert(&rule).await.unwrap();
+        engine.upsert_rule(rule).await.unwrap();
+        store.fail_complete.store(true, std::sync::atomic::Ordering::SeqCst);
+        engine.on_property_change("w1", "t1", "温度", "31").await;
+        assert!(rx.try_recv().is_ok(), "the hit is still delivered");
+        let kept = engine.rules.get("r1").expect("rule must not be removed");
+        assert!(kept.armed, "the failed one-shot must be re-armed");
+        assert!(store.contains("r1"), "the platform rule must survive the failure");
+
+        store.fail_complete.store(false, std::sync::atomic::Ordering::SeqCst);
+        engine.on_property_change("w1", "t1", "温度", "32").await;
+        assert!(rx.try_recv().is_ok(), "the retry fires");
+        assert!(!engine.rules.contains_key("r1"));
+        assert!(!store.contains("r1"));
+    }
+
+    #[tokio::test]
+    async fn task_watch_hit_deletes_rule_and_records_wake() {
+        let (_cache, mut engine, mut rx, _ledger, store) = setup(vec![thing("t1")]);
+        let rule = task_rule("r1", "t1", "task1");
+        store.insert(&rule).await.unwrap();
+        engine.upsert_rule(rule).await.unwrap();
+        engine.on_property_change("w1", "t1", "温度", "31").await;
+        let hit = rx.try_recv().expect("task watch hit");
+        assert_eq!(hit.owner_task_id.as_deref(), Some("task1"));
+        let wakes = store.wakes.lock().unwrap();
+        assert_eq!(wakes.len(), 1);
+        assert_eq!(wakes[0].task_id, "task1");
+        assert_eq!(wakes[0].event_id, "watch:r1:hit");
+        let signal: serde_json::Value = serde_json::from_str(&wakes[0].signal_json).unwrap();
+        assert_eq!(signal["workspace_id"], "w1");
+        assert_eq!(signal["source"]["Watch"]["rule_id"], "r1");
+        assert!(!store.contains("r1"));
+    }
+
+    #[tokio::test]
+    async fn task_watch_timeout_deletes_rule_and_records_wake() {
+        let (_cache, mut engine, _rx, _ledger, store) = setup(vec![thing("t1")]);
+        let rule = task_rule("r1", "t1", "task1");
+        store.insert(&rule).await.unwrap();
+        engine.upsert_rule(rule).await.unwrap();
+        engine.sweep_timeouts(Utc::now() + chrono::Duration::seconds(601)).await;
+        let wakes = store.wakes.lock().unwrap();
+        assert_eq!(wakes.len(), 1);
+        assert_eq!(wakes[0].event_id, "watch:r1:timeout");
+        assert!(!store.contains("r1"));
+    }
+
+    #[tokio::test]
+    async fn task_watch_invalidation_deletes_rule_and_records_wake() {
+        let (_cache, mut engine, _rx, _ledger, store) = setup(vec![thing("t1")]);
+        let rule = task_rule("r1", "t1", "task1");
+        store.insert(&rule).await.unwrap();
+        engine.upsert_rule(rule).await.unwrap();
+        engine.invalidate_thing("t1").await;
+        let wakes = store.wakes.lock().unwrap();
+        assert_eq!(wakes.len(), 1);
+        assert_eq!(wakes[0].event_id, "watch:r1:invalid");
+        assert!(!store.contains("r1"));
     }
 
     /// persistent：命中后保持；flap 在 1s 合并窗内不重复发；窗过后再跳变可再命中。

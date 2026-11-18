@@ -177,6 +177,7 @@ mod tests {
             driver: "demo".into(),
             driver_version: "1.0.0".into(),
             state_fields: vec![StateFieldDecl {
+                key: None,
                 name: "level".into(),
                 data_type: "integer".into(),
                 unit: Some("%".into()),
@@ -255,6 +256,7 @@ mod tests {
         let p = fixed_package_with_caps();
         let mut d = fixed_declaration(&p);
         d.state_fields.push(StateFieldDecl {
+            key: None,
             name: "extra".into(),
             data_type: "integer".into(),
             unit: None,
@@ -336,6 +338,7 @@ mod tests {
         let mut d = decl();
         d.state_fields = (0..=MAX_INSTANCE_STATE_FIELDS)
             .map(|i| StateFieldDecl {
+                key: None,
                 name: format!("f{i}"),
                 ..d.state_fields[0].clone()
             })

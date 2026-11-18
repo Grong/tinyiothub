@@ -45,7 +45,7 @@ pub fn load_configuration() -> Result<ApplicationSettings, ConfigError> {
 pub fn create_minimax_provider(
     cfg: &MinimaxConfig,
 ) -> anyhow::Result<Box<dyn tinyiothub_agent::port::provider::ModelProvider>> {
-    tinyiothub_agent::pool::provider::create_minimax_provider_with(&tinyiothub_agent::pool::provider::MinimaxSettings {
+    tinyiothub_agent::provider::create_minimax_provider_with(&tinyiothub_agent::provider::MinimaxSettings {
         base_url: cfg.base_url.clone(),
         auth_token: cfg.auth_token.clone(),
         model: cfg.model.clone(),

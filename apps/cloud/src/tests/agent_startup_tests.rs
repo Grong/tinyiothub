@@ -7,6 +7,7 @@
 use std::sync::Arc;
 use std::time::Duration;
 
+use crate::domains::agent::agent_runtime::{AgentRuntime, RuntimeDeps};
 use sqlx::SqlitePool;
 use tinyiothub_core::agent_runs::{Outcome, RunReport};
 use tinyiothub_core::heartbeat::TrustConfig;
@@ -14,8 +15,7 @@ use tinyiothub_storage::Db;
 use tinyiothub_storage::heartbeat::WorkspaceHeartbeatConfig;
 
 use crate::bootstrap::{build_agent_snapshot, reconcile_zombie_runs};
-use crate::domains::agent::host::test_utils::seed_test_workspace;
-use tinyiothub_agent::runtime::runtime::{AgentRuntime, RuntimeDeps};
+use crate::domains::agent::session::test_utils::seed_test_workspace;
 
 // ── fixtures ──────────────────────────────────────────────
 
@@ -62,6 +62,8 @@ fn report_json(run_id: &str, workspace_id: &str) -> String {
         trace: vec![],
         task_count: None,
         snapshot: None,
+        task_id: None,
+        wake_event_id: None,
     })
     .expect("serialize report")
 }
@@ -318,10 +320,6 @@ async fn restore_prewarms_unified_loop_heartbeat_deps() {
     // last_ticks 共享表句柄可注入 AppState（启动时尚无 tick，表为空）。
     assert!(manager.heartbeat_last_ticks().is_empty());
 
-    // workspace start 后统一 loop 运行（heartbeat trigger 挂载的断言在
-    // agent crate manager 单测：WorkspaceLoop.tasks 含 4 个任务）。
-    manager.start("ws1");
-    assert!(manager.is_running("ws1"));
     // reload_notify 每工作区独立且稳定（handler 写穿后 notify_one 的接线点）。
     let n1 = manager.heartbeat_reload_notify("ws1");
     assert!(
@@ -332,7 +330,6 @@ async fn restore_prewarms_unified_loop_heartbeat_deps() {
         !Arc::ptr_eq(&n1, &manager.heartbeat_reload_notify("ws2")),
         "不同工作区不得共享 Notify"
     );
-    manager.stop("ws1").await;
 }
 
 /// 终审 I-1：restore 预热把 DB `workspaces.heartbeat_config` 的 enabled 读进
