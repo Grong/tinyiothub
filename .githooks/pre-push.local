@@ -1,29 +1,165 @@
 #!/usr/bin/env bash
-#
-# pre-push hook — runs fmt, clippy, and tests before every push.
-# Install:  git config core.hooksPath .githooks
-# Skip:     git push --no-verify
+# Fast pre-push: formatting, affected packages, and tests for changed files.
+# Full workspace/browser verification runs in PR CI.
 
 set -euo pipefail
 
-echo "==> pre-push: running rust quality gate..."
-
-echo "  -> fmt check..."
-cargo fmt --all -- --check || {
-    echo "FAIL: formatting issues found. Run 'just fmt' to fix."
-    exit 1
+manifest_for() {
+    local dir
+    dir=$(dirname "$1")
+    while [ "$dir" != "." ] && [ "$dir" != "/" ]; do
+        if [ -f "$dir/Cargo.toml" ]; then
+            printf '%s\n' "$dir/Cargo.toml"
+            return 0
+        fi
+        dir=$(dirname "$dir")
+    done
+    return 1
 }
 
-echo "  -> clippy..."
-cargo clippy --workspace --exclude zeroclaw --all-targets -- -D warnings || {
-    echo "FAIL: clippy reported errors."
-    exit 1
+hash_if_present() {
+    if [ -f "$1" ]; then
+        git hash-object "$1"
+    else
+        printf 'missing:%s\n' "$1"
+    fi
 }
 
-echo "  -> tests..."
-cargo test --workspace --exclude zeroclaw --lib --bins --tests || {
-    echo "FAIL: some tests did not pass."
-    exit 1
+verify_one() {
+    local local_oid=$1 base=$2 commit_oid
+    local cache_dir cache_key marker file manifest already head_oid
+    local node_runner npx_runner diff_output
+    commit_oid=$(git rev-parse "$local_oid^{commit}")
+    head_oid=$(git rev-parse HEAD)
+    if [ "$commit_oid" != "$head_oid" ]; then
+        echo "FAIL: pushed OID $local_oid does not match HEAD $head_oid; checkout it before running pre-push" >&2
+        return 1
+    fi
+    git diff --quiet && git diff --cached --quiet && [ -z "$(git ls-files --others --exclude-standard)" ] || {
+        echo "FAIL: commit or stash working-tree changes before pre-push so checks cover the pushed tree" >&2
+        return 1
+    }
+    node_runner=${NODE:-"$HOME/.nvm/versions/node/v24.14.0/bin/node"}
+    npx_runner=${NPX:-"$HOME/.nvm/versions/node/v24.14.0/bin/npx"}
+
+    cache_dir=${PRE_PUSH_CACHE_DIR:-$(git rev-parse --git-path tinyiothub-pre-push)}
+    cache_key=$(
+        {
+            set -e
+            git rev-parse "$commit_oid^{tree}"
+            git rev-parse "$base^{commit}"
+            hash_if_present .githooks/pre-push.local
+            hash_if_present scripts/test-lane.sh
+            hash_if_present scripts/tests/pre-push-fast.sh
+            hash_if_present scripts/tests/pre-push-fast.test.js
+            command -v cargo
+            cargo --version
+            command -v rustc
+            rustc --version
+            command -v "$node_runner"
+            "$node_runner" --version
+            command -v "$npx_runner"
+            "$npx_runner" --version
+        } | git hash-object --stdin
+    )
+    marker="$cache_dir/$cache_key"
+    if [ -f "$marker" ]; then
+        echo "==> pre-push: reusing verified tree ${cache_key:0:12} for $local_oid"
+        return 0
+    fi
+
+    local changed=()
+    if diff_output=$(git diff --name-only "$base...$commit_oid"); then
+        while IFS= read -r file; do
+            [ -n "$file" ] && changed+=("$file")
+        done <<< "$diff_output"
+    else
+        echo "  -> no usable diff base; running full checks"
+        cargo clippy --workspace --exclude zeroclaw --all-targets -- -D warnings
+        bash scripts/test-lane.sh
+    fi
+
+    echo "==> pre-push: fast checks for $local_oid against $base"
+    cargo fmt --all -- --check
+
+    local manifests=()
+    local selected_tests=()
+    for file in ${changed[@]+"${changed[@]}"}; do
+        case "$file" in
+            .githooks/pre-push.local|scripts/test-lane.sh)
+                selected_tests+=("scripts/tests/pre-push-fast.sh")
+                continue
+                ;;
+            scripts/tests/*.sh|scripts/tests/*.test.js|*/src/*.rs|*/tests/*.rs|web/*.ts|web/*.tsx|web/package.json|web/package-lock.json|Cargo.lock|Cargo.toml|*/Cargo.toml)
+                selected_tests+=("$file")
+                ;;
+        esac
+
+        if [ "$file" = "Cargo.toml" ]; then
+            if [ -f "$file" ]; then
+                echo "  -> workspace manifest changed; clippy covers the workspace"
+                cargo clippy --workspace --exclude zeroclaw --all-targets -- -D warnings
+            fi
+            continue
+        fi
+        case "$file" in
+            *.rs|*/Cargo.toml) ;;
+            *) continue ;;
+        esac
+        if [ "${file##*/}" = "Cargo.toml" ]; then
+            [ -f "$file" ] || continue
+            manifest=$file
+        else
+            manifest=$(manifest_for "$file") || continue
+        fi
+        already=false
+        for existing in ${manifests[@]+"${manifests[@]}"}; do
+            [ "$existing" = "$manifest" ] && already=true
+        done
+        $already || manifests+=("$manifest")
+    done
+
+    for manifest in ${manifests[@]+"${manifests[@]}"}; do
+        echo "  -> clippy $manifest"
+        cargo clippy --manifest-path "$manifest" --all-targets -- -D warnings
+    done
+
+    if [ "${#selected_tests[@]}" -gt 0 ]; then
+        bash scripts/test-lane.sh "${selected_tests[@]}"
+    fi
+
+    mkdir -p "$cache_dir"
+    : > "$marker"
+    echo "==> pre-push: fast checks passed for $local_oid; CI owns full verification"
 }
 
-echo "==> pre-push: all checks passed."
+remote_name=${1:-origin}
+while read -r _local_ref local_oid remote_ref remote_oid; do
+    case "$local_oid" in
+        0000000000000000000000000000000000000000)
+            continue
+            ;;
+    esac
+
+    if [ "$remote_oid" != "0000000000000000000000000000000000000000" ]; then
+        # Existing refs: use the destination's actual advertised OID, not a
+        # possibly stale remote-tracking ref.
+        base=$remote_oid
+    else
+        base=origin/main
+        case "$remote_name" in
+            *://*|git@*) ;;
+            *)
+                case "$remote_ref" in
+                    refs/heads/*)
+                        candidate="$remote_name/${remote_ref#refs/heads/}"
+                        if git rev-parse --verify --quiet "$candidate" >/dev/null; then
+                            base=$candidate
+                        fi
+                        ;;
+                esac
+                ;;
+        esac
+    fi
+    verify_one "$local_oid" "$base"
+done

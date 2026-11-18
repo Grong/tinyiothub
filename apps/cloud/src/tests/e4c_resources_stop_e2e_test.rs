@@ -883,7 +883,7 @@ impl ThingDriver for CompositeGateDriver {
             max_attempts: 1,
             base_interval: Duration::from_millis(1),
             max_interval: Duration::from_millis(1),
-            timeout: Duration::from_millis(1),
+            timeout: Duration::from_secs(1),
             ..RetryConfig::default()
         }
     }
