@@ -11,3 +11,6 @@ dedup_key: Some(format!("heartbeat:{}", self.workspace_id)),
 20260912000003
 20260914000001
 20260928000001
+# creds.basic_auth_url: reserved .example 域上的显式 dummy 拒绝用例
+https://user:pass@camera.example
+https://user:pass@camera\\.example
