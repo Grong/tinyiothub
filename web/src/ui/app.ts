@@ -4,6 +4,7 @@ import { ApiClient, getAuthToken } from '../api/client.js';
 import { loadSettings, saveSettings, type UiSettings } from './storage.js';
 import { startThemeTransition, type ThemeTransitionContext } from './theme-transition.js';
 import { resolveTheme, type ThemeMode, type ResolvedTheme } from './theme.js';
+import { applyRouteSeo } from './seo.js';
 import './components/theme-toggle.js';
 import './components/toast.js';
 import { error as toastError } from './components/toast.js';
@@ -338,6 +339,7 @@ export class TinyIoTHubApp extends LitElement {
       }
       this.assistantRoute = assistantState;
       this.currentRoute = 'chat';
+      this.syncSeo();
       this._ensureViewLoaded('chat');
       return;
     }
@@ -367,6 +369,7 @@ export class TinyIoTHubApp extends LitElement {
       }
       this.currentRoute = 'run-detail';
       this.runDetailId = runMatch[1];
+      this.syncSeo();
       this._ensureViewLoaded('run-detail');
       return;
     }
@@ -391,11 +394,13 @@ export class TinyIoTHubApp extends LitElement {
         return;
       }
       this.currentRoute = path;
+      this.syncSeo();
       this._ensureViewLoaded('things');
       return;
     }
 
     this.currentRoute = path || 'home';
+    this.syncSeo();
 
     const publicRoutes = ['login', 'register', 'home', 'terms', 'privacy', ''];
     if (!publicRoutes.includes(path) && !this.isAuthenticated) {
@@ -404,6 +409,11 @@ export class TinyIoTHubApp extends LitElement {
     }
 
     this._ensureViewLoaded(this.currentRoute);
+  }
+
+  /** Keep title/description/canonical in sync with the resolved route. */
+  private syncSeo() {
+    applyRouteSeo(window.location.pathname, this.getPageTitle() || undefined);
   }
 
   /** Lazy-load the view module for the given route if needed. */

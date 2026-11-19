@@ -8,6 +8,7 @@ import "../components/point-earth.js";
 import "../components/showcase-viz.js";
 import "./home-panel.js";
 import "./home.css";
+import { HOME_FAQ, homeFaqJsonLd } from "./home-faq.js";
 
 /**
  * 联系方式 —— 上线前替换为真实信息。
@@ -52,6 +53,7 @@ export class HomeView extends LitElement {
     this.lastScrollY = y;
   };
   private revealObserver: IntersectionObserver | null = null;
+  private faqScript: HTMLScriptElement | null = null;
 
   createRenderRoot() {
     return this;
@@ -64,6 +66,7 @@ export class HomeView extends LitElement {
     window.addEventListener("scroll", this.scrollHandler, { passive: true });
     this.loadTheme();
     this.initRevealObserver();
+    this.injectFaqStructuredData();
   }
 
   disconnectedCallback() {
@@ -76,6 +79,18 @@ export class HomeView extends LitElement {
       this.revealObserver.disconnect();
       this.revealObserver = null;
     }
+    this.faqScript?.remove();
+    this.faqScript = null;
+  }
+
+  private injectFaqStructuredData() {
+    document.getElementById("home-faq-jsonld")?.remove();
+    const script = document.createElement("script");
+    script.type = "application/ld+json";
+    script.id = "home-faq-jsonld";
+    script.textContent = homeFaqJsonLd();
+    document.head.appendChild(script);
+    this.faqScript = script;
   }
 
   private initRevealObserver() {
@@ -489,6 +504,43 @@ export class HomeView extends LitElement {
                   路线图上还有<b>应急预案</b>、<b>节能策略</b>、<b>视频分析</b>——还没到能交付的程度，先标注在这里，不写成现有能力。
                 </p>
               </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- FAQ -->
+        <section class="section faq-section reveal" id="faq" aria-labelledby="faq-title">
+          <div class="section-inner">
+            <div class="section-header">
+              <div class="section-label">常见问题</div>
+              <h2 class="section-title" id="faq-title">关于 TinyIoTHub</h2>
+              <p class="section-desc">
+                选型前最常被问到的六个问题，答案都基于当前已交付能力
+              </p>
+            </div>
+            <div class="faq-list">
+              ${HOME_FAQ.map(
+                (item, index) => html`
+                  <details class="faq-item reveal reveal-delay-${(index % 3) + 1}">
+                    <summary class="faq-question">
+                      <span>${item.question}</span>
+                      <svg
+                        class="faq-chevron"
+                        width="18"
+                        height="18"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        stroke-width="2"
+                        aria-hidden="true"
+                      >
+                        <path d="m6 9 6 6 6-6" />
+                      </svg>
+                    </summary>
+                    <div class="faq-answer"><p>${item.answer}</p></div>
+                  </details>
+                `,
+              )}
             </div>
           </div>
         </section>

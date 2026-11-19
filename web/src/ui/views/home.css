@@ -2012,3 +2012,116 @@ view-home .reveal-delay-3 { transition-delay: 0.3s; }
     height: 560px;
   }
 }
+
+/* ================================
+   FAQ
+   ================================ */
+
+view-home .faq-section {
+  padding: 100px 32px 24px;
+  position: relative;
+  z-index: 1;
+}
+
+view-home .faq-list {
+  max-width: 880px;
+  margin: 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+view-home .faq-item {
+  border-radius: 16px;
+  background: var(--home-surface-dark);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  box-shadow:
+    var(--home-shadow-1),
+    var(--home-shadow-inset);
+  overflow: hidden;
+  transition:
+    border-color 0.2s ease,
+    background 0.2s ease;
+}
+
+view-home .faq-item[open] {
+  border-color: rgba(0, 212, 255, 0.3);
+}
+
+view-home .faq-question {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+  padding: 20px 24px;
+  list-style: none;
+  cursor: pointer;
+  font-size: 17px;
+  font-weight: 600;
+  line-height: 1.5;
+  color: var(--home-text-primary);
+}
+
+view-home .faq-question::-webkit-details-marker {
+  display: none;
+}
+
+view-home .faq-chevron {
+  flex-shrink: 0;
+  color: var(--home-accent-cyan);
+  transition: transform 0.2s ease;
+}
+
+view-home .faq-item[open] .faq-chevron {
+  transform: rotate(180deg);
+}
+
+view-home .faq-answer {
+  padding: 0 24px 22px;
+}
+
+view-home .faq-answer p {
+  margin: 0;
+  font-size: 15px;
+  line-height: 1.8;
+  color: var(--home-text-tertiary);
+}
+
+:root[data-theme="light"] view-home .faq-item {
+  background: var(--home-surface-light);
+  border-color: rgba(0, 0, 0, 0.06);
+  box-shadow:
+    var(--home-shadow-light-1),
+    var(--home-shadow-light-inset);
+}
+
+:root[data-theme="light"] view-home .faq-item[open] {
+  border-color: rgba(0, 95, 115, 0.3);
+}
+
+:root[data-theme="light"] view-home .faq-question {
+  color: #111827;
+}
+
+:root[data-theme="light"] view-home .faq-chevron {
+  color: #005f73;
+}
+
+:root[data-theme="light"] view-home .faq-answer p {
+  color: rgba(31, 41, 55, 0.65);
+}
+
+@media (max-width: 768px) {
+  view-home .faq-section {
+    padding: 72px 20px 16px;
+  }
+
+  view-home .faq-question {
+    padding: 18px 18px;
+    font-size: 16px;
+  }
+
+  view-home .faq-answer {
+    padding: 0 18px 20px;
+  }
+}

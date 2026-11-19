@@ -1,0 +1,30 @@
+# TinyIoTHub — https://tinyiothub.com
+# Public marketing and legal pages are crawlable. Authenticated console routes
+# are disallowed here and also send <meta name="robots" content="noindex">.
+# AI / LLM crawlers are welcome on the same public pages; see /llms.txt.
+
+User-agent: *
+Allow: /
+Disallow: /api/
+Disallow: /uploads/
+Disallow: /mcp
+Disallow: /dashboard
+Disallow: /things
+Disallow: /alarms
+Disallow: /tickets
+Disallow: /dispositions
+Disallow: /events
+Disallow: /monitoring
+Disallow: /users
+Disallow: /settings
+Disallow: /chat
+Disallow: /agents
+Disallow: /cron
+Disallow: /marketplace
+Disallow: /driver-health
+Disallow: /memory-dashboard
+Disallow: /workspace
+Disallow: /ai-ops
+Disallow: /run-detail
+
+Sitemap: https://tinyiothub.com/sitemap.xml

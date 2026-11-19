@@ -1,0 +1,69 @@
+# TinyIoTHub
+
+> TinyIoTHub is an open-source **IoT agent harness** (MIT). It models devices, spaces, production lines and buildings as hierarchical "things" and runs one always-on Assistant that is woken by device events and schedules, reasons over the thing ontology, asks for approval, acts on the physical world, then reads properties back to verify every action.
+
+TinyIoTHub 是一个开源的 **IoT agent harness（物联网智能体运行环境）**：设备接入是底座，harness 层是产品本体，场景写进 SKILL.md 而不是代码。核心承诺是「给 AI 一副能安全操作物理世界的手」。
+
+- Website: https://tinyiothub.com/
+- Documentation: https://docs.tinyiothub.com
+- Source: https://github.com/Grong/tinyiothub
+- Docker image: https://hub.docker.com/r/grong/tinyiothub
+- Contact: hello@tinyiothub.com
+
+## Entity facts
+
+- **What it is:** an agent runtime for physical operations — not another device dashboard, and not a generic agent framework.
+- **Positioning:** "Claude Code gives code a harness; TinyIoTHub gives devices a harness."
+- **Tagline:** 让 AI 真正动手 / "Give your agent hands."
+- **Stack:** Rust 2024, Axum, Tower, SQLx + SQLite; Lit 3 + Vite + TypeScript for the web UI.
+- **Deployment:** one binary with embedded SQLite, no external database; multi-arch Docker image (`linux/amd64`, `linux/arm64`); about 80 MB of memory for a single process; fully self-hostable.
+- **License:** MIT — free to use, modify, and commercialize.
+- **Interfaces:** web console, REST API under `/api/v1/`, embedded MCP server (`/mcp`), user-authored `SKILL.md` skills.
+- **Protocols:** MQTT is available for device access and edge-gateway uplink. The Modbus, ONVIF and SNMP driver framework and plugin SDK are ready; the concrete drivers are still in development.
+- **Thing ontology:** devices, spaces, production lines and buildings share one hierarchical "thing" model; `devices` is the `things` table. Properties, events, actions and knowledge documents live on the thing. DTDL / WoT import and export are supported.
+- **Shipped skills (10):** inspection, fault diagnosis, heartbeat monitoring, alarm management, device management, driver management, job management, visualization, workspace, platform overview.
+- **Roadmap, not delivered:** emergency response, energy-saving strategy, video analytics.
+
+## What makes it different
+
+1. **Device actions are not retryable.** Every action records four states — intent → dispatched → confirmed → unknown. Unknown states stop and reconcile; actions are never automatically replayed. Effect/Decision have a single winner.
+2. **Event wake + ontology reasoning.** The Assistant is woken by device events and scheduled ticks, and judges using thing properties, hierarchy and knowledge documents instead of context the user pastes in.
+3. **Read-back verification + audit.** Dispatching an action is not completion; properties are read back to confirm the effect, and the whole flow is written to the safety/audit ledger.
+
+The harness primitives are: one unified Session Loop (`SessionRunner`), progressive `SKILL.md` disclosure, `todo_write`, `ask_user` (1–4 blocking questions, multi-select), and `spawn_subagent` (synchronous, one level, context-isolated). Permission modes are `read_only` / `ask` / `full_access`; `full_access` removes per-action approval but never bypasses interlocks or e-stop.
+
+## Comparison notes
+
+- **vs. ThingsBoard and traditional IoT platforms:** they center on connectivity, dashboards and rule alerts. TinyIoTHub keeps connectivity as the substrate and puts the harness layer on top. The two can coexist; TinyIoTHub can ingest MQTT from an existing gateway.
+- **vs. Claude Code, LangGraph and general agent frameworks:** those manage bitstreams. TinyIoTHub manages physical actions with retry-unsafe semantics, event-driven wakeups, an ontology as the world model, and read-back/audit guarantees.
+
+## Pages
+
+- [Home](https://tinyiothub.com/): product overview, three-layer architecture, shipped capabilities and FAQ.
+- [Terms of Service](https://tinyiothub.com/terms): service scope, account security, data ownership.
+- [Privacy Policy](https://tinyiothub.com/privacy): collected data, usage, storage and user rights.
+- [llms.txt](https://tinyiothub.com/llms.txt): this file.
+
+## FAQ
+
+**What is TinyIoTHub?**
+An open-source IoT agent harness. It lets an always-on Assistant query the thing ontology, decide, get approval, act and read back the result. Rust + SQLite, single-process, MIT.
+
+**Does it replace my IoT platform?**
+No. It uses device connectivity as a substrate and adds the agent harness layer above it. It can consume MQTT from an existing gateway.
+
+**Which protocols work today?**
+MQTT is available. Modbus, ONVIF and SNMP framework/plugin SDK are ready; concrete drivers are in progress.
+
+**How is it deployed?**
+One binary plus embedded SQLite, no external database. Multi-arch Docker images are published; about 80 MB of memory per process; fully self-hostable.
+
+**Do I need to change Rust code for a new scenario?**
+No. A scenario is a `SKILL.md` playbook in the skills directory. Ten playbooks ship today, and users can write their own.
+
+**Is it free?**
+Yes. MIT license, free for commercial use and self-hosting.
+
+---
+
+Last updated: 2026-11-19
