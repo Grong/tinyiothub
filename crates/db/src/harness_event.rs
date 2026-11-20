@@ -40,7 +40,7 @@ const RECENT_SESSION_EVENTS_SQL: &str = "SELECT seq, event_id, session_id, execu
      ORDER BY occurred_at DESC, ('session:' || event_id) DESC LIMIT ?";
 
 const SESSION_TURN_SEQS_SQL: &str = "SELECT turn_id, seq FROM session_events \
-     WHERE execution_mode = ? AND session_id = ? AND type = 'turn.started' \
+     WHERE execution_mode = ? AND session_id = ? AND type = 'turn/start' \
        AND turn_id IS NOT NULL AND (? IS NULL OR seq < ?) \
      ORDER BY seq DESC LIMIT ?";
 
@@ -258,7 +258,7 @@ pub async fn append_session_event_tx(
         .and_then(Value::as_str)
         .map(str::to_owned)
         .or_else(|| {
-            (input.event_type == "turn.started")
+            (input.event_type == "turn/start")
                 .then(|| input.run_id.clone())
                 .flatten()
         });
@@ -633,7 +633,7 @@ impl Db {
     }
 
     /// Return complete turns, newest page first, without truncating long turns.
-    /// `before` is the oldest loaded `turn.started` sequence.
+    /// `before` is the oldest loaded `turn/start` sequence.
     pub async fn session_turn_page(
         &self,
         workspace_id: &str,
@@ -658,16 +658,16 @@ impl Db {
             .fetch_all(&mut *tx)
             .await?;
 
-        // `turn.started` carries the turn id as `run_id`, while the events
+        // `turn/start` carries the turn id as `run_id`, while the events
         // inside the turn carry the agent-loop run id. Selecting inner rows by
-        // `turn.started.run_id` therefore drops tools, text, and questions.
+        // `turn/start.run_id` therefore drops tools, text, and questions.
         // Use the sequence window, and add the selected turn ids only to keep
         // trigger/session rows that precede the first turn start.
         let oldest_turn_seq = selected.last().map(|(_, seq)| *seq);
         let next_before = if let Some(oldest_turn_seq) = oldest_turn_seq {
             sqlx::query_scalar::<_, i64>(
                 "SELECT seq FROM session_events
-                 WHERE execution_mode = ? AND session_id = ? AND type = 'turn.started' AND seq < ?
+                 WHERE execution_mode = ? AND session_id = ? AND type = 'turn/start' AND seq < ?
                  ORDER BY seq DESC LIMIT 1",
             )
             .bind(filter.execution_mode.as_str())
@@ -1190,7 +1190,7 @@ mod tests {
 
         let mut started = input("turn-started", ExecutionMode::Production);
         started.run_id = Some("turn-1".to_string());
-        started.event_type = "turn.started".to_string();
+        started.event_type = "turn/start".to_string();
         started.payload_json = json!({"turnId": "turn-1"});
         fixture.db.append_session_event(&started).await.expect("turn start");
 
@@ -1215,7 +1215,7 @@ mod tests {
         let types: Vec<&str> = page.events.iter().map(|event| event.event_type.as_str()).collect();
         assert_eq!(
             types,
-            vec!["trigger.received", "turn.started", "step.text", "question.asked"]
+            vec!["trigger.received", "turn/start", "step.text", "question.asked"]
         );
         assert_eq!(page.high_watermark, 4);
 
@@ -1229,7 +1229,7 @@ mod tests {
             let run_id = format!("run-{turn}");
             let mut started = input(&format!("turn-{turn}-started"), ExecutionMode::Production);
             started.run_id = Some(run_id.clone());
-            started.event_type = "turn.started".to_string();
+            started.event_type = "turn/start".to_string();
             started.payload_json = json!({"turnId": format!("turn-{turn}")});
             fixture
                 .db

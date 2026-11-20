@@ -326,7 +326,7 @@ async fn public_report_excludes_internal_refs_and_work_keys() {
         WS,
         "event-skip",
         &key,
-        "turn.completed",
+        "turn/end",
         json!({"turnId": "turn:skip-1", "outcome": "skipped", "toolCalls": 0}),
     )
     .await;
@@ -381,7 +381,7 @@ async fn report_turn_query_reports_terminal_counts_without_fabrication() {
         WS,
         "event-skip",
         &key,
-        "turn.completed",
+        "turn/end",
         json!({"turnId": "turn:skip-1", "outcome": "skipped", "toolCalls": 0}),
     )
     .await;
@@ -390,7 +390,7 @@ async fn report_turn_query_reports_terminal_counts_without_fabrication() {
         WS,
         "event-started",
         &key,
-        "turn.started",
+        "turn/start",
         json!({"turnId": "turn:running-1"}),
     )
     .await;

@@ -31,17 +31,17 @@ use super::preflight::{FENCE_SYNC_PENDING, PreflightDecision};
 use crate::domains::agent::session::context::TurnContext;
 use crate::domains::agent::session::events::{SESSION_EVENT_SCHEMA_V, session_started_payload};
 
-/// Stable reason written to `turn.completed(outcome=skipped)`.
+/// Stable reason written to `turn/end(outcome=skipped)`.
 pub const SKIP_REASON_NO_MATERIAL_CHANGE: &str = "no_material_change";
-/// `turn.started.turnKind` for a scheduled planned wake.
+/// `turn/start.turnKind` for a scheduled planned wake.
 pub const TURN_KIND_SCHEDULED: &str = "scheduled";
 /// The exact skipped lifecycle, in commit order.
 pub const SKIP_EVENT_TYPES: [&str; 6] = [
     "trigger.received",
     "wake.dispatched",
     "session.started",
-    "turn.started",
-    "turn.completed",
+    "turn/start",
+    "turn/end",
     "session.ended",
 ];
 
@@ -201,11 +201,11 @@ pub fn skipped_lifecycle_events(
             session_started_payload(&wake.session_id, TURN_KIND_SCHEDULED),
         ),
         event(
-            "turn.started",
+            "turn/start",
             json!({ "turnId": &attempt.turn_id, "turnKind": TURN_KIND_SCHEDULED }),
         ),
         event(
-            "turn.completed",
+            "turn/end",
             json!({
                 "turnId": &attempt.turn_id,
                 "outcome": "skipped",
@@ -472,7 +472,7 @@ fn next_attempt_no(state: Option<&SuppressionState>) -> i64 {
 fn committed_turn_id(skip: &CommittedSkip) -> Option<String> {
     skip.events
         .iter()
-        .find(|event| event.event_type == "turn.completed")
+        .find(|event| event.event_type == "turn/end")
         .and_then(|event| event.payload_json.get("turnId"))
         .and_then(Value::as_str)
         .map(ToString::to_string)
@@ -1436,7 +1436,7 @@ mod audit {
             self.events()
                 .await
                 .iter()
-                .filter(|event| event.event_type == "turn.completed" && event.payload_json["outcome"] == "skipped")
+                .filter(|event| event.event_type == "turn/end" && event.payload_json["outcome"] == "skipped")
                 .count()
         }
 
@@ -1523,12 +1523,12 @@ mod audit {
         assert_ne!(first.turn_id, second.turn_id);
         assert_ne!(first.wake_event_id, second.wake_event_id);
         assert_ne!(
-            first.event_id("turn.completed"),
-            second.event_id("turn.completed"),
+            first.event_id("turn/end"),
+            second.event_id("turn/end"),
             "event ids must change with attemptNo"
         );
         assert_ne!(
-            first.event_id("turn.completed"),
+            first.event_id("turn/end"),
             first.event_id("session.ended"),
             "event ids must distinguish lifecycle events"
         );

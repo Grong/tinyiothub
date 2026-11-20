@@ -23,7 +23,7 @@ describe('TimelineModel', () => {
   it('dedupes by eventId and keeps seq order', () => {
     const model = new TimelineModel();
     model.ingestEvent(event(2, 'message.created', { messageId: 'm2', role: 'user', text: '你好' }));
-    model.ingestEvent(event(1, 'turn.started', { turnId: 't1' }));
+    model.ingestEvent(event(1, 'turn/start', { turnId: 't1' }));
     model.ingestEvent(event(2, 'message.created', { messageId: 'm2', role: 'user', text: '你好' }));
     expect(model.blocks.map((block) => block.kind)).toEqual(['turn', 'user']);
     expect(model.cursor).toBe(2);
@@ -33,10 +33,10 @@ describe('TimelineModel', () => {
   it('pairs tools by toolCallId and records evidence', () => {
     const model = new TimelineModel();
     model.ingestEvent(
-      event(1, 'tool.called', { toolCallId: 'c1', tool: 'search_things', args: { q: 'x' } }),
+      event(1, 'tool/call', { toolCallId: 'c1', tool: 'search_things', args: { q: 'x' } }),
     );
     model.ingestEvent(
-      event(2, 'tool.returned', {
+      event(2, 'tool/result', {
         toolCallId: 'c1',
         tool: 'search_things',
         result: 'ok',
@@ -135,9 +135,9 @@ describe('TimelineModel', () => {
     const subagent = model.blocks.find((block) => block.kind === 'subagent');
     expect(subagent).toMatchObject({ id: 's1', status: 'completed', summary: '2 台 unknown' });
 
-    model.ingestEvent(event(3, 'turn.started', { turnId: 't1' }));
+    model.ingestEvent(event(3, 'turn/start', { turnId: 't1' }));
     model.ingestEvent(
-      event(4, 'turn.completed', { turnId: 't1', outcome: 'completed', usage: null }),
+      event(4, 'turn/end', { turnId: 't1', outcome: 'completed', usage: null }),
     );
     const turn = model.blocks.find((block) => block.kind === 'turn');
     expect(turn).toMatchObject({ status: 'completed' });
@@ -147,23 +147,23 @@ describe('TimelineModel', () => {
     model.ingestEvent(
       event(1, 'trigger.received', { trigger: 'schedule', sourceId: 'wake-123456789' }),
     );
-    model.ingestEvent(event(2, 'turn.started', { turnId: 't1' }));
+    model.ingestEvent(event(2, 'turn/start', { turnId: 't1' }));
     model.ingestEvent(
-      event(3, 'tool.called', {
+      event(3, 'tool/call', {
         toolCallId: 'c1',
         tool: 'read_device',
         args: { thingId: 'dev-1' },
       }),
     );
     model.ingestEvent(
-      event(4, 'tool.returned', {
+      event(4, 'tool/result', {
         toolCallId: 'c1',
         tool: 'read_device',
         result: '{"online":true}',
       }),
     );
     model.ingestEvent(
-      event(5, 'turn.completed', {
+      event(5, 'turn/end', {
         turnId: 't1',
         outcome: 'completed',
         toolCalls: 16,
@@ -186,14 +186,14 @@ describe('TimelineModel', () => {
   it('marks failed tool results with the structured error', () => {
     const model = new TimelineModel();
     model.ingestEvent(
-      event(1, 'tool.called', {
+      event(1, 'tool/call', {
         toolCallId: 'c1',
         tool: 'get_skill',
         args: { skill_name: 'patrol' },
       }),
     );
     model.ingestEvent(
-      event(2, 'tool.returned', {
+      event(2, 'tool/result', {
         toolCallId: 'c1',
         tool: 'get_skill',
         result: '{"error":"Skill patrol not found","success":false}',
@@ -207,7 +207,7 @@ describe('TimelineModel', () => {
 
   it('coalesces step.text deltas and finalizes them with message.created', () => {
     const model = new TimelineModel();
-    model.ingestEvent(event(1, 'turn.started', { turnId: 't1' }));
+    model.ingestEvent(event(1, 'turn/start', { turnId: 't1' }));
     model.ingestEvent(event(2, 'step.text', { turnId: 't1', text: '先看' }));
     model.ingestEvent(event(3, 'step.text', { turnId: 't1', text: '设备。' }));
     let assistant = model.blocks.find((block) => block.kind === 'assistant');
@@ -231,7 +231,7 @@ describe('TimelineModel', () => {
   });
   it('projects a compact assistant settlement with its reasoning', () => {
     const model = new TimelineModel();
-    model.ingestEvent(event(1, 'turn.started', { turnId: 't1' }));
+    model.ingestEvent(event(1, 'turn/start', { turnId: 't1' }));
     model.ingestEvent(
       event(2, 'assistant/message', {
         turnId: 't1',
@@ -257,7 +257,7 @@ describe('TimelineModel', () => {
 
   it('merges live deltas and replaces them with the durable settlement', () => {
     const model = new TimelineModel();
-    model.ingestEvent(event(1, 'turn.started', { turnId: 't1' }));
+    model.ingestEvent(event(1, 'turn/start', { turnId: 't1' }));
     model.applyLive({
       v: 2,
       frame: 'stream/delta',
@@ -304,7 +304,7 @@ describe('TimelineModel', () => {
     );
     const question = model.blocks.find((block) => block.kind === 'question');
     expect(question).toMatchObject({ questionId: 'q1', outcome: 'pending' });
-    model.ingestEvent(event(2, 'turn.completed', { turnId: 't1', outcome: 'cancelled' }));
+    model.ingestEvent(event(2, 'turn/end', { turnId: 't1', outcome: 'cancelled' }));
     expect(question).toMatchObject({ outcome: 'timed_out' });
     expect(model.pendingQuestion).toBeNull();
   });
@@ -329,10 +329,10 @@ describe('TimelineModel', () => {
 
   it('rolls back only the failed model attempt and records retry details', () => {
     const model = new TimelineModel();
-    model.ingestEvent(event(1, 'turn.started', { turnId: 't1' }));
-    model.ingestEvent(event(2, 'tool.called', { toolCallId: 'c1', tool: 'read_device', args: {} }));
+    model.ingestEvent(event(1, 'turn/start', { turnId: 't1' }));
+    model.ingestEvent(event(2, 'tool/call', { toolCallId: 'c1', tool: 'read_device', args: {} }));
     model.ingestEvent(
-      event(3, 'tool.returned', { toolCallId: 'c1', tool: 'read_device', result: 'online' }),
+      event(3, 'tool/result', { toolCallId: 'c1', tool: 'read_device', result: 'online' }),
     );
     model.ingestEvent(event(4, 'step.text', { turnId: 't1', text: '失效的部分正文' }));
     model.ingestEvent(event(5, 'step.thinking', { turnId: 't1', thinking: '失效的思考' }));
@@ -364,9 +364,9 @@ describe('TimelineModel', () => {
 
   it('keeps cancellation reason and source after a history reload', () => {
     const model = new TimelineModel();
-    model.ingestEvent(event(1, 'turn.started', { turnId: 't1' }));
+    model.ingestEvent(event(1, 'turn/start', { turnId: 't1' }));
     model.ingestEvent(
-      event(2, 'turn.completed', {
+      event(2, 'turn/end', {
         turnId: 't1',
         outcome: 'cancelled',
         error: '用户主动停止本轮执行',
@@ -381,11 +381,11 @@ describe('TimelineModel', () => {
   });
   it('finalizes partial assistant content when the turn fails', () => {
     const model = new TimelineModel();
-    model.ingestEvent(event(1, 'turn.started', { turnId: 't1' }));
+    model.ingestEvent(event(1, 'turn/start', { turnId: 't1' }));
     model.ingestEvent(event(2, 'step.text', { turnId: 't1', text: '最后一次请求的部分正文' }));
     model.ingestEvent(event(3, 'step.thinking', { turnId: 't1', thinking: '最后一次思考' }));
     model.ingestEvent(
-      event(4, 'turn.completed', {
+      event(4, 'turn/end', {
         turnId: 't1',
         outcome: 'failed',
         error: 'HTTP 503: unavailable',
@@ -401,10 +401,10 @@ describe('TimelineModel', () => {
   });
   it('coalesces an older turn page without retaining its failed model attempt', () => {
     const model = new TimelineModel();
-    model.ingest({ events: [event(10, 'turn.started', { turnId: 't2' })], highWatermark: 10 });
+    model.ingest({ events: [event(10, 'turn/start', { turnId: 't2' })], highWatermark: 10 });
     model.ingest({
       events: [
-        event(1, 'turn.started', { turnId: 't1' }),
+        event(1, 'turn/start', { turnId: 't1' }),
         event(2, 'step.text', { turnId: 't1', text: '失败正文' }),
         event(3, 'turn.retry', { turnId: 't1', attempt: 1, maxRetries: 3 }),
         event(4, 'step.text', { turnId: 't1', text: '最终' }),
@@ -435,27 +435,27 @@ describe('TimelineModel', () => {
   it('clears a pending question when its turn has already ended', () => {
     const model = new TimelineModel();
     model.ingestEvent(event(1, 'question.asked', { questionId: 'q1', questions: [] }));
-    model.ingestEvent(event(2, 'turn.completed', { turnId: 't1', outcome: 'cancelled', source: 'schedule' }));
+    model.ingestEvent(event(2, 'turn/end', { turnId: 't1', outcome: 'cancelled', source: 'schedule' }));
     expect(model.pendingQuestion).toBeNull();
   });
 
   it('does not clear a current question when an older turn page completes', () => {
     const model = new TimelineModel();
     model.ingest({ events: [event(10, 'question.asked', { questionId: 'q-current', questions: [] })], highWatermark: 10 });
-    model.ingest({ events: [event(1, 'turn.completed', { turnId: 't-old', outcome: 'cancelled' })], highWatermark: 10 });
+    model.ingest({ events: [event(1, 'turn/end', { turnId: 't-old', outcome: 'cancelled' })], highWatermark: 10 });
     expect(model.pendingQuestion?.questionId).toBe('q-current');
   });
 
   it('does not resurrect a question from an older completed turn', () => {
     const model = new TimelineModel();
-    model.ingest({ events: [event(10, 'turn.completed', { turnId: 't-old', outcome: 'cancelled' })], highWatermark: 10 });
+    model.ingest({ events: [event(10, 'turn/end', { turnId: 't-old', outcome: 'cancelled' })], highWatermark: 10 });
     model.ingest({ events: [event(1, 'question.asked', { questionId: 'q-old', questions: [] })], highWatermark: 10 });
     expect(model.pendingQuestion).toBeNull();
   });
 
   it('clears a pending approval when its turn has already ended', () => {
     const model = new TimelineModel();
-    model.ingestEvent(event(1, 'turn.started', { turnId: 't1' }));
+    model.ingestEvent(event(1, 'turn/start', { turnId: 't1' }));
     model.ingestEvent(
       event(2, 'approval.requested', {
         turnId: 't1',
@@ -465,7 +465,7 @@ describe('TimelineModel', () => {
       }),
     );
     model.ingestEvent(
-      event(3, 'turn.completed', {
+      event(3, 'turn/end', {
         turnId: 't1',
         outcome: 'cancelled',
         source: 'schedule',

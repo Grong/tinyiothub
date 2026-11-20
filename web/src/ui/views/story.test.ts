@@ -89,13 +89,13 @@ describe('view-story', () => {
     hoisted.fetchSessionEvents.mockResolvedValue({
       events: [
         event(1, 'trigger.received', { trigger: 'schedule' }),
-        event(2, 'turn.started', { turnId: 't1' }),
-        event(3, 'tool.called', {
+        event(2, 'turn/start', { turnId: 't1' }),
+        event(3, 'tool/call', {
           toolCallId: 'c1',
           tool: 'read_device',
           args: { thingId: 'dev-1' },
         }),
-        event(4, 'tool.returned', {
+        event(4, 'tool/result', {
           toolCallId: 'c1',
           tool: 'read_device',
           result: JSON.stringify({
@@ -113,7 +113,7 @@ describe('view-story', () => {
           role: 'assistant',
           text: '冷却塔 A 运行正常，出水温度 32.5℃。',
         }),
-        event(6, 'turn.completed', { turnId: 't1', outcome: 'completed', toolCalls: 1 }),
+        event(6, 'turn/end', { turnId: 't1', outcome: 'completed', toolCalls: 1 }),
       ],
       highWatermark: 6,
     });
@@ -149,13 +149,13 @@ describe('view-story', () => {
 
   it('loads older turns on demand while keeping the latest round in the rail', async () => {
     const makeTurn = (seq: number, turnId: string, id: string, name: string) => [
-      event(seq, 'turn.started', { turnId }),
-      event(seq + 1, 'tool.called', {
+      event(seq, 'turn/start', { turnId }),
+      event(seq + 1, 'tool/call', {
         toolCallId: `c-${id}`,
         tool: 'read_device',
         args: { thingId: id },
       }),
-      event(seq + 2, 'tool.returned', {
+      event(seq + 2, 'tool/result', {
         toolCallId: `c-${id}`,
         tool: 'read_device',
         result: JSON.stringify({
@@ -168,7 +168,7 @@ describe('view-story', () => {
           state: { 温度: '26' },
         }),
       }),
-      event(seq + 3, 'turn.completed', { turnId, outcome: 'completed' }),
+      event(seq + 3, 'turn/end', { turnId, outcome: 'completed' }),
     ];
     const latest = makeTurn(10, 't-new', 'dev-new', '新风机');
     const older = makeTurn(1, 't-old', 'dev-old', '旧水泵');
@@ -204,7 +204,7 @@ describe('view-story', () => {
     const fetchesBefore = hoisted.fetchSessionEvents.mock.calls.length;
     const connection = hoisted.connectSessionEvents.mock.calls[0][0];
 
-    connection.onEvent(event(20, 'turn.started', { turnId: 't-new' }));
+    connection.onEvent(event(20, 'turn/start', { turnId: 't-new' }));
     await vi.waitFor(() => expect(el.textContent).not.toContain('冷却塔 A'));
 
     connection.onEvent(event(21, 'step.text', { turnId: 't-new', text: '正在检查' }));
@@ -214,14 +214,14 @@ describe('view-story', () => {
     await vi.waitFor(() => expect(el.textContent).toContain('正在检查新风机。'));
 
     connection.onEvent(
-      event(23, 'tool.called', {
+      event(23, 'tool/call', {
         toolCallId: 'c-new',
         tool: 'read_device',
         args: { thingId: 'dev-new' },
       }),
     );
     connection.onEvent(
-      event(24, 'tool.returned', {
+      event(24, 'tool/result', {
         toolCallId: 'c-new',
         tool: 'read_device',
         result: JSON.stringify({

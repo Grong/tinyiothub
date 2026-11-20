@@ -1591,13 +1591,13 @@ mod registry {
                     "message.created",
                     json!({"messageId": "assistant-1", "role": "assistant", "text": "assistant output"}),
                 ),
-                ("turn.started", json!({"turnId": "turn-1"})),
+                ("turn/start", json!({"turnId": "turn-1"})),
                 ("step.text", json!({"turnId": "turn-1", "text": "streamed step"})),
                 (
-                    "tool.called",
+                    "tool/call",
                     json!({"turnId": "turn-1", "tool": "read_device", "args": {}}),
                 ),
-                ("turn.completed", json!({"turnId": "turn-1", "outcome": "completed"})),
+                ("turn/end", json!({"turnId": "turn-1", "outcome": "completed"})),
                 (
                     "thing.event",
                     json!({"marker": "session-event-marker", "thingId": "device-1", "temperature": 21.5}),
@@ -2006,7 +2006,7 @@ mod registry {
             0,
         );
         for (event_type, payload) in [
-            ("turn.started", json!({"turnId": "turn-2"})),
+            ("turn/start", json!({"turnId": "turn-2"})),
             (
                 "message.created",
                 json!({"messageId": "assistant-2", "role": "assistant", "text": "another report"}),

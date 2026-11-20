@@ -11,10 +11,10 @@ const STATUS_LABEL: Record<string, string> = {
 };
 
 const EVENT_LABEL: Record<string, string> = {
-  'turn.started': '开始处理',
-  'turn.completed': '本轮结束',
-  'tool.called': '调用工具',
-  'tool.returned': '工具返回',
+  'turn/start': '开始处理',
+  'turn/end': '本轮结束',
+  'tool/call': '调用工具',
+  'tool/result': '工具返回',
   'skill.loaded': '载入技能',
   'todo.updated': '计划更新',
   'question.asked': '向你提问',

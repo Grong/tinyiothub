@@ -13,11 +13,9 @@ import { unsafeHTML } from 'lit/directives/unsafe-html.js';
 import type { TodoItem } from '../../api/assistant.js';
 import {
   connectSessionEvents,
-  fetchAssistantHud,
   fetchSessionEvents,
   fetchSessionTodos,
   listChatSessions,
-  type HudSnapshot,
   type SessionEvent,
   type SessionSummary,
 } from '../../api/assistant.js';
@@ -116,7 +114,6 @@ export class StoryView extends LitElement {
   @state() private story: StoryProjection = EMPTY_STORY;
   @state() private loading = true;
   @state() private error = '';
-  @state() private hud: HudSnapshot | null = null;
   @state() private achievements: AchievementStats = EMPTY_ACHIEVEMENTS;
   @state() private achievementsLoading = false;
   @state() private historyBefore: number | null = null;
@@ -192,15 +189,13 @@ export class StoryView extends LitElement {
   private async loadDashboard(): Promise<void> {
     this.achievementsLoading = true;
     try {
-      const [summary, events, hud, sessions] = await Promise.all([
+      const [summary, events, sessions] = await Promise.all([
         brainEventApi.summary().catch(() => null),
         this.loadBrainEvents(),
-        fetchAssistantHud(this.workspaceId).catch(() => null),
         listChatSessions().catch(() => null),
       ]);
       this.brainSummary = summary;
       this.brainEvents = events;
-      this.hud = hud;
       if (sessions) {
         const previous = this.sessions;
         this.sessions = sessions;
@@ -366,7 +361,7 @@ export class StoryView extends LitElement {
       after,
       onEvent: (event) => {
         if (this.sessionKey !== key) return;
-        if (event.eventType === 'turn.started') {
+        if (event.eventType === 'turn/start') {
           this.startStreamingTurn(key, event);
           return;
         }
@@ -471,9 +466,7 @@ export class StoryView extends LitElement {
     ) {
       return true;
     }
-    // 还没有任何 turn 事件时，才用 HUD 兜底，避免 HUD 的 60s 缓存把“已完成”
-    // 误显示成“正在工作”。
-    return this.story.sections.length === 0 && this.hud?.assistant.status === 'working';
+    return false;
   }
 
   private workingDetail(): string {
@@ -486,16 +479,14 @@ export class StoryView extends LitElement {
 
   private statusText(): string {
     if (this.isWorking()) return ASSISTANT_STATUS.working;
-    const hudStatus = this.hud?.assistant.status;
-    if (hudStatus === 'waiting_for_user' || hudStatus === 'paused' || hudStatus === 'error') {
-      return ASSISTANT_STATUS[hudStatus] ?? hudStatus;
+    if (this.timeline.pendingQuestion || this.timeline.pendingApprovals.length > 0) {
+      return ASSISTANT_STATUS.waiting_for_user;
     }
     return ASSISTANT_STATUS.idle;
   }
 
   private pendingCount(): number {
-    if (!this.hud) return 0;
-    return this.hud.pending.approvals + this.hud.pending.questions;
+    return (this.timeline.pendingQuestion ? 1 : 0) + this.timeline.pendingApprovals.length;
   }
 
   private openEngineer(event: Event): void {

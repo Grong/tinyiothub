@@ -72,7 +72,7 @@ describe('assistant api', () => {
 
   it('fetches session events raw with cursor params', async () => {
     const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
-      jsonResponse({ events: [{ seq: 3, eventId: 'e3', eventType: 'turn.started', payloadJson: {} }], highWatermark: 3 }),
+      jsonResponse({ events: [{ seq: 3, eventId: 'e3', eventType: 'turn/start', payloadJson: {} }], highWatermark: 3 }),
     );
     const page = await fetchSessionEvents('agent:ws-1:default/a', 2, 100);
     const [url, init] = fetchMock.mock.calls[0];

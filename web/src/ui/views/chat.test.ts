@@ -32,7 +32,7 @@ const turnStarted = {
   executionMode: 'production',
   runId: 'r',
   taskId: null,
-  eventType: 'turn.started',
+  eventType: 'turn/start',
   occurredAt: '',
   causeId: null,
   schemaV: 1,

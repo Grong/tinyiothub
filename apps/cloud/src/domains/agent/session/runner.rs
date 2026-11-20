@@ -160,11 +160,11 @@ pub enum TurnOutcome {
 /// Session Event write health for one Turn.
 ///
 /// A full Turn may install a suppression baseline only when every event
-/// persisted and the `turn.completed` terminal was written.
+/// persisted and the `turn/end` terminal was written.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct TurnEventHealth {
     pub failed: u32,
-    /// The `turn.completed` terminal event was persisted.
+    /// The `turn/end` terminal event was persisted.
     pub terminal_written: bool,
 }
 
@@ -187,7 +187,7 @@ pub struct SessionRunner {
     contexts: Arc<TurnContextRegistry>,
 }
 
-/// Accumulates per-model-call usage into one `turn.completed` payload.
+/// Accumulates per-model-call usage into one `turn/end` payload.
 #[derive(Default)]
 struct UsageTotals {
     input_tokens: u64,
@@ -246,7 +246,7 @@ impl SessionRunner {
     /// Run one Turn and report Session Event write health.
     ///
     /// Planned-wake callers pass the durably allocated attempt so
-    /// `turn.started`/`turn.completed` share the attempt-derived ids used by
+    /// `turn/start`/`turn/end` share the attempt-derived ids used by
     /// the skip audit. `previous_attempt_id` links a changed-source replay's
     /// new attempt to the committed skip it supersedes. The health evidence
     /// lets those callers refuse to install a baseline when any event (in
@@ -268,7 +268,7 @@ impl SessionRunner {
             started["previousAttemptId"] = json!(previous);
             started["supersedes"] = json!(true);
         }
-        if !self.emit_turn_event(context, attempt, "turn.started", started).await {
+        if !self.emit_turn_event(context, attempt, "turn/start", started).await {
             health.failed += 1;
         }
 
@@ -402,7 +402,7 @@ impl SessionRunner {
                             if events
                                 .emit(session_event(
                                     &context,
-                                    "tool.called",
+                                    "tool/call",
                                     json!({
                                         "turnId": &context.turn_id,
                                         "stepId": step_id!(),
@@ -428,7 +428,7 @@ impl SessionRunner {
                             if events
                                 .emit(session_event(
                                     &context,
-                                    "tool.returned",
+                                    "tool/result",
                                     json!({
                                         "turnId": &context.turn_id,
                                         "stepId": if step_open { Some(step_id!()) } else { None },
@@ -562,7 +562,7 @@ impl SessionRunner {
                     .emit_turn_event(
                         context,
                         attempt,
-                        "turn.completed",
+                        "turn/end",
                         json!({
                             "turnId": &context.turn_id,
                             "outcome": "completed",
@@ -614,7 +614,7 @@ impl SessionRunner {
                         payload["source"] = json!("system");
                     }
                 }
-                health.terminal_written = self.emit_turn_event(context, attempt, "turn.completed", payload).await;
+                health.terminal_written = self.emit_turn_event(context, attempt, "turn/end", payload).await;
                 if !health.terminal_written {
                     health.failed += 1;
                 }
@@ -648,7 +648,7 @@ impl SessionRunner {
         payload: serde_json::Value,
     ) -> bool {
         let input = match attempt {
-            Some(attempt) if matches!(event_type, "turn.started" | "turn.completed") => {
+            Some(attempt) if matches!(event_type, "turn/start" | "turn/end") => {
                 attempt_event(context, attempt, event_type, payload)
             }
             _ => session_event(context, event_type, payload),
@@ -789,8 +789,8 @@ mod tests {
     fn completed_payload(events: &[tinyiothub_core::harness::HarnessEventInput]) -> &serde_json::Value {
         let event = events
             .iter()
-            .find(|event| event.event_type == "turn.completed")
-            .expect("turn.completed emitted");
+            .find(|event| event.event_type == "turn/end")
+            .expect("turn/end emitted");
         &event.payload_json
     }
 
@@ -836,13 +836,13 @@ mod tests {
         assert_eq!(
             types,
             vec![
-                "turn.started",
+                "turn/start",
                 "step/start",
-                "tool.called",
-                "tool.returned",
+                "tool/call",
+                "tool/result",
                 "assistant/message",
                 "step/end",
-                "turn.completed"
+                "turn/end"
             ]
         );
         let text = events
@@ -864,7 +864,7 @@ mod tests {
         );
         let completed = events
             .iter()
-            .find(|event| event.event_type == "turn.completed")
+            .find(|event| event.event_type == "turn/end")
             .expect("turn completed");
         assert_eq!(completed.payload_json["outcome"], "completed");
         assert_eq!(observer.events.lock().await.len(), 3);
@@ -1009,10 +1009,10 @@ mod tests {
                 .position(|event| event.event_type == name)
                 .unwrap_or_else(|| panic!("missing {name}"))
         };
-        assert!(index("turn.started") < index("tool.called"));
-        assert!(index("tool.returned") < index("assistant/message"));
+        assert!(index("turn/start") < index("tool/call"));
+        assert!(index("tool/result") < index("assistant/message"));
         assert!(index("assistant/message") < index("step/end"));
-        assert!(index("step/end") < index("turn.completed"));
+        assert!(index("step/end") < index("turn/end"));
     }
 
     #[tokio::test]

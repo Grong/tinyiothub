@@ -270,13 +270,7 @@ mod tests {
         let types: Vec<&str> = events.iter().map(|event| event.event_type.as_str()).collect();
         assert_eq!(
             types,
-            vec![
-                "turn.started",
-                "step/start",
-                "assistant/message",
-                "step/end",
-                "turn.completed"
-            ]
+            vec!["turn/start", "step/start", "assistant/message", "step/end", "turn/end"]
         );
         assert!(
             events
@@ -286,7 +280,7 @@ mod tests {
         );
         let completed = events
             .iter()
-            .find(|event| event.event_type == "turn.completed")
+            .find(|event| event.event_type == "turn/end")
             .expect("turn completed");
         assert_eq!(completed.payload_json["outcome"], "completed");
     }

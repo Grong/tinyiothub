@@ -1375,11 +1375,11 @@ mod tests {
                 "trigger.received",
                 "wake.dispatched",
                 "session.started",
-                "turn.started",
+                "turn/start",
                 "step/start",
                 "assistant/message",
                 "step/end",
-                "turn.completed",
+                "turn/end",
                 "session.ended",
             ]
         );
@@ -1660,7 +1660,7 @@ mod tests {
         assert_eq!(
             events
                 .iter()
-                .filter(|event| { event.event_type == "turn.completed" && event.payload_json["outcome"] == "skipped" })
+                .filter(|event| { event.event_type == "turn/end" && event.payload_json["outcome"] == "skipped" })
                 .count(),
             1
         );

@@ -48,13 +48,13 @@ describe('buildStory', () => {
   it('translates a device read into a business step, device card and vision card', () => {
     const model = timelineOf(
       event(1, 'trigger.received', { trigger: 'schedule', sourceId: 'wake-1' }),
-      event(2, 'turn.started', { turnId: 't1' }),
-      event(3, 'tool.called', {
+      event(2, 'turn/start', { turnId: 't1' }),
+      event(3, 'tool/call', {
         toolCallId: 'c1',
         tool: 'read_device',
         args: { thingId: 'dev-1' },
       }),
-      event(4, 'tool.returned', {
+      event(4, 'tool/result', {
         toolCallId: 'c1',
         tool: 'read_device',
         result: JSON.stringify(deviceResult),
@@ -65,7 +65,7 @@ describe('buildStory', () => {
         role: 'assistant',
         text: '冷却塔 A 离线，已通知值班人员。',
       }),
-      event(6, 'turn.completed', { turnId: 't1', outcome: 'completed', toolCalls: 1 }),
+      event(6, 'turn/end', { turnId: 't1', outcome: 'completed', toolCalls: 1 }),
     );
 
     const story = buildStory(model.blocks, []);
@@ -122,13 +122,13 @@ describe('buildStory', () => {
 
   it('summarizes a device inventory without pretending every item was inspected', () => {
     const model = timelineOf(
-      event(1, 'turn.started', { turnId: 't1' }),
-      event(2, 'tool.called', {
+      event(1, 'turn/start', { turnId: 't1' }),
+      event(2, 'tool/call', {
         toolCallId: 'c1',
         tool: 'list_things',
         args: { thingType: 'device' },
       }),
-      event(3, 'tool.returned', {
+      event(3, 'tool/result', {
         toolCallId: 'c1',
         tool: 'list_things',
         result: JSON.stringify({
@@ -153,13 +153,13 @@ describe('buildStory', () => {
 
   it('marks failed operations and keeps the business-language error', () => {
     const model = timelineOf(
-      event(1, 'turn.started', { turnId: 't1' }),
-      event(2, 'tool.called', {
+      event(1, 'turn/start', { turnId: 't1' }),
+      event(2, 'tool/call', {
         toolCallId: 'c1',
         tool: 'invoke_action',
         args: { thingId: 'dev-2', actionName: 'start' },
       }),
-      event(3, 'tool.returned', {
+      event(3, 'tool/result', {
         toolCallId: 'c1',
         tool: 'invoke_action',
         result: JSON.stringify({ success: false, error: '设备正被占用' }),
@@ -178,13 +178,13 @@ describe('buildStory', () => {
 
   it('surfaces per-frame detection findings as business issues', () => {
     const model = timelineOf(
-      event(1, 'turn.started', { turnId: 't1' }),
-      event(2, 'tool.called', {
+      event(1, 'turn/start', { turnId: 't1' }),
+      event(2, 'tool/call', {
         toolCallId: 'c1',
         tool: 'read_device',
         args: { thingId: 'cam-1', sources: ['cam-1'] },
       }),
-      event(3, 'tool.returned', {
+      event(3, 'tool/result', {
         toolCallId: 'c1',
         tool: 'read_device',
         result: JSON.stringify({
@@ -212,23 +212,23 @@ describe('buildStory', () => {
 
   it('deduplicates repeated findings for the same device', () => {
     const model = timelineOf(
-      event(1, 'turn.started', { turnId: 't1' }),
-      event(2, 'tool.called', {
+      event(1, 'turn/start', { turnId: 't1' }),
+      event(2, 'tool/call', {
         toolCallId: 'c1',
         tool: 'read_device',
         args: { thingId: 'dev-1' },
       }),
-      event(3, 'tool.returned', {
+      event(3, 'tool/result', {
         toolCallId: 'c1',
         tool: 'read_device',
         result: JSON.stringify(deviceResult),
       }),
-      event(4, 'tool.called', {
+      event(4, 'tool/call', {
         toolCallId: 'c2',
         tool: 'read_device',
         args: { thingId: 'dev-1' },
       }),
-      event(5, 'tool.returned', {
+      event(5, 'tool/result', {
         toolCallId: 'c2',
         tool: 'read_device',
         result: JSON.stringify(deviceResult),
@@ -242,28 +242,28 @@ describe('buildStory', () => {
 
   it('keeps the right rail scoped to the latest round', () => {
     const firstRound = [
-      event(1, 'turn.started', { turnId: 't1' }),
-      event(2, 'tool.called', {
+      event(1, 'turn/start', { turnId: 't1' }),
+      event(2, 'tool/call', {
         toolCallId: 'c1',
         tool: 'read_device',
         args: { thingId: 'dev-1' },
       }),
-      event(3, 'tool.returned', {
+      event(3, 'tool/result', {
         toolCallId: 'c1',
         tool: 'read_device',
         result: JSON.stringify(deviceResult),
         evidence,
       }),
-      event(4, 'turn.completed', { turnId: 't1', outcome: 'completed' }),
+      event(4, 'turn/end', { turnId: 't1', outcome: 'completed' }),
     ];
     const secondRound = [
-      event(5, 'turn.started', { turnId: 't2' }),
-      event(6, 'tool.called', {
+      event(5, 'turn/start', { turnId: 't2' }),
+      event(6, 'tool/call', {
         toolCallId: 'c2',
         tool: 'read_device',
         args: { thingId: 'dev-2' },
       }),
-      event(7, 'tool.returned', {
+      event(7, 'tool/result', {
         toolCallId: 'c2',
         tool: 'read_device',
         result: JSON.stringify({
@@ -284,7 +284,7 @@ describe('buildStory', () => {
           },
         ],
       }),
-      event(8, 'turn.completed', { turnId: 't2', outcome: 'completed' }),
+      event(8, 'turn/end', { turnId: 't2', outcome: 'completed' }),
     ];
 
     const story = buildStory(timelineOf(...firstRound, ...secondRound).blocks, []);
@@ -304,9 +304,9 @@ describe('buildStory', () => {
 
   it('does not invent zero counts when a tool result is truncated', () => {
     const model = timelineOf(
-      event(1, 'turn.started', { turnId: 't1' }),
-      event(2, 'tool.called', { toolCallId: 'c1', tool: 'list_things', args: {} }),
-      event(3, 'tool.returned', {
+      event(1, 'turn/start', { turnId: 't1' }),
+      event(2, 'tool/call', { toolCallId: 'c1', tool: 'list_things', args: {} }),
+      event(3, 'tool/result', {
         toolCallId: 'c1',
         tool: 'list_things',
         result: '{"items":[{"id":"d1","name":"送风机',
@@ -319,7 +319,7 @@ describe('buildStory', () => {
 
   it('keeps the latest plan and the reasoning used to reach it', () => {
     const model = timelineOf(
-      event(1, 'turn.started', { turnId: 't1' }),
+      event(1, 'turn/start', { turnId: 't1' }),
       event(2, 'step.thinking', { turnId: 't1', thinking: '先看离线设备，再看告警。' }),
       event(3, 'todo.updated', {
         todos: [
@@ -343,7 +343,7 @@ describe('buildStory', () => {
 
   it('keeps an unanswered question visible after the turn ends', () => {
     const model = timelineOf(
-      event(1, 'turn.started', { turnId: 't-q' }),
+      event(1, 'turn/start', { turnId: 't-q' }),
       event(2, 'question.asked', {
         questionId: 'q-closed',
         questions: [
@@ -355,7 +355,7 @@ describe('buildStory', () => {
           },
         ],
       }),
-      event(3, 'turn.completed', { turnId: 't-q', outcome: 'cancelled' }),
+      event(3, 'turn/end', { turnId: 't-q', outcome: 'cancelled' }),
     );
     const story = buildStory(model.blocks, []);
     const latest = story.sections[story.sections.length - 1];
@@ -366,7 +366,7 @@ describe('buildStory', () => {
 
   it('surfaces a pending question as a waiting step', () => {
     const model = timelineOf(
-      event(1, 'turn.started', { turnId: 't-wait' }),
+      event(1, 'turn/start', { turnId: 't-wait' }),
       event(2, 'step.text', { turnId: 't-wait', text: '诊断完成，需要确认操作范围。' }),
       event(3, 'question.asked', {
         questionId: 'q-1',
@@ -408,7 +408,7 @@ describe('buildStory', () => {
     const quota =
       'CompletionError: ProviderError: LLM streaming request failed: HTTP 429: rate_limit_error: 已达到 Token Plan 用量上限';
     const model = timelineOf(
-      event(1, 'turn.started', { turnId: 't-fail' }),
+      event(1, 'turn/start', { turnId: 't-fail' }),
       event(2, 'turn.retry', {
         turnId: 't-fail',
         attempt: 1,
@@ -423,7 +423,7 @@ describe('buildStory', () => {
         delayMs: 2000,
         error: quota,
       }),
-      event(4, 'turn.completed', {
+      event(4, 'turn/end', {
         turnId: 't-fail',
         outcome: 'failed',
         error: quota,
@@ -431,8 +431,8 @@ describe('buildStory', () => {
         toolCalls: 0,
       }),
       event(5, 'session.ended', { outcome: 'failed' }),
-      event(6, 'turn.started', { turnId: 't-next' }),
-      event(7, 'turn.completed', { turnId: 't-next', outcome: 'completed' }),
+      event(6, 'turn/start', { turnId: 't-next' }),
+      event(7, 'turn/end', { turnId: 't-next', outcome: 'completed' }),
     );
 
     const story = buildStory(model.blocks, []);
@@ -520,13 +520,13 @@ describe('achievements', () => {
   it('separates this shift, today and the week without inventing savings', () => {
     const story = buildStory(
       timelineOf(
-        event(1, 'turn.started', { turnId: 't1' }),
-        event(2, 'tool.called', {
+        event(1, 'turn/start', { turnId: 't1' }),
+        event(2, 'tool/call', {
           toolCallId: 'c1',
           tool: 'read_device',
           args: { thingId: 'dev-1' },
         }),
-        event(3, 'tool.returned', {
+        event(3, 'tool/result', {
           toolCallId: 'c1',
           tool: 'read_device',
           result: JSON.stringify(deviceResult),

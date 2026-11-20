@@ -469,7 +469,7 @@ impl SuppressionOps for FixtureOps {
                             &workspace_id,
                             &task_session_key,
                             &format!("{turn_for_log}-failed"),
-                            "turn.completed",
+                            "turn/end",
                             payload,
                         )
                         .await;
@@ -541,7 +541,7 @@ impl SuppressionOps for FixtureOps {
                         &fail_workspace,
                         &fail_session,
                         &format!("{log_turn_id}-failed"),
-                        "turn.completed",
+                        "turn/end",
                         payload,
                     )
                     .await;
@@ -599,7 +599,7 @@ async fn execute_full_turn(turn: ExecuteFullTurn) -> Result<(), String> {
         &turn.workspace_id,
         &turn.session_key,
         &format!("{}-started", turn.turn_id),
-        "turn.started",
+        "turn/start",
         json!({"turnId": turn.turn_id}),
     )
     .await?;
@@ -659,7 +659,7 @@ async fn execute_full_turn(turn: ExecuteFullTurn) -> Result<(), String> {
         &turn.workspace_id,
         &turn.session_key,
         &format!("{}-completed", turn.turn_id),
-        "turn.completed",
+        "turn/end",
         json!({
             "turnId": turn.turn_id,
             "outcome": "completed",

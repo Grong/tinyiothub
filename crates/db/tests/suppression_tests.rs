@@ -207,10 +207,10 @@ fn event(event_id: &str, event_type: &str, payload: Value) -> HarnessEventInput 
 
 fn skip_events() -> Vec<HarnessEventInput> {
     vec![
-        event("skip:turn.started", "turn.started", json!({"turnKind": "scheduled"})),
+        event("skip:turn/start", "turn/start", json!({"turnKind": "scheduled"})),
         event(
-            "skip:turn.completed",
-            "turn.completed",
+            "skip:turn/end",
+            "turn/end",
             json!({"outcome": "skipped", "reason": "no_material_change"}),
         ),
         event("skip:session.ended", "session.ended", json!({"outcome": "skipped"})),
@@ -833,14 +833,14 @@ fn event_for_run(event_id: &str, event_type: &str, payload: Value, run_id: &str)
 fn skip_events_for_turn(turn_id: &str) -> Vec<HarnessEventInput> {
     vec![
         event_for_run(
-            "skip:turn.started",
-            "turn.started",
+            "skip:turn/start",
+            "turn/start",
             json!({"turnKind": "scheduled"}),
             turn_id,
         ),
         event_for_run(
-            "skip:turn.completed",
-            "turn.completed",
+            "skip:turn/end",
+            "turn/end",
             json!({"outcome": "skipped", "reason": "no_material_change"}),
             turn_id,
         ),

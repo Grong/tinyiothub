@@ -277,13 +277,13 @@ export class TimelineModel {
         );
         break;
       }
-      case 'turn.started':
+      case 'turn/start':
         this.pushBlock(
           { kind: 'turn', id: asString(payload.turnId) || event.eventId, status: 'running', at },
           event.seq,
         );
         break;
-      case 'turn.completed': {
+      case 'turn/end': {
         const id = asString(payload.turnId);
         const status = asString(payload.outcome);
         const mapped =
@@ -448,14 +448,14 @@ export class TimelineModel {
         }
         break;
       }
-      case 'tool.called': {
+      case 'tool/call': {
         const id = asString(payload.toolCallId) || event.eventId;
         const name = asString(payload.tool);
         if (name === 'canvas') break;
         this.pushBlock({ kind: 'tool', id, name, args: payload.args ?? null, at }, event.seq);
         break;
       }
-      case 'tool.returned': {
+      case 'tool/result': {
         const id = asString(payload.toolCallId) || event.eventId;
         const name = asString(payload.tool);
         if (name === 'canvas') break;

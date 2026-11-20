@@ -2820,11 +2820,11 @@ mod tests {
                 "trigger.received",
                 "wake.dispatched",
                 "session.started",
-                "turn.started",
+                "turn/start",
                 "step/start",
                 "assistant/message",
                 "step/end",
-                "turn.completed",
+                "turn/end",
                 "session.ended",
             ]
         );
@@ -3065,7 +3065,7 @@ mod tests {
                 .lock()
                 .await
                 .iter()
-                .any(|event| event.event_type == "turn.started");
+                .any(|event| event.event_type == "turn/start");
             if started {
                 break;
             }
@@ -3092,7 +3092,7 @@ mod tests {
         assert_eq!(events.last().unwrap().payload_json["outcome"], "cancelled");
         let terminal = events
             .iter()
-            .find(|event| event.event_type == "turn.completed")
+            .find(|event| event.event_type == "turn/end")
             .expect("cancelled wake must finish its turn");
         assert_eq!(terminal.payload_json["outcome"], "cancelled");
         assert_eq!(terminal.payload_json["source"], "schedule");
@@ -3140,11 +3140,11 @@ mod tests {
                 "trigger.received",
                 "wake.dispatched",
                 "session.started",
-                "turn.started",
+                "turn/start",
                 "step/start",
                 "assistant/message",
                 "step/end",
-                "turn.completed",
+                "turn/end",
                 "session.ended"
             ]
         );
@@ -3511,7 +3511,7 @@ mod tests {
             self.session_events()
                 .await
                 .iter()
-                .filter(|event| event.event_type == "turn.completed" && event.payload_json["outcome"] == "skipped")
+                .filter(|event| event.event_type == "turn/end" && event.payload_json["outcome"] == "skipped")
                 .count()
         }
 
@@ -3651,7 +3651,7 @@ mod tests {
         let events = fixture.sink.events.lock().await;
         let terminal = events
             .iter()
-            .find(|event| event.event_type == "turn.completed")
+            .find(|event| event.event_type == "turn/end")
             .expect("failed terminal");
         assert_eq!(terminal.payload_json["error"]["code"], "context_budget_unavailable");
         assert!(terminal.payload_json["errorMessage"].as_str().is_some());
@@ -3728,7 +3728,7 @@ mod tests {
                 .lock()
                 .await
                 .iter()
-                .any(|event| event.event_type == "turn.started");
+                .any(|event| event.event_type == "turn/start");
             if started {
                 break;
             }
@@ -3769,7 +3769,7 @@ mod tests {
 
     #[tokio::test]
     async fn missing_terminal_session_event_prevents_baseline_installation() {
-        for failed_event in ["turn.completed", "session.ended"] {
+        for failed_event in ["turn/end", "session.ended"] {
             let fixture = lifecycle_fixture(SuppressionMode::Enforce, Some(failed_event), true).await;
             let report = fixture.run().await;
             assert!(
@@ -3935,8 +3935,8 @@ mod tests {
         let started = events
             .iter()
             .rev()
-            .find(|event| event.event_type == "turn.started")
-            .expect("turn.started");
+            .find(|event| event.event_type == "turn/start")
+            .expect("turn/start");
         assert_eq!(
             started.payload_json["previousAttemptId"],
             serde_json::json!(skip_attempt_id)
@@ -3989,9 +3989,9 @@ mod tests {
         // events go directly to the workspace DB).
         let events = fixture.sink.events.lock().await;
         assert!(
-            events.iter().any(|event| {
-                event.event_type == "turn.completed" && event.run_id.as_deref() == Some(turn_id.as_str())
-            }),
+            events
+                .iter()
+                .any(|event| { event.event_type == "turn/end" && event.run_id.as_deref() == Some(turn_id.as_str()) }),
             "the executed Turn must carry the preallocated turnId {turn_id}"
         );
         let state = fixture.state().await;

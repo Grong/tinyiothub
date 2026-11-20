@@ -178,12 +178,12 @@ mod tests {
     async fn recording_sink_captures_events() {
         let sink = test_support::RecordingSink::default();
         let context = ctx();
-        sink.emit(session_event(&context, "turn.started", json!({})))
+        sink.emit(session_event(&context, "turn/start", json!({})))
             .await
             .unwrap();
         let events = sink.events.lock().await;
         assert_eq!(events.len(), 1);
-        assert_eq!(events[0].event_type, "turn.started");
+        assert_eq!(events[0].event_type, "turn/start");
     }
 
     #[test]
