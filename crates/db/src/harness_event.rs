@@ -39,10 +39,9 @@ const RECENT_SESSION_EVENTS_SQL: &str = "SELECT seq, event_id, session_id, execu
      FROM session_events WHERE execution_mode = ? \
      ORDER BY occurred_at DESC, ('session:' || event_id) DESC LIMIT ?";
 
-const SESSION_TURN_SEQS_SQL: &str = "SELECT turn_id, seq FROM session_events \
-     WHERE execution_mode = ? AND session_id = ? AND type = 'turn/start' \
-       AND turn_id IS NOT NULL AND (? IS NULL OR seq < ?) \
-     ORDER BY seq DESC LIMIT ?";
+const SESSION_TURN_SEQS_SQL: &str = "SELECT turn_id, started_seq FROM session_turns \
+     WHERE execution_mode = ? AND session_id = ? AND (? IS NULL OR started_seq < ?) \
+     ORDER BY started_seq DESC LIMIT ?";
 
 const MODE_EVENT_PAGE_SQL: &str = "SELECT seq, event_id, session_id, execution_mode, run_id, task_id, type, occurred_at, cause_id, schema_v, payload_digest, payload_json FROM session_events
     WHERE execution_mode = ? AND seq > ? ORDER BY seq ASC LIMIT ?";
@@ -295,6 +294,56 @@ pub async fn append_session_event_tx(
     .await?;
 
     if inserted.rows_affected() == 1 {
+        if let Some(turn_id) = turn_id.as_deref() {
+            match input.event_type.as_str() {
+                "turn/start" => {
+                    sqlx::query(
+                        "INSERT INTO session_turns
+                            (turn_id, session_id, execution_mode, started_seq, status, started_at)
+                         VALUES (?, ?, ?, ?, 'running', ?)
+                         ON CONFLICT(execution_mode, session_id, turn_id) DO UPDATE SET
+                            started_seq = excluded.started_seq,
+                            status = 'running',
+                            ended_seq = NULL,
+                            ended_at = NULL,
+                            error = NULL",
+                    )
+                    .bind(turn_id)
+                    .bind(&input.session_id)
+                    .bind(input.execution_mode.as_str())
+                    .bind(inserted.last_insert_rowid())
+                    .bind(input.occurred_at.to_rfc3339())
+                    .execute(&mut **tx)
+                    .await?;
+                }
+                "turn/end" => {
+                    let status = input
+                        .payload_json
+                        .get("outcome")
+                        .and_then(Value::as_str)
+                        .unwrap_or("completed");
+                    let error = input
+                        .payload_json
+                        .get("errorMessage")
+                        .or_else(|| input.payload_json.get("error"))
+                        .and_then(Value::as_str);
+                    sqlx::query(
+                        "UPDATE session_turns SET status = ?, ended_seq = ?, ended_at = ?, error = ?
+                         WHERE execution_mode = ? AND session_id = ? AND turn_id = ?",
+                    )
+                    .bind(status)
+                    .bind(inserted.last_insert_rowid())
+                    .bind(input.occurred_at.to_rfc3339())
+                    .bind(error)
+                    .bind(input.execution_mode.as_str())
+                    .bind(&input.session_id)
+                    .bind(turn_id)
+                    .execute(&mut **tx)
+                    .await?;
+                }
+                _ => {}
+            }
+        }
         return Ok(HarnessEvent {
             seq: inserted.last_insert_rowid(),
             event_id: input.event_id.clone(),
@@ -666,9 +715,9 @@ impl Db {
         let oldest_turn_seq = selected.last().map(|(_, seq)| *seq);
         let next_before = if let Some(oldest_turn_seq) = oldest_turn_seq {
             sqlx::query_scalar::<_, i64>(
-                "SELECT seq FROM session_events
-                 WHERE execution_mode = ? AND session_id = ? AND type = 'turn/start' AND seq < ?
-                 ORDER BY seq DESC LIMIT 1",
+                "SELECT 1 FROM session_turns
+                 WHERE execution_mode = ? AND session_id = ? AND started_seq < ?
+                 LIMIT 1",
             )
             .bind(filter.execution_mode.as_str())
             .bind(session_id)
@@ -1120,7 +1169,7 @@ mod tests {
         assert!(
             turn_plan
                 .iter()
-                .any(|detail| detail.contains("idx_session_events_mode_session_seq")),
+                .any(|detail| detail.contains("idx_session_turns_mode_session_started")),
             "expected turn page index in {turn_plan:?}"
         );
 
