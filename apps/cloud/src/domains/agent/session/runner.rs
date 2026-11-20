@@ -237,7 +237,6 @@ impl SessionRunner {
                                 step_index += 1;
                                 step_open = true;
                                 step_usage_seen = false;
-                                step_has_content = false;
                                 if !emit_step_marker(&events, &context, "step/start", step_index).await {
                                     failed += 1;
                                 }
@@ -267,7 +266,6 @@ impl SessionRunner {
                                 step_index += 1;
                                 step_open = true;
                                 step_usage_seen = false;
-                                step_has_content = false;
                                 if !emit_step_marker(&events, &context, "step/start", step_index).await {
                                     failed += 1;
                                 }
@@ -358,7 +356,6 @@ impl SessionRunner {
                                 step_index += 1;
                                 step_open = true;
                                 step_usage_seen = false;
-                                step_has_content = false;
                                 if !emit_step_marker(&events, &context, "step/start", step_index).await {
                                     failed += 1;
                                 }
