@@ -94,14 +94,13 @@ function clampText(value: string, max: number): string {
   return text.length > max ? `${text.slice(0, max)}…` : text;
 }
 
-/** 默认记录：优先正在跑的，其次最近的自主巡检/事件，最后任意会话。 */
+/** 默认记录：最近更新的会话；更新时间相同才优先 active。 */
 export function pickDefaultSession(sessions: SessionSummary[]): SessionSummary | null {
   if (sessions.length === 0) return null;
-  const rank = (session: SessionSummary): number =>
-    (session.status === 'active' ? 2 : 0) +
-    (session.kind === 'scheduled' || session.kind === 'event' ? 1 : 0);
   return [...sessions].sort(
-    (left, right) => rank(right) - rank(left) || right.updatedAt - left.updatedAt,
+    (left, right) =>
+      right.updatedAt - left.updatedAt ||
+      (right.status === 'active' ? 1 : 0) - (left.status === 'active' ? 1 : 0),
   )[0];
 }
 
@@ -210,8 +209,7 @@ export class StoryView extends LitElement {
           !this.manualSelection &&
           preferred &&
           preferred.sessionKey !== this.sessionKey &&
-          current?.status !== 'active' &&
-          preferred.status === 'active'
+          current?.status !== 'active'
         ) {
           void this.selectSession(preferred.sessionKey);
         }

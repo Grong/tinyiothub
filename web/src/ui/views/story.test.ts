@@ -251,13 +251,13 @@ describe('view-story', () => {
 });
 
 describe('pickDefaultSession', () => {
-  it('prefers the running autonomous shift over older chats', () => {
+  it('prefers the most recently updated shift, breaking ties toward active', () => {
     const running: SessionSummary = {
       ...session,
       sessionKey: 'agent:ws-1:default/running',
       status: 'active',
       kind: 'scheduled',
-      updatedAt: 100,
+      updatedAt: 600,
     };
     const chat: SessionSummary = {
       ...session,
@@ -268,5 +268,23 @@ describe('pickDefaultSession', () => {
     };
     expect(pickDefaultSession([chat, running])?.sessionKey).toBe(running.sessionKey);
     expect(pickDefaultSession([])).toBeNull();
+  });
+
+  it('does not let a stale active session mask a newer conversation', () => {
+    const staleActive: SessionSummary = {
+      ...session,
+      sessionKey: 'agent:ws-1:default/stale',
+      status: 'active',
+      kind: 'scheduled',
+      updatedAt: 100,
+    };
+    const newerChat: SessionSummary = {
+      ...session,
+      sessionKey: 'agent:ws-1:default/newer',
+      status: 'ended',
+      kind: 'chat',
+      updatedAt: 900,
+    };
+    expect(pickDefaultSession([staleActive, newerChat])?.sessionKey).toBe(newerChat.sessionKey);
   });
 });
