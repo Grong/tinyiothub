@@ -255,6 +255,45 @@ describe('TimelineModel', () => {
     });
   });
 
+  it('merges live deltas and replaces them with the durable settlement', () => {
+    const model = new TimelineModel();
+    model.ingestEvent(event(1, 'turn.started', { turnId: 't1' }));
+    model.applyLive({
+      v: 2,
+      frame: 'stream/delta',
+      streamId: 't1:s1',
+      turnId: 't1',
+      stepId: 't1:s1',
+      index: 0,
+      kind: 'text',
+      text: '冷却塔',
+    });
+    model.applyLive({
+      v: 2,
+      frame: 'stream/delta',
+      streamId: 't1:s1',
+      turnId: 't1',
+      stepId: 't1:s1',
+      index: 0,
+      kind: 'text',
+      text: ' A 离线',
+    });
+    expect(model.blocks.filter((block) => block.kind === 'assistant')).toHaveLength(1);
+    model.ingestEvent(
+      event(2, 'assistant/message', {
+        turnId: 't1',
+        stepId: 't1:s1',
+        messageId: 'm1',
+        text: '冷却塔 A 离线。',
+        reasoning: '',
+        stream: [],
+      }),
+    );
+    const assistants = model.blocks.filter((block) => block.kind === 'assistant');
+    expect(assistants).toHaveLength(1);
+    expect(assistants[0]).toMatchObject({ text: '冷却塔 A 离线。', id: 'm1', stepId: 't1:s1' });
+  });
+
   it('projects an assistant attempt as retry evidence', () => {
     const model = new TimelineModel();
     model.ingestEvent(

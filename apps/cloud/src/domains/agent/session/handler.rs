@@ -155,6 +155,7 @@ pub async fn stream_events(
         .unwrap_or(0);
     let after = query.after.max(last_event_id);
     let notifier = state.session_stream.subscribe(&claims.workspace_id);
+    let mut live = state.session_runtime.live.subscribe(&parsed.session_key());
 
     let event_stream = stream! {
         let mut cursor = after;
@@ -192,6 +193,13 @@ pub async fn stream_events(
             tokio::select! {
                 _ = notifier.notified() => {}
                 _ = tokio::time::sleep(Duration::from_secs(1)) => {}
+                frame = live.recv() => {
+                    if let Ok(frame) = frame
+                        && let Ok(event) = Event::default().event("live").json_data(frame)
+                    {
+                        yield Ok::<_, Infallible>(event);
+                    }
+                }
             }
         }
     };

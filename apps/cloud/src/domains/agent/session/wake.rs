@@ -4196,6 +4196,7 @@ mod tests {
         let sink = Arc::new(crate::domains::agent::session::events::DbSessionEventSink::new(
             db.clone(),
             Arc::new(crate::domains::agent::runtime::session_stream::SessionStreamHub::default()),
+            Arc::new(crate::domains::agent::runtime::session_live::SessionLiveHub::default()),
         ));
         let runner = Arc::new(SessionRunner::new(
             sink.clone(),

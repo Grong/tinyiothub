@@ -58,6 +58,7 @@ pub use wake::{WakeExecutor, WakeOutcome, WakeReport, WakeRunner, assistant_agen
 
 use std::sync::Arc;
 
+use crate::domains::agent::runtime::session_live::SessionLiveHub;
 use crate::domains::agent::runtime::session_stream::SessionStreamHub;
 
 #[derive(Clone)]
@@ -69,12 +70,14 @@ pub struct SessionRuntime {
     pub approvals: Arc<ApprovalBroker>,
     pub subagents: Arc<SubagentSlot>,
     pub runner: Arc<SessionRunner>,
+    pub live: Arc<SessionLiveHub>,
     pub system_prompts: Arc<tinyiothub_core::config::SystemPromptsConfig>,
 }
 
 impl SessionRuntime {
     pub fn new(db: Arc<tinyiothub_storage::Db>, hub: Arc<SessionStreamHub>) -> Self {
-        let events: Arc<dyn SessionEventSink> = Arc::new(DbSessionEventSink::new(db, hub));
+        let live = Arc::new(SessionLiveHub::default());
+        let events: Arc<dyn SessionEventSink> = Arc::new(DbSessionEventSink::new(db, hub, live.clone()));
         let contexts = Arc::new(TurnContextRegistry::default());
         let todos = Arc::new(TodoStore::default());
         let questions = Arc::new(QuestionBroker::default());
@@ -89,6 +92,7 @@ impl SessionRuntime {
             approvals,
             subagents,
             runner,
+            live,
             system_prompts: Arc::new(tinyiothub_core::config::SystemPromptsConfig::default()),
         }
     }

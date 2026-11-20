@@ -39,6 +39,7 @@ pub mod controls;
 pub mod dispatch;
 pub mod harness_store;
 pub mod projection;
+pub mod session_live;
 pub mod session_stream;
 pub mod stream;
 pub mod tasks;

@@ -373,6 +373,11 @@ export class StoryView extends LitElement {
         this.timeline.ingestEvent(event);
         this.rebuild();
       },
+      onLive: (frame) => {
+        if (this.sessionKey !== key) return;
+        this.timeline.applyLive(frame);
+        this.rebuild();
+      },
       onError: (error) => {
         if (this.sessionKey !== key) return;
         this.error = error.message;

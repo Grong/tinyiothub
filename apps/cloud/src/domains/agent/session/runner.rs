@@ -6,6 +6,7 @@
 
 use std::sync::Arc;
 
+use crate::domains::agent::runtime::session_live::SessionLiveFrame;
 use serde_json::json;
 use tinyiothub_agent::port::events::TurnEvent;
 use tinyiothub_agent::port::runtime::AgentLoop;
@@ -276,6 +277,7 @@ impl SessionRunner {
             let events = self.events.clone();
             let context = context.clone();
             let observer = observer.clone();
+            #[allow(unused_assignments)]
             async move {
                 let mut tool_calls = 0u32;
                 // One Usage event is emitted per model call; this is the
@@ -315,6 +317,17 @@ impl SessionRunner {
                         if !emit_step_marker(&events, &context, "step/start", step_index).await {
                             failed += 1;
                         }
+                        events
+                            .live(
+                                &context.session_key,
+                                SessionLiveFrame::StreamStart {
+                                    stream_id: step_id!(),
+                                    turn_id: context.turn_id.clone(),
+                                    step_id: step_id!(),
+                                    attempt_id: step_attempt_id.clone(),
+                                },
+                            )
+                            .await;
                     }};
                 }
 
@@ -337,6 +350,17 @@ impl SessionRunner {
                                 }
                                 step_assistant_written = true;
                             }
+                            events
+                                .live(
+                                    &context.session_key,
+                                    SessionLiveFrame::StreamEnd {
+                                        stream_id: step_id!(),
+                                        turn_id: context.turn_id.clone(),
+                                        step_id: step_id!(),
+                                        status: "completed".to_string(),
+                                    },
+                                )
+                                .await;
                             if !emit_step_marker(&events, &context, "step/end", step_index).await {
                                 failed += 1;
                             }
@@ -357,6 +381,18 @@ impl SessionRunner {
                             let at_ms = step_started.elapsed().as_millis() as u64;
                             step_text.push_str(delta);
                             push_assistant_segment(&mut step_stream, StreamKind::Text, delta, at_ms);
+                            events
+                                .live(
+                                    &context.session_key,
+                                    SessionLiveFrame::StreamDelta {
+                                        stream_id: step_id!(),
+                                        turn_id: context.turn_id.clone(),
+                                        step_id: step_id!(),
+                                        kind: StreamKind::Text,
+                                        text: delta.clone(),
+                                    },
+                                )
+                                .await;
                         }
                         TurnEvent::ToolCall { id, name, args } => {
                             if !step_open {
@@ -418,11 +454,34 @@ impl SessionRunner {
                             let at_ms = step_started.elapsed().as_millis() as u64;
                             step_reasoning.push_str(delta);
                             push_assistant_segment(&mut step_stream, StreamKind::Reasoning, delta, at_ms);
+                            events
+                                .live(
+                                    &context.session_key,
+                                    SessionLiveFrame::StreamDelta {
+                                        stream_id: step_id!(),
+                                        turn_id: context.turn_id.clone(),
+                                        step_id: step_id!(),
+                                        kind: StreamKind::Reasoning,
+                                        text: delta.clone(),
+                                    },
+                                )
+                                .await;
                         }
                         TurnEvent::Retry(notice) => {
                             if !step_open {
                                 open_step!();
                             }
+                            events
+                                .live(
+                                    &context.session_key,
+                                    SessionLiveFrame::StreamEnd {
+                                        stream_id: step_id!(),
+                                        turn_id: context.turn_id.clone(),
+                                        step_id: step_id!(),
+                                        status: "retrying".to_string(),
+                                    },
+                                )
+                                .await;
                             if !emit_assistant_attempt(
                                 &events,
                                 &context,

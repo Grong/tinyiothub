@@ -13,6 +13,7 @@ use tinyiothub_storage::{Db, DbError};
 use uuid::Uuid;
 
 use super::context::TurnContext;
+use crate::domains::agent::runtime::session_live::{SessionLiveFrame, SessionLiveHub};
 use crate::domains::agent::runtime::session_stream::SessionStreamHub;
 
 pub const SESSION_EVENT_SCHEMA_V: i64 = 1;
@@ -26,16 +27,21 @@ pub trait SessionEventSink: Send + Sync {
     async fn notify(&self, _workspace_id: &str, _session_id: &str) -> Result<(), DbError> {
         Ok(())
     }
+
+    /// Process-local presentation delta. This is never persisted and may be
+    /// lost on disconnect; durable settlements are written with `emit`.
+    async fn live(&self, _session_id: &str, _frame: SessionLiveFrame) {}
 }
 
 pub struct DbSessionEventSink {
     db: Arc<Db>,
     hub: Arc<SessionStreamHub>,
+    live: Arc<SessionLiveHub>,
 }
 
 impl DbSessionEventSink {
-    pub fn new(db: Arc<Db>, hub: Arc<SessionStreamHub>) -> Self {
-        Self { db, hub }
+    pub fn new(db: Arc<Db>, hub: Arc<SessionStreamHub>, live: Arc<SessionLiveHub>) -> Self {
+        Self { db, hub, live }
     }
 }
 
@@ -50,6 +56,10 @@ impl SessionEventSink for DbSessionEventSink {
     async fn notify(&self, workspace_id: &str, _session_id: &str) -> Result<(), DbError> {
         self.hub.notify(workspace_id);
         Ok(())
+    }
+
+    async fn live(&self, session_id: &str, frame: SessionLiveFrame) {
+        self.live.publish(session_id, frame);
     }
 }
 

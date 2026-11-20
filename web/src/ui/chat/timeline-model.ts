@@ -1,4 +1,5 @@
 import type { Question, SessionEvent, SessionEventPage, TodoItem } from '../../api/assistant.js';
+import type { LiveFrame } from '../../types/session-protocol.js';
 
 export interface TurnUsage {
   inputTokens?: number;
@@ -57,6 +58,7 @@ export type TimelineBlock =
       id: string;
       text: string;
       turnId?: string;
+      stepId?: string;
       streaming?: boolean;
       at: string;
     }
@@ -193,6 +195,49 @@ export class TimelineModel {
     for (const event of ordered) this.ingestEvent(event);
   }
 
+  applyLive(frame: LiveFrame): void {
+    if (frame.frame === 'stream/delta') {
+      const kind = frame.kind === 'reasoning' ? 'reasoning' : 'assistant';
+      const id = `live:${frame.turnId}:${frame.stepId}:${kind}`;
+      const existing = this.blocks.find((block) => block.id === id);
+      if (existing && existing.kind === kind) {
+        existing.text += frame.text;
+        existing.streaming = true;
+        return;
+      }
+      if (kind === 'reasoning') {
+        this.blocks.push({
+          kind: 'reasoning',
+          id,
+          text: frame.text,
+          turnId: frame.turnId,
+          stepId: frame.stepId,
+          streaming: true,
+          at: new Date().toISOString(),
+        });
+      } else {
+        this.blocks.push({
+          kind: 'assistant',
+          id,
+          text: frame.text,
+          turnId: frame.turnId,
+          stepId: frame.stepId,
+          streaming: true,
+          at: new Date().toISOString(),
+        });
+      }
+      return;
+    }
+    if (frame.frame === 'stream/end') {
+      const prefix = `live:${frame.turnId}:${frame.stepId}`;
+      for (const block of this.blocks) {
+        if (block.id.startsWith(prefix) && (block.kind === 'assistant' || block.kind === 'reasoning')) {
+          block.streaming = false;
+        }
+      }
+    }
+  }
+
   ingestEvent(event: SessionEvent): void {
     if (this.seen.has(event.eventId)) return;
     this.seen.add(event.eventId);
@@ -320,6 +365,10 @@ export class TimelineModel {
         const stepId = asString(payload.stepId);
         const text = asString(payload.text);
         const reasoning = asString(payload.reasoning);
+        if (stepId) {
+          const prefix = `live:${turnId}:${stepId}`;
+          this.blocks = this.blocks.filter((block) => !block.id.startsWith(prefix));
+        }
         if (reasoning) {
           const id = `reasoning-${stepId || event.eventId}`;
           const existing = this.blocks.find((block) => block.kind === 'reasoning' && block.id === id);

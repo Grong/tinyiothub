@@ -997,6 +997,7 @@ impl SuppressionOps for FalseSkipOps {
         let sink = crate::domains::agent::session::events::DbSessionEventSink::new(
             self.db.clone(),
             Arc::new(crate::domains::agent::runtime::session_stream::SessionStreamHub::default()),
+            Arc::new(crate::domains::agent::runtime::session_live::SessionLiveHub::default()),
         );
         crate::domains::agent::session::wake::emit_confirmed_false_skip(
             &self.db,

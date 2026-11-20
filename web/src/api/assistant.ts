@@ -4,6 +4,7 @@
 //! - 事件/待答/答题/HUD/Schedule 是裸 JSON，直接用 fetch + buildUrl。
 //! - SessionKey 必须 encodeURIComponent（包含 ':' 与 '/'）。
 
+import type { LiveFrame } from '../types/session-protocol.js';
 import { ApiClient, ApiError, buildUrl, getAuthToken } from './client.js';
 
 export interface SessionEvent {
@@ -257,6 +258,7 @@ export function connectSessionEvents(opts: {
   sessionKey: string;
   after: number;
   onEvent: (event: SessionEvent) => void;
+  onLive?: (frame: LiveFrame) => void;
   onError?: (error: Error) => void;
   signal?: AbortSignal;
 }): () => void {
@@ -307,6 +309,12 @@ export function connectSessionEvents(opts: {
                     const event = JSON.parse(data) as SessionEvent;
                     cursor = Math.max(cursor, event.seq);
                     opts.onEvent(event);
+                  } catch (error) {
+                    opts.onError?.(error as Error);
+                  }
+                } else if (eventType === 'live') {
+                  try {
+                    opts.onLive?.(JSON.parse(data) as LiveFrame);
                   } catch (error) {
                     opts.onError?.(error as Error);
                   }

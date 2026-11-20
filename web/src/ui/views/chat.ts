@@ -176,6 +176,11 @@ export class ChatView extends LitElement {
           this.timeline.ingestEvent(event);
           this.requestUpdate();
         },
+        onLive: (frame) => {
+          if (this.sessionKey !== sessionKey) return;
+          this.timeline.applyLive(frame);
+          this.requestUpdate();
+        },
         onError: (error) => {
           if (this.sessionKey !== sessionKey) return;
           this.error = error.message;

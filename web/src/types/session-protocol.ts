@@ -160,8 +160,9 @@ export interface StreamDeltaFrame {
 export interface StreamEndFrame {
   v: typeof SESSION_PROTOCOL_VERSION;
   frame: 'stream/end';
-  streamId: string;
-  status: 'completed' | 'failed';
+  turnId: string;
+  stepId: string;
+  status: string;
 }
 
 export interface StreamSnapshotFrame {
