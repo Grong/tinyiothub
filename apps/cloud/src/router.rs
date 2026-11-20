@@ -114,40 +114,80 @@ async fn spa_handler(uri: axum::http::Uri) -> axum::response::Response {
 
     match tokio::fs::read(&file_path).await {
         Ok(content) => {
-            let content_type = if file_path.ends_with(".html") {
-                "text/html"
-            } else if file_path.ends_with(".js") {
-                "application/javascript"
-            } else if file_path.ends_with(".css") {
-                "text/css"
-            } else if file_path.ends_with(".json") {
-                "application/json"
-            } else if file_path.ends_with(".png") {
-                "image/png"
-            } else if file_path.ends_with(".jpg") || file_path.ends_with(".jpeg") {
-                "image/jpeg"
-            } else if file_path.ends_with(".svg") {
-                "image/svg+xml"
-            } else if file_path.ends_with(".ico") {
-                "image/x-icon"
-            } else {
-                "application/octet-stream"
-            };
-
+            let content_type = static_content_type(&file_path);
             ([(axum::http::header::CONTENT_TYPE, content_type)], content).into_response()
         }
         Err(_) => {
             let html_path = format!("{}.html", file_path);
             match tokio::fs::read(&html_path).await {
-                Ok(content) => ([(axum::http::header::CONTENT_TYPE, "text/html")], content).into_response(),
+                Ok(content) => (
+                    [(axum::http::header::CONTENT_TYPE, "text/html; charset=utf-8")],
+                    content,
+                )
+                    .into_response(),
                 Err(_) => {
                     tracing::info!("Serving index.html for SPA route: {}", path);
                     match tokio::fs::read("wwwroot/index.html").await {
-                        Ok(content) => ([(axum::http::header::CONTENT_TYPE, "text/html")], content).into_response(),
+                        Ok(content) => (
+                            [(axum::http::header::CONTENT_TYPE, "text/html; charset=utf-8")],
+                            content,
+                        )
+                            .into_response(),
                         Err(_) => (StatusCode::NOT_FOUND, "index.html not found").into_response(),
                     }
                 }
             }
         }
+    }
+}
+
+/// Content type for a file served from `wwwroot`.
+///
+/// Textual assets keep an explicit charset so `robots.txt`, `sitemap.xml` and
+/// `llms.txt` are parsed correctly by crawlers.
+fn static_content_type(path: &str) -> &'static str {
+    match path.rsplit_once('.').map(|(_, ext)| ext).unwrap_or("") {
+        "html" => "text/html; charset=utf-8",
+        "js" | "mjs" => "application/javascript; charset=utf-8",
+        "css" => "text/css; charset=utf-8",
+        "json" | "map" => "application/json; charset=utf-8",
+        "webmanifest" => "application/manifest+json; charset=utf-8",
+        "txt" => "text/plain; charset=utf-8",
+        "xml" => "application/xml; charset=utf-8",
+        "svg" => "image/svg+xml",
+        "png" => "image/png",
+        "jpg" | "jpeg" => "image/jpeg",
+        "webp" => "image/webp",
+        "gif" => "image/gif",
+        "ico" => "image/x-icon",
+        "woff" => "font/woff",
+        "woff2" => "font/woff2",
+        _ => "application/octet-stream",
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::static_content_type;
+
+    #[test]
+    fn static_content_type_serves_crawlable_assets_with_correct_types() {
+        assert_eq!(static_content_type("wwwroot/robots.txt"), "text/plain; charset=utf-8");
+        assert_eq!(static_content_type("wwwroot/llms.txt"), "text/plain; charset=utf-8");
+        assert_eq!(
+            static_content_type("wwwroot/sitemap.xml"),
+            "application/xml; charset=utf-8"
+        );
+        assert_eq!(static_content_type("wwwroot/index.html"), "text/html; charset=utf-8");
+        assert_eq!(
+            static_content_type("wwwroot/assets/app.js"),
+            "application/javascript; charset=utf-8"
+        );
+        assert_eq!(static_content_type("wwwroot/assets/app.css"), "text/css; charset=utf-8");
+        assert_eq!(static_content_type("wwwroot/og-image.png"), "image/png");
+        assert_eq!(
+            static_content_type("wwwroot/archive.unknown"),
+            "application/octet-stream"
+        );
     }
 }

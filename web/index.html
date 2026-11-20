@@ -3,8 +3,150 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>TinyIoTHub</title>
+    <title>TinyIoTHub · IoT Agent Harness — 给设备写 harness，让 AI 真正动手</title>
+    <meta
+      name="description"
+      content="TinyIoTHub 是开源的 IoT agent harness：设备接入是底座，让常驻 Assistant 被设备事件和定时任务唤醒，查本体、做决策、过审批、执行动作并回读验证。Rust + SQLite 单进程，MIT 协议，支持私有化与 Docker 部署。"
+    />
+    <meta
+      name="keywords"
+      content="TinyIoTHub,IoT agent harness,物联网智能体,AI 运维,Agent 运行时,MCP,Modbus,MQTT,边缘计算,开源 IoT 平台,SKILL.md"
+    />
+    <meta name="author" content="TinyIoTHub" />
+    <meta name="application-name" content="TinyIoTHub" />
     <meta name="color-scheme" content="dark light" />
+    <meta
+      name="robots"
+      content="index,follow,max-image-preview:large,max-snippet:-1,max-video-preview:-1"
+    />
+    <link rel="canonical" href="https://tinyiothub.com/" />
+    <link rel="sitemap" type="application/xml" href="/sitemap.xml" />
+    <link rel="alternate" type="text/plain" href="/llms.txt" title="llms.txt" />
+    <meta name="theme-color" content="#0a0b0f" media="(prefers-color-scheme: dark)" />
+    <meta name="theme-color" content="#f8f9fb" media="(prefers-color-scheme: light)" />
+
+    <!-- Open Graph -->
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="TinyIoTHub" />
+    <meta property="og:locale" content="zh_CN" />
+    <meta property="og:url" content="https://tinyiothub.com/" />
+    <meta property="og:title" content="TinyIoTHub — 给设备写 harness，让 AI 真正动手" />
+    <meta
+      property="og:description"
+      content="开源的 IoT agent harness：常驻 Assistant 被设备事件与定时任务唤醒，安全地操作物理世界——审批、对账、回读验证，全程可审计。MIT 协议，单进程私有化部署。"
+    />
+    <meta property="og:image" content="https://tinyiothub.com/og-image.png" />
+    <meta property="og:image:type" content="image/png" />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+    <meta
+      property="og:image:alt"
+      content="TinyIoTHub — IoT Agent Harness，给设备写 harness，让 AI 真正动手"
+    />
+
+    <!-- Twitter / X -->
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="TinyIoTHub — 给设备写 harness，让 AI 真正动手" />
+    <meta
+      name="twitter:description"
+      content="开源的 IoT agent harness：常驻 Assistant 被设备事件与定时任务唤醒，安全地操作物理世界——审批、对账、回读验证，全程可审计。"
+    />
+    <meta name="twitter:image" content="https://tinyiothub.com/og-image.png" />
+    <meta
+      name="twitter:image:alt"
+      content="TinyIoTHub — IoT Agent Harness，给设备写 harness，让 AI 真正动手"
+    />
+
+    <!-- Structured data: organization, site and product entity (GEO/SEO) -->
+    <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@graph": [
+          {
+            "@type": "Organization",
+            "@id": "https://tinyiothub.com/#organization",
+            "name": "TinyIoTHub",
+            "url": "https://tinyiothub.com/",
+            "logo": {
+              "@type": "ImageObject",
+              "url": "https://tinyiothub.com/logo.svg"
+            },
+            "email": "hello@tinyiothub.com",
+            "sameAs": [
+              "https://github.com/Grong/tinyiothub",
+              "https://hub.docker.com/r/grong/tinyiothub"
+            ],
+            "contactPoint": {
+              "@type": "ContactPoint",
+              "contactType": "sales",
+              "email": "hello@tinyiothub.com",
+              "availableLanguage": ["zh-CN", "en"]
+            }
+          },
+          {
+            "@type": "WebSite",
+            "@id": "https://tinyiothub.com/#website",
+            "url": "https://tinyiothub.com/",
+            "name": "TinyIoTHub",
+            "alternateName": "TinyIoTHub IoT Agent Harness",
+            "inLanguage": "zh-CN",
+            "publisher": { "@id": "https://tinyiothub.com/#organization" }
+          },
+          {
+            "@type": "WebPage",
+            "@id": "https://tinyiothub.com/#webpage",
+            "url": "https://tinyiothub.com/",
+            "name": "TinyIoTHub — 给设备写 harness，让 AI 真正动手",
+            "description": "TinyIoTHub 是开源的 IoT agent harness：常驻 Assistant 被设备事件和定时任务唤醒，查本体、做决策、过审批、执行动作并回读验证。",
+            "isPartOf": { "@id": "https://tinyiothub.com/#website" },
+            "about": { "@id": "https://tinyiothub.com/#software" },
+            "inLanguage": "zh-CN",
+            "dateModified": "2026-11-19",
+            "primaryImageOfPage": {
+              "@type": "ImageObject",
+              "url": "https://tinyiothub.com/og-image.png"
+            }
+          },
+          {
+            "@type": "SoftwareApplication",
+            "@id": "https://tinyiothub.com/#software",
+            "name": "TinyIoTHub",
+            "alternateName": "TinyIoTHub IoT Agent Harness",
+            "description": "开源的 IoT agent harness：把设备、空间、产线、楼宇建模为层级化的物，让常驻 Assistant 被设备事件和定时任务唤醒，查本体、做决策、过审批、执行动作并回读验证。",
+            "applicationCategory": "DeveloperApplication",
+            "applicationSubCategory": "IoT agent harness",
+            "operatingSystem": "Linux, Windows, Docker",
+            "url": "https://tinyiothub.com/",
+            "license": "https://opensource.org/license/mit",
+            "isAccessibleForFree": true,
+            "offers": {
+              "@type": "Offer",
+              "price": "0",
+              "priceCurrency": "CNY"
+            },
+            "featureList": [
+              "统一 Session Loop",
+              "SKILL.md 渐进披露",
+              "todo_write 待办自维护",
+              "ask_user 执行中提问",
+              "spawn_subagent 子代理上下文隔离",
+              "Effect / Decision 单赢家与 unknown 对账",
+              "动作回读验证与全量审计",
+              "设备/空间/产线/楼宇层级化物模型",
+              "MQTT 设备接入（Modbus / ONVIF / SNMP 驱动框架已就绪）",
+              "DTDL / WoT 物模板导入导出",
+              "内嵌 MCP Server",
+              "多租户、Workspace 与 RBAC"
+            ],
+            "publisher": { "@id": "https://tinyiothub.com/#organization" },
+            "sameAs": [
+              "https://github.com/Grong/tinyiothub",
+              "https://hub.docker.com/r/grong/tinyiothub"
+            ]
+          }
+        ]
+      }
+    </script>
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32.png" />
     <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png" />
@@ -40,6 +182,12 @@
       .app-loaded #skeleton{display:none!important}
       @keyframes spin{to{transform:rotate(360deg)}}
     </style>
+    <!-- No-JS: the skeleton cannot finish without the app bundle. -->
+    <noscript>
+      <style>
+        #skeleton { display: none !important; }
+      </style>
+    </noscript>
   </head>
   <body>
     <!-- Skeleton shown until app bootstraps -->
@@ -68,6 +216,85 @@
         </div>
       </div>
     </div>
+    <!-- Crawlable, no-JavaScript fallback: real content for search and AI crawlers. -->
+    <noscript>
+      <main
+        style="max-width:900px;margin:0 auto;padding:56px 24px;background:#05070f;color:#e8ecf1;font-family:system-ui,-apple-system,'PingFang SC','Noto Sans SC',sans-serif;line-height:1.75"
+      >
+        <p style="margin:0 0 12px;color:#00d4ff;font-size:13px;letter-spacing:.12em;text-transform:uppercase">
+          IoT Agent Harness · MIT 开源
+        </p>
+        <h1 style="margin:0 0 20px;font-size:40px;line-height:1.25">
+          TinyIoTHub — 给设备写 harness，让 AI 真正动手
+        </h1>
+        <p>
+          TinyIoTHub 是一个开源的
+          <strong>IoT agent harness（物联网智能体运行环境）</strong>。它把设备、空间、产线、楼宇统一建模为层级化的「物」，
+          让一个常驻 Assistant 被设备事件和定时任务唤醒，查询物模型、做出判断、通过审批后执行动作，并回读属性验证结果。
+          它解决的不是「连上设备」，而是「让 AI 安全地动手」。
+        </p>
+        <p>
+          <strong>核心事实：</strong>Rust + SQLite 单进程 · 约 80MB 内存 · MIT 协议 · linux/amd64 与 linux/arm64 多架构
+          Docker 镜像 · 内嵌 MCP Server · REST API <code>/api/v1/</code>。
+        </p>
+        <p style="color:#9aa4b2">
+          <strong>In English:</strong> TinyIoTHub is an open-source IoT agent harness (MIT) that lets an
+          always-on AI assistant safely operate physical devices — event-driven, ontology-aware,
+          approval-gated and read-back verified.
+        </p>
+
+        <h2>三层结构，价值在中间</h2>
+        <ul>
+          <li>
+            <strong>设备层（底座）：</strong>MQTT 已可用；Modbus、ONVIF、SNMP 驱动框架与 plugin-sdk 已就绪；
+            支持 DTDL / WoT 物模板导入导出。
+          </li>
+          <li>
+            <strong>Harness 层（产品本体）：</strong>统一 Session Loop、SKILL.md 按需加载、待办自维护、执行中提问、
+            子代理上下文隔离，以及审批、对账与回读验证。
+          </li>
+          <li>
+            <strong>应用层（产物）：</strong>巡检、故障诊断、心跳监控、告警管理等 10 个已交付技能，
+            全部是可读可改的 SKILL.md，新增场景不需要改一行 Rust。
+          </li>
+        </ul>
+
+        <h2>和通用 agent 框架的区别</h2>
+        <ol>
+          <li><strong>设备动作不可重试：</strong>每个动作记录「意图 → 派发 → 确认 → 未知」四态，未知状态停下来对账，绝不自动重放。</li>
+          <li><strong>事件唤醒 + 本体决策：</strong>Assistant 由设备事件和定时 tick 唤醒，依据物模型、层级关系和知识文档判断，而不是靠用户临时喂上下文。</li>
+          <li><strong>回读验证 + 全量审计：</strong>动作下发不算完成，必须回读属性确认生效；全过程进入安全/审计账本。</li>
+        </ol>
+
+        <h2>常见问题</h2>
+        <h3>TinyIoTHub 是什么？</h3>
+        <p>
+          一个开源的 IoT agent harness。它让常驻 Assistant 在物理世界里执行任务：查本体、做决策、过审批、动手、回读验证。
+          服务端 Rust + SQLite，单进程即可私有化部署，MIT 协议。
+        </p>
+        <h3>和 ThingsBoard 这类 IoT 平台有什么区别？</h3>
+        <p>
+          传统平台重心是设备接入、数据看板和规则告警；TinyIoTHub 把设备接入当底座，产品本体是设备之上的 harness 层。
+          两者可以并存，TinyIoTHub 可以通过 MQTT 接入现有网关。
+        </p>
+        <h3>支持哪些设备协议？</h3>
+        <p>
+          MQTT 已可用于设备接入与边缘网关上报；Modbus、ONVIF、SNMP 的驱动框架与 plugin-sdk 已就绪，具体驱动仍在开发中。
+        </p>
+        <h3>如何部署？</h3>
+        <p>
+          单个 Rust 二进制加内置 SQLite，不依赖外部数据库；官方提供多架构 Docker 镜像，约 80MB 内存即可运行，支持完全私有化。
+        </p>
+
+        <p style="margin-top:32px">
+          <a href="https://tinyiothub.com/login" style="color:#00d4ff">登录控制台</a> ·
+          <a href="https://docs.tinyiothub.com" style="color:#00d4ff">文档</a> ·
+          <a href="https://github.com/Grong/tinyiothub" style="color:#00d4ff">GitHub</a> ·
+          <a href="mailto:hello@tinyiothub.com" style="color:#00d4ff">hello@tinyiothub.com</a>
+        </p>
+        <p style="color:#8b93a1;font-size:13px">© 2026 TinyIoTHub. MIT License.</p>
+      </main>
+    </noscript>
     <tinyiothub-app></tinyiothub-app>
     <script type="module" src="/src/main.ts"></script>
     <script>document.documentElement.addEventListener('app-ready',function(){document.body.classList.add('app-loaded')}, {once:true})</script>
