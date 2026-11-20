@@ -217,23 +217,32 @@ impl SessionRunner {
                 let mut step_index = 0u32;
                 let mut step_open = false;
                 let mut step_usage_seen = false;
+                let mut step_has_content = false;
                 while let Some(event) = event_rx.recv().await {
                     match &event {
                         TurnEvent::Chunk { delta } => {
                             if step_open && step_usage_seen {
-                                if !emit_step_marker(&events, &context, "step/end", step_index).await {
-                                    failed += 1;
+                                if step_has_content {
+                                    if !emit_step_marker(&events, &context, "step/end", step_index).await {
+                                        failed += 1;
+                                    }
+                                    step_open = false;
+                                } else {
+                                    // A usage-only call has no surface content;
+                                    // keep the following output in the same step.
+                                    step_usage_seen = false;
                                 }
-                                step_open = false;
                             }
                             if !step_open {
                                 step_index += 1;
                                 step_open = true;
                                 step_usage_seen = false;
+                                step_has_content = false;
                                 if !emit_step_marker(&events, &context, "step/start", step_index).await {
                                     failed += 1;
                                 }
                             }
+                            step_has_content = true;
                             text_buf.push_str(delta);
                             let due = text_buf.chars().count() >= 200
                                 || last_text_flush.elapsed() >= std::time::Duration::from_millis(250);
@@ -258,10 +267,12 @@ impl SessionRunner {
                                 step_index += 1;
                                 step_open = true;
                                 step_usage_seen = false;
+                                step_has_content = false;
                                 if !emit_step_marker(&events, &context, "step/start", step_index).await {
                                     failed += 1;
                                 }
                             }
+                            step_has_content = true;
                             if !text_buf.is_empty() {
                                 let text = std::mem::take(&mut text_buf);
                                 if events
@@ -332,19 +343,27 @@ impl SessionRunner {
                         }
                         TurnEvent::Thinking { delta } => {
                             if step_open && step_usage_seen {
-                                if !emit_step_marker(&events, &context, "step/end", step_index).await {
-                                    failed += 1;
+                                if step_has_content {
+                                    if !emit_step_marker(&events, &context, "step/end", step_index).await {
+                                        failed += 1;
+                                    }
+                                    step_open = false;
+                                } else {
+                                    // A usage-only call has no surface content;
+                                    // keep the following output in the same step.
+                                    step_usage_seen = false;
                                 }
-                                step_open = false;
                             }
                             if !step_open {
                                 step_index += 1;
                                 step_open = true;
                                 step_usage_seen = false;
+                                step_has_content = false;
                                 if !emit_step_marker(&events, &context, "step/start", step_index).await {
                                     failed += 1;
                                 }
                             }
+                            step_has_content = true;
                             let written = events
                                 .emit(session_event(
                                     &context,
@@ -362,6 +381,7 @@ impl SessionRunner {
                             // attempt's usage must not close the step before the
                             // retry produces the authoritative model output.
                             step_usage_seen = false;
+                            step_has_content = false;
                             // Buffered text belongs to the failed model attempt;
                             // persisted chunks are rolled back by turn.retry in the UI.
                             text_buf.clear();
@@ -392,6 +412,7 @@ impl SessionRunner {
                             if !step_open {
                                 step_index += 1;
                                 step_open = true;
+                                step_has_content = false;
                                 if !emit_step_marker(&events, &context, "step/start", step_index).await {
                                     failed += 1;
                                 }
@@ -406,9 +427,6 @@ impl SessionRunner {
                         observer.on_turn_event(&event).await;
                     }
                 }
-                if step_open && !emit_step_marker(&events, &context, "step/end", step_index).await {
-                    failed += 1;
-                }
                 if !text_buf.is_empty()
                     && events
                         .emit(session_event(
@@ -419,6 +437,9 @@ impl SessionRunner {
                         .await
                         .is_err()
                 {
+                    failed += 1;
+                }
+                if step_open && !emit_step_marker(&events, &context, "step/end", step_index).await {
                     failed += 1;
                 }
                 (tool_calls, model_calls, usage.to_json(), failed)
