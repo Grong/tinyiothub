@@ -34,6 +34,16 @@ const SESSION_EVENT_PAGE_SQL: SessionEventPageQueries = SessionEventPageQueries 
 const EVENT_BY_ID_SQL: &str = "SELECT seq, event_id, session_id, execution_mode, run_id, task_id, type, occurred_at, cause_id, schema_v, payload_digest, payload_json
     FROM session_events WHERE event_id = ?";
 
+const RECENT_SESSION_EVENTS_SQL: &str = "SELECT seq, event_id, session_id, execution_mode, run_id, task_id, type, occurred_at, \
+     cause_id, schema_v, payload_digest, payload_json \
+     FROM session_events WHERE execution_mode = ? \
+     ORDER BY occurred_at DESC, ('session:' || event_id) DESC LIMIT ?";
+
+const SESSION_TURN_SEQS_SQL: &str = "SELECT run_id, MIN(seq) AS turn_seq FROM session_events \
+     WHERE execution_mode = ? AND session_id = ? AND type = 'turn.started' \
+       AND run_id IS NOT NULL AND (? IS NULL OR seq < ?) \
+     GROUP BY run_id ORDER BY turn_seq DESC LIMIT ?";
+
 const MODE_EVENT_PAGE_SQL: &str = "SELECT seq, event_id, session_id, execution_mode, run_id, task_id, type, occurred_at, cause_id, schema_v, payload_digest, payload_json FROM session_events
     WHERE execution_mode = ? AND seq > ? ORDER BY seq ASC LIMIT ?";
 
@@ -475,16 +485,11 @@ impl Db {
     pub async fn recent_session_events(&self, workspace_id: &str, limit: i64) -> Result<Vec<HarnessEvent>> {
         let limit = if limit <= 0 { 20 } else { limit.min(200) };
         let pool = self.workspace_pool(workspace_id).await?;
-        let rows = sqlx::query_as::<_, SessionEventRow>(
-            "SELECT seq, event_id, session_id, execution_mode, run_id, task_id, type, occurred_at, \
-             cause_id, schema_v, payload_digest, payload_json \
-             FROM session_events WHERE execution_mode = ? \
-             ORDER BY occurred_at DESC, ('session:' || event_id) DESC LIMIT ?",
-        )
-        .bind(ExecutionMode::Production.as_str())
-        .bind(limit)
-        .fetch_all(&pool)
-        .await?;
+        let rows = sqlx::query_as::<_, SessionEventRow>(RECENT_SESSION_EVENTS_SQL)
+            .bind(ExecutionMode::Production.as_str())
+            .bind(limit)
+            .fetch_all(&pool)
+            .await?;
         rows.into_iter().map(|row| row.into_event(workspace_id)).collect()
     }
 
@@ -588,19 +593,14 @@ impl Db {
         let turns = turns.clamp(1, 20);
         let pool = self.workspace_pool(workspace_id).await?;
         let mut tx = pool.begin().await?;
-        let selected = sqlx::query_as::<_, (String, i64)>(
-            "SELECT run_id, MIN(seq) AS turn_seq FROM session_events
-             WHERE execution_mode = ? AND session_id = ? AND type = 'turn.started'
-               AND run_id IS NOT NULL AND (? IS NULL OR seq < ?)
-             GROUP BY run_id ORDER BY turn_seq DESC LIMIT ?",
-        )
-        .bind(filter.execution_mode.as_str())
-        .bind(session_id)
-        .bind(before)
-        .bind(before)
-        .bind(turns)
-        .fetch_all(&mut *tx)
-        .await?;
+        let selected = sqlx::query_as::<_, (String, i64)>(SESSION_TURN_SEQS_SQL)
+            .bind(filter.execution_mode.as_str())
+            .bind(session_id)
+            .bind(before)
+            .bind(before)
+            .bind(turns)
+            .fetch_all(&mut *tx)
+            .await?;
 
         let oldest_turn_seq = selected.last().map(|(_, seq)| *seq);
         let next_before = if let Some(oldest_turn_seq) = oldest_turn_seq {
@@ -662,7 +662,7 @@ mod tests {
     use serde_json::{Value, json};
     use tinyiothub_core::harness::{DeviceFactsSnapshot, ExecutionMode, HarnessEventInput};
 
-    use super::{EventFilter, SESSION_EVENT_PAGE_SQL};
+    use super::{EventFilter, RECENT_SESSION_EVENTS_SQL, SESSION_EVENT_PAGE_SQL, SESSION_TURN_SEQS_SQL};
     use crate::{Db, DbError};
 
     struct HarnessEventFixture {
@@ -994,6 +994,45 @@ mod tests {
                 "expected {index} in {plan:?} for {sql}"
             );
         }
+
+        let feed_plan = sqlx::query_as::<_, (i64, i64, i64, String)>(sqlx::AssertSqlSafe(format!(
+            "EXPLAIN QUERY PLAN {RECENT_SESSION_EVENTS_SQL}"
+        )))
+        .bind("production")
+        .bind(20_i64)
+        .fetch_all(&pool)
+        .await
+        .expect("recent event query plan")
+        .into_iter()
+        .map(|(_, _, _, detail)| detail)
+        .collect::<Vec<_>>();
+        assert!(
+            feed_plan
+                .iter()
+                .any(|detail| detail.contains("idx_session_events_mode_occurred_event")),
+            "expected recent-event feed index in {feed_plan:?}"
+        );
+
+        let turn_plan = sqlx::query_as::<_, (i64, i64, i64, String)>(sqlx::AssertSqlSafe(format!(
+            "EXPLAIN QUERY PLAN {SESSION_TURN_SEQS_SQL}"
+        )))
+        .bind("production")
+        .bind("session-1")
+        .bind(None::<i64>)
+        .bind(None::<i64>)
+        .bind(20_i64)
+        .fetch_all(&pool)
+        .await
+        .expect("turn page query plan")
+        .into_iter()
+        .map(|(_, _, _, detail)| detail)
+        .collect::<Vec<_>>();
+        assert!(
+            turn_plan
+                .iter()
+                .any(|detail| detail.contains("idx_session_events_mode_session_turn")),
+            "expected turn page index in {turn_plan:?}"
+        );
 
         let platform_has_events: bool = sqlx::query_scalar(
             "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'session_events')",

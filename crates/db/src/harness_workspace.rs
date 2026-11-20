@@ -183,6 +183,27 @@ fn harness_migrator() -> Migrator {
                 .into_sql_str(),
             false,
         ),
+        Migration::new(
+            20261119000001,
+            "harness_events_feed_index".into(),
+            MigrationType::Simple,
+            include_str!("../migrations/20261119000001_harness_events_feed_index.sql").into_sql_str(),
+            false,
+        ),
+        Migration::new(
+            20261119000002,
+            "harness_events_turn_index".into(),
+            MigrationType::Simple,
+            include_str!("../migrations/20261119000002_harness_events_turn_index.sql").into_sql_str(),
+            false,
+        ),
+        Migration::new(
+            20261119000003,
+            "harness_events_turn_index_shape".into(),
+            MigrationType::Simple,
+            include_str!("../migrations/20261119000003_harness_events_turn_index_shape.sql").into_sql_str(),
+            false,
+        ),
     ]);
     // Rollback/mixed-version workers must open workspaces that already contain
     // additive migrations unknown to their older binary, matching the platform
