@@ -28,6 +28,7 @@ import { md } from '../shared/markdown.js';
 import {
   buildStory,
   EMPTY_STORY,
+  failureCopy,
   formatStoryClock,
   STORY_ORIGIN_LABEL,
   type StorySection,
@@ -94,14 +95,13 @@ function clampText(value: string, max: number): string {
   return text.length > max ? `${text.slice(0, max)}…` : text;
 }
 
-/** 默认记录：优先正在跑的，其次最近的自主巡检/事件，最后任意会话。 */
+/** 默认记录：最近更新的会话；更新时间相同才优先 active。 */
 export function pickDefaultSession(sessions: SessionSummary[]): SessionSummary | null {
   if (sessions.length === 0) return null;
-  const rank = (session: SessionSummary): number =>
-    (session.status === 'active' ? 2 : 0) +
-    (session.kind === 'scheduled' || session.kind === 'event' ? 1 : 0);
   return [...sessions].sort(
-    (left, right) => rank(right) - rank(left) || right.updatedAt - left.updatedAt,
+    (left, right) =>
+      right.updatedAt - left.updatedAt ||
+      (right.status === 'active' ? 1 : 0) - (left.status === 'active' ? 1 : 0),
   )[0];
 }
 
@@ -133,6 +133,9 @@ export class StoryView extends LitElement {
   private historyLocked = false;
   private stickToLatest = true;
   private historyEpoch = 0;
+  private pinPending = false;
+  private suppressScroll = false;
+  private feedObserver: ResizeObserver | null = null;
 
   connectedCallback(): void {
     super.connectedCallback();
@@ -144,7 +147,20 @@ export class StoryView extends LitElement {
     this.closeEvents = null;
     if (this.refreshTimer !== null) window.clearInterval(this.refreshTimer);
     this.refreshTimer = null;
+    this.feedObserver?.disconnect();
+    this.feedObserver = null;
     super.disconnectedCallback();
+  }
+
+  protected firstUpdated(): void {
+    const feed = this.querySelector('.story-feed');
+    if (!feed || typeof ResizeObserver === 'undefined') return;
+    this.feedObserver = new ResizeObserver(() => {
+      if (this.stickToLatest && !this.loadingOlder && !this.suppressScroll) {
+        this.pinFeedToBottom();
+      }
+    });
+    this.feedObserver.observe(feed);
   }
 
   private get workspaceId(): string {
@@ -194,8 +210,7 @@ export class StoryView extends LitElement {
           !this.manualSelection &&
           preferred &&
           preferred.sessionKey !== this.sessionKey &&
-          current?.status !== 'active' &&
-          preferred.status === 'active'
+          current?.status !== 'active'
         ) {
           void this.selectSession(preferred.sessionKey);
         }
@@ -249,6 +264,7 @@ export class StoryView extends LitElement {
     this.loadingOlder = false;
     this.historyLocked = false;
     this.stickToLatest = true;
+    this.pinPending = true;
     try {
       const page = await fetchSessionEvents(key, 0, 200, { turns: 2 });
       if (seq !== this.loadSeq) return;
@@ -261,10 +277,14 @@ export class StoryView extends LitElement {
       this.rebuild();
       this.loading = false;
       this.connect(key, this.timeline.highWatermark);
+      await this.updateComplete;
+      this.pinToLatest();
     } catch (error) {
       if (seq !== this.loadSeq) return;
       this.error = (error as Error).message || '加载会话过程失败';
       this.loading = false;
+      this.pinPending = false;
+      this.suppressScroll = false;
     }
     this.recomputeAchievements();
   }
@@ -318,6 +338,7 @@ export class StoryView extends LitElement {
   }
 
   private onFeedScroll(): void {
+    if (this.suppressScroll || this.pinPending) return;
     const feed = this.feedScroller();
     if (!feed) return;
     const distanceToBottom = feed.scrollHeight - feed.scrollTop - feed.clientHeight;
@@ -387,7 +408,11 @@ export class StoryView extends LitElement {
   }
 
   private rebuild(): void {
-    this.story = buildStory(this.timeline.blocks, this.timeline.todos);
+    this.story = buildStory(
+      this.timeline.blocks,
+      this.timeline.todos,
+      this.timeline.pendingQuestion,
+    );
     this.recomputeAchievements();
   }
 
@@ -432,6 +457,9 @@ export class StoryView extends LitElement {
   }
 
   private isWorking(): boolean {
+    if (this.timeline.pendingQuestion || this.timeline.pendingApprovals.length > 0) {
+      return false;
+    }
     if (
       this.story.running !== undefined ||
       this.story.sections.some((section) => section.status === 'running')
@@ -476,14 +504,37 @@ export class StoryView extends LitElement {
     window.dispatchEvent(new PopStateEvent('popstate'));
   }
 
-  protected updated(): void {
-    if (!this.stickToLatest || this.loadingOlder) return;
+  /** Pin after a load or while new content is appended. */
+  private pinFeedToBottom(): void {
     const pin = () => {
       const feed = this.feedScroller();
       if (feed) feed.scrollTop = feed.scrollHeight;
     };
     pin();
     requestAnimationFrame(pin);
+  }
+
+  /** One-shot initial pin: ignore the scroll events our own scroll causes. */
+  private pinToLatest(): void {
+    this.suppressScroll = true;
+    const pin = () => {
+      const feed = this.feedScroller();
+      if (feed) feed.scrollTop = feed.scrollHeight;
+    };
+    pin();
+    requestAnimationFrame(() => {
+      pin();
+      requestAnimationFrame(() => {
+        pin();
+        this.suppressScroll = false;
+        this.pinPending = false;
+      });
+    });
+  }
+
+  protected updated(): void {
+    if (!this.stickToLatest || this.loadingOlder || this.suppressScroll) return;
+    this.pinFeedToBottom();
   }
 
   render() {
@@ -541,6 +592,7 @@ export class StoryView extends LitElement {
           <main class="story-main" @scroll=${() => this.onFeedScroll()}>
             <div class="story-feed">
               ${this.renderHistory()} ${this.renderHero()}
+              ${this.renderFailureNotice()} ${this.renderWaiting()}
               ${this.isWorking() ? this.renderWorking() : nothing} ${this.renderPrompt()}
               ${
                 this.loading && this.story.sections.length === 0
@@ -634,6 +686,58 @@ export class StoryView extends LitElement {
         </div>
       </section>
     `;
+  }
+
+  private renderWaiting() {
+    const question = this.timeline.pendingQuestion;
+    const approval = this.timeline.pendingApprovals[0];
+    if (!question && !approval) return nothing;
+    const first = question?.questions[0];
+    const title = question
+      ? first?.header
+        ? `等待你确认：${first.header}`
+        : '等待你确认'
+      : `等待审批：${approval?.tool ?? '操作'}`;
+    const body = question
+      ? (first?.question ?? 'AI 需要你的回答才能继续。')
+      : (approval?.summary ?? '有一个操作需要你的批准。');
+    const options = first?.options.slice(0, 3) ?? [];
+    return html`<div class="story-waiting" role="status">
+      <div class="story-waiting__head">
+        <span class="story-waiting__mark" aria-hidden="true">?</span>
+        <div>
+          <strong>${title}</strong>
+          <p>${body}</p>
+        </div>
+      </div>
+      ${
+        options.length > 0
+          ? html`<ul class="story-waiting__options">
+              ${options.map((option) => html`<li>${option.label}</li>`)}
+            </ul>`
+          : nothing
+      }
+      <button class="story-waiting__action" @click=${(event: Event) => this.openEngineer(event)}>
+        去对话处理
+      </button>
+    </div>`;
+  }
+
+  private renderFailureNotice() {
+    const latest = this.story.sections[this.story.sections.length - 1];
+    if (!latest || (latest.status !== 'failed' && latest.status !== 'cancelled')) {
+      return nothing;
+    }
+    const copy = failureCopy(latest.error ?? latest.lastRetryError ?? '');
+    const title = latest.status === 'failed' ? '本轮没有完成' : '本轮已取消';
+    const retry = latest.retries > 0 ? ` 已重试 ${latest.retries} 次。` : '';
+    return html`<div class="story-failure" role="alert">
+      <span class="story-failure__mark" aria-hidden="true">!</span>
+      <div class="story-failure__body">
+        <strong>${title}</strong>
+        <p>${copy.detail}${retry}</p>
+      </div>
+    </div>`;
   }
 
   private renderWorking() {

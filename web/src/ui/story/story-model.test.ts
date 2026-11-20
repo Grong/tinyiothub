@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { TimelineModel } from '../chat/timeline-model.js';
 import type { SessionEvent } from '../../api/assistant.js';
-import { buildStory, deviceHealthLabel, deviceTypeLabel } from './story-model.js';
+import { buildStory, deviceHealthLabel, deviceTypeLabel, failureCopy } from './story-model.js';
 import { buildMonthBuckets, buildWeekBuckets, computeAchievements } from './story-achievements.js';
 import type { BrainEvent } from '../../api/brain-events.js';
 
@@ -339,6 +339,89 @@ describe('buildStory', () => {
     expect(story.sections[0].steps).toContainEqual(
       expect.objectContaining({ title: 'AI 在思考', tone: 'think', status: 'running' }),
     );
+  });
+
+  it('surfaces a pending question as a waiting step', () => {
+    const model = timelineOf(
+      event(1, 'turn.started', { turnId: 't-wait' }),
+      event(2, 'step.text', { turnId: 't-wait', text: '诊断完成，需要确认操作范围。' }),
+      event(3, 'question.asked', {
+        questionId: 'q-1',
+        questions: [
+          {
+            header: '重连授权',
+            question: '是否执行离线传感器重连？',
+            multiSelect: false,
+            options: [
+              { label: '仅网关 restart', description: '只重启网关并复查' },
+              { label: '全部执行', description: '21 次写操作' },
+            ],
+          },
+        ],
+      }),
+    );
+    const story = buildStory(model.blocks, [], {
+      questionId: 'q-1',
+      at: '2026-11-20T09:09:37.000Z',
+      questions: [
+        {
+          header: '重连授权',
+          question: '是否执行离线传感器重连？',
+          multiSelect: false,
+          options: [
+            { label: '仅网关 restart', description: '只重启网关并复查' },
+            { label: '全部执行', description: '21 次写操作' },
+          ],
+        },
+      ],
+    });
+    const latest = story.sections[story.sections.length - 1];
+    const waiting = latest?.steps.find((step) => step.title.includes('重连授权'));
+    expect(waiting?.status).toBe('running');
+    expect(waiting?.detail).toContain('离线传感器重连');
+  });
+
+  it('turns a failed turn into business copy and one retry summary', () => {
+    const quota =
+      'CompletionError: ProviderError: LLM streaming request failed: HTTP 429: rate_limit_error: 已达到 Token Plan 用量上限';
+    const model = timelineOf(
+      event(1, 'turn.started', { turnId: 't-fail' }),
+      event(2, 'turn.retry', {
+        turnId: 't-fail',
+        attempt: 1,
+        maxRetries: 3,
+        delayMs: 1000,
+        error: quota,
+      }),
+      event(3, 'turn.retry', {
+        turnId: 't-fail',
+        attempt: 2,
+        maxRetries: 3,
+        delayMs: 2000,
+        error: quota,
+      }),
+      event(4, 'turn.completed', {
+        turnId: 't-fail',
+        outcome: 'failed',
+        error: quota,
+        modelCalls: 0,
+        toolCalls: 0,
+      }),
+      event(5, 'session.ended', { outcome: 'failed' }),
+      event(6, 'turn.started', { turnId: 't-next' }),
+      event(7, 'turn.completed', { turnId: 't-next', outcome: 'completed' }),
+    );
+
+    const story = buildStory(model.blocks, []);
+    const failed = story.sections[0];
+    expect(failed.status).toBe('failed');
+    expect(failed.retries).toBe(2);
+    expect(failureCopy(quota).category).toBe('quota');
+    expect(failed.steps.map((step) => step.title)).toContain('模型调用重试');
+    const failure = failed.steps.find((step) => step.title === '本轮未完成');
+    expect(failure?.detail).toContain('模型额度不足');
+    expect(failure?.detail).toContain('已重试 2 次');
+    expect(failed.steps.some((step) => step.title.includes('会话结束：failed'))).toBe(false);
   });
 
   it('exports shared labels for device cards', () => {

@@ -351,6 +351,120 @@ view-story {
   animation: story-spin 0.9s linear infinite;
 }
 
+/* ── Waiting for the user ───────────────────────────── */
+.story-waiting {
+  margin-top: var(--space-4);
+  padding: 12px 14px;
+  border: 1px solid color-mix(in srgb, var(--accent) 42%, var(--border));
+  border-radius: var(--radius-md);
+  background: var(--accent-subtle);
+}
+
+.story-waiting__head {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-3);
+}
+
+.story-waiting__mark {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  border-radius: var(--radius-full);
+  background: var(--accent);
+  color: var(--accent-foreground);
+  font-family: var(--mono);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.story-waiting__head strong {
+  display: block;
+  font-size: 12.5px;
+  color: var(--text-strong);
+}
+
+.story-waiting__head p {
+  margin: 3px 0 0;
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--muted);
+}
+
+.story-waiting__options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 10px 0 0;
+  padding: 0 0 0 34px;
+  list-style: none;
+}
+
+.story-waiting__options li {
+  padding: 4px 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-elevated);
+  font-size: 11.5px;
+  color: var(--text);
+}
+
+.story-waiting__action {
+  margin: 10px 0 0 34px;
+  padding: 6px 12px;
+  border: 1px solid var(--accent);
+  border-radius: var(--radius-sm);
+  background: var(--accent);
+  color: var(--accent-foreground);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.story-waiting__action:hover {
+  filter: brightness(1.06);
+}
+
+/* ── Failure notice ─────────────────────────────────── */
+.story-failure {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-3);
+  margin-top: var(--space-4);
+  padding: 10px 12px;
+  border: 1px solid color-mix(in srgb, var(--danger) 42%, var(--border));
+  border-radius: var(--radius-md);
+  background: var(--danger-subtle);
+}
+
+.story-failure__mark {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  border-radius: var(--radius-full);
+  background: var(--danger);
+  color: var(--danger-foreground);
+  font-family: var(--mono);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.story-failure__body strong {
+  display: block;
+  font-size: 12.5px;
+  color: var(--text-strong);
+}
+
+.story-failure__body p {
+  margin: 3px 0 0;
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--muted);
+}
+
 /* ── Working banner ─────────────────────────────────── */
 .story-working {
   position: relative;
