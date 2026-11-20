@@ -44,6 +44,7 @@ const lazyViews: Record<string, () => Promise<void>> = {
   'driver-health': () => import('./views/driver-health.js').then(() => {}),
   'memory-dashboard': () => import('./views/memory-dashboard.js').then(() => {}),
   workspace: () => import('./views/workspace.js').then(() => {}),
+  story: () => import('./views/story.js').then(() => {}),
   'ai-ops': () => import('./views/ai-ops.js').then(() => {}),
   'run-detail': () => import('./views/run-detail.js').then(() => {}),
 };
@@ -134,6 +135,11 @@ const NAV_GROUPS: NavGroup[] = [
         route: 'memory-dashboard',
         label: '记忆面板',
         icon: 'M4 4h16a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2zm0 4v8h16V8H4zm3 2h4v4H7v-4zm6 0h4v2h-4v-2z',
+      },
+      {
+        route: 'story',
+        label: 'AI 纪实',
+        icon: 'M1 12s4-8 11-8 11 8 11 8-4 8-11 8S1 12 1 12zm11 3a3 3 0 1 0 0-6 3 3 0 0 0 0 6z',
       },
       {
         route: 'chat',
@@ -463,6 +469,7 @@ export class TinyIoTHubApp extends LitElement {
       marketplace: '应用市场',
       'driver-health': '驱动健康',
       chat: 'AI 聊天',
+      story: 'AI 工作纪实',
       agents: 'Agent 管理',
       cron: '定时任务',
       'memory-dashboard': '记忆面板',
@@ -489,6 +496,7 @@ export class TinyIoTHubApp extends LitElement {
       marketplace: '浏览和安装模板与驱动',
       'driver-health': '查看已加载动态驱动的运行状态',
       chat: '与 AI Agent 对话',
+      story: '巡检、处置和节能的完整过程——用业务语言看懂 AI 做了什么',
       agents: '管理和配置 Agent',
       cron: '管理定时执行的任务和作业',
       'memory-dashboard': '查看和管理 Agent 记忆与反思队列',
@@ -538,8 +546,8 @@ export class TinyIoTHubApp extends LitElement {
         >
           ${this.renderNav()}
         </nav>
-        <div class="content ${this.currentRoute === 'workspace' ? 'content--workspace' : this.currentRoute === 'ai-ops' ? 'content--heartbeat' : this.currentRoute === 'chat' ? 'content--chat' : ''}" role="main" id="main-content">
-          ${this.currentRoute.startsWith('things/') || this.currentRoute === 'chat' || this.currentRoute === 'workspace' || this.currentRoute === 'ai-ops' || this.currentRoute === 'run-detail'
+        <div class="content ${this.currentRoute === 'workspace' ? 'content--workspace' : this.currentRoute === 'ai-ops' ? 'content--heartbeat' : this.currentRoute === 'chat' ? 'content--chat' : this.currentRoute === 'story' ? 'content--story' : ''}" role="main" id="main-content">
+          ${this.currentRoute.startsWith('things/') || this.currentRoute === 'chat' || this.currentRoute === 'story' || this.currentRoute === 'workspace' || this.currentRoute === 'ai-ops' || this.currentRoute === 'run-detail'
             ? nothing
             : html`
                 <section class="content-header">
@@ -707,6 +715,7 @@ export class TinyIoTHubApp extends LitElement {
       return html`<view-chat
         .initialSessionKey=${this.assistantRoute?.sessionKey ?? ''}
       ></view-chat>`;
+    if (base === 'story') return html`<view-story></view-story>`;
     if (base === 'agents') return html`<view-agents></view-agents>`;
     if (base === 'cron') return html`<view-cron></view-cron>`;
     if (base === 'marketplace') return html`<view-marketplace></view-marketplace>`;
