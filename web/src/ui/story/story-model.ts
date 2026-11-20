@@ -734,6 +734,46 @@ export function buildStory(
         });
         break;
       }
+      case 'question': {
+        const first = part.questions[0];
+        const pending = part.outcome === 'pending';
+        const answered = part.outcome === 'answered';
+        const section = current ?? ensureSection(part.at);
+        section.steps.push({
+          id: `question:${part.questionId}`,
+          title: pending
+            ? first?.header
+              ? `等待你确认：${first.header}`
+              : '等待你确认'
+            : answered
+              ? first?.header
+                ? `已确认：${first.header}`
+                : '已确认'
+              : first?.header
+                ? `确认未完成：${first.header}`
+                : '确认未完成',
+          detail: first?.question ?? '',
+          at: part.at,
+          status: pending ? 'running' : answered ? 'done' : 'failed',
+          tone: pending ? 'ask' : answered ? 'read' : 'alarm',
+          visionIds: [],
+        });
+        break;
+      }
+      case 'approval': {
+        const pending = part.outcome === 'pending';
+        const section = current ?? ensureSection(part.at);
+        section.steps.push({
+          id: `approval:${part.approvalId}`,
+          title: pending ? `等待审批：${part.tool || '设备操作'}` : `审批已处理：${part.tool || '设备操作'}`,
+          detail: part.summary,
+          at: part.at,
+          status: pending ? 'running' : 'done',
+          tone: pending ? 'ask' : 'read',
+          visionIds: [],
+        });
+        break;
+      }
       case 'retry': {
         const section = current ?? ensureSection(part.at);
         section.retries += 1;
@@ -806,7 +846,12 @@ export function buildStory(
     }
   }
 
-  if (pendingQuestion) {
+  if (
+    pendingQuestion &&
+    !blocks.some(
+      (block) => block.kind === 'question' && block.questionId === pendingQuestion.questionId,
+    )
+  ) {
     const section = sections[sections.length - 1];
     const first = pendingQuestion.questions[0];
     if (section) {

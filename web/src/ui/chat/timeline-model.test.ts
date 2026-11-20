@@ -294,6 +294,21 @@ describe('TimelineModel', () => {
     expect(assistants[0]).toMatchObject({ text: '冷却塔 A 离线。', id: 'm1', stepId: 't1:s1' });
   });
 
+  it('keeps a question block after the turn closes without an answer', () => {
+    const model = new TimelineModel();
+    model.ingestEvent(
+      event(1, 'question.asked', {
+        questionId: 'q1',
+        questions: [{ header: '重连授权', question: '是否继续？', options: [], multiSelect: false }],
+      }),
+    );
+    const question = model.blocks.find((block) => block.kind === 'question');
+    expect(question).toMatchObject({ questionId: 'q1', outcome: 'pending' });
+    model.ingestEvent(event(2, 'turn.completed', { turnId: 't1', outcome: 'cancelled' }));
+    expect(question).toMatchObject({ outcome: 'timed_out' });
+    expect(model.pendingQuestion).toBeNull();
+  });
+
   it('projects an assistant attempt as retry evidence', () => {
     const model = new TimelineModel();
     model.ingestEvent(

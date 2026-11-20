@@ -341,6 +341,29 @@ describe('buildStory', () => {
     );
   });
 
+  it('keeps an unanswered question visible after the turn ends', () => {
+    const model = timelineOf(
+      event(1, 'turn.started', { turnId: 't-q' }),
+      event(2, 'question.asked', {
+        questionId: 'q-closed',
+        questions: [
+          {
+            header: '重连授权',
+            question: '是否继续重连？',
+            multiSelect: false,
+            options: [],
+          },
+        ],
+      }),
+      event(3, 'turn.completed', { turnId: 't-q', outcome: 'cancelled' }),
+    );
+    const story = buildStory(model.blocks, []);
+    const latest = story.sections[story.sections.length - 1];
+    const waiting = latest?.steps.find((step) => step.title.includes('重连授权'));
+    expect(waiting?.title).toContain('确认未完成');
+    expect(waiting?.status).toBe('failed');
+  });
+
   it('surfaces a pending question as a waiting step', () => {
     const model = timelineOf(
       event(1, 'turn.started', { turnId: 't-wait' }),

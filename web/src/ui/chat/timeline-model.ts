@@ -42,6 +42,23 @@ export type TimelineBlock =
     }
   | { kind: 'origin'; id: string; source: string; sourceId?: string; at: string }
   | {
+      kind: 'question';
+      id: string;
+      questionId: string;
+      questions: Question[];
+      outcome: 'pending' | 'answered' | 'timed_out';
+      at: string;
+    }
+  | {
+      kind: 'approval';
+      id: string;
+      approvalId: string;
+      tool: string;
+      summary: string;
+      outcome: 'pending' | 'resolved';
+      at: string;
+    }
+  | {
       kind: 'tool';
       id: string;
       name: string;
@@ -288,6 +305,11 @@ export class TimelineModel {
           }
         }
         if (this.pendingQuestion && event.seq >= this.pendingQuestionSeq) {
+          const pendingId = this.pendingQuestion.questionId;
+          const pendingBlock = this.blocks.find(
+            (block) => block.kind === 'question' && block.questionId === pendingId,
+          );
+          if (pendingBlock?.kind === 'question') pendingBlock.outcome = 'timed_out';
           this.pendingQuestion = null;
           this.pendingQuestionSeq = 0;
         }
@@ -475,18 +497,27 @@ export class TimelineModel {
         break;
       case 'question.asked':
         if (event.seq > this.latestTurnCompletedSeq && event.seq >= this.pendingQuestionSeq) {
-          this.pendingQuestion = {
-            questionId: asString(payload.questionId),
-            questions: Array.isArray(payload.questions) ? (payload.questions as Question[]) : [],
-            at,
-          };
+          const questionId = asString(payload.questionId);
+          const questions = Array.isArray(payload.questions) ? (payload.questions as Question[]) : [];
+          this.pendingQuestion = { questionId, questions, at };
           this.pendingQuestionSeq = event.seq;
+          this.pushBlock(
+            { kind: 'question', id: questionId || event.eventId, questionId, questions, outcome: 'pending', at },
+            event.seq,
+          );
         }
         break;
       case 'question.answered':
-        if (this.pendingQuestion?.questionId === asString(payload.questionId) && event.seq >= this.pendingQuestionSeq) {
+        const answeredId = asString(payload.questionId);
+        if (this.pendingQuestion?.questionId === answeredId && event.seq >= this.pendingQuestionSeq) {
           this.pendingQuestion = null;
           this.pendingQuestionSeq = 0;
+        }
+        const questionBlock = this.blocks.find(
+          (block) => block.kind === 'question' && block.questionId === answeredId,
+        );
+        if (questionBlock?.kind === 'question') {
+          questionBlock.outcome = payload.timedOut ? 'timed_out' : 'answered';
         }
         this.pushBlock(
           {
@@ -509,6 +540,18 @@ export class TimelineModel {
             turnId: asString(payload.turnId) || undefined,
           });
         }
+        this.pushBlock(
+          {
+            kind: 'approval',
+            id: approvalId || event.eventId,
+            approvalId,
+            tool: asString(payload.action),
+            summary: asString(payload.summary),
+            outcome: 'pending',
+            at,
+          },
+          event.seq,
+        );
         break;
       }
       case 'approval.resolved': {
@@ -516,6 +559,10 @@ export class TimelineModel {
         this.pendingApprovals = this.pendingApprovals.filter(
           (pending) => pending.approvalId !== approvalId,
         );
+        const approvalBlock = this.blocks.find(
+          (block) => block.kind === 'approval' && block.approvalId === approvalId,
+        );
+        if (approvalBlock?.kind === 'approval') approvalBlock.outcome = 'resolved';
         this.pushBlock(
           {
             kind: 'notice',
