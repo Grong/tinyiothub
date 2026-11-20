@@ -16,6 +16,30 @@ use super::context::{TurnContext, TurnContextRegistry};
 use super::events::{SessionEventSink, session_event};
 use super::suppression::audit::{WakeAttempt, attempt_event};
 
+/// Emit one durable step boundary marker. The runner owns the step window:
+/// a step opens on the first model output/tool call and closes when the next
+/// model output arrives after the previous call settled.
+async fn emit_step_marker(
+    events: &Arc<dyn SessionEventSink>,
+    context: &TurnContext,
+    event_type: &'static str,
+    step_index: u32,
+) -> bool {
+    let step_id = format!("{}:s{}", context.turn_id, step_index);
+    events
+        .emit(session_event(
+            context,
+            event_type,
+            json!({
+                "turnId": &context.turn_id,
+                "stepId": step_id,
+                "index": step_index,
+            }),
+        ))
+        .await
+        .is_ok()
+}
+
 #[async_trait::async_trait]
 pub trait TurnObserver: Send + Sync {
     async fn on_turn_event(&self, event: &TurnEvent);
@@ -190,9 +214,26 @@ impl SessionRunner {
                 let mut failed = 0u32;
                 let mut text_buf = String::new();
                 let mut last_text_flush = tokio::time::Instant::now();
+                let mut step_index = 0u32;
+                let mut step_open = false;
+                let mut step_usage_seen = false;
                 while let Some(event) = event_rx.recv().await {
                     match &event {
                         TurnEvent::Chunk { delta } => {
+                            if step_open && step_usage_seen {
+                                if !emit_step_marker(&events, &context, "step/end", step_index).await {
+                                    failed += 1;
+                                }
+                                step_open = false;
+                            }
+                            if !step_open {
+                                step_index += 1;
+                                step_open = true;
+                                step_usage_seen = false;
+                                if !emit_step_marker(&events, &context, "step/start", step_index).await {
+                                    failed += 1;
+                                }
+                            }
                             text_buf.push_str(delta);
                             let due = text_buf.chars().count() >= 200
                                 || last_text_flush.elapsed() >= std::time::Duration::from_millis(250);
@@ -213,6 +254,14 @@ impl SessionRunner {
                             }
                         }
                         TurnEvent::ToolCall { id, name, args } => {
+                            if !step_open {
+                                step_index += 1;
+                                step_open = true;
+                                step_usage_seen = false;
+                                if !emit_step_marker(&events, &context, "step/start", step_index).await {
+                                    failed += 1;
+                                }
+                            }
                             if !text_buf.is_empty() {
                                 let text = std::mem::take(&mut text_buf);
                                 if events
@@ -282,6 +331,20 @@ impl SessionRunner {
                             }
                         }
                         TurnEvent::Thinking { delta } => {
+                            if step_open && step_usage_seen {
+                                if !emit_step_marker(&events, &context, "step/end", step_index).await {
+                                    failed += 1;
+                                }
+                                step_open = false;
+                            }
+                            if !step_open {
+                                step_index += 1;
+                                step_open = true;
+                                step_usage_seen = false;
+                                if !emit_step_marker(&events, &context, "step/start", step_index).await {
+                                    failed += 1;
+                                }
+                            }
                             let written = events
                                 .emit(session_event(
                                     &context,
@@ -295,6 +358,10 @@ impl SessionRunner {
                             }
                         }
                         TurnEvent::Retry(notice) => {
+                            // A retry stays inside the open step: the failed
+                            // attempt's usage must not close the step before the
+                            // retry produces the authoritative model output.
+                            step_usage_seen = false;
                             // Buffered text belongs to the failed model attempt;
                             // persisted chunks are rolled back by turn.retry in the UI.
                             text_buf.clear();
@@ -322,6 +389,14 @@ impl SessionRunner {
                             output_tokens,
                             cost_usd,
                         } => {
+                            if !step_open {
+                                step_index += 1;
+                                step_open = true;
+                                if !emit_step_marker(&events, &context, "step/start", step_index).await {
+                                    failed += 1;
+                                }
+                            }
+                            step_usage_seen = true;
                             model_calls += 1;
                             usage.add(*input_tokens, *cached_input_tokens, *output_tokens, *cost_usd);
                         }
@@ -330,6 +405,9 @@ impl SessionRunner {
                     if let Some(observer) = &observer {
                         observer.on_turn_event(&event).await;
                     }
+                }
+                if step_open && !emit_step_marker(&events, &context, "step/end", step_index).await {
+                    failed += 1;
                 }
                 if !text_buf.is_empty()
                     && events
@@ -650,20 +728,36 @@ mod tests {
             types,
             vec![
                 "turn.started",
+                "step/start",
                 "step.text",
                 "tool.called",
                 "tool.returned",
+                "step/end",
                 "message.created",
                 "turn.completed"
             ]
         );
-        assert_eq!(events[1].payload_json["text"], "hi");
+        let text = events
+            .iter()
+            .find(|event| event.event_type == "step.text")
+            .expect("step text");
+        assert_eq!(text.payload_json["text"], "hi");
+        assert!(text.payload_json["turnId"].as_str().is_some_and(|id| !id.is_empty()));
+        let step_start = events
+            .iter()
+            .find(|event| event.event_type == "step/start")
+            .expect("step start");
+        assert_eq!(step_start.payload_json["index"], 1);
         assert!(
-            events[1].payload_json["turnId"]
+            step_start.payload_json["stepId"]
                 .as_str()
                 .is_some_and(|id| !id.is_empty())
         );
-        assert_eq!(events[5].payload_json["outcome"], "completed");
+        let completed = events
+            .iter()
+            .find(|event| event.event_type == "turn.completed")
+            .expect("turn completed");
+        assert_eq!(completed.payload_json["outcome"], "completed");
         assert_eq!(observer.events.lock().await.len(), 3);
         assert!(contexts.get("agent_main").is_none(), "guard clears turn context");
     }
