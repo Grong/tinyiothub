@@ -2028,11 +2028,11 @@ mod registry {
             ),
             ("assistant.suppression.alert", json!({"code": "source_unavailable"})),
             (
-                "subagent.started",
+                "subagent/started",
                 json!({"subagentId": "sub-2", "task": "inspect pump"}),
             ),
             (
-                "subagent.completed",
+                "subagent/completed",
                 json!({"subagentId": "sub-2", "summary": "model-written subagent summary"}),
             ),
             ("skill/loaded", json!({"name": "inspection", "body": "skill body"})),

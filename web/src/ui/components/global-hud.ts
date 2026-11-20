@@ -20,8 +20,8 @@ const EVENT_LABEL: Record<string, string> = {
   'question/asked': '向你提问',
   'approval/requested': '请求审批',
   'approval/resolved': '审批完成',
-  'subagent.started': '派出子代理',
-  'subagent.completed': '子代理返回',
+  'subagent/started': '派出子代理',
+  'subagent/completed': '子代理返回',
 };
 
 function formatTime(value: string | null): string {

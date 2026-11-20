@@ -119,14 +119,14 @@ describe('TimelineModel', () => {
   it('updates subagent lifecycle and turn status', () => {
     const model = new TimelineModel();
     model.ingestEvent(
-      event(1, 'subagent.started', {
+      event(1, 'subagent/started', {
         subagentId: 's1',
         description: '分析离线',
         subagentType: 'general-purpose',
       }),
     );
     model.ingestEvent(
-      event(2, 'subagent.completed', {
+      event(2, 'subagent/completed', {
         subagentId: 's1',
         status: 'completed',
         summary: '2 台 unknown',

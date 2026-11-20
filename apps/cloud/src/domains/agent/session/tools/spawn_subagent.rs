@@ -62,7 +62,7 @@ impl SpawnSubagentTool {
         self.events
             .emit(session_event(
                 &context,
-                "subagent.started",
+                "subagent/started",
                 json!({
                     "subagentId": subagent_id.clone(),
                     "description": description.clone(),
@@ -91,7 +91,7 @@ impl SpawnSubagentTool {
                     .events
                     .emit(session_event(
                         &context,
-                        "subagent.completed",
+                        "subagent/completed",
                         json!({
                             "subagentId": subagent_id,
                             "status": "failed",
@@ -108,7 +108,7 @@ impl SpawnSubagentTool {
         self.events
             .emit(session_event(
                 &context,
-                "subagent.completed",
+                "subagent/completed",
                 json!({
                     "subagentId": report.subagent_id.clone(),
                     "status": report.status,
@@ -240,7 +240,7 @@ mod tests {
         assert!(result.output.contains("检查完成"));
         let events = sink.events.lock().await;
         let types: Vec<&str> = events.iter().map(|event| event.event_type.as_str()).collect();
-        assert_eq!(types, vec!["subagent.started", "subagent.completed"]);
+        assert_eq!(types, vec!["subagent/started", "subagent/completed"]);
         assert_eq!(events[1].payload_json["toolCalls"], 3);
     }
 

@@ -485,7 +485,7 @@ export class TimelineModel {
         );
         break;
       }
-      case 'subagent.started': {
+      case 'subagent/started': {
         this.pushBlock(
           {
             kind: 'subagent',
@@ -499,7 +499,7 @@ export class TimelineModel {
         );
         break;
       }
-      case 'subagent.completed': {
+      case 'subagent/completed': {
         const id = asString(payload.subagentId);
         const block = this.blocks.find((item) => item.kind === 'subagent' && item.id === id);
         const status = asString(payload.status);
