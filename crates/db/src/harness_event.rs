@@ -565,9 +565,42 @@ impl Db {
                 .fetch_all(&mut *tx)
                 .await?
         };
-        let high_watermark = sqlx::query_scalar::<_, i64>("SELECT COALESCE(MAX(seq), 0) FROM session_events")
+        let high_watermark = if let Some(session_id) = &filter.session_id {
+            sqlx::query_scalar::<_, i64>(
+                "SELECT COALESCE(MAX(seq), 0) FROM session_events \
+                 WHERE execution_mode = ? AND session_id = ?",
+            )
+            .bind(filter.execution_mode.as_str())
+            .bind(session_id)
             .fetch_one(&mut *tx)
-            .await?;
+            .await?
+        } else if let Some(run_id) = &filter.run_id {
+            sqlx::query_scalar::<_, i64>(
+                "SELECT COALESCE(MAX(seq), 0) FROM session_events \
+                 WHERE execution_mode = ? AND run_id = ?",
+            )
+            .bind(filter.execution_mode.as_str())
+            .bind(run_id)
+            .fetch_one(&mut *tx)
+            .await?
+        } else if let Some(task_id) = &filter.task_id {
+            sqlx::query_scalar::<_, i64>(
+                "SELECT COALESCE(MAX(seq), 0) FROM session_events \
+                 WHERE execution_mode = ? AND task_id = ?",
+            )
+            .bind(filter.execution_mode.as_str())
+            .bind(task_id)
+            .fetch_one(&mut *tx)
+            .await?
+        } else {
+            sqlx::query_scalar::<_, i64>(
+                "SELECT COALESCE(MAX(seq), 0) FROM session_events \
+                 WHERE execution_mode = ?",
+            )
+            .bind(filter.execution_mode.as_str())
+            .fetch_one(&mut *tx)
+            .await?
+        };
         let events = rows
             .into_iter()
             .map(|row| row.into_event(workspace_id))
@@ -637,9 +670,14 @@ impl Db {
             run_ids.push_unseparated(") ORDER BY seq ASC");
             query.build_query_as::<SessionEventRow>().fetch_all(&mut *tx).await?
         };
-        let high_watermark = sqlx::query_scalar::<_, i64>("SELECT COALESCE(MAX(seq), 0) FROM session_events")
-            .fetch_one(&mut *tx)
-            .await?;
+        let high_watermark = sqlx::query_scalar::<_, i64>(
+            "SELECT COALESCE(MAX(seq), 0) FROM session_events \
+             WHERE execution_mode = ? AND session_id = ?",
+        )
+        .bind(filter.execution_mode.as_str())
+        .bind(session_id)
+        .fetch_one(&mut *tx)
+        .await?;
         let events = rows
             .into_iter()
             .map(|row| row.into_event(workspace_id))
@@ -803,7 +841,7 @@ mod tests {
             .await
             .expect("production page");
         assert_eq!(page.events, vec![production.clone()]);
-        assert_eq!(page.high_watermark, latest.seq);
+        assert_eq!(page.high_watermark, production.seq);
 
         let empty = fixture
             .db
@@ -811,7 +849,23 @@ mod tests {
             .await
             .expect("filtered gap is an empty page, not a lost frame");
         assert!(empty.events.is_empty());
-        assert_eq!(empty.high_watermark, latest.seq);
+        assert_eq!(empty.high_watermark, production.seq);
+
+        let other_page = fixture
+            .db
+            .session_event_page(
+                "ws-events",
+                &EventFilter {
+                    session_id: Some("session-2".to_string()),
+                    ..filter(ExecutionMode::Production)
+                },
+                0,
+                10,
+            )
+            .await
+            .expect("other session page");
+        assert_eq!(other_page.events, vec![latest.clone()]);
+        assert_eq!(other_page.high_watermark, latest.seq);
 
         let simulation = fixture
             .db

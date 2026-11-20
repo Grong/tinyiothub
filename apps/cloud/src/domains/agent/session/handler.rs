@@ -8,7 +8,7 @@ use std::time::Duration;
 use async_stream::stream;
 use axum::Json;
 use axum::extract::{Path, Query, State};
-use axum::http::{HeaderValue, StatusCode, header};
+use axum::http::{HeaderMap, HeaderValue, StatusCode, header};
 use axum::response::sse::{Event, KeepAlive, Sse};
 use axum::response::{IntoResponse, Response};
 use serde::Deserialize;
@@ -139,21 +139,33 @@ pub async fn stream_events(
     claims: Claims,
     Path(session_key): Path<String>,
     Query(query): Query<EventQuery>,
+    headers: HeaderMap,
 ) -> Response {
     let Some(parsed) = verify_session_workspace(&session_key, &claims.workspace_id) else {
         return StatusCode::NOT_FOUND.into_response();
     };
     let filter = event_filter(&parsed.session_key());
     let db = state.db.clone();
+    // EventSource reconnect semantics: prefer the standard header when the
+    // query cursor is absent, while keeping the explicit cursor authoritative.
+    let last_event_id = headers
+        .get("last-event-id")
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.parse::<i64>().ok())
+        .unwrap_or(0);
+    let after = query.after.max(last_event_id);
+    let notifier = state.session_stream.subscribe(&claims.workspace_id);
 
     let event_stream = stream! {
-        let mut cursor = query.after;
+        let mut cursor = after;
         loop {
+            let mut emitted = 0usize;
             match db
                 .session_event_page(&parsed.workspace_id, &filter, cursor, 200)
                 .await
             {
                 Ok(page) => {
+                    emitted = page.events.len();
                     for event in page.events {
                         cursor = event.seq;
                         if !super::is_public_session_event(&event.event_type) {
@@ -172,7 +184,15 @@ pub async fn stream_events(
                     tracing::warn!(%error, %session_key, "session event tail failed");
                 }
             }
-            tokio::time::sleep(Duration::from_millis(200)).await;
+            // Drain a full page immediately; otherwise wait for a committed
+            // write hint, with a slow fallback for writers in another process.
+            if emitted >= 200 {
+                continue;
+            }
+            tokio::select! {
+                _ = notifier.notified() => {}
+                _ = tokio::time::sleep(Duration::from_secs(1)) => {}
+            }
         }
     };
 
