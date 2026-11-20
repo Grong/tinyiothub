@@ -87,12 +87,12 @@ async fn emit_assistant_attempt(
     context: &TurnContext,
     step_id: &str,
     attempt_id: &str,
-    attempt: u32,
-    max_attempts: u32,
+    attempt: (u32, u32),
     stream: &[AssistantStreamSegment],
     error: &str,
     delay_ms: u64,
 ) -> bool {
+    let (attempt, max_attempts) = attempt;
     events
         .emit(session_event(
             context,
@@ -487,8 +487,7 @@ impl SessionRunner {
                                 &context,
                                 &step_id!(),
                                 &step_attempt_id,
-                                notice.attempt,
-                                notice.max_retries + 1,
+                                (notice.attempt, notice.max_retries + 1),
                                 &step_stream,
                                 &notice.error,
                                 notice.delay_ms,
