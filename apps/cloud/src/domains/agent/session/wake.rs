@@ -1721,11 +1721,10 @@ impl WakeRunner {
             };
             after = last.seq;
             for event in page.events {
-                if event.event_type != "message.created" {
-                    continue;
-                }
-                let Some(role) = event.payload_json["role"].as_str() else {
-                    continue;
+                let role = match event.event_type.as_str() {
+                    "assistant/message" => "assistant",
+                    "message.created" => event.payload_json["role"].as_str().unwrap_or_default(),
+                    _ => continue,
                 };
                 if role != "user" && role != "assistant" {
                     continue;
@@ -1733,6 +1732,9 @@ impl WakeRunner {
                 let Some(text) = event.payload_json["text"].as_str() else {
                     continue;
                 };
+                if text.is_empty() {
+                    continue;
+                }
                 messages.push(tinyiothub_agent::port::provider::ChatMessage {
                     role: role.to_string(),
                     content: text.to_string(),
@@ -2819,8 +2821,9 @@ mod tests {
                 "wake.dispatched",
                 "session.started",
                 "turn.started",
-                "step.text",
-                "message.created",
+                "step/start",
+                "assistant/message",
+                "step/end",
                 "turn.completed",
                 "session.ended",
             ]
@@ -3138,8 +3141,9 @@ mod tests {
                 "wake.dispatched",
                 "session.started",
                 "turn.started",
-                "step.text",
-                "message.created",
+                "step/start",
+                "assistant/message",
+                "step/end",
                 "turn.completed",
                 "session.ended"
             ]

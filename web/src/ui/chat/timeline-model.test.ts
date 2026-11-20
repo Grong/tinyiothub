@@ -229,6 +229,50 @@ describe('TimelineModel', () => {
       turnId: 't1',
     });
   });
+  it('projects a compact assistant settlement with its reasoning', () => {
+    const model = new TimelineModel();
+    model.ingestEvent(event(1, 'turn.started', { turnId: 't1' }));
+    model.ingestEvent(
+      event(2, 'assistant/message', {
+        turnId: 't1',
+        stepId: 't1:s1',
+        messageId: 'm1',
+        text: '冷却塔 A 离线。',
+        reasoning: '先确认在线状态。',
+        stream: [
+          { kind: 'reasoning', atMs: 10, text: '先确认在线状态。' },
+          { kind: 'text', atMs: 40, text: '冷却塔 A 离线。' },
+        ],
+      }),
+    );
+    const reasoning = model.blocks.find((block) => block.kind === 'reasoning');
+    const assistant = model.blocks.find((block) => block.kind === 'assistant');
+    expect(reasoning).toMatchObject({ text: '先确认在线状态。', turnId: 't1', streaming: false });
+    expect(assistant).toMatchObject({
+      text: '冷却塔 A 离线。',
+      turnId: 't1',
+      stepId: 't1:s1',
+    });
+  });
+
+  it('projects an assistant attempt as retry evidence', () => {
+    const model = new TimelineModel();
+    model.ingestEvent(
+      event(1, 'assistant/attempt', {
+        turnId: 't1',
+        stepId: 't1:s1',
+        attemptId: 'a1',
+        attempt: 1,
+        maxAttempts: 3,
+        stream: [],
+        error: 'HTTP 429',
+        retryDelayMs: 1000,
+      }),
+    );
+    const retry = model.blocks.find((block) => block.kind === 'retry');
+    expect(retry).toMatchObject({ attempt: 1, maxRetries: 3, delayMs: 1000, error: 'HTTP 429' });
+  });
+
   it('rolls back only the failed model attempt and records retry details', () => {
     const model = new TimelineModel();
     model.ingestEvent(event(1, 'turn.started', { turnId: 't1' }));

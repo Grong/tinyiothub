@@ -273,9 +273,8 @@ mod tests {
             vec![
                 "turn.started",
                 "step/start",
-                "step.text",
+                "assistant/message",
                 "step/end",
-                "message.created",
                 "turn.completed"
             ]
         );

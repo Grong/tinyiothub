@@ -1376,8 +1376,9 @@ mod tests {
                 "wake.dispatched",
                 "session.started",
                 "turn.started",
-                "step.text",
-                "message.created",
+                "step/start",
+                "assistant/message",
+                "step/end",
                 "turn.completed",
                 "session.ended",
             ]

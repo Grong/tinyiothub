@@ -9,6 +9,7 @@ use std::sync::Arc;
 use serde_json::json;
 use tinyiothub_agent::port::events::TurnEvent;
 use tinyiothub_agent::port::runtime::AgentLoop;
+use tinyiothub_core::session_protocol::{AssistantStreamSegment, StreamKind};
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 
@@ -34,6 +35,76 @@ async fn emit_step_marker(
                 "turnId": &context.turn_id,
                 "stepId": step_id,
                 "index": step_index,
+            }),
+        ))
+        .await
+        .is_ok()
+}
+
+fn push_assistant_segment(segments: &mut Vec<AssistantStreamSegment>, kind: StreamKind, text: &str, at_ms: u64) {
+    if let Some(last) = segments.last_mut()
+        && last.kind == kind
+    {
+        last.text.push_str(text);
+        return;
+    }
+    segments.push(AssistantStreamSegment {
+        kind,
+        at_ms,
+        text: text.to_string(),
+    });
+}
+
+async fn emit_assistant_message(
+    events: &Arc<dyn SessionEventSink>,
+    context: &TurnContext,
+    step_id: &str,
+    text: &str,
+    reasoning: &str,
+    stream: &[AssistantStreamSegment],
+    usage: Option<&serde_json::Value>,
+) -> bool {
+    let mut payload = json!({
+        "turnId": &context.turn_id,
+        "stepId": step_id,
+        "messageId": uuid::Uuid::new_v4().to_string(),
+        "text": text,
+        "reasoning": reasoning,
+        "stream": stream,
+    });
+    if let Some(usage) = usage {
+        payload["usage"] = usage.clone();
+    }
+    events
+        .emit(session_event(context, "assistant/message", payload))
+        .await
+        .is_ok()
+}
+
+async fn emit_assistant_attempt(
+    events: &Arc<dyn SessionEventSink>,
+    context: &TurnContext,
+    step_id: &str,
+    attempt_id: &str,
+    attempt: u32,
+    max_attempts: u32,
+    stream: &[AssistantStreamSegment],
+    error: &str,
+    delay_ms: u64,
+) -> bool {
+    events
+        .emit(session_event(
+            context,
+            "assistant/attempt",
+            json!({
+                "turnId": &context.turn_id,
+                "stepId": step_id,
+                "attemptId": attempt_id,
+                "attempt": attempt,
+                "maxAttempts": max_attempts,
+                "stream": stream,
+                "error": error,
+                "retryDelayMs": delay_ms,
             }),
         ))
         .await
@@ -212,86 +283,97 @@ impl SessionRunner {
                 let mut model_calls = 0u64;
                 let mut usage = UsageTotals::default();
                 let mut failed = 0u32;
-                let mut text_buf = String::new();
-                let mut last_text_flush = tokio::time::Instant::now();
                 let mut step_index = 0u32;
                 let mut step_open = false;
                 let mut step_usage_seen = false;
-                let mut step_has_content = false;
+                let mut step_started = std::time::Instant::now();
+                let mut step_text = String::new();
+                let mut step_reasoning = String::new();
+                let mut step_stream: Vec<AssistantStreamSegment> = Vec::new();
+                let mut step_assistant_written = false;
+                let mut step_attempt_id = uuid::Uuid::new_v4().to_string();
+                let mut step_usage: Option<serde_json::Value> = None;
+
+                macro_rules! step_id {
+                    () => {
+                        format!("{}:s{}", context.turn_id, step_index)
+                    };
+                }
+
+                macro_rules! open_step {
+                    () => {{
+                        step_index += 1;
+                        step_open = true;
+                        step_usage_seen = false;
+                        step_assistant_written = false;
+                        step_attempt_id = uuid::Uuid::new_v4().to_string();
+                        step_started = std::time::Instant::now();
+                        step_text.clear();
+                        step_reasoning.clear();
+                        step_stream.clear();
+                        step_usage = None;
+                        if !emit_step_marker(&events, &context, "step/start", step_index).await {
+                            failed += 1;
+                        }
+                    }};
+                }
+
+                macro_rules! close_step {
+                    () => {{
+                        if step_open {
+                            if !step_assistant_written && (!step_text.is_empty() || !step_reasoning.is_empty()) {
+                                if !emit_assistant_message(
+                                    &events,
+                                    &context,
+                                    &step_id!(),
+                                    &step_text,
+                                    &step_reasoning,
+                                    &step_stream,
+                                    step_usage.as_ref(),
+                                )
+                                .await
+                                {
+                                    failed += 1;
+                                }
+                                step_assistant_written = true;
+                            }
+                            if !emit_step_marker(&events, &context, "step/end", step_index).await {
+                                failed += 1;
+                            }
+                            step_open = false;
+                        }
+                    }};
+                }
+
                 while let Some(event) = event_rx.recv().await {
                     match &event {
                         TurnEvent::Chunk { delta } => {
                             if step_open && step_usage_seen {
-                                if step_has_content {
-                                    if !emit_step_marker(&events, &context, "step/end", step_index).await {
-                                        failed += 1;
-                                    }
-                                    step_open = false;
-                                } else {
-                                    // A usage-only call has no surface content;
-                                    // keep the following output in the same step.
-                                    step_usage_seen = false;
-                                }
+                                close_step!();
                             }
                             if !step_open {
-                                step_index += 1;
-                                step_open = true;
-                                step_usage_seen = false;
-                                if !emit_step_marker(&events, &context, "step/start", step_index).await {
-                                    failed += 1;
-                                }
+                                open_step!();
                             }
-                            step_has_content = true;
-                            text_buf.push_str(delta);
-                            let due = text_buf.chars().count() >= 200
-                                || last_text_flush.elapsed() >= std::time::Duration::from_millis(250);
-                            if due && !text_buf.is_empty() {
-                                let text = std::mem::take(&mut text_buf);
-                                if events
-                                    .emit(session_event(
-                                        &context,
-                                        "step.text",
-                                        json!({ "turnId": &context.turn_id, "text": text }),
-                                    ))
-                                    .await
-                                    .is_err()
-                                {
-                                    failed += 1;
-                                }
-                                last_text_flush = tokio::time::Instant::now();
-                            }
+                            let at_ms = step_started.elapsed().as_millis() as u64;
+                            step_text.push_str(delta);
+                            push_assistant_segment(&mut step_stream, StreamKind::Text, delta, at_ms);
                         }
                         TurnEvent::ToolCall { id, name, args } => {
                             if !step_open {
-                                step_index += 1;
-                                step_open = true;
-                                step_usage_seen = false;
-                                if !emit_step_marker(&events, &context, "step/start", step_index).await {
-                                    failed += 1;
-                                }
-                            }
-                            step_has_content = true;
-                            if !text_buf.is_empty() {
-                                let text = std::mem::take(&mut text_buf);
-                                if events
-                                    .emit(session_event(
-                                        &context,
-                                        "step.text",
-                                        json!({ "turnId": &context.turn_id, "text": text }),
-                                    ))
-                                    .await
-                                    .is_err()
-                                {
-                                    failed += 1;
-                                }
-                                last_text_flush = tokio::time::Instant::now();
+                                open_step!();
                             }
                             tool_calls += 1;
                             if events
                                 .emit(session_event(
                                     &context,
                                     "tool.called",
-                                    json!({ "toolCallId": id, "tool": name, "args": args }),
+                                    json!({
+                                        "turnId": &context.turn_id,
+                                        "stepId": step_id!(),
+                                        "toolCallId": id,
+                                        "tool": name,
+                                        "args": args
+                                    }),
                                 ))
                                 .await
                                 .is_err()
@@ -305,21 +387,6 @@ impl SessionRunner {
                             output,
                             attachments,
                         } => {
-                            if !text_buf.is_empty() {
-                                let text = std::mem::take(&mut text_buf);
-                                if events
-                                    .emit(session_event(
-                                        &context,
-                                        "step.text",
-                                        json!({ "turnId": &context.turn_id, "text": text }),
-                                    ))
-                                    .await
-                                    .is_err()
-                                {
-                                    failed += 1;
-                                }
-                                last_text_flush = tokio::time::Instant::now();
-                            }
                             let evidence: Vec<tinyiothub_core::media::EvidenceRef> =
                                 attachments.iter().map(Into::into).collect();
                             if events
@@ -327,6 +394,8 @@ impl SessionRunner {
                                     &context,
                                     "tool.returned",
                                     json!({
+                                        "turnId": &context.turn_id,
+                                        "stepId": if step_open { Some(step_id!()) } else { None },
                                         "toolCallId": id,
                                         "tool": name,
                                         "result": truncate(output, 2000),
@@ -341,64 +410,41 @@ impl SessionRunner {
                         }
                         TurnEvent::Thinking { delta } => {
                             if step_open && step_usage_seen {
-                                if step_has_content {
-                                    if !emit_step_marker(&events, &context, "step/end", step_index).await {
-                                        failed += 1;
-                                    }
-                                    step_open = false;
-                                } else {
-                                    // A usage-only call has no surface content;
-                                    // keep the following output in the same step.
-                                    step_usage_seen = false;
-                                }
+                                close_step!();
                             }
                             if !step_open {
-                                step_index += 1;
-                                step_open = true;
-                                step_usage_seen = false;
-                                if !emit_step_marker(&events, &context, "step/start", step_index).await {
-                                    failed += 1;
-                                }
+                                open_step!();
                             }
-                            step_has_content = true;
-                            let written = events
-                                .emit(session_event(
-                                    &context,
-                                    "step.thinking",
-                                    json!({ "turnId": &context.turn_id, "thinking": delta }),
-                                ))
-                                .await
-                                .is_ok();
-                            if !written {
-                                failed += 1;
-                            }
+                            let at_ms = step_started.elapsed().as_millis() as u64;
+                            step_reasoning.push_str(delta);
+                            push_assistant_segment(&mut step_stream, StreamKind::Reasoning, delta, at_ms);
                         }
                         TurnEvent::Retry(notice) => {
-                            // A retry stays inside the open step: the failed
-                            // attempt's usage must not close the step before the
-                            // retry produces the authoritative model output.
-                            step_usage_seen = false;
-                            step_has_content = false;
-                            // Buffered text belongs to the failed model attempt;
-                            // persisted chunks are rolled back by turn.retry in the UI.
-                            text_buf.clear();
-                            if events
-                                .emit(session_event(
-                                    &context,
-                                    "turn.retry",
-                                    json!({
-                                        "turnId": &context.turn_id,
-                                        "attempt": notice.attempt,
-                                        "maxRetries": notice.max_retries,
-                                        "delayMs": notice.delay_ms,
-                                        "error": notice.error
-                                    }),
-                                ))
-                                .await
-                                .is_err()
+                            if !step_open {
+                                open_step!();
+                            }
+                            if !emit_assistant_attempt(
+                                &events,
+                                &context,
+                                &step_id!(),
+                                &step_attempt_id,
+                                notice.attempt,
+                                notice.max_retries + 1,
+                                &step_stream,
+                                &notice.error,
+                                notice.delay_ms,
+                            )
+                            .await
                             {
                                 failed += 1;
                             }
+                            step_attempt_id = uuid::Uuid::new_v4().to_string();
+                            step_usage_seen = false;
+                            step_assistant_written = false;
+                            step_text.clear();
+                            step_reasoning.clear();
+                            step_stream.clear();
+                            step_usage = None;
                         }
                         TurnEvent::Usage {
                             input_tokens,
@@ -407,16 +453,33 @@ impl SessionRunner {
                             cost_usd,
                         } => {
                             if !step_open {
-                                step_index += 1;
-                                step_open = true;
-                                step_has_content = false;
-                                if !emit_step_marker(&events, &context, "step/start", step_index).await {
-                                    failed += 1;
-                                }
+                                open_step!();
                             }
                             step_usage_seen = true;
+                            step_usage = Some(json!({
+                                "inputTokens": input_tokens,
+                                "cachedInputTokens": cached_input_tokens,
+                                "outputTokens": output_tokens,
+                                "costUsd": cost_usd,
+                            }));
                             model_calls += 1;
                             usage.add(*input_tokens, *cached_input_tokens, *output_tokens, *cost_usd);
+                            if !step_assistant_written {
+                                if !emit_assistant_message(
+                                    &events,
+                                    &context,
+                                    &step_id!(),
+                                    &step_text,
+                                    &step_reasoning,
+                                    &step_stream,
+                                    step_usage.as_ref(),
+                                )
+                                .await
+                                {
+                                    failed += 1;
+                                }
+                                step_assistant_written = true;
+                            }
                         }
                         _ => {}
                     }
@@ -424,21 +487,7 @@ impl SessionRunner {
                         observer.on_turn_event(&event).await;
                     }
                 }
-                if !text_buf.is_empty()
-                    && events
-                        .emit(session_event(
-                            &context,
-                            "step.text",
-                            json!({ "turnId": &context.turn_id, "text": std::mem::take(&mut text_buf) }),
-                        ))
-                        .await
-                        .is_err()
-                {
-                    failed += 1;
-                }
-                if step_open && !emit_step_marker(&events, &context, "step/end", step_index).await {
-                    failed += 1;
-                }
+                close_step!();
                 (tool_calls, model_calls, usage.to_json(), failed)
             }
         });
@@ -451,22 +500,6 @@ impl SessionRunner {
 
         let outcome = match result {
             Ok(text) => {
-                if !self
-                    .emit_turn_event(
-                        context,
-                        attempt,
-                        "message.created",
-                        json!({
-                            "messageId": uuid::Uuid::new_v4().to_string(),
-                            "turnId": &context.turn_id,
-                            "role": "assistant",
-                            "text": &text
-                        }),
-                    )
-                    .await
-                {
-                    health.failed += 1;
-                }
                 health.terminal_written = self
                     .emit_turn_event(
                         context,
@@ -747,20 +780,20 @@ mod tests {
             vec![
                 "turn.started",
                 "step/start",
-                "step.text",
                 "tool.called",
                 "tool.returned",
+                "assistant/message",
                 "step/end",
-                "message.created",
                 "turn.completed"
             ]
         );
         let text = events
             .iter()
-            .find(|event| event.event_type == "step.text")
-            .expect("step text");
+            .find(|event| event.event_type == "assistant/message")
+            .expect("assistant message");
         assert_eq!(text.payload_json["text"], "hi");
         assert!(text.payload_json["turnId"].as_str().is_some_and(|id| !id.is_empty()));
+        assert!(text.payload_json["stepId"].as_str().is_some_and(|id| !id.is_empty()));
         let step_start = events
             .iter()
             .find(|event| event.event_type == "step/start")
@@ -885,17 +918,16 @@ mod tests {
         let events = sink.events.lock().await;
         let retry = events
             .iter()
-            .find(|event| event.event_type == "turn.retry")
-            .expect("turn.retry emitted");
-        assert_eq!(
-            retry.payload_json,
-            json!({
-                "turnId": retry.payload_json["turnId"],
-                "attempt": 2,
-                "maxRetries": 3,
-                "delayMs": 2000,
-                "error": "HTTP 503: unavailable"
-            })
+            .find(|event| event.event_type == "assistant/attempt")
+            .expect("assistant/attempt emitted");
+        assert_eq!(retry.payload_json["attempt"], 2);
+        assert_eq!(retry.payload_json["maxAttempts"], 4);
+        assert_eq!(retry.payload_json["retryDelayMs"], 2000);
+        assert_eq!(retry.payload_json["error"], "HTTP 503: unavailable");
+        assert!(
+            retry.payload_json["attemptId"]
+                .as_str()
+                .is_some_and(|id| !id.is_empty())
         );
     }
 
@@ -920,8 +952,9 @@ mod tests {
                 .unwrap_or_else(|| panic!("missing {name}"))
         };
         assert!(index("turn.started") < index("tool.called"));
-        assert!(index("tool.returned") < index("message.created"));
-        assert!(index("message.created") < index("turn.completed"));
+        assert!(index("tool.returned") < index("assistant/message"));
+        assert!(index("assistant/message") < index("step/end"));
+        assert!(index("step/end") < index("turn.completed"));
     }
 
     #[tokio::test]

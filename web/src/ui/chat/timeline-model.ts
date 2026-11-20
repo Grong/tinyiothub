@@ -15,6 +15,7 @@ export type TimelineBlock =
       text: string;
       at: string;
       turnId?: string;
+      stepId?: string;
       streaming?: boolean;
     }
   | {
@@ -312,6 +313,43 @@ export class TimelineModel {
             event.seq,
           );
         }
+        break;
+      }
+      case 'assistant/message': {
+        const turnId = asString(payload.turnId);
+        const stepId = asString(payload.stepId);
+        const text = asString(payload.text);
+        const reasoning = asString(payload.reasoning);
+        if (reasoning) {
+          const id = `reasoning-${stepId || event.eventId}`;
+          const existing = this.blocks.find((block) => block.kind === 'reasoning' && block.id === id);
+          if (existing?.kind === 'reasoning') {
+            existing.text = reasoning;
+            existing.streaming = false;
+          } else {
+            this.pushBlock({ kind: 'reasoning', id, text: reasoning, turnId, streaming: false, at }, event.seq);
+          }
+        }
+        if (text) {
+          const id = asString(payload.messageId) || event.eventId;
+          this.pushBlock({ kind: 'assistant', id, text, at, turnId, stepId }, event.seq);
+        }
+        break;
+      }
+      case 'assistant/attempt': {
+        this.pushBlock(
+          {
+            kind: 'retry',
+            id: event.eventId,
+            turnId: asString(payload.turnId),
+            attempt: asNumber(payload.attempt) ?? 0,
+            maxRetries: asNumber(payload.maxAttempts) ?? 0,
+            delayMs: asNumber(payload.retryDelayMs) ?? 0,
+            error: asString(payload.error),
+            at,
+          },
+          event.seq,
+        );
         break;
       }
       case 'message.created': {
