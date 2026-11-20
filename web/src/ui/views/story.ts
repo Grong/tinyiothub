@@ -133,6 +133,9 @@ export class StoryView extends LitElement {
   private historyLocked = false;
   private stickToLatest = true;
   private historyEpoch = 0;
+  private pinPending = false;
+  private suppressScroll = false;
+  private feedObserver: ResizeObserver | null = null;
 
   connectedCallback(): void {
     super.connectedCallback();
@@ -144,7 +147,20 @@ export class StoryView extends LitElement {
     this.closeEvents = null;
     if (this.refreshTimer !== null) window.clearInterval(this.refreshTimer);
     this.refreshTimer = null;
+    this.feedObserver?.disconnect();
+    this.feedObserver = null;
     super.disconnectedCallback();
+  }
+
+  protected firstUpdated(): void {
+    const feed = this.querySelector('.story-feed');
+    if (!feed || typeof ResizeObserver === 'undefined') return;
+    this.feedObserver = new ResizeObserver(() => {
+      if (this.stickToLatest && !this.loadingOlder && !this.suppressScroll) {
+        this.pinFeedToBottom();
+      }
+    });
+    this.feedObserver.observe(feed);
   }
 
   private get workspaceId(): string {
@@ -249,6 +265,7 @@ export class StoryView extends LitElement {
     this.loadingOlder = false;
     this.historyLocked = false;
     this.stickToLatest = true;
+    this.pinPending = true;
     try {
       const page = await fetchSessionEvents(key, 0, 200, { turns: 2 });
       if (seq !== this.loadSeq) return;
@@ -261,10 +278,14 @@ export class StoryView extends LitElement {
       this.rebuild();
       this.loading = false;
       this.connect(key, this.timeline.highWatermark);
+      await this.updateComplete;
+      this.pinToLatest();
     } catch (error) {
       if (seq !== this.loadSeq) return;
       this.error = (error as Error).message || '加载会话过程失败';
       this.loading = false;
+      this.pinPending = false;
+      this.suppressScroll = false;
     }
     this.recomputeAchievements();
   }
@@ -318,6 +339,7 @@ export class StoryView extends LitElement {
   }
 
   private onFeedScroll(): void {
+    if (this.suppressScroll || this.pinPending) return;
     const feed = this.feedScroller();
     if (!feed) return;
     const distanceToBottom = feed.scrollHeight - feed.scrollTop - feed.clientHeight;
@@ -476,14 +498,37 @@ export class StoryView extends LitElement {
     window.dispatchEvent(new PopStateEvent('popstate'));
   }
 
-  protected updated(): void {
-    if (!this.stickToLatest || this.loadingOlder) return;
+  /** Pin after a load or while new content is appended. */
+  private pinFeedToBottom(): void {
     const pin = () => {
       const feed = this.feedScroller();
       if (feed) feed.scrollTop = feed.scrollHeight;
     };
     pin();
     requestAnimationFrame(pin);
+  }
+
+  /** One-shot initial pin: ignore the scroll events our own scroll causes. */
+  private pinToLatest(): void {
+    this.suppressScroll = true;
+    const pin = () => {
+      const feed = this.feedScroller();
+      if (feed) feed.scrollTop = feed.scrollHeight;
+    };
+    pin();
+    requestAnimationFrame(() => {
+      pin();
+      requestAnimationFrame(() => {
+        pin();
+        this.suppressScroll = false;
+        this.pinPending = false;
+      });
+    });
+  }
+
+  protected updated(): void {
+    if (!this.stickToLatest || this.loadingOlder || this.suppressScroll) return;
+    this.pinFeedToBottom();
   }
 
   render() {
