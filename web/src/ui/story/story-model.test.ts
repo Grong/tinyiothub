@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { TimelineModel } from '../chat/timeline-model.js';
 import type { SessionEvent } from '../../api/assistant.js';
-import { buildStory, deviceHealthLabel, deviceTypeLabel } from './story-model.js';
+import { buildStory, deviceHealthLabel, deviceTypeLabel, failureCopy } from './story-model.js';
 import { buildMonthBuckets, buildWeekBuckets, computeAchievements } from './story-achievements.js';
 import type { BrainEvent } from '../../api/brain-events.js';
 
@@ -339,6 +339,49 @@ describe('buildStory', () => {
     expect(story.sections[0].steps).toContainEqual(
       expect.objectContaining({ title: 'AI 在思考', tone: 'think', status: 'running' }),
     );
+  });
+
+  it('turns a failed turn into business copy and one retry summary', () => {
+    const quota =
+      'CompletionError: ProviderError: LLM streaming request failed: HTTP 429: rate_limit_error: 已达到 Token Plan 用量上限';
+    const model = timelineOf(
+      event(1, 'turn.started', { turnId: 't-fail' }),
+      event(2, 'turn.retry', {
+        turnId: 't-fail',
+        attempt: 1,
+        maxRetries: 3,
+        delayMs: 1000,
+        error: quota,
+      }),
+      event(3, 'turn.retry', {
+        turnId: 't-fail',
+        attempt: 2,
+        maxRetries: 3,
+        delayMs: 2000,
+        error: quota,
+      }),
+      event(4, 'turn.completed', {
+        turnId: 't-fail',
+        outcome: 'failed',
+        error: quota,
+        modelCalls: 0,
+        toolCalls: 0,
+      }),
+      event(5, 'session.ended', { outcome: 'failed' }),
+      event(6, 'turn.started', { turnId: 't-next' }),
+      event(7, 'turn.completed', { turnId: 't-next', outcome: 'completed' }),
+    );
+
+    const story = buildStory(model.blocks, []);
+    const failed = story.sections[0];
+    expect(failed.status).toBe('failed');
+    expect(failed.retries).toBe(2);
+    expect(failureCopy(quota).category).toBe('quota');
+    expect(failed.steps.map((step) => step.title)).toContain('模型调用重试');
+    const failure = failed.steps.find((step) => step.title === '本轮未完成');
+    expect(failure?.detail).toContain('模型额度不足');
+    expect(failure?.detail).toContain('已重试 2 次');
+    expect(failed.steps.some((step) => step.title.includes('会话结束：failed'))).toBe(false);
   });
 
   it('exports shared labels for device cards', () => {

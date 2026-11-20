@@ -93,6 +93,11 @@ export interface StorySection {
   /** AI 私有推理，只在“判断依据”里展开。 */
   reasoning: string;
   findingCount: number;
+  /** Turn-level failure/cancel detail, when the turn did not complete. */
+  error?: string;
+  retries: number;
+  lastRetryAt?: string;
+  lastRetryError?: string;
 }
 
 export interface StoryPrompt {
@@ -620,6 +625,35 @@ function uniqueFindingKey(step: StoryStep): string | null {
   return `${step.deviceId ?? 'global'}:${step.finding}`;
 }
 
+export interface FailureCopy {
+  detail: string;
+  category: 'quota' | 'timeout' | 'auth' | 'network' | 'unknown';
+}
+
+/** Translate provider/turn errors into operator-facing copy. */
+export function failureCopy(error: string): FailureCopy {
+  const text = error.replace(/\s+/g, ' ').trim();
+  if (/429|rate[ _-]?limit|token plan|用量上限|quota/i.test(text)) {
+    return {
+      category: 'quota',
+      detail: '模型额度不足或已达到用量上限。请检查 Token Plan / 模型额度，下一轮会自动重试。',
+    };
+  }
+  if (/timeout|timed out/i.test(text)) {
+    return { category: 'timeout', detail: '模型响应超时，请稍后重试。' };
+  }
+  if (/401|403|unauthorized|api key|invalid key/i.test(text)) {
+    return { category: 'auth', detail: '模型鉴权失败，请检查 API Key / 模型配置。' };
+  }
+  if (/connect|network|dns|socket/i.test(text)) {
+    return { category: 'network', detail: '模型网络连接失败，请检查网络后重试。' };
+  }
+  return {
+    category: 'unknown',
+    detail: text ? clampText(text, 180) : '本轮执行失败，请查看工程师视图中的详细轨迹。',
+  };
+}
+
 export function buildStory(blocks: TimelineBlock[], todos: TodoItem[] = []): StoryView {
   const devices = new Map<string, StoryDevice>();
   const vision: StoryVision[] = [];
@@ -640,6 +674,7 @@ export function buildStory(blocks: TimelineBlock[], todos: TodoItem[] = []): Sto
         conclusion: '',
         reasoning: '',
         findingCount: 0,
+        retries: 0,
       };
       pendingOrigin = undefined;
       sections.push(current);
@@ -663,6 +698,8 @@ export function buildStory(blocks: TimelineBlock[], todos: TodoItem[] = []): Sto
           conclusion: '',
           reasoning: '',
           findingCount: 0,
+          error: part.error,
+          retries: 0,
         };
         pendingOrigin = undefined;
         sections.push(current);
@@ -691,6 +728,13 @@ export function buildStory(blocks: TimelineBlock[], todos: TodoItem[] = []): Sto
           tone: 'think',
           visionIds: [],
         });
+        break;
+      }
+      case 'retry': {
+        const section = current ?? ensureSection(part.at);
+        section.retries += 1;
+        section.lastRetryAt = part.at;
+        section.lastRetryError = part.error;
         break;
       }
       case 'tool': {
@@ -738,6 +782,9 @@ export function buildStory(blocks: TimelineBlock[], todos: TodoItem[] = []): Sto
         break;
       }
       case 'notice': {
+        // A failed session is explained by the turn-level failure card; do not
+        // duplicate it as a generic "会话结束：failed" row.
+        if (part.text.includes('会话结束') && part.text.includes('failed')) break;
         const section = current ?? ensureSection(part.at);
         section.steps.push({
           id: part.id,
@@ -756,6 +803,30 @@ export function buildStory(blocks: TimelineBlock[], todos: TodoItem[] = []): Sto
   }
 
   for (const section of sections) {
+    if (section.retries > 0) {
+      section.steps.push({
+        id: `${section.id}:retry`,
+        title: '模型调用重试',
+        detail: `共 ${section.retries} 次`,
+        at: section.lastRetryAt ?? section.startedAt,
+        status: 'done',
+        tone: 'analysis',
+        visionIds: [],
+      });
+    }
+    if (section.status === 'failed' || section.status === 'cancelled') {
+      const copy = failureCopy(section.error ?? section.lastRetryError ?? '');
+      const retryNote = section.retries > 0 ? ` 已重试 ${section.retries} 次。` : '';
+      section.steps.push({
+        id: `${section.id}:failure`,
+        title: section.status === 'failed' ? '本轮未完成' : '本轮已取消',
+        detail: `${copy.detail}${retryNote}`,
+        at: section.completedAt ?? section.startedAt,
+        status: section.status === 'failed' ? 'failed' : 'done',
+        tone: 'alarm',
+        visionIds: [],
+      });
+    }
     const seenInSection = new Set<string>();
     section.findingCount = section.steps.filter((step) => {
       const key = uniqueFindingKey(step);

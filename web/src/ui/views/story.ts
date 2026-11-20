@@ -28,6 +28,7 @@ import { md } from '../shared/markdown.js';
 import {
   buildStory,
   EMPTY_STORY,
+  failureCopy,
   formatStoryClock,
   STORY_ORIGIN_LABEL,
   type StorySection,
@@ -584,6 +585,7 @@ export class StoryView extends LitElement {
           <main class="story-main" @scroll=${() => this.onFeedScroll()}>
             <div class="story-feed">
               ${this.renderHistory()} ${this.renderHero()}
+              ${this.renderFailureNotice()}
               ${this.isWorking() ? this.renderWorking() : nothing} ${this.renderPrompt()}
               ${
                 this.loading && this.story.sections.length === 0
@@ -677,6 +679,23 @@ export class StoryView extends LitElement {
         </div>
       </section>
     `;
+  }
+
+  private renderFailureNotice() {
+    const latest = this.story.sections[this.story.sections.length - 1];
+    if (!latest || (latest.status !== 'failed' && latest.status !== 'cancelled')) {
+      return nothing;
+    }
+    const copy = failureCopy(latest.error ?? latest.lastRetryError ?? '');
+    const title = latest.status === 'failed' ? '本轮没有完成' : '本轮已取消';
+    const retry = latest.retries > 0 ? ` 已重试 ${latest.retries} 次。` : '';
+    return html`<div class="story-failure" role="alert">
+      <span class="story-failure__mark" aria-hidden="true">!</span>
+      <div class="story-failure__body">
+        <strong>${title}</strong>
+        <p>${copy.detail}${retry}</p>
+      </div>
+    </div>`;
   }
 
   private renderWorking() {
