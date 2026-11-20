@@ -14,7 +14,7 @@
  */
 
 import type { TodoItem } from '../../api/assistant.js';
-import { toolFailure, type TimelineBlock } from '../chat/timeline-model.js';
+import { toolFailure, type PendingQuestion, type TimelineBlock } from '../chat/timeline-model.js';
 
 export type StoryTone =
   | 'read'
@@ -654,7 +654,11 @@ export function failureCopy(error: string): FailureCopy {
   };
 }
 
-export function buildStory(blocks: TimelineBlock[], todos: TodoItem[] = []): StoryView {
+export function buildStory(
+  blocks: TimelineBlock[],
+  todos: TodoItem[] = [],
+  pendingQuestion: PendingQuestion | null = null,
+): StoryView {
   const devices = new Map<string, StoryDevice>();
   const vision: StoryVision[] = [];
   const sections: StorySection[] = [];
@@ -799,6 +803,22 @@ export function buildStory(blocks: TimelineBlock[], todos: TodoItem[] = []): Sto
       }
       default:
         break;
+    }
+  }
+
+  if (pendingQuestion) {
+    const section = sections[sections.length - 1];
+    const first = pendingQuestion.questions[0];
+    if (section) {
+      section.steps.push({
+        id: `question:${pendingQuestion.questionId}`,
+        title: first?.header ? `等待你确认：${first.header}` : '等待你确认',
+        detail: first?.question ?? 'AI 正在等待你的回答。',
+        at: pendingQuestion.at ?? section.startedAt,
+        status: 'running',
+        tone: 'ask',
+        visionIds: [],
+      });
     }
   }
 

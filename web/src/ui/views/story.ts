@@ -408,7 +408,11 @@ export class StoryView extends LitElement {
   }
 
   private rebuild(): void {
-    this.story = buildStory(this.timeline.blocks, this.timeline.todos);
+    this.story = buildStory(
+      this.timeline.blocks,
+      this.timeline.todos,
+      this.timeline.pendingQuestion,
+    );
     this.recomputeAchievements();
   }
 
@@ -453,6 +457,9 @@ export class StoryView extends LitElement {
   }
 
   private isWorking(): boolean {
+    if (this.timeline.pendingQuestion || this.timeline.pendingApprovals.length > 0) {
+      return false;
+    }
     if (
       this.story.running !== undefined ||
       this.story.sections.some((section) => section.status === 'running')
@@ -585,7 +592,7 @@ export class StoryView extends LitElement {
           <main class="story-main" @scroll=${() => this.onFeedScroll()}>
             <div class="story-feed">
               ${this.renderHistory()} ${this.renderHero()}
-              ${this.renderFailureNotice()}
+              ${this.renderFailureNotice()} ${this.renderWaiting()}
               ${this.isWorking() ? this.renderWorking() : nothing} ${this.renderPrompt()}
               ${
                 this.loading && this.story.sections.length === 0
@@ -679,6 +686,41 @@ export class StoryView extends LitElement {
         </div>
       </section>
     `;
+  }
+
+  private renderWaiting() {
+    const question = this.timeline.pendingQuestion;
+    const approval = this.timeline.pendingApprovals[0];
+    if (!question && !approval) return nothing;
+    const first = question?.questions[0];
+    const title = question
+      ? first?.header
+        ? `等待你确认：${first.header}`
+        : '等待你确认'
+      : `等待审批：${approval?.tool ?? '操作'}`;
+    const body = question
+      ? (first?.question ?? 'AI 需要你的回答才能继续。')
+      : (approval?.summary ?? '有一个操作需要你的批准。');
+    const options = first?.options.slice(0, 3) ?? [];
+    return html`<div class="story-waiting" role="status">
+      <div class="story-waiting__head">
+        <span class="story-waiting__mark" aria-hidden="true">?</span>
+        <div>
+          <strong>${title}</strong>
+          <p>${body}</p>
+        </div>
+      </div>
+      ${
+        options.length > 0
+          ? html`<ul class="story-waiting__options">
+              ${options.map((option) => html`<li>${option.label}</li>`)}
+            </ul>`
+          : nothing
+      }
+      <button class="story-waiting__action" @click=${(event: Event) => this.openEngineer(event)}>
+        去对话处理
+      </button>
+    </div>`;
   }
 
   private renderFailureNotice() {
