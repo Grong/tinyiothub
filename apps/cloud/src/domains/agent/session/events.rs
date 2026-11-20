@@ -92,7 +92,7 @@ fn payload_digest(payload: &serde_json::Value) -> String {
     hash.iter().map(|byte| format!("{byte:02x}")).collect()
 }
 
-/// spec §5.4.3：`session.started { session_id, kind }` 的统一构造。
+/// spec §5.4.3：`session/start { session_id, kind }` 的统一构造。
 pub fn session_started_payload(session_id: &str, kind: &str) -> serde_json::Value {
     serde_json::json!({ "sessionId": session_id, "kind": kind })
 }
@@ -152,11 +152,11 @@ mod tests {
     #[test]
     fn event_carries_turn_identity_and_schema() {
         let context = ctx();
-        let input = session_event(&context, "todo.updated", json!({"todos": []}));
+        let input = session_event(&context, "todo/write", json!({"todos": []}));
         assert_eq!(input.workspace_id, "ws");
         assert_eq!(input.session_id, "agent:ws:agent_main/s1");
         assert_eq!(input.run_id, Some("run1".to_string()));
-        assert_eq!(input.event_type, "todo.updated");
+        assert_eq!(input.event_type, "todo/write");
         assert_eq!(input.schema_v, 1);
         assert_eq!(input.execution_mode, ExecutionMode::Production);
         assert_eq!(input.task_id, None);
@@ -168,8 +168,8 @@ mod tests {
     #[test]
     fn same_payload_has_stable_digest_but_new_event_id() {
         let context = ctx();
-        let a = session_event(&context, "todo.updated", json!({"todos": []}));
-        let b = session_event(&context, "todo.updated", json!({"todos": []}));
+        let a = session_event(&context, "todo/write", json!({"todos": []}));
+        let b = session_event(&context, "todo/write", json!({"todos": []}));
         assert_eq!(a.payload_digest, b.payload_digest);
         assert_ne!(a.event_id, b.event_id);
     }

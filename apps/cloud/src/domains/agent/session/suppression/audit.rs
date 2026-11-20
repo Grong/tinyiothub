@@ -37,12 +37,12 @@ pub const SKIP_REASON_NO_MATERIAL_CHANGE: &str = "no_material_change";
 pub const TURN_KIND_SCHEDULED: &str = "scheduled";
 /// The exact skipped lifecycle, in commit order.
 pub const SKIP_EVENT_TYPES: [&str; 6] = [
-    "trigger.received",
-    "wake.dispatched",
-    "session.started",
+    "trigger/received",
+    "wake/dispatched",
+    "session/start",
     "turn/start",
     "turn/end",
-    "session.ended",
+    "session/end",
 ];
 
 const WAKE_ID_DOMAIN: &[u8] = b"tinyiothub:planned-wake:v1\0";
@@ -192,12 +192,12 @@ pub fn skipped_lifecycle_events(
     let checked_at = checked_at.to_rfc3339_opts(SecondsFormat::Secs, true);
     vec![
         event(
-            "trigger.received",
+            "trigger/received",
             json!({ "trigger": "schedule", "sourceId": &attempt.wake_event_id }),
         ),
-        event("wake.dispatched", json!({ "wakeEventId": &attempt.wake_event_id })),
+        event("wake/dispatched", json!({ "wakeEventId": &attempt.wake_event_id })),
         event(
-            "session.started",
+            "session/start",
             session_started_payload(&wake.session_id, TURN_KIND_SCHEDULED),
         ),
         event(
@@ -215,7 +215,7 @@ pub fn skipped_lifecycle_events(
             }),
         ),
         event(
-            "session.ended",
+            "session/end",
             json!({ "sessionId": &wake.session_id, "outcome": "skipped" }),
         ),
     ]
@@ -1453,7 +1453,7 @@ mod audit {
                 execution_mode: ExecutionMode::Production,
                 run_id: None,
                 task_id: None,
-                event_type: "message.created".to_string(),
+                event_type: "user/message".to_string(),
                 occurred_at: ts(),
                 cause_id: None,
                 schema_v: 1,
@@ -1529,7 +1529,7 @@ mod audit {
         );
         assert_ne!(
             first.event_id("turn/end"),
-            first.event_id("session.ended"),
+            first.event_id("session/end"),
             "event ids must distinguish lifecycle events"
         );
         // A replay of the same attempt derives the same ids.

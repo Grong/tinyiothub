@@ -1233,7 +1233,7 @@ mod tests {
 
         let mut trigger = input("trigger", ExecutionMode::Production);
         trigger.run_id = Some("turn-1".to_string());
-        trigger.event_type = "trigger.received".to_string();
+        trigger.event_type = "trigger/received".to_string();
         trigger.payload_json = json!({"trigger": "schedule"});
         fixture.db.append_session_event(&trigger).await.expect("trigger");
 
@@ -1252,7 +1252,7 @@ mod tests {
 
         let mut question = input("question", ExecutionMode::Production);
         question.run_id = Some("agent-run-1".to_string());
-        question.event_type = "question.asked".to_string();
+        question.event_type = "question/asked".to_string();
         question.payload_json = json!({"turnId": "turn-1", "questionId": "q-1", "questions": []});
         fixture.db.append_session_event(&question).await.expect("question");
 
@@ -1264,7 +1264,7 @@ mod tests {
         let types: Vec<&str> = page.events.iter().map(|event| event.event_type.as_str()).collect();
         assert_eq!(
             types,
-            vec!["trigger.received", "turn/start", "step.text", "question.asked"]
+            vec!["trigger/received", "turn/start", "step.text", "question/asked"]
         );
         assert_eq!(page.high_watermark, 4);
 
@@ -1360,7 +1360,7 @@ mod tests {
                     execution_mode: ExecutionMode::Production,
                     run_id: None,
                     task_id: None,
-                    event_type: "message.created".to_string(),
+                    event_type: "user/message".to_string(),
                     occurred_at,
                     cause_id: None,
                     schema_v: 1,

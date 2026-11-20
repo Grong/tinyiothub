@@ -891,11 +891,11 @@ impl Db {
         }
 
         // User input that arrived after the preflight snapshot belongs to the
-        // next Turn. Only `message.created(role=user)` controls the cursor.
+        // next Turn. Only `user/message` controls the cursor.
         let current_cursor: i64 = sqlx::query_scalar(
             "SELECT COALESCE(MAX(seq), 0) FROM session_events \
              WHERE execution_mode = 'production' AND session_id = ? \
-               AND type = 'message.created' \
+               AND type = 'user/message' \
                AND json_extract(payload_json, '$.role') = 'user'",
         )
         .bind(&attempt.session_id)

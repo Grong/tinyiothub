@@ -65,7 +65,7 @@ impl GetSkillTool {
         events
             .emit(session_event(
                 &context,
-                "skill.loaded",
+                "skill/loaded",
                 serde_json::json!({
                     "skillId": skill.name,
                     "name": skill.name,
@@ -259,7 +259,7 @@ mod tests {
         assert!(result.output.contains("节能分析"));
         let events = sink.events.lock().await;
         assert_eq!(events.len(), 1);
-        assert_eq!(events[0].event_type, "skill.loaded");
+        assert_eq!(events[0].event_type, "skill/loaded");
         assert_eq!(events[0].payload_json["name"], "energy-saving");
         assert_eq!(events[0].payload_json["version"], "2");
     }

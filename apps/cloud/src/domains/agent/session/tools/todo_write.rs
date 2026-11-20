@@ -45,7 +45,7 @@ impl TodoWriteTool {
         }
         let todos = self.store.replace(&context.session_key, list.todos.clone());
         self.events
-            .emit(session_event(&context, "todo.updated", json!({ "todos": &todos })))
+            .emit(session_event(&context, "todo/write", json!({ "todos": &todos })))
             .await?;
         Ok(ToolResult {
             success: true,
@@ -164,7 +164,7 @@ mod tests {
         assert!(result.success);
         assert_eq!(store.get("agent:ws:agent_main/s1").len(), 1);
         let events = sink.events.lock().await;
-        assert_eq!(events.last().unwrap().event_type, "todo.updated");
+        assert_eq!(events.last().unwrap().event_type, "todo/write");
         assert_eq!(
             events.last().unwrap().payload_json["todos"][0]["content"],
             "检查离线事件"

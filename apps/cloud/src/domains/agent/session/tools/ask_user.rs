@@ -59,7 +59,7 @@ impl AskUserTool {
             .events
             .emit(session_event(
                 &context,
-                "question.asked",
+                "question/asked",
                 json!({
                     "questionId": question_id.clone(),
                     "questions": questions.clone()
@@ -78,7 +78,7 @@ impl AskUserTool {
                     .events
                     .emit(session_event(
                         &context,
-                        "question.answered",
+                        "question/answered",
                         json!({
                             "questionId": question_id,
                             "answers": answer.answers,
@@ -98,7 +98,7 @@ impl AskUserTool {
                     .events
                     .emit(session_event(
                         &context,
-                        "question.answered",
+                        "question/answered",
                         json!({
                             "questionId": question_id,
                             "answers": [],
@@ -114,7 +114,7 @@ impl AskUserTool {
                     .events
                     .emit(session_event(
                         &context,
-                        "question.answered",
+                        "question/answered",
                         json!({
                             "questionId": question_id,
                             "answers": [],
@@ -272,17 +272,17 @@ mod tests {
             async move { tool.execute(args()).await }
         });
 
-        // 等 question.asked 落进 sink，再回答。
+        // 等 question/asked 落进 sink，再回答。
         let mut question_id = None;
         for _ in 0..100 {
             tokio::time::sleep(Duration::from_millis(5)).await;
             let events = sink.events.lock().await;
-            if let Some(event) = events.iter().find(|event| event.event_type == "question.asked") {
+            if let Some(event) = events.iter().find(|event| event.event_type == "question/asked") {
                 question_id = event.payload_json["questionId"].as_str().map(ToString::to_string);
                 break;
             }
         }
-        let question_id = question_id.expect("question.asked emitted");
+        let question_id = question_id.expect("question/asked emitted");
         broker
             .answer(
                 "agent:ws:agent_main/s1",
@@ -301,7 +301,7 @@ mod tests {
         assert!(result.success);
         assert!(result.output.contains("仅离线"));
         let events = sink.events.lock().await;
-        assert!(events.iter().any(|event| event.event_type == "question.answered"));
+        assert!(events.iter().any(|event| event.event_type == "question/answered"));
     }
 
     #[tokio::test]

@@ -1372,20 +1372,20 @@ mod tests {
         assert_eq!(
             types,
             vec![
-                "trigger.received",
-                "wake.dispatched",
-                "session.started",
+                "trigger/received",
+                "wake/dispatched",
+                "session/start",
                 "turn/start",
                 "step/start",
                 "assistant/message",
                 "step/end",
                 "turn/end",
-                "session.ended",
+                "session/end",
             ]
         );
         let session_key = events[2].payload_json["sessionId"]
             .as_str()
-            .expect("session.started must carry sessionId")
+            .expect("session/start must carry sessionId")
             .to_string();
         assert_eq!(events[2].payload_json["kind"], "scheduled");
         assert_eq!(events.last().unwrap().payload_json["outcome"], "completed");

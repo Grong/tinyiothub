@@ -98,7 +98,7 @@ impl Tool for PermissionGuardTool {
                     .events
                     .emit(session_event(
                         &context,
-                        "approval.requested",
+                        "approval/requested",
                         json!({
                             "approvalId": approval_id,
                             "action": self.inner.name(),
@@ -126,7 +126,7 @@ impl Tool for PermissionGuardTool {
                     .events
                     .emit(session_event(
                         &context,
-                        "approval.resolved",
+                        "approval/resolved",
                         json!({ "approvalId": approval_id, "resolution": resolution }),
                     ))
                     .await;
@@ -291,7 +291,7 @@ mod tests {
         assert_eq!(calls.load(Ordering::SeqCst), 1);
         let events = sink.events.lock().await;
         let types: Vec<&str> = events.iter().map(|event| event.event_type.as_str()).collect();
-        assert_eq!(types, vec!["approval.requested", "approval.resolved"]);
+        assert_eq!(types, vec!["approval/requested", "approval/resolved"]);
         assert_eq!(events[1].payload_json["resolution"], "approved");
     }
 
@@ -324,7 +324,7 @@ mod tests {
         assert_eq!(calls.load(Ordering::SeqCst), 0);
         let events = sink.events.lock().await;
         let types: Vec<&str> = events.iter().map(|event| event.event_type.as_str()).collect();
-        assert_eq!(types, vec!["approval.requested", "approval.resolved"]);
+        assert_eq!(types, vec!["approval/requested", "approval/resolved"]);
         assert_eq!(events[1].payload_json["resolution"], "denied");
     }
 
@@ -347,8 +347,8 @@ mod tests {
         assert!(!result.success);
         assert_eq!(calls.load(Ordering::SeqCst), 0);
         let events = sink.events.lock().await;
-        let last = events.last().expect("approval.resolved emitted");
-        assert_eq!(last.event_type, "approval.resolved");
+        let last = events.last().expect("approval/resolved emitted");
+        assert_eq!(last.event_type, "approval/resolved");
         assert_eq!(last.payload_json["resolution"], "denied");
     }
 

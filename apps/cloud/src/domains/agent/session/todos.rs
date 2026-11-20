@@ -1,6 +1,6 @@
 //! TodoStore — 当前会话的 Todo 列表缓存。
 //!
-//! DB 里的 `todo.updated` 事件是真相；这里只保存最近一次写入，供同进程内的
+//! DB 里的 `todo/write` 事件是真相；这里只保存最近一次写入，供同进程内的
 //! `/sessions/{key}/todos` 快速读取。重启后由事件重放恢复。
 
 use std::sync::Arc;

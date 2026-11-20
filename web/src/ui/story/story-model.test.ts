@@ -47,7 +47,7 @@ const evidence = [
 describe('buildStory', () => {
   it('translates a device read into a business step, device card and vision card', () => {
     const model = timelineOf(
-      event(1, 'trigger.received', { trigger: 'schedule', sourceId: 'wake-1' }),
+      event(1, 'trigger/received', { trigger: 'schedule', sourceId: 'wake-1' }),
       event(2, 'turn/start', { turnId: 't1' }),
       event(3, 'tool/call', {
         toolCallId: 'c1',
@@ -60,9 +60,8 @@ describe('buildStory', () => {
         result: JSON.stringify(deviceResult),
         evidence,
       }),
-      event(5, 'message.created', {
+      event(5, 'assistant/message', {
         messageId: 'm1',
-        role: 'assistant',
         text: '冷却塔 A 离线，已通知值班人员。',
       }),
       event(6, 'turn/end', { turnId: 't1', outcome: 'completed', toolCalls: 1 }),
@@ -320,8 +319,15 @@ describe('buildStory', () => {
   it('keeps the latest plan and the reasoning used to reach it', () => {
     const model = timelineOf(
       event(1, 'turn/start', { turnId: 't1' }),
-      event(2, 'step.thinking', { turnId: 't1', thinking: '先看离线设备，再看告警。' }),
-      event(3, 'todo.updated', {
+      event(2, 'assistant/message', {
+        turnId: 't1',
+        stepId: 't1:s1',
+        messageId: 'm1',
+        text: '',
+        reasoning: '先看离线设备，再看告警。',
+        stream: [{ kind: 'reasoning', atMs: 1, text: '先看离线设备，再看告警。' }],
+      }),
+      event(3, 'todo/write', {
         todos: [
           { content: '检查离线设备', status: 'completed', activeForm: '检查离线设备' },
           { content: '确认告警', status: 'in_progress', activeForm: '确认告警' },
@@ -337,14 +343,14 @@ describe('buildStory', () => {
     expect(story.plans).toHaveLength(2);
     expect(story.sections[0].reasoning).toContain('先看离线设备');
     expect(story.sections[0].steps).toContainEqual(
-      expect.objectContaining({ title: 'AI 在思考', tone: 'think', status: 'running' }),
+      expect.objectContaining({ title: 'AI 在思考', tone: 'think', status: 'done' }),
     );
   });
 
   it('keeps an unanswered question visible after the turn ends', () => {
     const model = timelineOf(
       event(1, 'turn/start', { turnId: 't-q' }),
-      event(2, 'question.asked', {
+      event(2, 'question/asked', {
         questionId: 'q-closed',
         questions: [
           {
@@ -368,7 +374,7 @@ describe('buildStory', () => {
     const model = timelineOf(
       event(1, 'turn/start', { turnId: 't-wait' }),
       event(2, 'step.text', { turnId: 't-wait', text: '诊断完成，需要确认操作范围。' }),
-      event(3, 'question.asked', {
+      event(3, 'question/asked', {
         questionId: 'q-1',
         questions: [
           {
@@ -409,18 +415,22 @@ describe('buildStory', () => {
       'CompletionError: ProviderError: LLM streaming request failed: HTTP 429: rate_limit_error: 已达到 Token Plan 用量上限';
     const model = timelineOf(
       event(1, 'turn/start', { turnId: 't-fail' }),
-      event(2, 'turn.retry', {
+      event(2, 'assistant/attempt', {
         turnId: 't-fail',
+        stepId: 't-fail:s1',
+        attemptId: 'a1',
         attempt: 1,
-        maxRetries: 3,
-        delayMs: 1000,
+        maxAttempts: 4,
+        retryDelayMs: 1000,
         error: quota,
       }),
-      event(3, 'turn.retry', {
+      event(3, 'assistant/attempt', {
         turnId: 't-fail',
+        stepId: 't-fail:s1',
+        attemptId: 'a2',
         attempt: 2,
-        maxRetries: 3,
-        delayMs: 2000,
+        maxAttempts: 4,
+        retryDelayMs: 2000,
         error: quota,
       }),
       event(4, 'turn/end', {
@@ -430,7 +440,7 @@ describe('buildStory', () => {
         modelCalls: 0,
         toolCalls: 0,
       }),
-      event(5, 'session.ended', { outcome: 'failed' }),
+      event(5, 'session/end', { outcome: 'failed' }),
       event(6, 'turn/start', { turnId: 't-next' }),
       event(7, 'turn/end', { turnId: 't-next', outcome: 'completed' }),
     );

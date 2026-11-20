@@ -1285,8 +1285,8 @@ fn default_memory_source(db: &Arc<Db>) -> Arc<dyn PromptMemorySource> {
 
 /// 一次 wake session 的来源（scheduled / event 共用同一套生命周期写入）。
 ///
-/// `source_id` 为 `None` 时，`trigger.received.sourceId` 回落到本轮的
-/// `wake.dispatched.wakeEventId`（scheduled 路径的相关性保持）。
+/// `source_id` 为 `None` 时，`trigger/received.sourceId` 回落到本轮的
+/// `wake/dispatched.wakeEventId`（scheduled 路径的相关性保持）。
 struct SessionOrigin<'a> {
     workspace_id: &'a str,
     assistant_id: &'a str,
@@ -1723,7 +1723,7 @@ impl WakeRunner {
             for event in page.events {
                 let role = match event.event_type.as_str() {
                     "assistant/message" => "assistant",
-                    "message.created" => event.payload_json["role"].as_str().unwrap_or_default(),
+                    "user/message" => "user",
                     _ => continue,
                 };
                 if role != "user" && role != "assistant" {
@@ -1874,7 +1874,7 @@ impl WakeRunner {
             .as_ref()
             .map(|attempt| attempt.wake_event_id.clone())
             .unwrap_or_else(|| Uuid::new_v4().to_string());
-        // scheduled 无显式 source：与本轮 wake.dispatched.wakeEventId 保持同一
+        // scheduled 无显式 source：与本轮 wake/dispatched.wakeEventId 保持同一
         // 身份；event 使用告警 id。
         let trigger_source_id = origin.source_id.unwrap_or_else(|| wake_event_id.clone());
         let mut events_healthy = true;
@@ -1882,7 +1882,7 @@ impl WakeRunner {
             .emit_lifecycle(
                 &context,
                 attempt.as_ref(),
-                "trigger.received",
+                "trigger/received",
                 json!({ "trigger": origin.trigger, "sourceId": trigger_source_id }),
             )
             .await;
@@ -1892,13 +1892,13 @@ impl WakeRunner {
             dispatched["supersedes"] = json!(link.supersedes);
         }
         events_healthy &= self
-            .emit_lifecycle(&context, attempt.as_ref(), "wake.dispatched", dispatched)
+            .emit_lifecycle(&context, attempt.as_ref(), "wake/dispatched", dispatched)
             .await;
         events_healthy &= self
             .emit_lifecycle(
                 &context,
                 attempt.as_ref(),
-                "session.started",
+                "session/start",
                 session_started_payload(&session_key, origin.kind),
             )
             .await;
@@ -1944,7 +1944,7 @@ impl WakeRunner {
         };
         // Missing lifecycle/terminal events are failed evidence, never a
         // successful Turn. This decides the reported outcome *and* the
-        // `session.ended` payload, so a persisted event never disagrees with
+        // `session/end` payload, so a persisted event never disagrees with
         // the report.
         if (!events_healthy || !turn_health.is_healthy()) && matches!(outcome, WakeOutcome::Completed) {
             outcome = WakeOutcome::Failed {
@@ -1955,7 +1955,7 @@ impl WakeRunner {
             .emit_lifecycle(
                 &context,
                 attempt.as_ref(),
-                "session.ended",
+                "session/end",
                 json!({ "sessionId": &session_key, "outcome": outcome.as_str() }),
             )
             .await;
@@ -2683,7 +2683,7 @@ mod tests {
             wake.db
                 .append_session_event(&session_event(
                     &context,
-                    "message.created",
+                    "user/message",
                     json!({ "messageId": uuid::Uuid::new_v4().to_string(), "role": "user", "text": text }),
                 ))
                 .await
@@ -2817,21 +2817,21 @@ mod tests {
         assert_eq!(
             types,
             vec![
-                "trigger.received",
-                "wake.dispatched",
-                "session.started",
+                "trigger/received",
+                "wake/dispatched",
+                "session/start",
                 "turn/start",
                 "step/start",
                 "assistant/message",
                 "step/end",
                 "turn/end",
-                "session.ended",
+                "session/end",
             ]
         );
         assert_eq!(events[2].payload_json["kind"], "scheduled");
         assert_eq!(
             events[0].payload_json["sourceId"], events[1].payload_json["wakeEventId"],
-            "scheduled trigger.received.sourceId must correlate with wake.dispatched.wakeEventId"
+            "scheduled trigger/received.sourceId must correlate with wake/dispatched.wakeEventId"
         );
         assert_eq!(events.last().unwrap().payload_json["outcome"], "completed");
         let session = wake.db.get_session(&report.session_key).await.unwrap().unwrap();
@@ -3086,8 +3086,8 @@ mod tests {
         let events = sink.events.lock().await;
         assert_eq!(
             events.last().unwrap().event_type,
-            "session.ended",
-            "cancelled wake must still emit session.ended"
+            "session/end",
+            "cancelled wake must still emit session/end"
         );
         assert_eq!(events.last().unwrap().payload_json["outcome"], "cancelled");
         let terminal = events
@@ -3137,15 +3137,15 @@ mod tests {
         assert_eq!(
             types,
             vec![
-                "trigger.received",
-                "wake.dispatched",
-                "session.started",
+                "trigger/received",
+                "wake/dispatched",
+                "session/start",
                 "turn/start",
                 "step/start",
                 "assistant/message",
                 "step/end",
                 "turn/end",
-                "session.ended"
+                "session/end"
             ]
         );
         assert_eq!(events[2].payload_json["kind"], "event");
@@ -3769,7 +3769,7 @@ mod tests {
 
     #[tokio::test]
     async fn missing_terminal_session_event_prevents_baseline_installation() {
-        for failed_event in ["turn/end", "session.ended"] {
+        for failed_event in ["turn/end", "session/end"] {
             let fixture = lifecycle_fixture(SuppressionMode::Enforce, Some(failed_event), true).await;
             let report = fixture.run().await;
             assert!(
@@ -3946,8 +3946,8 @@ mod tests {
         let dispatched = events
             .iter()
             .rev()
-            .find(|event| event.event_type == "wake.dispatched")
-            .expect("wake.dispatched");
+            .find(|event| event.event_type == "wake/dispatched")
+            .expect("wake/dispatched");
         assert_eq!(
             dispatched.payload_json["previousAttemptId"],
             serde_json::json!(skip_attempt_id)

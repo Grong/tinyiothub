@@ -372,18 +372,18 @@ pub async fn send_message(
                 .events
                 .emit(crate::domains::agent::session::session_event(
                     &context,
-                    "session.started",
+                    "session/start",
                     crate::domains::agent::session::session_started_payload(&session_key, "chat"),
                 ))
                 .await
         {
-            tracing::warn!(%error, %session_key, "Failed to persist session.started event");
+            tracing::warn!(%error, %session_key, "Failed to persist session/start event");
         }
         if let Err(error) = session_runtime
             .events
             .emit(crate::domains::agent::session::session_event(
                 &context,
-                "message.created",
+                "user/message",
                 serde_json::json!({
                     "messageId": uuid::Uuid::new_v4().to_string(),
                     "role": "user",
@@ -399,7 +399,7 @@ pub async fn send_message(
                 .events
                 .emit(crate::domains::agent::session::session_event(
                     &context,
-                    "skill.loaded",
+                    "skill/loaded",
                     serde_json::json!({
                         "skillId": skill_name,
                         "name": skill_name,
@@ -408,7 +408,7 @@ pub async fn send_message(
                 ))
                 .await
         {
-            tracing::warn!(%error, %session_key, "Failed to persist skill.loaded event");
+            tracing::warn!(%error, %session_key, "Failed to persist skill/loaded event");
         }
 
         let observer: Arc<dyn crate::domains::agent::session::TurnObserver> = Arc::new(ChatEventObserver {

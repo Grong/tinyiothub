@@ -893,7 +893,7 @@ async fn raw_turn_state_is_filtered_from_public_session_events_and_hud() {
         WS,
         "event-visible",
         &key,
-        "message.created",
+        "user/message",
         json!({"messageId": "m1", "turnId": "turn:visible", "role": "assistant", "text": "hello"}),
     )
     .await;
@@ -907,7 +907,7 @@ async fn raw_turn_state_is_filtered_from_public_session_events_and_hud() {
         !serialized.contains("turn.state"),
         "public Session Events leaked turn.state: {serialized}"
     );
-    assert!(serialized.contains("message.created"));
+    assert!(serialized.contains("user/message"));
 
     let hud = send(
         &app,

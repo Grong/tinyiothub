@@ -232,6 +232,13 @@ fn harness_migrator() -> Migrator {
             include_str!("../migrations/20261120000004_harness_chunk_cleanup.sql").into_sql_str(),
             false,
         ),
+        Migration::new(
+            20261120000005,
+            "harness_event_vocab_final".into(),
+            MigrationType::Simple,
+            include_str!("../migrations/20261120000005_harness_event_vocab_final.sql").into_sql_str(),
+            false,
+        ),
     ]);
     // Rollback/mixed-version workers must open workspaces that already contain
     // additive migrations unknown to their older binary, matching the platform

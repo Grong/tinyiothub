@@ -1,6 +1,6 @@
 //! QuestionBroker — 把 `ask_user` 的阻塞等待与 HTTP 回答端点解耦。
 //!
-//! 工具注册一个 oneshot，事件 `question.asked` 把 question_id 送到前端；
+//! 工具注册一个 oneshot，事件 `question/asked` 把 question_id 送到前端；
 //! 回答端点按 session_key 校验后 resolve。
 
 use std::sync::Arc;

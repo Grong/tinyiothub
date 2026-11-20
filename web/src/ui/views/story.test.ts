@@ -88,7 +88,7 @@ describe('view-story', () => {
     hoisted.connectSessionEvents.mockReturnValue(() => {});
     hoisted.fetchSessionEvents.mockResolvedValue({
       events: [
-        event(1, 'trigger.received', { trigger: 'schedule' }),
+        event(1, 'trigger/received', { trigger: 'schedule' }),
         event(2, 'turn/start', { turnId: 't1' }),
         event(3, 'tool/call', {
           toolCallId: 'c1',
@@ -108,9 +108,8 @@ describe('view-story', () => {
             state: { 出水温度: '32.5' },
           }),
         }),
-        event(5, 'message.created', {
+        event(5, 'assistant/message', {
           messageId: 'm1',
-          role: 'assistant',
           text: '冷却塔 A 运行正常，出水温度 32.5℃。',
         }),
         event(6, 'turn/end', { turnId: 't1', outcome: 'completed', toolCalls: 1 }),
@@ -207,10 +206,28 @@ describe('view-story', () => {
     connection.onEvent(event(20, 'turn/start', { turnId: 't-new' }));
     await vi.waitFor(() => expect(el.textContent).not.toContain('冷却塔 A'));
 
-    connection.onEvent(event(21, 'step.text', { turnId: 't-new', text: '正在检查' }));
+    connection.onLive({
+      v: 2,
+      frame: 'stream/delta',
+      streamId: 't-new:s1',
+      turnId: 't-new',
+      stepId: 't-new:s1',
+      index: 0,
+      kind: 'text',
+      text: '正在检查',
+    });
     await vi.waitFor(() => expect(el.textContent).toContain('正在检查'));
 
-    connection.onEvent(event(22, 'step.text', { turnId: 't-new', text: '新风机。' }));
+    connection.onLive({
+      v: 2,
+      frame: 'stream/delta',
+      streamId: 't-new:s1',
+      turnId: 't-new',
+      stepId: 't-new:s1',
+      index: 0,
+      kind: 'text',
+      text: '新风机。',
+    });
     await vi.waitFor(() => expect(el.textContent).toContain('正在检查新风机。'));
 
     connection.onEvent(
