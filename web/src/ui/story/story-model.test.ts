@@ -373,7 +373,7 @@ describe('buildStory', () => {
   it('surfaces a pending question as a waiting step', () => {
     const model = timelineOf(
       event(1, 'turn/start', { turnId: 't-wait' }),
-      event(2, 'step.text', { turnId: 't-wait', text: '诊断完成，需要确认操作范围。' }),
+      event(2, 'assistant/message', { turnId: 't-wait', messageId: 'm-wait', text: '诊断完成，需要确认操作范围。' }),
       event(3, 'question/asked', {
         questionId: 'q-1',
         questions: [

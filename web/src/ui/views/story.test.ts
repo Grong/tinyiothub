@@ -1,9 +1,15 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import type { LiveFrame } from '../../types/session-protocol.js';
 
 const hoisted = vi.hoisted(() => ({
   fetchSessionEvents: vi.fn(),
   connectSessionEvents: vi.fn(
-    (_opts: { sessionKey: string; after: number; onEvent: (event: SessionEvent) => void }) =>
+    (_opts: {
+      sessionKey: string;
+      after: number;
+      onEvent: (event: SessionEvent) => void;
+      onLive: (frame: LiveFrame) => void;
+    }) =>
       () => {},
   ),
   fetchSessionTodos: vi.fn(),
