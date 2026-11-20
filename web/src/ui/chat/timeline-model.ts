@@ -79,6 +79,7 @@ export type TimelineBlock =
 export interface PendingQuestion {
   questionId: string;
   questions: Question[];
+  at?: string;
 }
 
 export interface PendingApproval {
@@ -390,6 +391,7 @@ export class TimelineModel {
           this.pendingQuestion = {
             questionId: asString(payload.questionId),
             questions: Array.isArray(payload.questions) ? (payload.questions as Question[]) : [],
+            at,
           };
           this.pendingQuestionSeq = event.seq;
         }
