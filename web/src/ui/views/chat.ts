@@ -18,6 +18,7 @@ import {
   type ChatState,
 } from '../controllers/chat.js';
 import { resolveSessionKey } from '../shared/session-key.js';
+import '../chat/task-plan-panel.js';
 import {
   TimelineModel,
   timelineFromHistory,
@@ -441,6 +442,11 @@ export class ChatView extends LitElement {
   private renderComposer() {
     const fullAccess = this.permissionMode === 'full_access';
     return html`
+      ${
+        this.timeline.todos.length > 0
+          ? html`<task-plan-panel .todos=${this.timeline.todos}></task-plan-panel>`
+          : nothing
+      }
       <div class="composer-dock">
         <textarea
           class="composer-input chat-input"

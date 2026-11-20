@@ -39,6 +39,7 @@ import {
   type AchievementStats,
 } from '../story/story-achievements.js';
 import '../story/achievements-panel.js';
+import '../chat/task-plan-panel.js';
 import '../story/device-deck.js';
 import '../story/vision-deck.js';
 import '../../styles/views/story.css';
@@ -589,7 +590,13 @@ export class StoryView extends LitElement {
             <div class="story-feed">
               ${this.renderHistory()} ${this.renderHero()}
               ${this.renderFailureNotice()} ${this.renderWaiting()}
-              ${this.isWorking() ? this.renderWorking() : nothing} ${this.renderPrompt()}
+              ${this.isWorking() ? this.renderWorking() : nothing}
+              ${
+                this.story.plans.length > 0
+                  ? html`<task-plan-panel .todos=${this.story.plans}></task-plan-panel>`
+                  : nothing
+              }
+              ${this.renderPrompt()}
               ${
                 this.loading && this.story.sections.length === 0
                   ? this.renderSkeleton()
