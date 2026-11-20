@@ -786,9 +786,9 @@ export function buildStory(
         break;
       }
       case 'notice': {
-        // A failed session is explained by the turn-level failure card; do not
-        // duplicate it as a generic "会话结束：failed" row.
-        if (part.text.includes('会话结束') && part.text.includes('failed')) break;
+        // The turn header/status and the failure card explain terminal state;
+        // a generic "会话结束：failed/cancelled" row is duplicate noise.
+        if (part.text.startsWith('会话结束：')) break;
         const section = current ?? ensureSection(part.at);
         section.steps.push({
           id: part.id,
