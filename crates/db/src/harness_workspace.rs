@@ -204,6 +204,13 @@ fn harness_migrator() -> Migrator {
             include_str!("../migrations/20261119000003_harness_events_turn_index_shape.sql").into_sql_str(),
             false,
         ),
+        Migration::new(
+            20261120000001,
+            "harness_session_identity".into(),
+            MigrationType::Simple,
+            include_str!("../migrations/20261120000001_harness_session_identity.sql").into_sql_str(),
+            false,
+        ),
     ]);
     // Rollback/mixed-version workers must open workspaces that already contain
     // additive migrations unknown to their older binary, matching the platform

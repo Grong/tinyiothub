@@ -39,9 +39,9 @@ const RECENT_SESSION_EVENTS_SQL: &str = "SELECT seq, event_id, session_id, execu
      FROM session_events WHERE execution_mode = ? \
      ORDER BY occurred_at DESC, ('session:' || event_id) DESC LIMIT ?";
 
-const SESSION_TURN_SEQS_SQL: &str = "SELECT run_id, seq FROM session_events \
+const SESSION_TURN_SEQS_SQL: &str = "SELECT turn_id, seq FROM session_events \
      WHERE execution_mode = ? AND session_id = ? AND type = 'turn.started' \
-       AND run_id IS NOT NULL AND (? IS NULL OR seq < ?) \
+       AND turn_id IS NOT NULL AND (? IS NULL OR seq < ?) \
      ORDER BY seq DESC LIMIT ?";
 
 const MODE_EVENT_PAGE_SQL: &str = "SELECT seq, event_id, session_id, execution_mode, run_id, task_id, type, occurred_at, cause_id, schema_v, payload_digest, payload_json FROM session_events
@@ -252,9 +252,29 @@ pub async fn append_session_event_tx(
 
     validate_schema(input.schema_v)?;
     validate_payload(&input.event_type, &input.payload_json)?;
+    let turn_id = input
+        .payload_json
+        .get("turnId")
+        .and_then(Value::as_str)
+        .map(str::to_owned)
+        .or_else(|| {
+            (input.event_type == "turn.started")
+                .then(|| input.run_id.clone())
+                .flatten()
+        });
+    let step_id = input
+        .payload_json
+        .get("stepId")
+        .and_then(Value::as_str)
+        .map(str::to_owned);
+    let attempt_id = input
+        .payload_json
+        .get("attemptId")
+        .and_then(Value::as_str)
+        .map(str::to_owned);
     let inserted = sqlx::query(
-        "INSERT INTO session_events (event_id, session_id, execution_mode, run_id, task_id, type, occurred_at, cause_id, schema_v, payload_digest, payload_json)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        "INSERT INTO session_events (event_id, session_id, execution_mode, run_id, task_id, type, occurred_at, cause_id, schema_v, payload_digest, payload_json, turn_id, step_id, attempt_id)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT(event_id) DO NOTHING",
     )
     .bind(&input.event_id)
@@ -268,6 +288,9 @@ pub async fn append_session_event_tx(
     .bind(input.schema_v)
     .bind(&input.payload_digest)
     .bind(serde_json::to_string(&input.payload_json)?)
+    .bind(&turn_id)
+    .bind(&step_id)
+    .bind(&attempt_id)
     .execute(&mut **tx)
     .await?;
 
@@ -657,7 +680,9 @@ impl Db {
             None
         };
 
-        let rows = if let Some(oldest_turn_seq) = oldest_turn_seq {
+        let rows = if selected.is_empty() {
+            Vec::new()
+        } else {
             let mut query = sqlx::QueryBuilder::new(
                 "SELECT seq, event_id, session_id, execution_mode, run_id, task_id, type, occurred_at, cause_id, schema_v, payload_digest, payload_json FROM session_events WHERE execution_mode = ",
             );
@@ -665,21 +690,18 @@ impl Db {
                 .push_bind(filter.execution_mode.as_str())
                 .push(" AND session_id = ")
                 .push_bind(session_id)
-                .push(" AND ((seq >= ")
-                .push_bind(oldest_turn_seq)
-                .push(" AND (")
-                .push_bind(before)
-                .push(" IS NULL OR seq < ")
-                .push_bind(before)
-                .push(")) OR run_id IN (");
-            let mut run_ids = query.separated(", ");
-            for (run_id, _) in &selected {
-                run_ids.push_bind(run_id);
+                .push(" AND (turn_id IN (");
+            let mut turn_ids = query.separated(", ");
+            for (turn_id, _) in &selected {
+                turn_ids.push_bind(turn_id);
             }
-            run_ids.push_unseparated(")) ORDER BY seq ASC");
+            turn_ids.push_unseparated(") OR run_id IN (");
+            let mut turn_run_ids = query.separated(", ");
+            for (turn_id, _) in &selected {
+                turn_run_ids.push_bind(turn_id);
+            }
+            turn_run_ids.push_unseparated(")) ORDER BY seq ASC");
             query.build_query_as::<SessionEventRow>().fetch_all(&mut *tx).await?
-        } else {
-            Vec::new()
         };
         let high_watermark = sqlx::query_scalar::<_, i64>(
             "SELECT COALESCE(MAX(seq), 0) FROM session_events \
@@ -1024,6 +1046,9 @@ mod tests {
                 "schema_v",
                 "payload_digest",
                 "payload_json",
+                "turn_id",
+                "step_id",
+                "attempt_id",
             ]
         );
 
@@ -1179,7 +1204,7 @@ mod tests {
         let mut question = input("question", ExecutionMode::Production);
         question.run_id = Some("agent-run-1".to_string());
         question.event_type = "question.asked".to_string();
-        question.payload_json = json!({"questionId": "q-1", "questions": []});
+        question.payload_json = json!({"turnId": "turn-1", "questionId": "q-1", "questions": []});
         fixture.db.append_session_event(&question).await.expect("question");
 
         let page = fixture

@@ -56,6 +56,10 @@ impl SessionEventSink for DbSessionEventSink {
 /// 构造一条 Session 事件。`event_id` 每次新生成；同一 payload 的 digest 稳定，
 /// 因此重放/重试不会产生冲突（DB 以 event_id 幂等）。
 pub fn session_event(ctx: &TurnContext, event_type: &str, payload: serde_json::Value) -> HarnessEventInput {
+    let mut payload = payload;
+    if payload.get("turnId").is_none() {
+        payload["turnId"] = serde_json::json!(ctx.turn_id);
+    }
     HarnessEventInput {
         event_id: Uuid::new_v4().to_string(),
         workspace_id: ctx.workspace_id.clone(),
