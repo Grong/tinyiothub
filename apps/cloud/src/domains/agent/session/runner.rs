@@ -455,6 +455,26 @@ impl SessionRunner {
                                     }
                                 }
                             }
+                            if name == "todo_write" && todos_all_completed(&args) {
+                                let active = agenda.iter().any(|item| item.status == AgendaStatus::InProgress);
+                                if active {
+                                    for item in &mut agenda {
+                                        if item.status == AgendaStatus::InProgress {
+                                            item.status = AgendaStatus::Completed;
+                                        }
+                                    }
+                                    let _ = events_for_agenda
+                                        .emit(session_event(
+                                            &agenda_context,
+                                            "agenda/update",
+                                            json!({
+                                                "turnId": &agenda_context.turn_id,
+                                                "items": &agenda,
+                                            }),
+                                        ))
+                                        .await;
+                                }
+                            }
                             if events
                                 .emit(session_event(
                                     &context,
@@ -784,6 +804,18 @@ impl SessionRunner {
     }
 }
 
+fn todos_all_completed(args: &serde_json::Value) -> bool {
+    let Some(todos) = args.get("todos").and_then(|value| value.as_array()) else {
+        return false;
+    };
+    !todos.is_empty()
+        && todos.iter().all(|todo| {
+            todo.get("status")
+                .and_then(|status| status.as_str())
+                .is_some_and(|status| status == "completed")
+        })
+}
+
 fn agenda_key(args: &serde_json::Value) -> Option<&str> {
     ["skill_name", "skillName", "name"]
         .iter()
@@ -1046,6 +1078,16 @@ mod tests {
                 "costUsd": 0.001
             })
         );
+    }
+
+    #[test]
+    fn completed_todo_list_settles_the_active_agenda() {
+        assert!(super::todos_all_completed(&json!({
+            "todos": [{"content": "a", "status": "completed"}, {"content": "b", "status": "completed"}]
+        })));
+        assert!(!super::todos_all_completed(&json!({
+            "todos": [{"content": "a", "status": "completed"}, {"content": "b", "status": "pending"}]
+        })));
     }
 
     #[tokio::test]
