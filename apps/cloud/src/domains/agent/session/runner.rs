@@ -17,6 +17,8 @@ use tokio_util::sync::CancellationToken;
 use super::context::{TurnContext, TurnContextRegistry};
 use super::events::{SessionEventSink, session_event};
 use super::suppression::audit::{WakeAttempt, attempt_event};
+use super::todos::TodoStore;
+use super::types::TodoStatus;
 
 /// Emit one durable step boundary marker. The runner owns the step window:
 /// a step opens on the first model output/tool call and closes when the next
@@ -185,6 +187,7 @@ pub struct TurnCounts {
 pub struct SessionRunner {
     events: Arc<dyn SessionEventSink>,
     contexts: Arc<TurnContextRegistry>,
+    todos: Option<Arc<TodoStore>>,
 }
 
 /// Accumulates per-model-call usage into one `turn/end` payload.
@@ -227,7 +230,18 @@ impl UsageTotals {
 
 impl SessionRunner {
     pub fn new(events: Arc<dyn SessionEventSink>, contexts: Arc<TurnContextRegistry>) -> Self {
-        Self { events, contexts }
+        Self {
+            events,
+            contexts,
+            todos: None,
+        }
+    }
+
+    /// Wire the session todo cache so a completed model answer cannot silently
+    /// finalize a turn whose plan still has pending work.
+    pub fn with_todos(mut self, todos: Arc<TodoStore>) -> Self {
+        self.todos = Some(todos);
+        self
     }
 
     pub async fn run_turn(
@@ -560,6 +574,31 @@ impl SessionRunner {
 
         let outcome = match result {
             Ok(text) => {
+                let pending = self
+                    .todos
+                    .as_ref()
+                    .map(|store| store.get(&context.session_key))
+                    .unwrap_or_default()
+                    .into_iter()
+                    .filter(|todo| todo.status != TodoStatus::Completed)
+                    .collect::<Vec<_>>();
+                if !pending.is_empty() {
+                    let _ = self
+                        .emit_turn_event(
+                            context,
+                            attempt,
+                            "turn/incomplete",
+                            json!({
+                                "turnId": &context.turn_id,
+                                "pending": pending.iter().map(|todo| json!({
+                                    "content": &todo.content,
+                                    "status": todo.status,
+                                })).collect::<Vec<_>>(),
+                                "reason": "final answer arrived while the task plan still has pending items",
+                            }),
+                        )
+                        .await;
+                }
                 health.terminal_written = self
                     .emit_turn_event(
                         context,
@@ -571,7 +610,9 @@ impl SessionRunner {
                             "text": &text,
                             "toolCalls": tool_calls,
                             "modelCalls": model_calls,
-                            "usage": &usage
+                            "usage": &usage,
+                            "incomplete": !pending.is_empty(),
+                            "pendingTodos": pending.iter().map(|todo| &todo.content).collect::<Vec<_>>(),
                         }),
                     )
                     .await;
@@ -920,6 +961,39 @@ mod tests {
                 "costUsd": 0.001
             })
         );
+    }
+
+    #[tokio::test]
+    async fn completed_turn_with_pending_todos_is_marked_incomplete() {
+        let (runner, sink) = runner_and_sink();
+        let todos = Arc::new(TodoStore::default());
+        todos.replace(
+            "agent:ws:agent_main/s1",
+            vec![super::super::types::Todo {
+                content: "检查告警".into(),
+                status: TodoStatus::Pending,
+                active_form: "检查告警".into(),
+            }],
+        );
+        let runner = runner.with_todos(todos);
+
+        let outcome = runner
+            .run_turn(&ScriptedLoop::completed(Vec::new()), &ctx(), "hello", None, None)
+            .await;
+
+        assert!(matches!(outcome, TurnOutcome::Completed { .. }));
+        let events = sink.events.lock().await;
+        let incomplete = events
+            .iter()
+            .find(|event| event.event_type == "turn/incomplete")
+            .expect("incomplete event");
+        assert_eq!(incomplete.payload_json["pending"][0]["content"], "检查告警");
+        let end = events
+            .iter()
+            .find(|event| event.event_type == "turn/end")
+            .expect("turn end");
+        assert_eq!(end.payload_json["incomplete"], true);
+        assert_eq!(end.payload_json["pendingTodos"][0], "检查告警");
     }
 
     #[tokio::test]

@@ -30,6 +30,21 @@ describe('TimelineModel', () => {
     expect(model.firstUserText).toBe('你好');
   });
 
+  it('surfaces an incomplete turn as a notice', () => {
+    const model = new TimelineModel();
+    model.ingestEvent(event(1, 'turn/start', { turnId: 't1' }));
+    model.ingestEvent(
+      event(2, 'turn/incomplete', {
+        turnId: 't1',
+        pending: [{ content: '检查告警', status: 'pending' }],
+      }),
+    );
+    model.ingestEvent(event(3, 'turn/end', { turnId: 't1', outcome: 'completed', incomplete: true }));
+    const notice = model.blocks.find((block) => block.kind === 'notice');
+    expect(notice).toMatchObject({ tone: 'incomplete' });
+    expect(notice?.kind === 'notice' ? notice.text : '').toContain('检查告警');
+  });
+
   it('pairs tools by toolCallId and records evidence', () => {
     const model = new TimelineModel();
     model.ingestEvent(

@@ -83,7 +83,7 @@ impl SessionRuntime {
         let questions = Arc::new(QuestionBroker::default());
         let approvals = Arc::new(ApprovalBroker::default());
         let subagents = Arc::new(SubagentSlot::default());
-        let runner = Arc::new(SessionRunner::new(events.clone(), contexts.clone()));
+        let runner = Arc::new(SessionRunner::new(events.clone(), contexts.clone()).with_todos(todos.clone()));
         Self {
             events,
             contexts,

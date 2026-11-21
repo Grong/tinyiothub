@@ -92,7 +92,7 @@ export type TimelineBlock =
   | {
       kind: 'notice';
       id: string;
-      tone: 'answered' | 'timed_out' | 'cancelled';
+      tone: 'answered' | 'timed_out' | 'cancelled' | 'incomplete';
       text: string;
       at: string;
     };
@@ -276,6 +276,24 @@ export class TimelineModel {
           event.seq,
         );
         break;
+      case 'turn/incomplete': {
+        const pending = Array.isArray(payload.pending)
+          ? payload.pending
+              .map((item) => (typeof item === 'object' && item !== null ? String((item as Record<string, unknown>).content ?? '') : ''))
+              .filter(Boolean)
+          : [];
+        this.pushBlock(
+          {
+            kind: 'notice',
+            id: `${asString(payload.turnId) || event.eventId}:incomplete`,
+            tone: 'incomplete',
+            text: pending.length > 0 ? `计划未完成：${pending.join('、')}` : '计划未完成',
+            at,
+          },
+          event.seq,
+        );
+        break;
+      }
       case 'turn/end': {
         const id = asString(payload.turnId);
         const status = asString(payload.outcome);
