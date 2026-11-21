@@ -1,5 +1,6 @@
 ---
-description: Workspace page visualization — find scene + push A2UI (Stage + Insight). BLOCKING REQUIREMENT when user is on Workspace.
+name: workspace
+description: 工作空间可视化：查找场景并推送 A2UI 卡片、表格和 3D 场景。
 version: "2.1"
 ---
 

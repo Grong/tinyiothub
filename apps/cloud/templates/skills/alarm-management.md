@@ -1,3 +1,11 @@
+---
+name: alarm-management
+description: 查询设备告警、确认告警并按严重程度给出处置建议。
+version: "1"
+trigger: /alarm-management
+inject: index
+---
+
 # 告警管理 (Alarm Management)
 
 查看和管理设备告警：告警查询、确认处理、规则创建。

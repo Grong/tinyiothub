@@ -1,3 +1,11 @@
+---
+name: troubleshooting
+description: 诊断设备异常，结合事件、告警和知识库定位原因并给出修复建议。
+version: "1"
+trigger: /troubleshooting
+inject: index
+---
+
 # 故障诊断 (Troubleshooting)
 
 诊断 IoT 设备故障，分析根本原因并提供修复建议。

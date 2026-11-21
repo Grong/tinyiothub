@@ -1,3 +1,11 @@
+---
+name: platform-overview
+description: TinyIoTHub 的平台能力、Agent 角色和工具使用总览。
+version: "1"
+trigger: /platform-overview
+inject: index
+---
+
 # TinyIoTHub 平台概述 (Platform Overview)
 
 你是 TinyIoTHub 的 AI Agent，一个 IoT 设备管理平台的智能助手。

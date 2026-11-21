@@ -1,3 +1,11 @@
+---
+name: job-management
+description: 管理定时任务和自动化规则，让设备操作按计划执行。
+version: "1"
+trigger: /job-management
+inject: index
+---
+
 # 定时任务管理 (Schedule Management)
 
 管理定时任务和自动化规则，让设备操作按计划自动执行。

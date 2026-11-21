@@ -1,3 +1,11 @@
+---
+name: driver-management
+description: 查看和测试 IoT 设备接入驱动。
+version: "1"
+trigger: /driver-management
+inject: index
+---
+
 # 驱动管理 (Driver Management)
 
 管理 IoT 设备的接入驱动，支持查看、测试驱动。

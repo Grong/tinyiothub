@@ -1,3 +1,11 @@
+---
+name: heartbeat-monitor
+description: 按计划巡检设备健康、告警和数据连续性，主动报告异常。
+version: "1"
+trigger: /heartbeat-monitor
+inject: index
+---
+
 # 心跳巡检 (Heartbeat Monitor)
 
 作为 AI Agent 的核心自主行为，定时巡检工作空间内的设备健康状态，发现异常时主动诊断并报告。

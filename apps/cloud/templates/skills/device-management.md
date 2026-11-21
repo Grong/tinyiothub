@@ -1,3 +1,11 @@
+---
+name: device-management
+description: 查看设备清单和状态，读写设备属性并执行设备动作。
+version: "1"
+trigger: /device-management
+inject: index
+---
+
 # 设备管理 (Device Management)
 
 管理和操作 IoT 设备：查看设备清单、读取状态、属性读写、执行设备动作。
