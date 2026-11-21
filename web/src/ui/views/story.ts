@@ -587,11 +587,14 @@ export class StoryView extends LitElement {
 
         <div class="story-body" @scroll=${() => this.onFeedScroll()}>
           <div class="story-work">
+          <div class="story-head">
+            ${this.renderHero()}
+            ${this.renderFailureNotice()} ${this.renderWaiting()}
+            ${this.isWorking() ? this.renderWorking() : nothing}
+          </div>
           <main class="story-main" @scroll=${() => this.onFeedScroll()}>
             <div class="story-feed">
-              ${this.renderHistory()} ${this.renderHero()}
-              ${this.renderFailureNotice()} ${this.renderWaiting()}
-              ${this.isWorking() ? this.renderWorking() : nothing}
+              ${this.renderHistory()}
               ${this.renderPrompt()}
               ${
                 this.loading && this.story.sections.length === 0
