@@ -27,6 +27,7 @@ import {
   deleteChatSession,
   fetchAssistantHud,
   fetchSessionEvents,
+  fetchSessionProjection,
   listChatSessions,
   renameChatSession,
   updateAssistantSchedule,
@@ -68,6 +69,20 @@ describe('assistant api', () => {
     );
     await deleteChatSession('agent:ws-1:default/a b');
     expect(hoisted.apiDelete).toHaveBeenCalledWith('/chat/sessions/agent%3Aws-1%3Adefault%2Fa%20b');
+  });
+
+  it('fetches the durable session projection', async () => {
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      jsonResponse({
+        turn: { turnId: 't1', phase: 'executing', agenda: [{ key: 'inspection', label: '巡检', status: 'in_progress' }], lastSeq: 9 },
+        highWatermark: 12,
+      }),
+    );
+    const projection = await fetchSessionProjection('agent:ws-1:default/a');
+    const [url] = fetchMock.mock.calls[0];
+    expect(String(url)).toBe('/api/v1/chat/sessions/agent%3Aws-1%3Adefault%2Fa/projection');
+    expect(projection.turn.agenda[0].key).toBe('inspection');
+    expect(projection.highWatermark).toBe(12);
   });
 
   it('fetches session events raw with cursor params', async () => {

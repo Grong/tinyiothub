@@ -14,6 +14,7 @@ import type { TodoItem } from '../../api/assistant.js';
 import {
   connectSessionEvents,
   fetchSessionEvents,
+  fetchSessionProjection,
   fetchSessionTodos,
   listChatSessions,
   type SessionEvent,
@@ -264,9 +265,15 @@ export class StoryView extends LitElement {
     this.stickToLatest = true;
     this.pinPending = true;
     try {
-      const page = await fetchSessionEvents(key, 0, 200, { turns: 2 });
+      const [page, projection] = await Promise.all([
+        fetchSessionEvents(key, 0, 200, { turns: 2 }),
+        fetchSessionProjection(key).catch(() => null),
+      ]);
       if (seq !== this.loadSeq) return;
       this.timeline.ingest(page);
+      if (projection && projection.turn.agenda.length > 0) {
+        this.timeline.agenda = projection.turn.agenda;
+      }
       this.historyBefore = page.nextBefore ?? null;
       this.historyHasMore = Boolean(page.hasMore && this.historyBefore !== null);
       const todos = await fetchSessionTodos(key);

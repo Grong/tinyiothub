@@ -3,6 +3,7 @@ import type { LiveFrame } from '../../types/session-protocol.js';
 
 const hoisted = vi.hoisted(() => ({
   fetchSessionEvents: vi.fn(),
+  fetchSessionProjection: vi.fn(),
   connectSessionEvents: vi.fn(
     (_opts: {
       sessionKey: string;
@@ -95,6 +96,10 @@ describe('view-story', () => {
       feedbackWrong: 0,
     });
     hoisted.connectSessionEvents.mockReturnValue(() => {});
+    hoisted.fetchSessionProjection.mockResolvedValue({
+      turn: { turnId: 't1', phase: 'executing', agenda: [], lastSeq: 6 },
+      highWatermark: 6,
+    });
     hoisted.fetchSessionEvents.mockResolvedValue({
       events: [
         event(1, 'trigger/received', { trigger: 'schedule' }),

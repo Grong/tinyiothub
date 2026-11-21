@@ -168,6 +168,30 @@ export async function fetchSessionEvents(
   return rawJson<SessionEventPage>(response, '加载会话事件失败');
 }
 
+export interface SessionProjectionAgendaItem {
+  key: string;
+  label: string;
+  status: string;
+}
+
+export interface SessionProjectionView {
+  turn: {
+    turnId: string | null;
+    phase: string;
+    agenda: SessionProjectionAgendaItem[];
+    lastSeq: number;
+  };
+  highWatermark: number;
+}
+
+export async function fetchSessionProjection(sessionKey: string): Promise<SessionProjectionView> {
+  const response = await fetch(buildUrl(sessionPath(sessionKey, '/projection')), {
+    headers: authHeaders(),
+    credentials: 'include',
+  });
+  return rawJson<SessionProjectionView>(response, '加载会话状态失败');
+}
+
 export async function fetchSessionTodos(sessionKey: string): Promise<TodoItem[]> {
   const response = await fetch(buildUrl(sessionPath(sessionKey, '/todos')), {
     headers: authHeaders(),
