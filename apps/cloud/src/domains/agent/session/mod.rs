@@ -27,6 +27,7 @@ pub mod notify;
 pub mod persist;
 pub mod pool_adapter;
 pub mod ports;
+pub mod projection;
 pub mod questions;
 pub mod runner;
 pub mod skills_seed;

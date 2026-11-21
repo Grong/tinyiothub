@@ -4,12 +4,14 @@
 //! phase and agenda from those events. It performs no I/O and can be used by a
 //! snapshot cache or a replay test.
 
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use super::turn_state::{AgendaItem, AgendaStatus, TurnPhase};
 
 /// Current projection of one turn, advanced by session events in seq order.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct TurnProjection {
     pub turn_id: Option<String>,
     pub phase: TurnPhase,

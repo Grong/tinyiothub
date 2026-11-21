@@ -153,6 +153,23 @@ pub async fn list_events(
     }
 }
 
+pub async fn get_projection(
+    State(state): State<AgentState>,
+    claims: Claims,
+    Path(session_key): Path<String>,
+) -> Response {
+    let Some(parsed) = verify_session_workspace(&session_key, &claims.workspace_id) else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+    match super::projection::load_session_projection(&state.db, &parsed.workspace_id, &parsed.session_key()).await {
+        Ok(view) => Json(view).into_response(),
+        Err(error) => {
+            tracing::warn!(%error, %session_key, "session projection failed");
+            StatusCode::INTERNAL_SERVER_ERROR.into_response()
+        }
+    }
+}
+
 pub async fn stream_events(
     State(state): State<AgentState>,
     claims: Claims,
