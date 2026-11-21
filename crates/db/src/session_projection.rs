@@ -56,7 +56,8 @@ impl Db {
              ON CONFLICT(projection_name, subject_id) DO UPDATE SET
                  last_seq = excluded.last_seq,
                  state_json = excluded.state_json,
-                 updated_at = excluded.updated_at",
+                 updated_at = excluded.updated_at
+             WHERE excluded.last_seq > session_projection_snapshots.last_seq",
         )
         .bind(projection_name)
         .bind(subject_id)
