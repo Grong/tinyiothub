@@ -22,7 +22,7 @@ export type TimelineBlock =
   | {
       kind: 'turn';
       id: string;
-      status: 'running' | 'completed' | 'failed' | 'cancelled';
+      status: 'running' | 'completed' | 'failed' | 'cancelled' | 'partial';
       at: string;
       completedAt?: string;
       toolCalls?: number;
@@ -321,7 +321,13 @@ export class TimelineModel {
         const id = asString(payload.turnId);
         const status = asString(payload.outcome);
         const mapped =
-          status === 'completed' ? 'completed' : status === 'failed' ? 'failed' : 'cancelled';
+          status === 'completed'
+            ? 'completed'
+            : status === 'failed'
+              ? 'failed'
+              : status === 'partial'
+                ? 'partial'
+                : 'cancelled';
         const block = this.blocks.find((item) => item.kind === 'turn' && item.id === id);
         const patch = {
           status: mapped,

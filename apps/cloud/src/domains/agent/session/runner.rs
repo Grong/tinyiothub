@@ -662,7 +662,7 @@ impl SessionRunner {
                         "turn/end",
                         json!({
                             "turnId": &context.turn_id,
-                            "outcome": "completed",
+                            "outcome": if pending.is_empty() && agenda.iter().all(|item| matches!(item.status, AgendaStatus::Completed | AgendaStatus::Skipped | AgendaStatus::Blocked)) { "completed" } else { "partial" },
                             "text": &text,
                             "toolCalls": tool_calls,
                             "modelCalls": model_calls,

@@ -64,7 +64,9 @@ describe('TimelineModel', () => {
         pending: [{ content: '检查告警', status: 'pending' }],
       }),
     );
-    model.ingestEvent(event(3, 'turn/end', { turnId: 't1', outcome: 'completed', incomplete: true }));
+    model.ingestEvent(event(3, 'turn/end', { turnId: 't1', outcome: 'partial', incomplete: true }));
+    const turn = model.blocks.find((block) => block.kind === 'turn');
+    expect(turn?.kind === 'turn' ? turn.status : '').toBe('partial');
     const notice = model.blocks.find((block) => block.kind === 'notice');
     expect(notice).toMatchObject({ tone: 'incomplete' });
     expect(notice?.kind === 'notice' ? notice.text : '').toContain('检查告警');

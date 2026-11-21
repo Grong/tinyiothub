@@ -84,7 +84,7 @@ export interface StoryStep {
   details?: ToolDetail[];
 }
 
-export type StorySectionStatus = 'running' | 'done' | 'failed' | 'cancelled';
+export type StorySectionStatus = 'running' | 'done' | 'failed' | 'cancelled' | 'partial';
 
 export interface StorySection {
   id: string;
@@ -501,6 +501,7 @@ function stepFromTool(
 
 function statusOf(status: string): StorySectionStatus {
   if (status === 'completed') return 'done';
+  if (status === 'partial') return 'partial';
   if (status === 'failed') return 'failed';
   if (status === 'cancelled') return 'cancelled';
   return 'running';

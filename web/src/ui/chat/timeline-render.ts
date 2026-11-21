@@ -36,6 +36,7 @@ const SUBAGENT_STATUS: Record<string, string> = {
 const TURN_STATE: Record<string, string> = {
   running: '处理中',
   completed: '完成',
+  partial: '部分完成',
   failed: '失败',
   cancelled: '已取消',
 };

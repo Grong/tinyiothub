@@ -56,6 +56,7 @@ const SECTION_STATUS: Record<string, string> = {
   done: '已完成',
   failed: '执行失败',
   cancelled: '已取消',
+  partial: '部分完成',
 };
 
 const STEP_STATUS: Record<StoryStep['status'], string> = {
