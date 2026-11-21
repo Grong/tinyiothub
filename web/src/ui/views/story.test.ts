@@ -159,6 +159,26 @@ describe('view-story', () => {
     expect(el.querySelector('.story-waiting--approval')).toBeTruthy();
   });
 
+  it('catches up events from the projection high watermark', async () => {
+    hoisted.fetchSessionProjection.mockResolvedValueOnce({
+      turn: { turnId: 't1', phase: 'completed', agenda: [], lastSeq: 6 },
+      highWatermark: 7,
+    });
+    hoisted.fetchSessionEvents
+      .mockResolvedValueOnce({
+        events: [event(1, 'turn/start', { turnId: 't1' })],
+        highWatermark: 1,
+      })
+      .mockResolvedValueOnce({
+        events: [event(7, 'turn/end', { turnId: 't1', outcome: 'completed', text: 'done' })],
+        highWatermark: 7,
+      });
+    const el = document.createElement('view-story') as StoryView;
+    document.body.appendChild(el);
+    await vi.waitFor(() => expect(hoisted.fetchSessionEvents).toHaveBeenCalledTimes(2));
+    expect(hoisted.fetchSessionEvents.mock.calls[1][1]).toBe(1);
+  });
+
   it('renders the business story, device deck and brain achievements', async () => {
     const el = document.createElement('view-story') as StoryView;
     document.body.appendChild(el);

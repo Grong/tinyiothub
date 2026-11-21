@@ -274,6 +274,11 @@ export class StoryView extends LitElement {
       if (projection && projection.turn.agenda.length > 0) {
         this.timeline.agenda = projection.turn.agenda;
       }
+      if (projection && projection.highWatermark > page.highWatermark) {
+        const missing = await fetchSessionEvents(key, page.highWatermark, 200);
+        if (seq !== this.loadSeq) return;
+        this.timeline.ingest(missing);
+      }
       this.historyBefore = page.nextBefore ?? null;
       this.historyHasMore = Boolean(page.hasMore && this.historyBefore !== null);
       const todos = await fetchSessionTodos(key);
