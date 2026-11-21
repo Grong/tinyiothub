@@ -5,6 +5,259 @@ use tinyiothub_skills::registry::ToolRegistry as _;
 
 use super::registry::ToolRegistry;
 
+/// One stable tool identity. `name` is the canonical/model-visible name where
+/// applicable; `aliases` stay executable for approval replay but are not
+/// exposed to the model. `view_key` is the frontend contract.
+#[derive(Debug, Clone, Copy)]
+pub struct ToolCatalogEntry {
+    pub name: &'static str,
+    pub aliases: &'static [&'static str],
+    pub view_key: &'static str,
+    pub label: &'static str,
+    pub group: &'static str,
+    pub group_label: &'static str,
+    pub description: &'static str,
+    pub danger: bool,
+    pub visible: bool,
+}
+
+pub const TOOL_CATALOG: &[ToolCatalogEntry] = &[
+    ToolCatalogEntry {
+        name: "list_devices",
+        aliases: &["list_things", "search_things"],
+        view_key: "device.list",
+        label: "列出设备",
+        group: "device",
+        group_label: "设备管理",
+        description: "列出当前工作区设备，可按名称、类型、状态过滤",
+        danger: false,
+        visible: true,
+    },
+    ToolCatalogEntry {
+        name: "read_device",
+        aliases: &["get_thing", "get_thing_profile"],
+        view_key: "device.read",
+        label: "读取设备",
+        group: "device",
+        group_label: "设备管理",
+        description: "读取设备实时状态、健康度、空间归属和属性值",
+        danger: false,
+        visible: true,
+    },
+    ToolCatalogEntry {
+        name: "read_property",
+        aliases: &["read_properties"],
+        view_key: "property.read",
+        label: "读取属性",
+        group: "property",
+        group_label: "设备管理",
+        description: "读取单个设备属性的当前值（旧审批别名保留）",
+        danger: false,
+        visible: false,
+    },
+    ToolCatalogEntry {
+        name: "set_device",
+        aliases: &["write_properties"],
+        view_key: "device.write",
+        label: "写入设备属性",
+        group: "device",
+        group_label: "设备管理",
+        description: "写入设备属性并等待回读验证",
+        danger: true,
+        visible: true,
+    },
+    ToolCatalogEntry {
+        name: "call_device",
+        aliases: &["invoke_action", "send_command"],
+        view_key: "device.action",
+        label: "执行设备操作",
+        group: "device",
+        group_label: "设备管理",
+        description: "向设备下发动作/命令，受策略、审批和 Effect 约束",
+        danger: true,
+        visible: true,
+    },
+    ToolCatalogEntry {
+        name: "stop",
+        aliases: &[],
+        view_key: "device.stop",
+        label: "停止设备操作",
+        group: "device",
+        group_label: "设备管理",
+        description: "停止当前设备动作或流程",
+        danger: true,
+        visible: true,
+    },
+    ToolCatalogEntry {
+        name: "watch",
+        aliases: &[],
+        view_key: "watch.create",
+        label: "建立条件等待",
+        group: "device",
+        group_label: "设备管理",
+        description: "等待设备属性或事件满足条件",
+        danger: false,
+        visible: true,
+    },
+    ToolCatalogEntry {
+        name: "unwatch",
+        aliases: &[],
+        view_key: "watch.remove",
+        label: "取消条件等待",
+        group: "device",
+        group_label: "设备管理",
+        description: "取消之前建立的条件等待",
+        danger: false,
+        visible: true,
+    },
+    ToolCatalogEntry {
+        name: "get_thing_tree",
+        aliases: &[],
+        view_key: "thing.tree",
+        label: "物层级树",
+        group: "thing",
+        group_label: "物本体",
+        description: "读取空间、楼层、产线和设备的层级关系",
+        danger: false,
+        visible: true,
+    },
+    ToolCatalogEntry {
+        name: "query_events",
+        aliases: &["get_device_history"],
+        view_key: "event.history",
+        label: "查询事件",
+        group: "event",
+        group_label: "事件",
+        description: "按设备、时间范围查询事件与历史",
+        danger: false,
+        visible: true,
+    },
+    ToolCatalogEntry {
+        name: "alarm_list",
+        aliases: &["list_alarms"],
+        view_key: "alarm.list",
+        label: "查询告警列表",
+        group: "alarm",
+        group_label: "告警管理",
+        description: "列出当前告警和历史告警记录",
+        danger: false,
+        visible: false,
+    },
+    ToolCatalogEntry {
+        name: "alarm_acknowledge",
+        aliases: &[],
+        view_key: "alarm.action",
+        label: "确认告警",
+        group: "alarm",
+        group_label: "告警管理",
+        description: "确认或关闭一条告警",
+        danger: false,
+        visible: false,
+    },
+    ToolCatalogEntry {
+        name: "search_knowledge",
+        aliases: &[],
+        view_key: "knowledge.search",
+        label: "搜索知识库",
+        group: "knowledge",
+        group_label: "知识库",
+        description: "搜索工作区知识文档",
+        danger: false,
+        visible: true,
+    },
+    ToolCatalogEntry {
+        name: "read_document",
+        aliases: &[],
+        view_key: "knowledge.document",
+        label: "读取文档",
+        group: "knowledge",
+        group_label: "知识库",
+        description: "读取知识文档正文",
+        danger: false,
+        visible: true,
+    },
+    ToolCatalogEntry {
+        name: "list_composites",
+        aliases: &[],
+        view_key: "composite.list",
+        label: "列出动作链",
+        group: "device",
+        group_label: "设备管理",
+        description: "列出可执行的动作链",
+        danger: false,
+        visible: true,
+    },
+    ToolCatalogEntry {
+        name: "run_composite",
+        aliases: &[],
+        view_key: "composite.run",
+        label: "执行动作链",
+        group: "device",
+        group_label: "设备管理",
+        description: "执行一个动作链",
+        danger: true,
+        visible: true,
+    },
+    ToolCatalogEntry {
+        name: "todo_write",
+        aliases: &["update_todo"],
+        view_key: "todo.write",
+        label: "更新任务计划",
+        group: "workflow",
+        group_label: "工作流",
+        description: "用完整列表替换当前任务计划",
+        danger: false,
+        visible: true,
+    },
+    ToolCatalogEntry {
+        name: "ask_user",
+        aliases: &[],
+        view_key: "interaction.ask",
+        label: "请求用户决定",
+        group: "workflow",
+        group_label: "工作流",
+        description: "向用户提问并等待回答",
+        danger: false,
+        visible: true,
+    },
+    ToolCatalogEntry {
+        name: "spawn_subagent",
+        aliases: &[],
+        view_key: "subagent.spawn",
+        label: "派生子代理",
+        group: "workflow",
+        group_label: "工作流",
+        description: "派生子代理执行独立任务",
+        danger: false,
+        visible: true,
+    },
+    ToolCatalogEntry {
+        name: "get_skill",
+        aliases: &[],
+        view_key: "skill.load",
+        label: "加载技能",
+        group: "workflow",
+        group_label: "工作流",
+        description: "加载任务所需技能说明",
+        danger: false,
+        visible: true,
+    },
+];
+
+pub fn catalog_entry(name: &str) -> Option<&'static ToolCatalogEntry> {
+    TOOL_CATALOG
+        .iter()
+        .find(|entry| entry.name == name || entry.aliases.contains(&name))
+}
+
+pub fn canonical_tool_name(name: &str) -> &str {
+    catalog_entry(name).map_or(name, |entry| entry.name)
+}
+
+pub fn tool_view_key(name: &str) -> &'static str {
+    catalog_entry(name).map_or("generic", |entry| entry.view_key)
+}
+
 /// 根据工具名称推断是否危险操作 (mirrored from cloud's `mcp::tool_metadata`
 /// until the MCP plane is reclaimed — keep the patterns in sync).
 pub(crate) fn name_infers_destructive(name: &str) -> bool {
@@ -19,6 +272,9 @@ pub(crate) fn name_infers_destructive(name: &str) -> bool {
 
 /// Label mapping for known tools (display name in Chinese).
 pub(crate) fn tool_label(name: &str) -> &str {
+    if let Some(entry) = catalog_entry(name) {
+        return entry.label;
+    }
     match name {
         // Device-runtime tools (MCP)
         // E2 fixed device tools
@@ -67,6 +323,9 @@ pub(crate) fn tool_label(name: &str) -> &str {
 
 /// Infer group (id, label) from tool name.
 pub(crate) fn tool_group(name: &str) -> (&str, &str) {
+    if let Some(entry) = catalog_entry(name) {
+        return (entry.group, entry.group_label);
+    }
     if name == "search_workspace_resources" {
         ("workspace", "工作空间")
     } else if matches!(
@@ -136,53 +395,32 @@ impl ToolRegistry {
 /// Returns the static catalog of all available TinyIoTHub tools grouped by category.
 /// Aligned with the 16 MCP-registered handlers in the composition layer's mcp plane.
 pub fn build_tools_catalog_json() -> serde_json::Value {
+    let mut groups: std::collections::BTreeMap<&'static str, (&'static str, Vec<serde_json::Value>)> =
+        std::collections::BTreeMap::new();
+    for entry in TOOL_CATALOG.iter().filter(|entry| entry.visible) {
+        let (_, tools) = groups
+            .entry(entry.group)
+            .or_insert_with(|| (entry.group_label, Vec::new()));
+        tools.push(serde_json::json!({
+            "id": entry.name,
+            "name": entry.name,
+            "label": entry.label,
+            "description": entry.description,
+            "viewKey": entry.view_key,
+            "danger": entry.danger,
+            "enabled": !entry.danger,
+        }));
+    }
     serde_json::json!({
-        "groups": [
-            {
-                "id": "thing",
-                "label": "设备管理",
+        "groups": groups
+            .into_iter()
+            .map(|(id, (label, tools))| serde_json::json!({
+                "id": id,
+                "label": label,
                 "source": "core",
-                "tools": [
-                    { "id": "search_things",    "name": "search_things",    "label": "搜索设备",         "description": "分页搜索设备列表，支持按名称、类型、状态等过滤",           "danger": false, "enabled": true  },
-                    { "id": "get_thing",        "name": "get_thing",        "label": "获取设备 Profile", "description": "获取设备完整信息，包含属性定义和当前值",                   "danger": false, "enabled": true  },
-                    { "id": "read_properties",  "name": "read_properties",  "label": "读取属性",         "description": "读取设备指定属性的当前值",                                   "danger": false, "enabled": true  },
-                    { "id": "write_properties", "name": "write_properties", "label": "写入属性",         "description": "写入设备指定属性的值",                                       "danger": false, "enabled": true  },
-                    { "id": "send_command",     "name": "send_command",     "label": "执行设备命令",     "description": "向设备下发控制命令并获取执行结果",                          "danger": false, "enabled": true  },
-                    { "id": "create_thing",     "name": "create_thing",     "label": "创建设备",         "description": "根据模板创建新设备",                                        "danger": false, "enabled": true  },
-                    { "id": "delete_thing",     "name": "delete_thing",     "label": "删除设备",         "description": "删除指定设备",                                              "danger": true,  "enabled": false },
-                ]
-            },
-            {
-                "id": "alarm",
-                "label": "告警管理",
-                "source": "core",
-                "tools": [
-                    { "id": "alarm_list",        "name": "alarm_list",        "label": "查询告警列表", "description": "列出当前告警和历史告警记录",                  "danger": false, "enabled": true },
-                    { "id": "alarm_acknowledge", "name": "alarm_acknowledge", "label": "确认告警",     "description": "确认并关闭一条告警",                          "danger": false, "enabled": true },
-                    { "id": "alarm_rule_add",    "name": "alarm_rule_add",    "label": "添加告警规则", "description": "创建新的告警规则",                            "danger": false, "enabled": true },
-                ]
-            },
-            {
-                "id": "driver",
-                "label": "驱动管理",
-                "source": "core",
-                "tools": [
-                    { "id": "list_drivers", "name": "list_drivers", "label": "查询驱动列表", "description": "列出系统中所有已注册的协议驱动（Modbus/ONVIF等）", "danger": false, "enabled": true },
-                    { "id": "test_driver",  "name": "test_driver",  "label": "测试驱动",     "description": "测试驱动的连接状态",                             "danger": false, "enabled": true },
-                ]
-            },
-            {
-                "id": "job",
-                "label": "任务管理",
-                "source": "core",
-                "tools": [
-                    { "id": "list_schedules",   "name": "list_schedules",   "label": "查询任务列表",   "description": "列出系统中所有调度任务",                "danger": false, "enabled": true },
-                    { "id": "create_schedule",  "name": "create_schedule",  "label": "创建调度任务",   "description": "创建新的调度任务",                      "danger": false, "enabled": true },
-                    { "id": "update_schedule",  "name": "update_schedule",  "label": "更新调度任务",   "description": "更新已有调度任务的配置",                "danger": false, "enabled": true },
-                    { "id": "delete_schedule",  "name": "delete_schedule",  "label": "删除调度任务",   "description": "删除指定的调度任务",                    "danger": true,  "enabled": false },
-                ]
-            },
-        ]
+                "tools": tools,
+            }))
+            .collect::<Vec<_>>()
     })
 }
 
@@ -194,9 +432,9 @@ mod tests {
     fn test_tool_label_mapping() {
         assert_eq!(tool_label("list_devices"), "列出设备");
         assert_eq!(tool_label("read_device"), "读取设备");
-        assert_eq!(tool_label("watch"), "条件等待");
-        assert_eq!(tool_label("search_things"), "搜索物");
-        assert_eq!(tool_label("get_thing"), "查看物");
+        assert_eq!(tool_label("watch"), "建立条件等待");
+        assert_eq!(tool_label("search_things"), "列出设备");
+        assert_eq!(tool_label("get_thing"), "读取设备");
         assert_eq!(tool_label("alarm_list"), "查询告警列表");
         assert_eq!(tool_label("list_drivers"), "查询驱动列表");
         assert_eq!(tool_label("list_schedules"), "查询任务列表");
@@ -205,9 +443,30 @@ mod tests {
     }
 
     #[test]
+    fn tool_catalog_has_unique_names_aliases_and_view_keys() {
+        let mut names = std::collections::HashSet::new();
+        let mut aliases = std::collections::HashSet::new();
+        for entry in TOOL_CATALOG {
+            assert!(!entry.name.is_empty());
+            assert!(!entry.view_key.is_empty());
+            assert!(names.insert(entry.name), "duplicate canonical name {}", entry.name);
+            for alias in entry.aliases {
+                assert!(!alias.is_empty());
+                assert!(!names.contains(*alias), "alias {alias} collides with a canonical name");
+                assert!(aliases.insert(*alias), "duplicate alias {alias}");
+            }
+        }
+        assert_eq!(canonical_tool_name("get_thing"), "read_device");
+        assert_eq!(canonical_tool_name("invoke_action"), "call_device");
+        assert_eq!(tool_view_key("get_thing_profile"), "device.read");
+        assert_eq!(tool_view_key("alarm_list"), "alarm.list");
+        assert_eq!(tool_view_key("unknown_tool"), "generic");
+    }
+
+    #[test]
     fn test_tool_group_classification() {
         assert_eq!(tool_group("search_things"), ("device", "设备管理"));
-        assert_eq!(tool_group("get_thing"), ("thing", "物本体"));
+        assert_eq!(tool_group("get_thing"), ("device", "设备管理"));
         assert_eq!(tool_group("delete_thing"), ("thing", "物本体"));
 
         assert_eq!(tool_group("alarm_list"), ("alarm", "告警管理"));
@@ -232,33 +491,54 @@ mod tests {
         let groups = catalog["groups"].as_array().unwrap();
         assert!(!groups.is_empty(), "Static catalog should have groups");
         let group_ids: Vec<&str> = groups.iter().filter_map(|g| g["id"].as_str()).collect();
-        assert!(group_ids.contains(&"thing"));
-        assert!(group_ids.contains(&"alarm"));
+        assert!(group_ids.contains(&"device"));
+        assert!(group_ids.contains(&"workflow"));
     }
 
     #[test]
-    fn catalog_tool_ids_match_mcp_registry_names() {
+    fn catalog_uses_only_canonical_visible_tool_names() {
         let catalog = build_tools_catalog_json();
-        let ids: Vec<&str> = catalog["groups"]
+        let tools: Vec<&serde_json::Value> = catalog["groups"]
             .as_array()
             .unwrap()
             .iter()
-            .flat_map(|g| g["tools"].as_array().unwrap().iter().map(|t| t["id"].as_str().unwrap()))
+            .flat_map(|g| g["tools"].as_array().unwrap())
             .collect();
+        let ids: Vec<&str> = tools.iter().filter_map(|t| t["id"].as_str()).collect();
         for expected in [
-            "search_things",
+            "list_devices",
+            "read_device",
+            "set_device",
+            "call_device",
+            "stop",
+            "watch",
+            "unwatch",
+            "get_thing_tree",
+            "query_events",
+            "search_knowledge",
+            "read_document",
+            "list_composites",
+            "run_composite",
+            "todo_write",
+            "ask_user",
+            "spawn_subagent",
+            "get_skill",
+        ] {
+            assert!(ids.contains(&expected), "catalog missing canonical name {expected}");
+        }
+        for stale in [
             "get_thing",
-            "create_thing",
-            "delete_thing",
+            "search_things",
+            "list_things",
             "read_properties",
             "write_properties",
             "send_command",
+            "invoke_action",
+            "alarm_list",
         ] {
-            assert!(ids.contains(&expected), "catalog missing MCP name {expected}");
+            assert!(!ids.contains(&stale), "hidden/legacy name {stale} leaked");
         }
-        for stale in ["search_devices", "get_device", "create_device", "delete_device"] {
-            assert!(!ids.contains(&stale), "stale name {stale} leaked");
-        }
+        assert!(tools.iter().all(|tool| tool["viewKey"].as_str().is_some()));
     }
 
     #[test]
@@ -278,10 +558,16 @@ mod tests {
             .filter_map(|g| g.get("id").and_then(|v| v.as_str()))
             .collect();
 
+        assert!(group_ids.contains(&"device"), "catalog should have a 'device' group");
         assert!(group_ids.contains(&"thing"), "catalog should have a 'thing' group");
-        assert!(group_ids.contains(&"alarm"), "catalog should have an 'alarm' group");
-        assert!(group_ids.contains(&"driver"), "catalog should have a 'driver' group");
-        assert!(group_ids.contains(&"job"), "catalog should have a 'job' group");
+        assert!(
+            group_ids.contains(&"workflow"),
+            "catalog should have a 'workflow' group"
+        );
+        assert!(
+            group_ids.contains(&"knowledge"),
+            "catalog should have a 'knowledge' group"
+        );
 
         for group in groups {
             let g_obj = group.as_object().expect("group should be an object");
@@ -299,6 +585,7 @@ mod tests {
                 assert!(t_obj.contains_key("id"), "tool should have 'id' field");
                 assert!(t_obj.contains_key("danger"), "tool should have 'danger' field");
                 assert!(t_obj.contains_key("enabled"), "tool should have 'enabled' field");
+                assert!(t_obj.contains_key("viewKey"), "tool should have 'viewKey' field");
             }
         }
     }
