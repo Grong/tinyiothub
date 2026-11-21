@@ -284,7 +284,8 @@ export class TimelineModel {
           event.seq,
         );
         break;
-      case 'agenda/set': {
+      case 'agenda/set':
+      case 'agenda/update': {
         const items = Array.isArray(payload.items) ? payload.items : [];
         this.agenda = items
           .map((item) => {

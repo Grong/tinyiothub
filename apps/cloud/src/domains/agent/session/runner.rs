@@ -8,6 +8,7 @@ use std::sync::Arc;
 
 use crate::domains::agent::runtime::session_live::SessionLiveFrame;
 use serde_json::json;
+use tinyiothub_agent::harness::AgendaStatus;
 use tinyiothub_agent::port::events::TurnEvent;
 use tinyiothub_agent::port::runtime::AgentLoop;
 use tinyiothub_core::session_protocol::{AssistantStreamSegment, StreamKind};
@@ -286,7 +287,8 @@ impl SessionRunner {
         if !self.emit_turn_event(context, attempt, "turn/start", started).await {
             health.failed += 1;
         }
-        if let Some(agenda) = load_turn_agenda(&context.workspace_id).await {
+        let agenda = load_turn_agenda(&context.workspace_id).await.unwrap_or_default();
+        if !agenda.is_empty() {
             let _ = self
                 .emit_turn_event(
                     context,
@@ -294,7 +296,7 @@ impl SessionRunner {
                     "agenda/set",
                     json!({
                         "turnId": &context.turn_id,
-                        "items": agenda,
+                        "items": &agenda,
                     }),
                 )
                 .await;
@@ -305,8 +307,11 @@ impl SessionRunner {
             let events = self.events.clone();
             let context = context.clone();
             let observer = observer.clone();
+            let events_for_agenda = self.events.clone();
+            let agenda_context = context.clone();
             #[allow(unused_assignments)]
             async move {
+                let mut agenda = agenda;
                 let mut tool_calls = 0u32;
                 // One Usage event is emitted per model call; this is the
                 // server-side model-call count used by gate evidence.
@@ -427,6 +432,29 @@ impl SessionRunner {
                                 open_step!();
                             }
                             tool_calls += 1;
+                            if let Some(key) = agenda_key(&args) {
+                                if let Some(index) = agenda.iter().position(|item| item.key == key) {
+                                    let changed = agenda[index].status != AgendaStatus::InProgress;
+                                    for item in &mut agenda {
+                                        if item.status == AgendaStatus::InProgress && item.key != key {
+                                            item.status = AgendaStatus::Completed;
+                                        }
+                                    }
+                                    agenda[index].status = AgendaStatus::InProgress;
+                                    if changed {
+                                        let _ = events_for_agenda
+                                            .emit(session_event(
+                                                &agenda_context,
+                                                "agenda/update",
+                                                json!({
+                                                    "turnId": &agenda_context.turn_id,
+                                                    "items": &agenda,
+                                                }),
+                                            ))
+                                            .await;
+                                    }
+                                }
+                            }
                             if events
                                 .emit(session_event(
                                     &context,
@@ -576,14 +604,14 @@ impl SessionRunner {
                     }
                 }
                 close_step!();
-                (tool_calls, model_calls, usage.to_json(), failed)
+                (tool_calls, model_calls, usage.to_json(), failed, agenda)
             }
         });
 
         let cancel_token = cancel.as_ref().map(|cancellation| cancellation.token.clone());
         let result = agent.turn_streamed(message, event_tx, cancel_token).await;
-        let (tool_calls, model_calls, usage, forward_failed) =
-            forward.await.unwrap_or((0, 0, serde_json::Value::Null, 1));
+        let (tool_calls, model_calls, usage, forward_failed, agenda) =
+            forward.await.unwrap_or((0, 0, serde_json::Value::Null, 1, Vec::new()));
         health.failed += forward_failed;
 
         let outcome = match result {
@@ -596,7 +624,16 @@ impl SessionRunner {
                     .into_iter()
                     .filter(|todo| todo.status != TodoStatus::Completed)
                     .collect::<Vec<_>>();
-                if !pending.is_empty() {
+                let pending_agenda = agenda
+                    .iter()
+                    .filter(|item| {
+                        !matches!(
+                            item.status,
+                            AgendaStatus::Completed | AgendaStatus::Skipped | AgendaStatus::Blocked
+                        )
+                    })
+                    .collect::<Vec<_>>();
+                if !pending.is_empty() || !pending_agenda.is_empty() {
                     let _ = self
                         .emit_turn_event(
                             context,
@@ -607,6 +644,11 @@ impl SessionRunner {
                                 "pending": pending.iter().map(|todo| json!({
                                     "content": &todo.content,
                                     "status": todo.status,
+                                })).collect::<Vec<_>>(),
+                                "pendingAgenda": pending_agenda.iter().map(|item| json!({
+                                    "key": &item.key,
+                                    "label": &item.label,
+                                    "status": item.status,
                                 })).collect::<Vec<_>>(),
                                 "reason": "final answer arrived while the task plan still has pending items",
                             }),
@@ -625,8 +667,9 @@ impl SessionRunner {
                             "toolCalls": tool_calls,
                             "modelCalls": model_calls,
                             "usage": &usage,
-                            "incomplete": !pending.is_empty(),
+                            "incomplete": !pending.is_empty() || !agenda.iter().all(|item| matches!(item.status, AgendaStatus::Completed | AgendaStatus::Skipped | AgendaStatus::Blocked)),
                             "pendingTodos": pending.iter().map(|todo| &todo.content).collect::<Vec<_>>(),
+                            "pendingAgenda": agenda.iter().filter(|item| !matches!(item.status, AgendaStatus::Completed | AgendaStatus::Skipped | AgendaStatus::Blocked)).map(|item| &item.key).collect::<Vec<_>>(),
                         }),
                     )
                     .await;
@@ -717,6 +760,12 @@ impl SessionRunner {
             true
         }
     }
+}
+
+fn agenda_key(args: &serde_json::Value) -> Option<&str> {
+    ["skill_name", "skillName", "name"]
+        .iter()
+        .find_map(|key| args.get(*key).and_then(|value| value.as_str()))
 }
 
 fn truncate(value: &str, max_chars: usize) -> String {

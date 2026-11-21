@@ -43,6 +43,16 @@ describe('TimelineModel', () => {
     );
     expect(model.agenda.map((item) => item.key)).toEqual(['inspection', 'energy-saving']);
     expect(model.agenda[0].label).toBe('巡检');
+    model.ingestEvent(
+      event(2, 'agenda/update', {
+        turnId: 't1',
+        items: [
+          { key: 'inspection', label: '巡检', status: 'in_progress' },
+          { key: 'energy-saving', label: '节能', status: 'pending' },
+        ],
+      }),
+    );
+    expect(model.agenda[0].status).toBe('in_progress');
   });
 
   it('surfaces an incomplete turn as a notice', () => {
