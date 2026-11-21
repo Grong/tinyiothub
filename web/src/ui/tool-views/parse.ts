@@ -45,6 +45,7 @@ export interface DeviceFacts {
   health: string;
   metrics: Array<{ label: string; value: string }>;
   sources: DeviceSource[];
+  actions: Array<{ name: string; description: string }>;
 }
 
 const DEVICE_ID_KEYS = ['thingId', 'thing_id', 'deviceId', 'device_id', 'id'];
@@ -85,6 +86,14 @@ export function deviceFacts(result: unknown, args: unknown): DeviceFacts | null 
         at: firstString(source, ['mediaTime', 'media_time']) || firstString(evidence, ['mediaTime', 'media_time']),
       };
     });
+  const actions = (Array.isArray(record?.actions) ? record.actions : [])
+    .map(recordOf)
+    .filter((action): action is Record<string, unknown> => action !== null)
+    .map((action) => ({
+      name: firstString(action, ['name', 'actionName', 'action_name', 'id']),
+      description: firstString(action, ['description', 'label', 'summary']),
+    }))
+    .filter((action) => action.name);
   return {
     id,
     name: name || id,
@@ -93,6 +102,7 @@ export function deviceFacts(result: unknown, args: unknown): DeviceFacts | null 
     health: firstString(record, ['health']) || 'unknown',
     metrics,
     sources,
+    actions,
   };
 }
 

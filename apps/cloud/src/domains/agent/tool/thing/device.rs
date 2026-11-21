@@ -471,6 +471,11 @@ impl Tool for ReadDeviceTool {
             if online { "在线" } else { "离线" }
         );
 
+        let actions = self
+            .thing_service
+            .load_actions(&input.thing_id)
+            .await
+            .unwrap_or_default();
         let mut payload = json!({
             "v": 1,
             "thingId": input.thing_id,
@@ -481,6 +486,7 @@ impl Tool for ReadDeviceTool {
             "online": online,
             "position": thing.address,
             "state": state,
+            "actions": actions,
             "text": text,
         });
         if let Some(knowledge_docs) = &thing.knowledge_docs {
@@ -1449,6 +1455,7 @@ mod tests {
 
         let result = tool.execute(json!({"thingId":"dev-1"})).await.expect("execute");
         assert!(result.success, "{:?}", result.error);
+        assert!(result.output.contains("\"actions\""));
         let events = db
             .runtime_events_after("ws-set", None, Some("task-read"), 10)
             .await

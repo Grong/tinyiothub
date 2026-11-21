@@ -650,7 +650,7 @@ impl ThingService {
 
     /// Load actions from the storage layer (single source of SQL for
     /// thing_actions — eng-review T9).
-    async fn load_actions(&self, thing_id: &str) -> Option<Vec<serde_json::Value>> {
+    pub(crate) async fn load_actions(&self, thing_id: &str) -> Option<Vec<serde_json::Value>> {
         let db = Db::new(self.pool.clone());
         let cmds = db.find_thing_commands_by_thing_id(thing_id).await.ok()?;
         if cmds.is_empty() {

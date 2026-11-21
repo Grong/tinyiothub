@@ -52,6 +52,10 @@ export const deviceReadView: ToolView = {
           label: `画面 ${index + 1}`,
           value: [source.label, source.finding].filter(Boolean).join(' · '),
         })),
+        ...facts.actions.slice(0, 5).map((action, index) => ({
+          label: `动作 ${index + 1}`,
+          value: [action.name, action.description].filter(Boolean).join(' · '),
+        })),
         ...(input.evidence?.length
           ? [{ label: '证据', value: `${input.evidence.length} 条` }]
           : []),

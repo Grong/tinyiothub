@@ -8,6 +8,7 @@ const device = JSON.stringify({
   health: 'bad',
   zone: '3 号楼屋面',
   state: { 出水温度: '38.2', 风机转速: '0' },
+  actions: [{ name: 'reconnect', description: '重新连接' }],
   sources: [{ source: '通道 1', mediaTime: '2026-11-21T12:00:00Z', text: '塔顶有积水' }],
 });
 
@@ -33,6 +34,7 @@ describe('tool views', () => {
         expect.arrayContaining([
           { label: '画面 1', value: '通道 1 · 塔顶有积水' },
           { label: '证据', value: '1 条' },
+          { label: '动作 1', value: 'reconnect · 重新连接' },
         ]),
       );
     }
