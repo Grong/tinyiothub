@@ -63,15 +63,15 @@ const STEP_STATUS: Record<StoryStep['status'], string> = {
   failed: '失败',
 };
 
-const STEP_ICON: Record<StoryStep['tone'], string> = {
-  read: '◎',
-  write: '✎',
-  alarm: '⚠',
-  plan: '☑',
-  ask: '?',
-  analysis: '◌',
-  skill: '◆',
-  think: '✧',
+const STEP_ICON: Record<StoryStep['tone'], ReturnType<typeof html>> = {
+  read: html`<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12Z"/><circle cx="12" cy="12" r="3"/></svg>`,
+  write: html`<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>`,
+  alarm: html`<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z"/><path d="M12 9v4"/><path d="M12 17h.01"/></svg>`,
+  plan: html`<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>`,
+  ask: html`<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M9.1 9a3 3 0 1 1 5.8 1c0 2-3 2-3 4"/><path d="M12 17h.01"/></svg>`,
+  analysis: html`<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 12h4l3 8 4-16 3 8h4"/></svg>`,
+  skill: html`<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2 22 12 12 22 2 12Z"/></svg>`,
+  think: html`<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 18h6"/><path d="M10 22h4"/><path d="M12 2a7 7 0 0 0-4 12.7V17h8v-2.3A7 7 0 0 0 12 2Z"/></svg>`,
 };
 
 const ASSISTANT_STATUS: Record<string, string> = {
@@ -860,8 +860,13 @@ export class StoryView extends LitElement {
     return html`
       <details class="story-step story-step--${step.tone} story-step--${step.status}">
         <summary class="story-step__line">
-          <span class="story-step__mark" aria-hidden="true">${STEP_ICON[step.tone]}</span>
-          <span class="story-step__title">${step.title}</span>
+          <span class="story-step__mark" aria-hidden="true">
+            <span class="story-step__icon">${STEP_ICON[step.tone]}</span>
+          </span>
+          <span class="story-step__title">
+            <span class="story-step__title-closed">${step.title}</span>
+            <span class="story-step__title-open">${step.title} · 详情</span>
+          </span>
           ${
             step.detail
               ? html`<span class="story-step__brief">${clampText(step.detail, 72)}</span>`
@@ -869,7 +874,9 @@ export class StoryView extends LitElement {
           }
           ${step.finding ? html`<span class="story-step__finding">${step.finding}</span>` : nothing}
           <time class="story-step__time">${formatStoryClock(step.at)}</time>
-          <span class="story-step__chevron" aria-hidden="true">⌄</span>
+          <span class="story-step__chevron" aria-hidden="true">
+            <svg viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"/></svg>
+          </span>
         </summary>
         <div class="story-step__expand">
           ${step.detail ? html`<p class="story-step__detail">${step.detail}</p>` : nothing}

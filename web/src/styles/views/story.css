@@ -829,8 +829,32 @@ view-story {
   display: none;
 }
 
-.story-step__line:hover {
-  background: var(--bg-subtle);
+@media (hover: hover) {
+  .story-step__line:hover {
+    background: color-mix(in srgb, var(--bg-subtle) 82%, var(--accent-subtle));
+  }
+
+  .story-step__line:hover .story-step__title {
+    color: var(--text-strong);
+  }
+
+  .story-step__line:hover .story-step__mark {
+    border-color: color-mix(in srgb, var(--accent) 42%, var(--border));
+    color: var(--accent);
+  }
+
+  .story-step__line:hover .story-step__chevron {
+    color: var(--text);
+  }
+}
+
+.story-step__line:active {
+  background: var(--accent-subtle);
+}
+
+.story-step__line:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: -2px;
 }
 
 .story-step__mark {
@@ -843,8 +867,28 @@ view-story {
   border: 1px solid var(--border);
   background: var(--card);
   color: var(--muted);
-  font-size: 10px;
   line-height: 1;
+  transition:
+    color var(--duration-fast) var(--ease-out),
+    border-color var(--duration-fast) var(--ease-out),
+    background var(--duration-fast) var(--ease-out);
+}
+
+.story-step__icon {
+  display: grid;
+  place-items: center;
+  width: 11px;
+  height: 11px;
+}
+
+.story-step__icon svg {
+  width: 100%;
+  height: 100%;
+  fill: none;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 1.7;
 }
 
 .story-step--write .story-step__mark {
@@ -882,6 +926,19 @@ view-story {
   font-size: 12.5px;
   line-height: 1.4;
   color: var(--text);
+  transition: color var(--duration-fast) var(--ease-out);
+}
+
+.story-step__title-open {
+  display: none;
+}
+
+.story-step[open] .story-step__title-closed {
+  display: none;
+}
+
+.story-step[open] .story-step__title-open {
+  display: inline;
 }
 
 .story-step--running .story-step__title {
@@ -929,9 +986,24 @@ view-story {
 
 .story-step__chevron {
   flex: none;
-  font-size: 10px;
+  display: grid;
+  place-items: center;
+  width: 15px;
+  height: 15px;
   color: var(--muted);
-  transition: transform var(--duration-fast) var(--ease-out);
+  transition:
+    transform var(--duration-fast) var(--ease-out),
+    color var(--duration-fast) var(--ease-out);
+}
+
+.story-step__chevron svg {
+  width: 100%;
+  height: 100%;
+  fill: none;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 1.8;
 }
 
 .story-step[open] .story-step__chevron {
@@ -2341,5 +2413,15 @@ view-story {
   }
   50% {
     box-shadow: 0 0 0 3px var(--accent-subtle);
+  }
+}
+
+
+@media (prefers-reduced-motion: reduce) {
+  .story-step__line,
+  .story-step__mark,
+  .story-step__title,
+  .story-step__chevron {
+    transition: none;
   }
 }
