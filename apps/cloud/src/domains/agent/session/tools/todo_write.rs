@@ -82,7 +82,7 @@ impl Tool for TodoWriteTool {
     }
 
     fn description(&self) -> &str {
-        "Create or replace the session todo list. Use concrete execution steps, not skill names: load a skill first and read its instructions, then write one item per concrete step of the active skill. Track one skill at a time; when switching skills, replace the list with the next skill's steps. Mark finished items completed and the next item in_progress; keep at most one item in_progress. Do not write a final conclusion while any item is pending or in_progress: finish it, or replace the list without obsolete items first. If an item is genuinely blocked, keep its real status and state the blocker explicitly; never mark it completed."
+        "Create or replace the session todo list. For a turn with multiple skills, you may start with one item per skill as a placeholder. Do not guess steps before loading a skill: after loading a skill, replace its placeholder with one item per concrete step from its instructions and keep the other skill items unchanged. Track one active skill at a time. Mark finished items completed and the next item in_progress; keep at most one item in_progress. Do not write a final conclusion while any item is pending or in_progress: finish it, or replace the list without obsolete items first. If an item is genuinely blocked, keep its real status and state the blocker explicitly; never mark it completed."
     }
 
     fn parameters_schema(&self) -> serde_json::Value {

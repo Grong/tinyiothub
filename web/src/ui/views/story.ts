@@ -334,6 +334,10 @@ export class StoryView extends LitElement {
     return this.querySelector('.story-body') as HTMLElement | null;
   }
 
+  private onFeedWheel(event: WheelEvent): void {
+    if (event.deltaY < 0) this.stickToLatest = false;
+  }
+
   private onFeedScroll(): void {
     if (this.suppressScroll || this.pinPending) return;
     const feed = this.feedScroller();
@@ -586,7 +590,7 @@ export class StoryView extends LitElement {
           </button>
         </header>
 
-        <div class="story-body" @scroll=${() => this.onFeedScroll()}>
+        <div class="story-body" @scroll=${() => this.onFeedScroll()} @wheel=${(event: WheelEvent) => this.onFeedWheel(event)}>
           <div class="story-work">
           <div class="story-head">
             ${this.renderHero()}

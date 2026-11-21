@@ -19,19 +19,20 @@ export const alarmActionView: ToolView = {
   key: 'alarm.action',
   present(input) {
     const record = recordOf(parseJson(input.result));
+    const failed = input.status === 'failed' || record?.success === false;
     const status = asString(record?.status || record?.outcome);
     const detail = asString(record?.message || record?.error);
     return {
       viewKey: 'alarm.action',
       title: input.name.includes('ack') ? '确认告警' : '处理告警',
-      summary: input.status === 'failed'
+      summary: failed
         ? clampText(input.error || detail || '操作失败', 120)
         : status
           ? `操作结果：${status}`
           : input.result
             ? '操作已提交'
             : '执行中…',
-      status: statusOf(input),
+      status: failed ? 'failed' : statusOf(input),
       details: [
         ...(status ? [{ label: '结果', value: status }] : []),
         ...(detail ? [{ label: '说明', value: detail }] : []),
@@ -80,18 +81,24 @@ export const alarmListView: ToolView = {
           }
         : null;
     }
-    const alarms = arrayFrom(record, ['alarms', 'items'])
+    const alarms = arrayFrom(record, ['alarms', 'items', 'data'])
       .map(recordOf)
       .filter((item): item is Record<string, unknown> => item !== null);
-    const total = typeof record.total === 'number' ? record.total : alarms.length;
+    const pagination = recordOf(record.pagination);
+    const total =
+      typeof record.total === 'number'
+        ? record.total
+        : typeof pagination?.total_count === 'number'
+          ? pagination.total_count
+          : alarms.length;
     const critical = alarms.filter((alarm) =>
-      ['critical', 'error', 'high'].includes(asString(alarm.level || alarm.severity)),
+      ['critical', 'error', 'high'].includes(asString(alarm.alarmLevel || alarm.level || alarm.severity)),
     ).length;
     const unacknowledged = alarms.filter((alarm) => alarm.isAcknowledged !== true).length;
     const details = alarms.slice(0, 5).map((alarm, index) => ({
       label: `告警 ${index + 1}`,
       value: [
-        asString(alarm.level || alarm.severity),
+        asString(alarm.alarmLevel || alarm.level || alarm.severity),
         asString(alarm.thingName || alarm.deviceName || alarm.thingId),
         asString(alarm.message || alarm.ruleName || alarm.name),
       ]

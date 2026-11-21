@@ -184,7 +184,7 @@ describe('buildStory', () => {
     expect(story.stats.actions).toBe(0);
   });
 
-  it('marks failed operations and keeps the business-language error', () => {
+  it('marks failed operations without inventing a business finding', () => {
     const model = timelineOf(
       event(1, 'turn/start', { turnId: 't1' }),
       event(2, 'tool/call', {
@@ -203,10 +203,37 @@ describe('buildStory', () => {
     const step = story.sections[0].steps[0];
 
     expect(step.status).toBe('failed');
-    expect(step.finding).toBe('操作未成功');
+    expect(step.finding).toBeUndefined();
     expect(step.detail).toContain('设备正被占用');
     expect(step.tone).toBe('write');
-    expect(story.stats.findings).toBe(1);
+    expect(story.stats.findings).toBe(0);
+  });
+
+  it('uses real alarm data for findings and ignores failed tool attempts', () => {
+    const model = timelineOf(
+      event(1, 'turn/start', { turnId: 't-alarm' }),
+      event(2, 'tool/call', { toolCallId: 'c1', tool: 'alarm_list', args: {} }),
+      event(3, 'tool/result', {
+        toolCallId: 'c1',
+        tool: 'alarm_list',
+        result: JSON.stringify({
+          data: [
+            { id: 'alarm-005', alarmLevel: 'critical', message: 'A栋车间烟雾浓度异常' },
+            { id: 'alarm-003', alarmLevel: 'warning', message: '冷链温度异常' },
+          ],
+          pagination: { total_count: 2 },
+        }),
+      }),
+      event(4, 'tool/call', { toolCallId: 'c2', tool: 'alarm_acknowledge', args: { id: 'alarm-005' } }),
+      event(5, 'tool/result', {
+        toolCallId: 'c2',
+        tool: 'alarm_acknowledge',
+        result: JSON.stringify({ success: false, error: '报警未找到: alarm-005' }),
+      }),
+    );
+    const story = buildStory(model.blocks, []);
+    expect(story.findings.map((finding) => finding.label)).toEqual(['发现 2 条告警']);
+    expect(story.devices.map((device) => device.id)).not.toContain('alarm-005');
   });
 
   it('surfaces per-frame detection findings as business issues', () => {

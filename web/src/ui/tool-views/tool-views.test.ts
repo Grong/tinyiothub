@@ -92,6 +92,25 @@ describe('tool views', () => {
     expect(events.details?.[0].value).toContain('offline');
   });
 
+  it('reads the paginated alarm API shape', () => {
+    const view = presentTool({
+      name: 'alarm_list',
+      viewKey: 'alarm.list',
+      args: {},
+      result: JSON.stringify({
+        data: [
+          { id: 'alarm-005', alarmLevel: 'critical', message: 'A栋车间烟雾浓度异常', isAcknowledged: false },
+          { id: 'alarm-003', alarmLevel: 'warning', message: '冷链温度异常', isAcknowledged: true },
+        ],
+        pagination: { total_count: 2 },
+      }),
+      status: 'ok',
+    });
+    expect(view.summary).toBe('2 条待关注');
+    expect(view.metrics).toContainEqual({ label: '严重', value: '1' });
+    expect(view.details?.[0].value).toContain('烟雾浓度');
+  });
+
   it('renders action target and parameters', () => {
     const view = presentTool({
       name: 'call_device',

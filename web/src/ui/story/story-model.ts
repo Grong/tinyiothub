@@ -342,11 +342,36 @@ function upsertDevice(
   return existing;
 }
 
+const DEVICE_TOOLS = new Set([
+  'list_devices',
+  'list_things',
+  'search_things',
+  'read_device',
+  'get_thing',
+  'get_thing_profile',
+  'read_property',
+  'read_properties',
+  'set_device',
+  'write_properties',
+  'call_device',
+  'invoke_action',
+  'send_command',
+  'stop',
+  'watch',
+  'unwatch',
+  'query_events',
+  'get_device_history',
+  'get_thing_tree',
+  'list_composites',
+  'run_composite',
+]);
+
 function collectDevices(
   devices: Map<string, StoryDevice>,
   part: Extract<TimelineBlock, { kind: 'tool' }>,
   order: number,
 ): StoryDevice | null {
+  if (!DEVICE_TOOLS.has(part.name)) return null;
   const parsed = parseJsonValue(part.result);
   const inspected = !['list_things', 'list_devices', 'search_things'].includes(part.name);
   let primary: StoryDevice | null = null;
@@ -385,7 +410,7 @@ function findingOf(
 
   const parsed = recordOf(parseJsonValue(part.result));
   if (parsed) {
-    const alarms = parsed.alarms ?? parsed.items;
+    const alarms = parsed.alarms ?? parsed.items ?? parsed.data;
     if (Array.isArray(alarms) && alarms.length > 0 && part.name.includes('alarm')) {
       return `发现 ${alarms.length} 条告警`;
     }
@@ -398,12 +423,8 @@ function findingOf(
         return `画面识别 ${detection.data.length} 个目标`;
       }
     }
-    const sourceErrors = parsed.sourceErrors;
-    if (Array.isArray(sourceErrors) && sourceErrors.length > 0) return '现场画面读取失败';
-    const success = parsed.success;
-    if (success === false) return '操作未成功';
   }
-  if (part.status === 'failed') return '操作未成功';
+  // A failed attempt is execution status, not a business finding.
   return undefined;
 }
 

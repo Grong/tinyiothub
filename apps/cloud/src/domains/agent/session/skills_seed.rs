@@ -11,7 +11,7 @@ use tinyiothub_storage::Db;
 const INSPECTION_TEMPLATE: &str = include_str!("../../../../templates/skills/inspection.md");
 
 const TODO_LIFECYCLE: &str = "\n## 计划状态\n\n\
-- 加载本技能后，根据下面的执行步骤建立 Todo：每项是具体动作，技能名不要作为 Todo 项。当前步骤为 `in_progress`，其余步骤为 `pending`。\n\
+- 加载本技能后，将 Todo 中本技能的占位项展开为下面的执行步骤；每项是具体动作。若 Todo 中还没有本技能项，先添加。当前步骤为 `in_progress`，其余步骤为 `pending`。\n\
 - 每完成一个步骤，立即再次调用 `todo_write`：将该步骤标记为 `completed`，并将下一步骤标记为 `in_progress`。不要等到最终回复才更新。\n\
 - 输出最终总结前再次调用 `todo_write`：完成项标记为 completed；确实被阻塞、无法完成的项保留 pending/in_progress，在最终回复说明阻塞原因，不得伪装完成。\n\
 - 没有异常或提前结束时也要更新已执行项，不得让计划停留在初始状态。\n";
