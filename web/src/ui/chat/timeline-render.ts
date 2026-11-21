@@ -3,6 +3,7 @@ import { unsafeHTML } from 'lit/directives/unsafe-html.js';
 import { md } from '../shared/markdown.js';
 import type { ContentPart } from './timeline-model.js';
 import type { TodoItem } from '../../api/assistant.js';
+import { hasDedicatedToolView, presentTool } from '../tool-views/registry.js';
 
 const TOOL_META: Record<string, { icon: string; verb: string }> = {
   get_thing: { icon: '◎', verb: '查看设备' },
@@ -340,17 +341,36 @@ function renderTool(part: ToolPart): TemplateResult {
     : part.result
       ? 'activity__meta--ok'
       : 'activity__meta--pending';
+  const presentation = presentTool({
+    name: part.name,
+    args: part.args,
+    result: part.result ?? null,
+    status: failed ? 'failed' : part.result ? 'ok' : 'running',
+    error: part.error,
+  });
+  const label = hasDedicatedToolView(part.name)
+    ? `${presentation.title}${presentation.summary ? ` · ${presentation.summary}` : ''}`
+    : toolSummary(part);
   return html`<details
     class="activity activity--tool log-entry ${failed ? 'activity--failed' : ''}"
   >
     <summary class="activity__summary">
       <span class="activity__icon" aria-hidden="true">${icon}</span>
-      <span class="activity__label">${toolSummary(part)}</span>
+      <span class="activity__label">${label}</span>
       <span class="activity__meta ${stateClass}"
         >${failed ? '失败' : part.result ? '完成' : '执行中'}</span
       >
     </summary>
     <div class="activity__detail process-detail">
+      ${
+        presentation.metrics?.length
+          ? html`<dl class="activity__metrics">
+              ${presentation.metrics.map(
+                (metric) => html`<div><dt>${metric.label}</dt><dd>${metric.value}</dd></div>`,
+              )}
+            </dl>`
+          : nothing
+      }
       <div class="activity__detail-label">参数</div>
       <pre>${JSON.stringify(part.args ?? {}, null, 2)}</pre>
       ${

@@ -15,6 +15,7 @@
 
 import type { TodoItem } from '../../api/assistant.js';
 import { toolFailure, type PendingQuestion, type TimelineBlock } from '../chat/timeline-model.js';
+import { hasDedicatedToolView, presentTool } from '../tool-views/registry.js';
 
 export type StoryTone =
   | 'read'
@@ -601,10 +602,18 @@ function stepFromTool(
   };
   const failed = part.status === 'failed';
   const status: StoryStepStatus = failed ? 'failed' : part.result ? 'done' : 'running';
+  const presentation = presentTool({
+    name: part.name,
+    args: part.args,
+    result: part.result ?? null,
+    status: failed ? 'failed' : part.result ? 'ok' : 'running',
+    error: part.error,
+  });
+  const dedicated = hasDedicatedToolView(part.name);
   return {
     id: part.id,
-    title: titleOf(part, device),
-    detail: detailOf(part, device),
+    title: dedicated ? presentation.title : titleOf(part, device),
+    detail: dedicated ? presentation.summary : detailOf(part, device),
     at: part.at,
     status,
     tone: copy.tone,
@@ -612,7 +621,7 @@ function stepFromTool(
     deviceId: device?.id,
     visionIds: visionOf(part, device).map((item) => item.evidenceId),
     finding: findingOf(part, device),
-    metrics: device?.metrics,
+    metrics: presentation.metrics?.map((metric) => ({ name: metric.label, value: metric.value })) ?? device?.metrics,
   };
 }
 
