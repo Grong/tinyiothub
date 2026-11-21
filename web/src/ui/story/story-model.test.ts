@@ -5,7 +5,35 @@ import { buildStory, deviceHealthLabel, deviceTypeLabel, failureCopy } from './s
 import { buildMonthBuckets, buildWeekBuckets, computeAchievements } from './story-achievements.js';
 import type { BrainEvent } from '../../api/brain-events.js';
 
+const TEST_VIEW_KEYS: Record<string, string> = {
+  read_device: 'device.read',
+  get_thing: 'device.read',
+  get_thing_profile: 'device.read',
+  list_devices: 'device.list',
+  list_things: 'device.list',
+  search_things: 'device.list',
+  read_property: 'property.read',
+  read_properties: 'property.read',
+  set_device: 'device.write',
+  write_properties: 'device.write',
+  call_device: 'device.action',
+  invoke_action: 'device.action',
+  send_command: 'device.action',
+  query_events: 'event.history',
+  get_device_history: 'event.history',
+  alarm_list: 'alarm.list',
+  list_alarms: 'alarm.list',
+  todo_write: 'todo.write',
+  update_todo: 'todo.write',
+  ask_user: 'interaction.ask',
+  spawn_subagent: 'subagent.spawn',
+  get_skill: 'skill.load',
+};
+
 function event(seq: number, eventType: string, payloadJson: Record<string, unknown>): SessionEvent {
+  if ((eventType === 'tool/call' || eventType === 'tool/result') && typeof payloadJson.tool === 'string' && !payloadJson.viewKey) {
+    payloadJson = { ...payloadJson, viewKey: TEST_VIEW_KEYS[payloadJson.tool] ?? 'generic' };
+  }
   return {
     seq,
     eventId: `e${seq}`,

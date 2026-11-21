@@ -13,7 +13,7 @@ use axum::response::sse::{Event, KeepAlive, Sse};
 use axum::response::{IntoResponse, Response};
 use serde::Deserialize;
 use tinyiothub_agent::session::SessionKey;
-use tinyiothub_core::harness::ExecutionMode;
+use tinyiothub_core::harness::{ExecutionMode, HarnessEvent};
 use tinyiothub_storage::harness_event::EventFilter;
 use tinyiothub_web::security::Claims;
 
@@ -84,6 +84,24 @@ fn event_filter(session_id: &str) -> EventFilter {
     }
 }
 
+/// Backfill viewKey for rows written before the canonical catalog. This is a
+/// read-time projection; stored payloads and their digests stay untouched.
+fn with_tool_view_key(mut event: HarnessEvent) -> HarnessEvent {
+    if !matches!(event.event_type.as_str(), "tool/call" | "tool/result") {
+        return event;
+    }
+    let Some(name) = event.payload_json.get("tool").and_then(|value| value.as_str()) else {
+        return event;
+    };
+    let view_key = crate::domains::agent::tools::catalog::tool_view_key(name);
+    if let Some(payload) = event.payload_json.as_object_mut() {
+        payload
+            .entry("viewKey")
+            .or_insert_with(|| serde_json::Value::String(view_key.to_string()));
+    }
+    event
+}
+
 pub async fn list_events(
     State(state): State<AgentState>,
     claims: Claims,
@@ -101,7 +119,7 @@ pub async fn list_events(
             .await
         {
             Ok(page) => Json(serde_json::json!({
-                "events": page.events,
+                "events": page.events.into_iter().map(with_tool_view_key).collect::<Vec<_>>(),
                 "highWatermark": page.high_watermark,
                 "nextBefore": page.next_before,
                 "hasMore": page.has_more,
@@ -123,6 +141,7 @@ pub async fn list_events(
                 .events
                 .into_iter()
                 .filter(|event| super::is_public_session_event(&event.event_type))
+                .map(with_tool_view_key)
                 .collect::<Vec<_>>(),
             "highWatermark": page.high_watermark,
         }))
@@ -172,6 +191,7 @@ pub async fn stream_events(
                         if !super::is_public_session_event(&event.event_type) {
                             continue;
                         }
+                        let event = with_tool_view_key(event);
                         if let Ok(frame) = Event::default()
                             .event("session")
                             .id(event.seq.to_string())
@@ -306,6 +326,43 @@ mod tests {
         assert_eq!(parse_permission_mode("ask"), Some(PermissionMode::Ask));
         assert_eq!(parse_permission_mode("read_only"), Some(PermissionMode::ReadOnly));
         assert_eq!(parse_permission_mode("admin"), None);
+    }
+
+    fn event(event_type: &str, payload_json: serde_json::Value) -> HarnessEvent {
+        HarnessEvent {
+            seq: 1,
+            event_id: "e1".into(),
+            workspace_id: "ws".into(),
+            session_id: "agent:ws:agent_main/s1".into(),
+            execution_mode: ExecutionMode::Production,
+            run_id: None,
+            task_id: None,
+            event_type: event_type.into(),
+            occurred_at: chrono::Utc::now(),
+            cause_id: None,
+            schema_v: 1,
+            payload_digest: "d".into(),
+            payload_json,
+        }
+    }
+
+    #[test]
+    fn historical_tool_events_are_projected_with_a_view_key() {
+        let call = with_tool_view_key(event(
+            "tool/call",
+            serde_json::json!({"tool": "read_device", "args": {}}),
+        ));
+        assert_eq!(call.payload_json["viewKey"], "device.read");
+        let result = with_tool_view_key(event(
+            "tool/result",
+            serde_json::json!({"tool": "alarm_list", "result": "{}"}),
+        ));
+        assert_eq!(result.payload_json["viewKey"], "alarm.list");
+        let kept = with_tool_view_key(event(
+            "tool/result",
+            serde_json::json!({"tool": "read_device", "viewKey": "custom.view"}),
+        ));
+        assert_eq!(kept.payload_json["viewKey"], "custom.view");
     }
 
     #[test]

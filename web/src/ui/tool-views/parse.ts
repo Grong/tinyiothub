@@ -31,6 +31,12 @@ export function clampText(value: string, max = 80): string {
   return text.length > max ? `${text.slice(0, max)}…` : text;
 }
 
+export interface DeviceSource {
+  label: string;
+  finding: string;
+  at: string;
+}
+
 export interface DeviceFacts {
   id: string;
   name: string;
@@ -38,6 +44,7 @@ export interface DeviceFacts {
   online?: boolean;
   health: string;
   metrics: Array<{ label: string; value: string }>;
+  sources: DeviceSource[];
 }
 
 const DEVICE_ID_KEYS = ['thingId', 'thing_id', 'deviceId', 'device_id', 'id'];
@@ -66,6 +73,18 @@ export function deviceFacts(result: unknown, args: unknown): DeviceFacts | null 
     ? Object.entries(state).map(([label, value]) => ({ label, value: clampText(displayValue(value), 32) }))
     : [];
   const online = typeof record?.online === 'boolean' ? record.online : undefined;
+  const sources = (Array.isArray(record?.sources) ? record.sources : [])
+    .map(recordOf)
+    .filter((source): source is Record<string, unknown> => source !== null)
+    .map((source) => {
+      const evidence = recordOf(source.evidence);
+      const detections = Array.isArray(source.data) ? source.data.length : 0;
+      return {
+        label: firstString(source, ['source', 'sourceId', 'source_id']) || firstString(evidence, ['source']) || '现场画面',
+        finding: firstString(source, ['text', 'summary', 'analysis', 'description']) || (detections > 0 ? `识别 ${detections} 个目标` : ''),
+        at: firstString(source, ['mediaTime', 'media_time']) || firstString(evidence, ['mediaTime', 'media_time']),
+      };
+    });
   return {
     id,
     name: name || id,
@@ -73,6 +92,7 @@ export function deviceFacts(result: unknown, args: unknown): DeviceFacts | null 
     online,
     health: firstString(record, ['health']) || 'unknown',
     metrics,
+    sources,
   };
 }
 

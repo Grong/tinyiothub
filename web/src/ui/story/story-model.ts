@@ -457,6 +457,7 @@ function stepFromTool(
     viewKey: part.viewKey,
     args: part.args,
     result: part.result ?? null,
+    evidence: part.evidence,
     status: failed ? 'failed' : part.result ? 'ok' : 'running',
     error: part.error,
   });

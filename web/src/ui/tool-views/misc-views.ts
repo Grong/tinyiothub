@@ -18,11 +18,24 @@ function arrayFrom(record: Record<string, unknown>, keys: string[]): unknown[] {
 export const alarmActionView: ToolView = {
   key: 'alarm.action',
   present(input) {
+    const record = recordOf(parseJson(input.result));
+    const status = asString(record?.status || record?.outcome);
+    const detail = asString(record?.message || record?.error);
     return {
       viewKey: 'alarm.action',
       title: input.name.includes('ack') ? '确认告警' : '处理告警',
-      summary: input.result ? '操作已提交' : '执行中…',
+      summary: input.status === 'failed'
+        ? clampText(input.error || detail || '操作失败', 120)
+        : status
+          ? `操作结果：${status}`
+          : input.result
+            ? '操作已提交'
+            : '执行中…',
       status: statusOf(input),
+      details: [
+        ...(status ? [{ label: '结果', value: status }] : []),
+        ...(detail ? [{ label: '说明', value: detail }] : []),
+      ],
     };
   },
 };

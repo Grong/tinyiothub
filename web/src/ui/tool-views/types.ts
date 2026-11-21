@@ -24,6 +24,7 @@ export interface ToolViewInput {
   viewKey?: string;
   args: unknown;
   result?: string | null;
+  evidence?: unknown[];
   status?: 'running' | 'ok' | 'failed';
   error?: string;
 }

@@ -48,6 +48,13 @@ export const deviceReadView: ToolView = {
       details: [
         ...(facts.zone ? [{ label: '区域', value: facts.zone }] : []),
         ...(facts.id ? [{ label: '设备 ID', value: facts.id }] : []),
+        ...facts.sources.map((source, index) => ({
+          label: `画面 ${index + 1}`,
+          value: [source.label, source.finding].filter(Boolean).join(' · '),
+        })),
+        ...(input.evidence?.length
+          ? [{ label: '证据', value: `${input.evidence.length} 条` }]
+          : []),
       ],
     };
   },

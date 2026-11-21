@@ -46,6 +46,9 @@ const session: SessionSummary = {
 };
 
 function event(seq: number, eventType: string, payloadJson: Record<string, unknown>) {
+  if (payloadJson.tool === 'read_device' && !payloadJson.viewKey) {
+    payloadJson = { ...payloadJson, viewKey: 'device.read' };
+  }
   return {
     seq,
     eventId: `e${seq}`,

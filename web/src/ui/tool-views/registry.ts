@@ -22,41 +22,6 @@ import {
   watchView,
 } from './misc-views.js';
 
-const NAME_TO_VIEW: Record<string, string> = {
-  read_device: 'device.read',
-  get_thing: 'device.read',
-  get_thing_profile: 'device.read',
-  list_devices: 'device.list',
-  list_things: 'device.list',
-  search_things: 'device.list',
-  read_property: 'property.read',
-  read_properties: 'property.read',
-  set_device: 'device.write',
-  write_properties: 'device.write',
-  call_device: 'device.action',
-  invoke_action: 'device.action',
-  send_command: 'device.action',
-  query_events: 'event.history',
-  get_device_history: 'event.history',
-  alarm_list: 'alarm.list',
-  list_alarms: 'alarm.list',
-  todo_write: 'todo.write',
-  update_todo: 'todo.write',
-  ask_user: 'interaction.ask',
-  spawn_subagent: 'subagent.spawn',
-  get_skill: 'skill.load',
-  search_knowledge: 'knowledge.search',
-  read_document: 'knowledge.document',
-  stop: 'device.stop',
-  get_thing_tree: 'thing.tree',
-  alarm_acknowledge: 'alarm.action',
-  alarm_resolve: 'alarm.action',
-  watch: 'watch.create',
-  unwatch: 'watch.create',
-  list_composites: 'composite.list',
-  run_composite: 'composite.run',
-};
-
 const VIEWS: Record<string, ToolView> = {
   [deviceReadView.key]: deviceReadView,
   [deviceListView.key]: deviceListView,
@@ -125,18 +90,9 @@ export const genericView: ToolView = {
   },
 };
 
-export function toolViewKey(name: string): string {
-  return NAME_TO_VIEW[name] ?? 'generic';
-}
-
-/** Frontend presentation; unknown tools always get a generic fallback. */
+/** Frontend presentation; the backend event's viewKey is authoritative. */
 export function presentTool(input: ToolViewInput): ToolPresentation {
-  const key = input.viewKey && VIEWS[input.viewKey] ? input.viewKey : toolViewKey(input.name);
-  const view = VIEWS[key];
+  const view = input.viewKey ? VIEWS[input.viewKey] : undefined;
   const presentation = view?.present(input);
   return presentation ?? genericView.present(input)!;
-}
-
-export function hasDedicatedToolView(name: string): boolean {
-  return VIEWS[toolViewKey(name)] !== undefined;
 }
