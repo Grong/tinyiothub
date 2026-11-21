@@ -71,7 +71,7 @@ pub struct TurnEventPage {
 }
 
 #[derive(sqlx::FromRow)]
-struct SessionEventRow {
+pub(crate) struct SessionEventRow {
     seq: i64,
     event_id: String,
     session_id: String,
@@ -88,7 +88,7 @@ struct SessionEventRow {
 }
 
 impl SessionEventRow {
-    fn into_event(self, workspace_id: &str) -> Result<HarnessEvent> {
+    pub(crate) fn into_event(self, workspace_id: &str) -> Result<HarnessEvent> {
         validate_schema(self.schema_v)?;
         let execution_mode = ExecutionMode::from_db(&self.execution_mode).ok_or_else(|| DbError::Validation {
             message: format!("unknown execution mode: {}", self.execution_mode),

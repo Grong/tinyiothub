@@ -246,6 +246,13 @@ fn harness_migrator() -> Migrator {
             include_str!("../migrations/20261120000006_harness_subagent_vocab.sql").into_sql_str(),
             false,
         ),
+        Migration::new(
+            20261121000001,
+            "session_projection_snapshots".into(),
+            MigrationType::Simple,
+            include_str!("../migrations/20261121000001_session_projection_snapshots.sql").into_sql_str(),
+            false,
+        ),
     ]);
     // Rollback/mixed-version workers must open workspaces that already contain
     // additive migrations unknown to their older binary, matching the platform
