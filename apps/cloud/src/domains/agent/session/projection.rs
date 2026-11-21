@@ -10,6 +10,7 @@ use tinyiothub_agent::harness::TurnProjection;
 use tinyiothub_storage::{Db, DbError};
 
 const PROJECTION_NAME: &str = "turn.v1";
+const PROJECTION_VERSION: i64 = 1;
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -27,8 +28,9 @@ pub async fn load_session_projection(
         .session_projection_snapshot(workspace_id, PROJECTION_NAME, session_key)
         .await?;
     let cached = snapshot.as_ref().and_then(|snapshot| {
-        serde_json::from_value::<TurnProjection>(snapshot.state_json.clone())
-            .ok()
+        (snapshot.projection_version == PROJECTION_VERSION)
+            .then(|| serde_json::from_value::<TurnProjection>(snapshot.state_json.clone()).ok())
+            .flatten()
             .map(|turn| (turn, snapshot.last_seq))
     });
 
@@ -64,6 +66,7 @@ pub async fn load_session_projection(
             PROJECTION_NAME,
             session_key,
             high_watermark.max(turn.last_seq),
+            PROJECTION_VERSION,
             &state_json,
         )
         .await;

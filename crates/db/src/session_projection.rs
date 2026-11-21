@@ -12,6 +12,7 @@ use crate::{Db, error::Result};
 #[derive(Debug, Clone)]
 pub struct SessionProjectionSnapshot {
     pub last_seq: i64,
+    pub projection_version: i64,
     pub state_json: Value,
 }
 
@@ -23,17 +24,18 @@ impl Db {
         subject_id: &str,
     ) -> Result<Option<SessionProjectionSnapshot>> {
         let pool = self.workspace_pool(workspace_id).await?;
-        let row = sqlx::query_as::<_, (i64, String)>(
-            "SELECT last_seq, state_json FROM session_projection_snapshots
+        let row = sqlx::query_as::<_, (i64, i64, String)>(
+            "SELECT last_seq, projection_version, state_json FROM session_projection_snapshots
              WHERE projection_name = ? AND subject_id = ?",
         )
         .bind(projection_name)
         .bind(subject_id)
         .fetch_optional(&pool)
         .await?;
-        row.map(|(last_seq, state_json)| {
+        row.map(|(last_seq, projection_version, state_json)| {
             Ok(SessionProjectionSnapshot {
                 last_seq,
+                projection_version,
                 state_json: serde_json::from_str(&state_json)?,
             })
         })
@@ -46,15 +48,17 @@ impl Db {
         projection_name: &str,
         subject_id: &str,
         last_seq: i64,
+        projection_version: i64,
         state_json: &Value,
     ) -> Result<()> {
         let pool = self.workspace_pool(workspace_id).await?;
         sqlx::query(
             "INSERT INTO session_projection_snapshots
-                 (projection_name, subject_id, last_seq, state_json, updated_at)
-             VALUES (?, ?, ?, ?, ?)
+                 (projection_name, subject_id, last_seq, projection_version, state_json, updated_at)
+             VALUES (?, ?, ?, ?, ?, ?)
              ON CONFLICT(projection_name, subject_id) DO UPDATE SET
                  last_seq = excluded.last_seq,
+                 projection_version = excluded.projection_version,
                  state_json = excluded.state_json,
                  updated_at = excluded.updated_at
              WHERE excluded.last_seq > session_projection_snapshots.last_seq",
@@ -62,6 +66,7 @@ impl Db {
         .bind(projection_name)
         .bind(subject_id)
         .bind(last_seq)
+        .bind(projection_version)
         .bind(serde_json::to_string(state_json)?)
         .bind(Utc::now().to_rfc3339())
         .execute(&pool)
