@@ -110,6 +110,12 @@ export interface PendingApproval {
   turnId?: string;
 }
 
+export interface AgendaEntry {
+  key: string;
+  label: string;
+  status: string;
+}
+
 function asString(value: unknown): string {
   return typeof value === 'string' ? value : '';
 }
@@ -162,6 +168,7 @@ export class TimelineModel {
   todos: TodoItem[] = [];
   pendingQuestion: PendingQuestion | null = null;
   pendingApprovals: PendingApproval[] = [];
+  agenda: AgendaEntry[] = [];
   cursor = 0;
   highWatermark = 0;
   firstUserText: string | null = null;
@@ -177,6 +184,7 @@ export class TimelineModel {
     this.todos = [];
     this.pendingQuestion = null;
     this.pendingApprovals = [];
+    this.agenda = [];
     this.cursor = 0;
     this.highWatermark = 0;
     this.firstUserText = null;
@@ -276,6 +284,20 @@ export class TimelineModel {
           event.seq,
         );
         break;
+      case 'agenda/set': {
+        const items = Array.isArray(payload.items) ? payload.items : [];
+        this.agenda = items
+          .map((item) => {
+            const record = item && typeof item === 'object' ? (item as Record<string, unknown>) : null;
+            return record ? {
+              key: asString(record.key),
+              label: asString(record.label),
+              status: asString(record.status),
+            } : null;
+          })
+          .filter((item): item is AgendaEntry => Boolean(item?.key));
+        break;
+      }
       case 'turn/incomplete': {
         const pending = Array.isArray(payload.pending)
           ? payload.pending

@@ -14,6 +14,7 @@ use tinyiothub_core::session_protocol::{AssistantStreamSegment, StreamKind};
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 
+use super::agenda::load_turn_agenda;
 use super::context::{TurnContext, TurnContextRegistry};
 use super::events::{SessionEventSink, session_event};
 use super::suppression::audit::{WakeAttempt, attempt_event};
@@ -284,6 +285,19 @@ impl SessionRunner {
         }
         if !self.emit_turn_event(context, attempt, "turn/start", started).await {
             health.failed += 1;
+        }
+        if let Some(agenda) = load_turn_agenda(&context.workspace_id).await {
+            let _ = self
+                .emit_turn_event(
+                    context,
+                    attempt,
+                    "agenda/set",
+                    json!({
+                        "turnId": &context.turn_id,
+                        "items": agenda,
+                    }),
+                )
+                .await;
         }
 
         let (event_tx, mut event_rx) = mpsc::channel::<TurnEvent>(64);

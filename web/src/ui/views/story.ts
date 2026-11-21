@@ -593,6 +593,7 @@ export class StoryView extends LitElement {
         <div class="story-body" @scroll=${() => this.onFeedScroll()} @wheel=${(event: WheelEvent) => this.onFeedWheel(event)}>
           <div class="story-work">
           <div class="story-head">
+            ${this.renderAgenda()}
             ${this.renderHero()}
             ${this.renderFailureNotice()} ${this.renderWaiting()}
             ${this.isWorking() ? this.renderWorking() : nothing}
@@ -701,6 +702,19 @@ export class StoryView extends LitElement {
         </div>
       </section>
     `;
+  }
+
+  private renderAgenda() {
+    const agenda = this.timeline.agenda;
+    if (agenda.length === 0) return nothing;
+    return html`<div class="story-agenda" aria-label="本轮技能">
+      <span class="story-agenda__label">本轮技能</span>
+      ${agenda.map(
+        (item) => html`<span class="story-agenda__item" data-status=${item.status}>
+          <span class="story-agenda__dot" aria-hidden="true"></span>${item.label}
+        </span>`,
+      )}
+    </div>`;
   }
 
   private renderWaiting() {

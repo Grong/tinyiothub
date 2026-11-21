@@ -30,6 +30,21 @@ describe('TimelineModel', () => {
     expect(model.firstUserText).toBe('你好');
   });
 
+  it('keeps the turn agenda from agenda/set', () => {
+    const model = new TimelineModel();
+    model.ingestEvent(
+      event(1, 'agenda/set', {
+        turnId: 't1',
+        items: [
+          { key: 'inspection', label: '巡检', status: 'pending' },
+          { key: 'energy-saving', label: '节能', status: 'pending' },
+        ],
+      }),
+    );
+    expect(model.agenda.map((item) => item.key)).toEqual(['inspection', 'energy-saving']);
+    expect(model.agenda[0].label).toBe('巡检');
+  });
+
   it('surfaces an incomplete turn as a notice', () => {
     const model = new TimelineModel();
     model.ingestEvent(event(1, 'turn/start', { turnId: 't1' }));

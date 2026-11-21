@@ -9,6 +9,7 @@ pub fn is_public_session_event(event_type: &str) -> bool {
     event_type != "turn.state"
 }
 
+pub mod agenda;
 pub mod agent_host;
 pub mod approvals;
 pub mod chat;

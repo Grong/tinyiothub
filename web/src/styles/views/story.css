@@ -171,6 +171,55 @@ view-story {
   min-height: 0;
 }
 
+.story-agenda {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  max-width: var(--story-content);
+  margin: 0 auto 12px;
+}
+
+.story-agenda__label {
+  margin-right: 2px;
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: 9.5px;
+  letter-spacing: 0.08em;
+}
+
+.story-agenda__item {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 8px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-full);
+  background: var(--bg-elevated);
+  color: var(--text);
+  font-size: 11px;
+}
+
+.story-agenda__dot {
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: var(--muted);
+}
+
+.story-agenda__item[data-status='in_progress'] .story-agenda__dot {
+  background: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-subtle);
+}
+
+.story-agenda__item[data-status='completed'] .story-agenda__dot {
+  background: var(--ok);
+}
+
+.story-agenda__item[data-status='blocked'] .story-agenda__dot {
+  background: var(--danger);
+}
+
 .story-head {
   flex: none;
   padding: 24px var(--story-gutter) 0;
