@@ -610,7 +610,7 @@ impl SessionRunner {
 
         let cancel_token = cancel.as_ref().map(|cancellation| cancellation.token.clone());
         let result = agent.turn_streamed(message, event_tx, cancel_token).await;
-        let (tool_calls, model_calls, usage, forward_failed, agenda) =
+        let (tool_calls, model_calls, usage, forward_failed, mut agenda) =
             forward.await.unwrap_or((0, 0, serde_json::Value::Null, 1, Vec::new()));
         health.failed += forward_failed;
 
@@ -624,6 +624,28 @@ impl SessionRunner {
                     .into_iter()
                     .filter(|todo| todo.status != TodoStatus::Completed)
                     .collect::<Vec<_>>();
+                // A final answer with no pending Todo means the currently
+                // active skill has finished. Settle that skill explicitly so a
+                // normal turn does not stay partial merely because it was the
+                // last skill loaded. Pending skills remain unresolved.
+                if pending.is_empty() && agenda.iter().any(|item| item.status == AgendaStatus::InProgress) {
+                    for item in &mut agenda {
+                        if item.status == AgendaStatus::InProgress {
+                            item.status = AgendaStatus::Completed;
+                        }
+                    }
+                    let _ = self
+                        .emit_turn_event(
+                            context,
+                            attempt,
+                            "agenda/update",
+                            json!({
+                                "turnId": &context.turn_id,
+                                "items": &agenda,
+                            }),
+                        )
+                        .await;
+                }
                 let pending_agenda = agenda
                     .iter()
                     .filter(|item| {
