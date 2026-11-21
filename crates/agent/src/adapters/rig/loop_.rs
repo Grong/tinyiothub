@@ -16,6 +16,7 @@ use rig_agent::streaming::StreamingPrompt;
 use rig_core::streaming::{StreamedAssistantContent, StreamedUserContent};
 use sha2::Digest;
 
+use crate::harness::{GuardDecision, ToolGuard};
 use crate::port::events::TurnEvent;
 use crate::port::runtime::{AgentLoop, AgentLoopConfig, AgentLoopHandle, SteeringBuffer};
 
@@ -227,6 +228,28 @@ impl AgentHook for BudgetHook {
     }
 }
 
+/// Enforces the harness tool-call budget and semantic repeat guard before
+/// every dispatch. It is intentionally a hook, not a tool wrapper: tool
+/// behavior, approval, and Effect handling stay with the tool layer.
+struct ToolGuardHook {
+    guard: Arc<std::sync::Mutex<ToolGuard>>,
+}
+
+impl AgentHook for ToolGuardHook {
+    async fn on_tool_call(&self, _ctx: &HookContext, event: ToolCallEvent<'_>) -> ToolCallAction {
+        let decision = self
+            .guard
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .before(event.tool_name, event.args);
+        match decision {
+            GuardDecision::Run => ToolCallAction::Run,
+            GuardDecision::Skip(message) => ToolCallAction::Skip(message),
+            GuardDecision::Stop(message) => ToolCallAction::Stop(message),
+        }
+    }
+}
+
 /// rig 默认把模型调用未暴露的工具当致命错误（`PromptError::UnknownToolCall`）
 /// 终结整轮。模型在长工具链里偶尔会臆造旧工具名或新名字——一次臆造就让
 /// 整个 Run 失败、Task 变 Failed（2026-11-02 实测：`read_property`）。
@@ -311,7 +334,10 @@ impl AgentLoop for RigAgentLoop {
                 media: tokio::sync::Mutex::new(RunMediaAccountant::default()),
                 tool_call_ids: self.tool_call_ids.clone(),
             })
-            .add_hook(InvalidToolCallRecovery);
+            .add_hook(InvalidToolCallRecovery)
+            .add_hook(ToolGuardHook {
+                guard: Arc::new(std::sync::Mutex::new(ToolGuard::default())),
+            });
         // conversation_memory=false：历史由 cloud DB 每轮 seed，经 .history() 传入。
         let seeded = self.seeded_history().await;
         if !seeded.is_empty() {
