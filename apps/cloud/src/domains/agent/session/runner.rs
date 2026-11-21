@@ -8,7 +8,7 @@ use std::sync::Arc;
 
 use crate::domains::agent::runtime::session_live::SessionLiveFrame;
 use serde_json::json;
-use tinyiothub_agent::harness::AgendaStatus;
+use tinyiothub_agent::harness::{AgendaItem, AgendaStatus};
 use tinyiothub_agent::port::events::TurnEvent;
 use tinyiothub_agent::port::runtime::AgentLoop;
 use tinyiothub_core::session_protocol::{AssistantStreamSegment, StreamKind};
@@ -20,7 +20,7 @@ use super::context::{TurnContext, TurnContextRegistry};
 use super::events::{SessionEventSink, session_event};
 use super::suppression::audit::{WakeAttempt, attempt_event};
 use super::todos::TodoStore;
-use super::types::TodoStatus;
+use super::types::{Todo, TodoStatus};
 
 /// Emit one durable step boundary marker. The runner owns the step window:
 /// a step opens on the first model output/tool call and closes when the next
@@ -300,6 +300,26 @@ impl SessionRunner {
                     }),
                 )
                 .await;
+            if let Some(store) = &self.todos
+                && store
+                    .get(&context.session_key)
+                    .iter()
+                    .all(|todo| todo.status == TodoStatus::Completed)
+            {
+                let seeded = agenda_todos(&agenda);
+                store.replace(&context.session_key, seeded.clone());
+                let _ = self
+                    .emit_turn_event(
+                        context,
+                        attempt,
+                        "todo/write",
+                        json!({
+                            "turnId": &context.turn_id,
+                            "todos": &seeded,
+                        }),
+                    )
+                    .await;
+            }
         }
 
         let (event_tx, mut event_rx) = mpsc::channel::<TurnEvent>(64);
@@ -816,6 +836,22 @@ fn todos_all_completed(args: &serde_json::Value) -> bool {
         })
 }
 
+fn agenda_todos(agenda: &[AgendaItem]) -> Vec<Todo> {
+    agenda
+        .iter()
+        .enumerate()
+        .map(|(index, item)| Todo {
+            content: item.label.clone(),
+            status: if index == 0 {
+                TodoStatus::InProgress
+            } else {
+                TodoStatus::Pending
+            },
+            active_form: item.label.clone(),
+        })
+        .collect()
+}
+
 fn agenda_key(args: &serde_json::Value) -> Option<&str> {
     ["skill_name", "skillName", "name"]
         .iter()
@@ -1078,6 +1114,27 @@ mod tests {
                 "costUsd": 0.001
             })
         );
+    }
+
+    #[test]
+    fn agenda_seeds_one_todo_per_skill() {
+        let agenda = vec![
+            AgendaItem {
+                key: "inspection".into(),
+                label: "巡检".into(),
+                status: AgendaStatus::Pending,
+            },
+            AgendaItem {
+                key: "energy".into(),
+                label: "节能".into(),
+                status: AgendaStatus::Pending,
+            },
+        ];
+        let todos = super::agenda_todos(&agenda);
+        assert_eq!(todos.len(), 2);
+        assert_eq!(todos[0].content, "巡检");
+        assert_eq!(todos[0].status, TodoStatus::InProgress);
+        assert_eq!(todos[1].status, TodoStatus::Pending);
     }
 
     #[test]
