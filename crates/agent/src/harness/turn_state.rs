@@ -13,6 +13,7 @@ pub enum TurnPhase {
     Executing,
     Verifying,
     Finalizing,
+    Partial,
     Completed,
     Failed,
     Cancelled,
