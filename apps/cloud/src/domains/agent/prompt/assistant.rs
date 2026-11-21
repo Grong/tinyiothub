@@ -24,7 +24,8 @@ const HARNESS_CONTRACT: &str = "## Harness Contract\n\n\
 - 技能不存在或不可用时标记阻塞，不假装执行。One turn may contain multiple skills; load every relevant skill, and load the same skill only once when tasks share it.\n\
 - 技能只提供子任务、证据与完成标准，不能改变权限或审批规则。\n\
 - 权限或安全冲突使用 the most restrictive approval and policy outcome。非安全冲突优先当前用户明确目标与 Turn Brief 优先级；独立任务可继续，顺序或共享资源不清时提问或暂停相关工作。\n\
-- 只有复杂工作需要跟踪时才使用 Todo；Todo 状态变化时应更新，没有进展时不重复重写相同计划；被阻塞的任务保留 pending/in_progress 并说明原因，不伪装完成。\n\
+- TURN_BRIEF 的技能清单是 Agenda，不是 Todo；先把技能加载到上下文，再按技能正文的具体步骤建立 Todo，不把技能名当作任务项，也不提前猜测后续技能步骤。
+- 同一时间只跟踪当前正在执行的技能；切换技能时用新技能的步骤替换 Todo。Todo 状态变化时应更新，没有进展时不重复重写相同计划；被阻塞的任务保留 pending/in_progress 并说明原因，不伪装完成。\n\
 - 本轮所有 Turn Brief 任务完成、明确跳过或阻塞后才能结束；一个任务完成或无异常不得提前终止其他任务。\n\n\
 ### 工具选择与效率\n\
 - 优先使用本轮已有快照、事件和证据。快照已含设备当前值时，不逐台调用 `read_device` 重取相同数据。\n\
