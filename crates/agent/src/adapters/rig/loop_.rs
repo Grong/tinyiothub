@@ -26,6 +26,26 @@ use super::tools::to_dynamic_tool;
 
 /// 固定会话 id：现状 zeroclaw 各 turn 独立、无显式会话（Global Constraints #6）。
 const CONVERSATION_ID: &str = "default";
+const MAX_SEEDED_HISTORY_MESSAGES: usize = 120;
+
+fn compact_seeded_messages(
+    mut messages: Vec<crate::port::provider::ChatMessage>,
+) -> Vec<crate::port::provider::ChatMessage> {
+    if messages.len() <= MAX_SEEDED_HISTORY_MESSAGES {
+        return messages;
+    }
+    let dropped = messages.len() - MAX_SEEDED_HISTORY_MESSAGES;
+    let mut kept = messages.split_off(dropped);
+    kept.insert(
+        0,
+        crate::port::provider::ChatMessage {
+            role: "user".into(),
+            content: format!("[earlier conversation compacted: {dropped} messages omitted]"),
+            attachments: Vec::new(),
+        },
+    );
+    kept
+}
 
 /// port AgentLoop 的 rig 引擎实现。
 ///
@@ -545,7 +565,8 @@ impl AgentLoop for RigAgentLoop {
     }
 
     async fn seed_history(&self, messages: &[crate::port::provider::ChatMessage]) -> anyhow::Result<()> {
-        let rig_messages = port_messages_to_rig(messages)?;
+        let compacted = compact_seeded_messages(messages.to_vec());
+        let rig_messages = port_messages_to_rig(&compacted)?;
         if let Some(memory) = &self.memory {
             rig_core::memory::ConversationMemory::append(memory.as_ref(), CONVERSATION_ID, rig_messages)
                 .await
@@ -648,6 +669,22 @@ pub fn rig_loop_factory(cfg: AgentLoopConfig) -> anyhow::Result<AgentLoopHandle>
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn seeded_history_is_compacted_with_a_marker() {
+        let messages = (0..MAX_SEEDED_HISTORY_MESSAGES + 5)
+            .map(|index| crate::port::provider::ChatMessage {
+                role: "user".into(),
+                content: format!("m{index}"),
+                attachments: Vec::new(),
+            })
+            .collect::<Vec<_>>();
+        let compacted = compact_seeded_messages(messages);
+        assert_eq!(compacted.len(), MAX_SEEDED_HISTORY_MESSAGES + 1);
+        assert!(compacted[0].content.contains("5 messages omitted"));
+        assert_eq!(compacted[1].content, "m5");
+        assert_eq!(compacted.last().unwrap().content, "m124");
+    }
 
     #[test]
     fn run_budget_charges_distinct_evidence_once_across_completions() {
