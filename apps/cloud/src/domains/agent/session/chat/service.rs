@@ -185,6 +185,7 @@ fn turn_event_to_chat_event(evt: &TurnEvent, run_id: &str, session_key: &str) ->
             delay_ms: notice.delay_ms,
             error: notice.error.clone(),
         },
+        TurnEvent::ToolCheckpoint { .. } => ChatEvent::Noop,
         TurnEvent::Usage { .. } => {
             // Usage events are informational only; filter these out downstream
             ChatEvent::Delta {
@@ -210,7 +211,9 @@ impl crate::domains::agent::session::TurnObserver for ChatEventObserver {
             return;
         }
         let chat = turn_event_to_chat_event(event, &self.run_id, &self.session_key);
-        let _ = self.tx.send(chat).await;
+        if !matches!(chat, ChatEvent::Noop) {
+            let _ = self.tx.send(chat).await;
+        }
     }
 }
 

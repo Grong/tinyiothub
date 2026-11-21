@@ -55,6 +55,7 @@ pub struct RigAgentLoop {
     /// Provider tool-call id of the call about to execute. Filled by the
     /// pre-execution hook and read by tools that freeze a durable identity.
     tool_call_ids: Option<crate::port::tool::ToolCallIdSlot>,
+    checkpoint_before_tool: bool,
     retry_events: super::provider::RetryEvents,
 }
 
@@ -66,6 +67,7 @@ impl RigAgentLoop {
             seeded: tokio::sync::Mutex::new(Vec::new()),
             redactions: std::collections::HashMap::new(),
             tool_call_ids: None,
+            checkpoint_before_tool: false,
             retry_events: super::provider::RetryEvents::default(),
         }
     }
@@ -77,6 +79,11 @@ impl RigAgentLoop {
 
     fn with_retry_events(mut self, retry_events: super::provider::RetryEvents) -> Self {
         self.retry_events = retry_events;
+        self
+    }
+
+    pub fn with_checkpoints(mut self, enabled: bool) -> Self {
+        self.checkpoint_before_tool = enabled;
         self
     }
 
@@ -228,6 +235,35 @@ impl AgentHook for BudgetHook {
     }
 }
 
+/// Waits for the runner to persist `tool/checkpoint` before a tool body runs.
+struct ToolCheckpointHook {
+    events: mpsc::Sender<TurnEvent>,
+}
+
+impl AgentHook for ToolCheckpointHook {
+    async fn on_tool_call(&self, _ctx: &HookContext, event: ToolCallEvent<'_>) -> ToolCallAction {
+        let id = event.tool_call_id.unwrap_or(event.internal_call_id).to_string();
+        let ack = crate::port::events::ToolCheckpointAck::new();
+        if self
+            .events
+            .send(TurnEvent::ToolCheckpoint {
+                id,
+                name: event.tool_name.to_string(),
+                ack: ack.clone(),
+            })
+            .await
+            .is_err()
+        {
+            return ToolCallAction::Stop("tool checkpoint channel closed".into());
+        }
+        match tokio::time::timeout(std::time::Duration::from_secs(5), ack.wait()).await {
+            Ok(true) => ToolCallAction::Run,
+            Ok(false) => ToolCallAction::Stop("tool checkpoint was not persisted".into()),
+            Err(_) => ToolCallAction::Stop("tool checkpoint timed out".into()),
+        }
+    }
+}
+
 /// Enforces the harness tool-call budget and semantic repeat guard before
 /// every dispatch. It is intentionally a hook, not a tool wrapper: tool
 /// behavior, approval, and Effect handling stay with the tool layer.
@@ -370,10 +406,15 @@ impl AgentLoop for RigAgentLoop {
                 media: tokio::sync::Mutex::new(RunMediaAccountant::default()),
                 tool_call_ids: self.tool_call_ids.clone(),
             })
-            .add_hook(InvalidToolCallRecovery)
-            .add_hook(ToolGuardHook {
-                guard: Arc::new(std::sync::Mutex::new(ToolGuard::default())),
+            .add_hook(InvalidToolCallRecovery);
+        if self.checkpoint_before_tool {
+            request = request.add_hook(ToolCheckpointHook {
+                events: event_tx.clone(),
             });
+        }
+        let mut request = request.add_hook(ToolGuardHook {
+            guard: Arc::new(std::sync::Mutex::new(ToolGuard::default())),
+        });
         // conversation_memory=false：历史由 cloud DB 每轮 seed，经 .history() 传入。
         let seeded = self.seeded_history().await;
         if !seeded.is_empty() {
@@ -598,6 +639,7 @@ pub fn rig_loop_factory(cfg: AgentLoopConfig) -> anyhow::Result<AgentLoopHandle>
         RigAgentLoop::new(agent, memory)
             .with_redactions(redactions)
             .with_tool_call_ids(cfg.tool_call_ids)
+            .with_checkpoints(cfg.checkpoint_before_tool)
             .with_retry_events(retry_events),
     ));
     Ok(handle)

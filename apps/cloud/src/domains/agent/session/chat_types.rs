@@ -109,6 +109,9 @@ pub enum ChatEvent {
         error: String,
         source: String,
     },
+    /// Internal-only marker for control-plane events that have no chat payload.
+    #[serde(skip)]
+    Noop,
 }
 
 impl ChatEvent {
@@ -120,6 +123,7 @@ impl ChatEvent {
             ChatEvent::ToolResult { run_id, .. } => run_id,
             ChatEvent::Final { run_id, .. } => run_id,
             ChatEvent::Retry { run_id, .. } | ChatEvent::Error { run_id, .. } => run_id,
+            ChatEvent::Noop => "",
         }
     }
 
@@ -131,6 +135,7 @@ impl ChatEvent {
             ChatEvent::ToolResult { session_key, .. } => session_key,
             ChatEvent::Final { session_key, .. } => session_key,
             ChatEvent::Retry { session_key, .. } | ChatEvent::Error { session_key, .. } => session_key,
+            ChatEvent::Noop => "",
         }
     }
 }

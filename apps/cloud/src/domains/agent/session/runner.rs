@@ -447,6 +447,21 @@ impl SessionRunner {
                                 )
                                 .await;
                         }
+                        TurnEvent::ToolCheckpoint { id, name, ack } => {
+                            let persisted = events
+                                .emit(session_event(
+                                    &context,
+                                    "tool/checkpoint",
+                                    json!({
+                                        "turnId": &context.turn_id,
+                                        "toolCallId": &id,
+                                        "tool": &name,
+                                    }),
+                                ))
+                                .await
+                                .is_ok();
+                            ack.complete(persisted);
+                        }
                         TurnEvent::ToolCall { id, name, args } => {
                             if !step_open {
                                 open_step!();

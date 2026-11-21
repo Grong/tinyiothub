@@ -196,6 +196,7 @@ impl AutonomousAgentFactory {
             conversation_memory: true,
             available_capabilities: self.available_capabilities.clone(),
             tool_call_ids: Some(tool_call_ids.clone()),
+            checkpoint_before_tool: true,
         };
         let agent = match rig_loop_factory(cfg) {
             Ok(agent) => agent,

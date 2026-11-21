@@ -772,6 +772,7 @@ async fn rig_loop_forwards_tool_and_usage_events() {
         conversation_memory: false,
         available_capabilities: vec![],
         tool_call_ids: Some(tool_call_ids.clone()),
+        checkpoint_before_tool: false,
     };
     let loop_ = rig_loop_factory(cfg).expect("factory builds loop");
 
@@ -953,6 +954,7 @@ fn invalid_tool_loop(
         conversation_memory: false,
         available_capabilities: vec![],
         tool_call_ids: None,
+        checkpoint_before_tool: false,
     })
     .expect("factory builds loop")
 }
@@ -1122,6 +1124,7 @@ async fn run_budget_rejects_fifth_distinct_image_before_provider_delivery() {
         conversation_memory: false,
         available_capabilities: vec![],
         tool_call_ids: None,
+        checkpoint_before_tool: false,
     })
     .expect("loop");
     let (tx, _rx) = tokio::sync::mpsc::channel(64);
@@ -1237,6 +1240,7 @@ async fn failing_tool_result_is_delivered_as_text_not_retried() {
         conversation_memory: false,
         available_capabilities: vec![],
         tool_call_ids: None,
+        checkpoint_before_tool: false,
     };
     let loop_ = rig_loop_factory(cfg).expect("factory builds loop");
 
@@ -1526,6 +1530,7 @@ async fn cancelled_after_stream_end_is_tool_loop_cancelled() {
         conversation_memory: false,
         available_capabilities: vec![],
         tool_call_ids: None,
+        checkpoint_before_tool: false,
     };
     let loop_ = rig_loop_factory(cfg).expect("factory builds loop");
 
@@ -1648,6 +1653,7 @@ fn tools_descriptor_capability_gate_fails_before_model_call() {
         conversation_memory: false,
         available_capabilities: vec![],
         tool_call_ids: None,
+        checkpoint_before_tool: false,
     });
     let error = match result {
         Ok(_) => panic!("missing video/vision capability must fail closed"),
@@ -1773,6 +1779,7 @@ async fn tools_descriptor_redacts_nested_secrets_in_public_events() {
         conversation_memory: false,
         available_capabilities: vec![],
         tool_call_ids: None,
+        checkpoint_before_tool: false,
     })
     .expect("loop");
 
@@ -1886,6 +1893,7 @@ async fn rig_loop_streams_tokens_and_tool_calls_from_real_sse() {
         conversation_memory: false,
         available_capabilities: vec![],
         tool_call_ids: None,
+        checkpoint_before_tool: false,
     };
     let loop_handle = crate::adapters::rig::loop_::rig_loop_factory(cfg).expect("loop");
     let (tx, mut rx) = tokio::sync::mpsc::channel(32);
@@ -2401,6 +2409,7 @@ async fn retry_after_partial_text_does_not_duplicate_text_or_replay_tools() {
         conversation_memory: false,
         available_capabilities: vec![],
         tool_call_ids: None,
+        checkpoint_before_tool: false,
     })
     .expect("loop");
     let (tx, mut rx) = tokio::sync::mpsc::channel(32);
@@ -2457,6 +2466,7 @@ async fn retry_backoff_stops_when_the_turn_is_cancelled() {
         conversation_memory: false,
         available_capabilities: vec![],
         tool_call_ids: None,
+        checkpoint_before_tool: false,
     })
     .expect("loop");
     let cancel = tokio_util::sync::CancellationToken::new();
@@ -2544,6 +2554,7 @@ async fn cancelling_an_in_flight_request_prevents_detached_retries() {
         conversation_memory: false,
         available_capabilities: vec![],
         tool_call_ids: None,
+        checkpoint_before_tool: false,
     })
     .expect("loop");
     let cancel = tokio_util::sync::CancellationToken::new();
@@ -2637,6 +2648,7 @@ async fn reasoning_deltas_stay_out_of_assistant_answer_text() {
         conversation_memory: false,
         available_capabilities: vec![],
         tool_call_ids: None,
+        checkpoint_before_tool: false,
     })
     .expect("loop");
     let (tx, mut rx) = tokio::sync::mpsc::channel(32);

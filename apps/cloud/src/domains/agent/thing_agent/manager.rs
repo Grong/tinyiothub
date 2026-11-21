@@ -659,6 +659,9 @@ pub(crate) mod tests {
                 conversation_memory: true,
                 available_capabilities: vec![],
                 tool_call_ids: None,
+
+                tool_call_ids: None,
+                checkpoint_before_tool: true,
             };
             let handle = tinyiothub_agent::adapters::rig::loop_::rig_loop_factory(cfg).expect("build stub loop");
             Self {

@@ -271,6 +271,7 @@ impl AgentPool {
             conversation_memory: false,
             available_capabilities: vec![],
             tool_call_ids: None,
+            checkpoint_before_tool: true,
         };
 
         let agent = tinyiothub_agent::adapters::rig::loop_::rig_loop_factory(cfg)
