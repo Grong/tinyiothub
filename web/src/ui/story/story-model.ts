@@ -14,7 +14,7 @@
  */
 
 import type { TodoItem } from '../../api/assistant.js';
-import { toolFailure, type PendingQuestion, type TimelineBlock } from '../chat/timeline-model.js';
+import type { PendingQuestion, TimelineBlock } from '../chat/timeline-model.js';
 import { presentTool } from '../tool-views/registry.js';
 import type { ToolDetail } from '../tool-views/types.js';
 
@@ -224,10 +224,6 @@ const TYPE_LABEL: Record<string, string> = {
 const DEVICE_TRIGGER_KEYS = ['thingId', 'thing_id', 'deviceId', 'device_id', 'id'];
 const DEVICE_NAME_KEYS = ['displayName', 'display_name', 'name', 'title'];
 
-function asString(value: unknown): string {
-  return typeof value === 'string' ? value : '';
-}
-
 function recordOf(value: unknown): Record<string, unknown> | null {
   return value !== null && typeof value === 'object' && !Array.isArray(value)
     ? (value as Record<string, unknown>)
@@ -270,16 +266,6 @@ function quoteDevice(name: string): string {
 
 function deviceLabel(device: StoryDevice | null | undefined): string {
   return device ? quoteDevice(device.name) : '设备';
-}
-
-function actionName(part: Extract<TimelineBlock, { kind: 'tool' }>): string {
-  return firstString(recordOf(part.args), [
-    'actionName',
-    'action_name',
-    'action',
-    'command',
-    'name',
-  ]);
 }
 
 function metricEntries(record: Record<string, unknown>): StoryDeviceMetric[] {
@@ -356,7 +342,6 @@ function upsertDevice(
   return existing;
 }
 
-/** 从工具结果里回收设备，并把它们记进设备卡牌。 */
 function collectDevices(
   devices: Map<string, StoryDevice>,
   part: Extract<TimelineBlock, { kind: 'tool' }>,
@@ -456,144 +441,6 @@ function visionOf(
   });
 }
 
-function detailOf(
-  part: Extract<TimelineBlock, { kind: 'tool' }>,
-  device: StoryDevice | null,
-): string {
-  if (part.status === 'failed')
-    return clampText(part.error ?? toolFailure(part.result) ?? '执行未成功');
-  if (!part.result) return '执行中…';
-
-  const parsed = parseJsonValue(part.result);
-  const record = recordOf(parsed);
-  const name = part.name;
-
-  if (device && ['read_device', 'get_thing', 'get_thing_profile'].includes(name)) {
-    const facts = [
-      device.online === undefined ? '' : device.online ? '在线' : '离线',
-      HEALTH_LABEL[device.health ?? ''] ?? '',
-      device.metrics.length > 0 ? `${device.metrics.length} 项运行参数` : '',
-    ].filter(Boolean);
-    if (facts.length > 0) return facts.join(' · ');
-  }
-
-  if (!record) {
-    // 事件里的 result 被截断时，宁可说“已完成”，也不要编造“0 台/没有告警”。
-    const text = asString(part.result).replace(/\s+/g, ' ').trim();
-    if (text && !/^[[{]/.test(text)) return clampText(text, 90);
-    return '已完成';
-  }
-
-  if (name === 'read_property' || name === 'read_properties') {
-    const property = firstString(record, ['propertyName', 'property_name']) || '属性';
-    const value = displayValue(record?.currentValue);
-    const unit = asString(record?.unit);
-    return `${property}：${value}${unit ? ` ${unit}` : ''}`;
-  }
-
-  if (['list_things', 'list_devices', 'search_things'].includes(name)) {
-    const items = Array.isArray(record?.items) ? record.items.length : 0;
-    const total = typeof record?.total === 'number' ? record.total : items;
-    return total > items ? `共 ${total} 台，已载入 ${items} 台` : `共 ${total} 台`;
-  }
-
-  if (name === 'query_events') {
-    const total = typeof record?.total === 'number' ? record.total : 0;
-    return `回看 ${total} 条事件`;
-  }
-
-  if (name === 'alarm_list' || name === 'list_alarms') {
-    const alarms = record?.alarms ?? record?.items;
-    const count = Array.isArray(alarms)
-      ? alarms.length
-      : typeof record?.total === 'number'
-        ? record.total
-        : 0;
-    return count > 0 ? `${count} 条待关注` : '当前没有告警';
-  }
-
-  if (name === 'set_device' || name === 'write_properties') {
-    const updated = record?.updated;
-    return Array.isArray(updated) && updated.length > 0
-      ? `已调整 ${updated.length} 项设置`
-      : '设置已生效';
-  }
-
-  if (name === 'invoke_action' || name === 'call_device' || name === 'send_command') {
-    const status = firstString(record, ['status']);
-    if (status === 'ok' || status === 'accepted' || status === 'submitted') return '已提交执行';
-    return '已下发，等待设备回读';
-  }
-
-  if (name === 'todo_write' || name === 'update_todo') {
-    const todos = Array.isArray(record?.todos) ? record.todos : [];
-    const done = todos.filter((item) => recordOf(item)?.status === 'completed').length;
-    return `计划 ${done}/${todos.length} 项完成`;
-  }
-
-  if (name === 'get_skill') {
-    const skill = firstString(recordOf(part.args), ['skillId', 'skill', 'name']);
-    return skill ? `规范 ${skill}` : '已载入作业规范';
-  }
-
-  if (name === 'ask_user') return '等待你的回答';
-
-  const text = asString(part.result).replace(/\s+/g, ' ').trim();
-  if (!text) return '';
-  // 证据列只保留 2000 字符，长 JSON 可能被截断而无法解析；业务页不展示半截协议。
-  if (/^[[{]/.test(text)) return '已完成';
-  return clampText(text, 90);
-}
-
-function titleOf(
-  part: Extract<TimelineBlock, { kind: 'tool' }>,
-  device: StoryDevice | null,
-): string {
-  const copy = STORY_ACTION_COPY[part.name] ?? {
-    verb: part.name,
-    tone: 'read' as StoryTone,
-    icon: '⚙',
-  };
-  const action = actionName(part);
-  switch (part.name) {
-    case 'read_device':
-      return `查看${deviceLabel(device)}的实时状态`;
-    case 'get_thing':
-    case 'get_thing_profile':
-      return `查看${deviceLabel(device)}的档案`;
-    case 'read_property':
-    case 'read_properties':
-      return `读取${deviceLabel(device)}的运行参数`;
-    case 'set_device':
-    case 'write_properties':
-      return `调整${deviceLabel(device)}的设置`;
-    case 'invoke_action':
-    case 'call_device':
-    case 'send_command':
-      return action ? `让${deviceLabel(device)}执行「${action}」` : `操作${deviceLabel(device)}`;
-    case 'query_events':
-    case 'get_device_history':
-      return `回看${deviceLabel(device)}最近的事件`;
-    case 'alarm_list':
-    case 'list_alarms':
-      return '检查当前告警';
-    case 'list_things':
-    case 'list_devices':
-      return '梳理需要关注的设备';
-    case 'ask_user':
-      return '需要你确认一件事';
-    case 'todo_write':
-    case 'update_todo':
-      return '更新工作计划';
-    case 'get_skill':
-      return '查阅作业规范';
-    case 'spawn_subagent':
-      return '安排专项分析';
-    default:
-      return device ? `${copy.verb}${deviceLabel(device)}` : copy.verb;
-  }
-}
-
 function stepFromTool(
   part: Extract<TimelineBlock, { kind: 'tool' }>,
   device: StoryDevice | null,
@@ -616,8 +463,8 @@ function stepFromTool(
   const dedicated = presentation.viewKey !== 'generic';
   return {
     id: part.id,
-    title: dedicated ? presentation.title : titleOf(part, device),
-    detail: dedicated ? presentation.summary : detailOf(part, device),
+    title: dedicated ? presentation.title : device ? `${copy.verb}${deviceLabel(device)}` : presentation.title,
+    detail: presentation.summary,
     at: part.at,
     status,
     tone: copy.tone,

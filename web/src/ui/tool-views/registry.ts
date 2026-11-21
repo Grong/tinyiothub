@@ -84,11 +84,43 @@ export const genericView: ToolView = {
   present(input) {
     const failed = input.status === 'failed';
     const name = input.name || '工具';
+    if (failed) {
+      return {
+        viewKey: 'generic',
+        title: name,
+        summary: input.error || '执行失败',
+        status: 'failed',
+      };
+    }
+    if (!input.result) {
+      return { viewKey: 'generic', title: name, summary: '执行中…', status: 'running' };
+    }
+    let parsed: unknown = null;
+    try {
+      parsed = JSON.parse(input.result);
+    } catch {
+      parsed = null;
+    }
+    const record = parsed && typeof parsed === 'object' && !Array.isArray(parsed)
+      ? (parsed as Record<string, unknown>)
+      : null;
     return {
       viewKey: 'generic',
       title: name,
-      summary: failed ? input.error || '执行失败' : input.result ? '已完成' : '执行中…',
-      status: failed ? 'failed' : input.result ? 'ok' : 'running',
+      summary: !parsed && /^[[{]/.test(input.result)
+        ? '已完成'
+        : typeof parsed === 'string' || !parsed
+          ? input.result.replace(/\s+/g, ' ').slice(0, 120)
+          : '已完成',
+      status: 'ok',
+      details: record
+        ? Object.entries(record)
+            .slice(0, 6)
+            .map(([label, value]) => ({
+              label,
+              value: typeof value === 'string' ? value.slice(0, 120) : JSON.stringify(value).slice(0, 120),
+            }))
+        : undefined,
     };
   },
 };
