@@ -107,7 +107,7 @@ function structuredToolResult(part: ToolPart): StructuredToolResult | null {
   if (['todo_write', 'update_todo', 'todo'].includes(part.name)) {
     const items = result.todos ?? result.tasks;
     if (!Array.isArray(items)) return null;
-    const todos = items.map((item) => {
+    const todos: Array<TodoItem | null> = items.map((item) => {
       const todo = record(item);
       const content = todo?.content ?? todo?.title ?? todo?.name;
       if (typeof content !== 'string') return null;
@@ -116,7 +116,7 @@ function structuredToolResult(part: ToolPart): StructuredToolResult | null {
         content,
         activeForm: typeof todo?.activeForm === 'string' ? todo.activeForm : content,
         status: status === 'completed' || status === 'in_progress' ? status : 'pending',
-      } satisfies TodoItem;
+      };
     });
     return todos.every((todo): todo is TodoItem => todo !== null) ? { kind: 'todos', todos } : null;
   }

@@ -586,16 +586,12 @@ export class StoryView extends LitElement {
         </header>
 
         <div class="story-body" @scroll=${() => this.onFeedScroll()}>
+          <div class="story-work">
           <main class="story-main" @scroll=${() => this.onFeedScroll()}>
             <div class="story-feed">
               ${this.renderHistory()} ${this.renderHero()}
               ${this.renderFailureNotice()} ${this.renderWaiting()}
               ${this.isWorking() ? this.renderWorking() : nothing}
-              ${
-                this.story.plans.length > 0
-                  ? html`<task-plan-panel .todos=${this.story.plans}></task-plan-panel>`
-                  : nothing
-              }
               ${this.renderPrompt()}
               ${
                 this.loading && this.story.sections.length === 0
@@ -611,6 +607,14 @@ export class StoryView extends LitElement {
               ${this.renderFooter()}
             </div>
           </main>
+          ${
+            this.story.plans.some((todo) => todo.status !== 'completed')
+              ? html`<div class="story-task-dock">
+                  <task-plan-panel .todos=${this.story.plans}></task-plan-panel>
+                </div>`
+              : nothing
+          }
+          </div>
           <aside class="story-rail" aria-label="工作成果">
             <story-achievements
               .stats=${this.achievements}

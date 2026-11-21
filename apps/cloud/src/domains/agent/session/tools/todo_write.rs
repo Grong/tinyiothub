@@ -100,7 +100,7 @@ impl Tool for TodoWriteTool {
                             "status": {"type": "string", "enum": ["pending", "in_progress", "completed"]},
                             "activeForm": {"type": "string"}
                         },
-                        "required": ["content", "status", "activeForm"]
+                        "required": ["content", "status"]
                     }
                 }
             },

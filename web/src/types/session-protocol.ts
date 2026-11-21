@@ -51,7 +51,7 @@ export interface TurnUsage {
 export interface SessionTodo {
   content: string;
   status: 'pending' | 'in_progress' | 'completed';
-  activeForm: string;
+  activeForm?: string;
 }
 
 export interface SessionQuestion {

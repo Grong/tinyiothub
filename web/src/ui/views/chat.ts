@@ -443,7 +443,7 @@ export class ChatView extends LitElement {
     const fullAccess = this.permissionMode === 'full_access';
     return html`
       ${
-        this.timeline.todos.length > 0
+        this.timeline.todos.some((todo) => todo.status !== 'completed')
           ? html`<task-plan-panel .todos=${this.timeline.todos}></task-plan-panel>`
           : nothing
       }

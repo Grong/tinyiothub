@@ -49,6 +49,7 @@ pub enum TodoStatus {
 pub struct Todo {
     pub content: String,
     pub status: TodoStatus,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
     pub active_form: String,
 }
 
@@ -77,9 +78,6 @@ impl TodoList {
         for todo in &self.todos {
             if todo.content.trim().is_empty() {
                 return Err("todo content must not be empty".to_string());
-            }
-            if todo.active_form.trim().is_empty() {
-                return Err("todo activeForm must not be empty".to_string());
             }
         }
         Ok(())
