@@ -21,6 +21,7 @@ export interface ToolPresentation {
 
 export interface ToolViewInput {
   name: string;
+  viewKey?: string;
   args: unknown;
   result?: string | null;
   status?: 'running' | 'ok' | 'failed';

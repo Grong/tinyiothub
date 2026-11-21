@@ -62,6 +62,7 @@ export type TimelineBlock =
       kind: 'tool';
       id: string;
       name: string;
+      viewKey?: string;
       args: unknown;
       result?: string;
       evidence?: unknown[];
@@ -362,7 +363,14 @@ export class TimelineModel {
         const id = asString(payload.toolCallId) || event.eventId;
         const name = asString(payload.tool);
         if (name === 'canvas') break;
-        this.pushBlock({ kind: 'tool', id, name, args: payload.args ?? null, at }, event.seq);
+        this.pushBlock({
+          kind: 'tool',
+          id,
+          name,
+          viewKey: asString(payload.viewKey) || undefined,
+          args: payload.args ?? null,
+          at,
+        }, event.seq);
         break;
       }
       case 'tool/result': {
@@ -376,6 +384,7 @@ export class TimelineModel {
         const block = this.blocks.find((item) => item.kind === 'tool' && item.id === id);
         if (block && block.kind === 'tool') {
           block.result = result;
+          block.viewKey = asString(payload.viewKey) || block.viewKey;
           block.evidence = evidence;
           block.status = status;
           block.error = error;

@@ -6,6 +6,21 @@ import {
   deviceWriteView,
   propertyReadView,
 } from './device-view.js';
+import {
+  alarmActionView,
+  alarmListView,
+  compositeView,
+  deviceStopView,
+  eventHistoryView,
+  knowledgeDocumentView,
+  knowledgeView,
+  questionView,
+  skillView,
+  subagentView,
+  thingTreeView,
+  todoView,
+  watchView,
+} from './misc-views.js';
 
 const NAME_TO_VIEW: Record<string, string> = {
   read_device: 'device.read',
@@ -30,6 +45,15 @@ const NAME_TO_VIEW: Record<string, string> = {
   ask_user: 'interaction.ask',
   spawn_subagent: 'subagent.spawn',
   get_skill: 'skill.load',
+  read_document: 'knowledge.document',
+  stop: 'device.stop',
+  get_thing_tree: 'thing.tree',
+  alarm_acknowledge: 'alarm.action',
+  alarm_resolve: 'alarm.action',
+  watch: 'watch.create',
+  unwatch: 'watch.create',
+  list_composites: 'composite.list',
+  run_composite: 'composite.run',
 };
 
 const VIEWS: Record<string, ToolView> = {
@@ -38,6 +62,20 @@ const VIEWS: Record<string, ToolView> = {
   [propertyReadView.key]: propertyReadView,
   [deviceWriteView.key]: deviceWriteView,
   [deviceActionView.key]: deviceActionView,
+  [alarmListView.key]: alarmListView,
+  [alarmActionView.key]: alarmActionView,
+  [deviceStopView.key]: deviceStopView,
+  [thingTreeView.key]: thingTreeView,
+  [eventHistoryView.key]: eventHistoryView,
+  [knowledgeView.key]: knowledgeView,
+  [knowledgeDocumentView.key]: knowledgeDocumentView,
+  [skillView.key]: skillView,
+  [todoView.key]: todoView,
+  [questionView.key]: questionView,
+  [subagentView.key]: subagentView,
+  [watchView.key]: watchView,
+  [compositeView.key]: compositeView,
+  'composite.run': compositeView,
 };
 
 export const genericView: ToolView = {
@@ -60,7 +98,7 @@ export function toolViewKey(name: string): string {
 
 /** Frontend presentation; unknown tools always get a generic fallback. */
 export function presentTool(input: ToolViewInput): ToolPresentation {
-  const key = toolViewKey(input.name);
+  const key = input.viewKey && VIEWS[input.viewKey] ? input.viewKey : toolViewKey(input.name);
   const view = VIEWS[key];
   const presentation = view?.present(input);
   return presentation ?? genericView.present(input)!;

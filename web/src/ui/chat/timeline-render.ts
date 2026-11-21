@@ -3,7 +3,7 @@ import { unsafeHTML } from 'lit/directives/unsafe-html.js';
 import { md } from '../shared/markdown.js';
 import type { ContentPart } from './timeline-model.js';
 import type { TodoItem } from '../../api/assistant.js';
-import { hasDedicatedToolView, presentTool } from '../tool-views/registry.js';
+import { presentTool } from '../tool-views/registry.js';
 
 const TOOL_META: Record<string, { icon: string; verb: string }> = {
   get_thing: { icon: '◎', verb: '查看设备' },
@@ -343,14 +343,16 @@ function renderTool(part: ToolPart): TemplateResult {
       : 'activity__meta--pending';
   const presentation = presentTool({
     name: part.name,
+    viewKey: part.viewKey,
     args: part.args,
     result: part.result ?? null,
     status: failed ? 'failed' : part.result ? 'ok' : 'running',
     error: part.error,
   });
-  const label = hasDedicatedToolView(part.name)
-    ? `${presentation.title}${presentation.summary ? ` · ${presentation.summary}` : ''}`
-    : toolSummary(part);
+  const label =
+    presentation.viewKey !== 'generic'
+      ? `${presentation.title}${presentation.summary ? ` · ${presentation.summary}` : ''}`
+      : toolSummary(part);
   return html`<details
     class="activity activity--tool log-entry ${failed ? 'activity--failed' : ''}"
   >

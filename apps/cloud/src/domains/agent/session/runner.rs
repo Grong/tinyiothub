@@ -408,6 +408,7 @@ impl SessionRunner {
                                         "stepId": step_id!(),
                                         "toolCallId": id,
                                         "tool": name,
+                                        "viewKey": crate::domains::agent::tools::catalog::tool_view_key(name),
                                         "args": args
                                     }),
                                 ))
@@ -434,6 +435,7 @@ impl SessionRunner {
                                         "stepId": if step_open { Some(step_id!()) } else { None },
                                         "toolCallId": id,
                                         "tool": name,
+                                        "viewKey": crate::domains::agent::tools::catalog::tool_view_key(name),
                                         "result": truncate(output, 2000),
                                         "evidence": evidence
                                     }),
@@ -845,6 +847,16 @@ mod tests {
                 "turn/end"
             ]
         );
+        let tool_call = events
+            .iter()
+            .find(|event| event.event_type == "tool/call")
+            .expect("tool call");
+        assert_eq!(tool_call.payload_json["viewKey"], "todo.write");
+        let tool_result = events
+            .iter()
+            .find(|event| event.event_type == "tool/result")
+            .expect("tool result");
+        assert_eq!(tool_result.payload_json["viewKey"], "todo.write");
         let text = events
             .iter()
             .find(|event| event.event_type == "assistant/message")
