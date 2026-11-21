@@ -10,6 +10,7 @@ export class TaskPlanPanel extends LitElement {
   }
 
   @property({ attribute: false }) todos: TodoItem[] = [];
+  @property({ type: Boolean }) running = true;
   @state() private expanded = true;
 
   private toggle(): void {
@@ -27,7 +28,10 @@ export class TaskPlanPanel extends LitElement {
         ? `任务 ${active.length} 进行中 · ${pending.length} 待处理`
         : done.length === total
           ? '任务全部完成'
-          : `任务 ${pending.length} 待处理`;
+          : this.running
+            ? `任务 ${pending.length} 待处理`
+            : `本轮结束 · ${pending.length} 项未完成`;
+    const warning = !this.running && pending.length > 0;
     return html`<section class="task-plan" aria-label="本轮任务">
       <button
         class="task-plan__header"
@@ -36,7 +40,7 @@ export class TaskPlanPanel extends LitElement {
         @click=${() => this.toggle()}
       >
         <span class="task-plan__kicker">任务</span>
-        <span class="task-plan__summary">${summary}</span>
+        <span class="task-plan__summary" data-warning=${warning || nothing}>${summary}</span>
         <span class="task-plan__done">${done.length}/${total}</span>
         <span class="task-plan__chevron" aria-hidden="true">${this.expanded ? '⌄' : '›'}</span>
       </button>

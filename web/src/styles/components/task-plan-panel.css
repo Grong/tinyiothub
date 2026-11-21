@@ -40,6 +40,10 @@
   white-space: nowrap;
 }
 
+.task-plan__summary[data-warning] {
+  color: var(--warn);
+}
+
 .task-plan__done {
   color: var(--muted);
   font-family: var(--mono);

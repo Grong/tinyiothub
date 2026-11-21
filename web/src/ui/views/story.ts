@@ -129,7 +129,7 @@ export class StoryView extends LitElement {
   private brainSummary: BrainEventsSummary | null = null;
   private manualSelection = false;
   private historyLocked = false;
-  private stickToLatest = true;
+  @state() private stickToLatest = true;
   private historyEpoch = 0;
   private pinPending = false;
   private suppressScroll = false;
@@ -611,9 +611,9 @@ export class StoryView extends LitElement {
             </div>
           </main>
           ${
-            this.story.plans.some((todo) => todo.status !== 'completed')
+            this.stickToLatest && this.story.plans.some((todo) => todo.status !== 'completed')
               ? html`<div class="story-task-dock">
-                  <task-plan-panel .todos=${this.story.plans}></task-plan-panel>
+                  <task-plan-panel .todos=${this.story.plans} ?running=${this.isWorking()}></task-plan-panel>
                 </div>`
               : nothing
           }
@@ -883,6 +883,18 @@ export class StoryView extends LitElement {
         </summary>
         <div class="story-step__expand">
           ${step.detail ? html`<p class="story-step__detail">${step.detail}</p>` : nothing}
+          ${
+            step.metrics && step.metrics.length > 0
+              ? html`<dl class="story-step__metrics">
+                  ${step.metrics.map(
+                    (metric) => html`<div class="story-step__metric">
+                      <dt>${metric.name}</dt>
+                      <dd>${metric.value}</dd>
+                    </div>`,
+                  )}
+                </dl>`
+              : nothing
+          }
           <div class="story-step__meta">
             <time>${formatStoryClock(step.at)}</time>
             <span>${STEP_STATUS[step.status]}</span>

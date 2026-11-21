@@ -76,6 +76,8 @@ export interface StoryStep {
   visionIds: string[];
   /** 这一步发现的问题；无事发生则为空。 */
   finding?: string;
+  /** 设备步骤展开后的具体运行参数。 */
+  metrics?: StoryDeviceMetric[];
 }
 
 export type StorySectionStatus = 'running' | 'done' | 'failed' | 'cancelled';
@@ -610,6 +612,7 @@ function stepFromTool(
     deviceId: device?.id,
     visionIds: visionOf(part, device).map((item) => item.evidenceId),
     finding: findingOf(part, device),
+    metrics: device?.metrics,
   };
 }
 
@@ -714,9 +717,9 @@ export function buildStory(
       case 'assistant': {
         if (!part.text.trim()) break;
         const section = current ?? ensureSection(part.at);
-        section.conclusion = section.conclusion
-          ? `${section.conclusion}\n\n${part.text}`
-          : part.text;
+        // Only the latest assistant settlement is the turn conclusion;
+        // intermediate step narration must not become a premature summary.
+        section.conclusion = part.text;
         break;
       }
       case 'reasoning': {

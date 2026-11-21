@@ -73,6 +73,12 @@ describe('buildStory', () => {
     expect(story.origin).toBe('schedule');
     expect(story.sections[0].conclusion).toContain('冷却塔 A 离线');
     expect(story.sections[0].steps).toHaveLength(1);
+    expect(story.sections[0].steps[0].metrics).toEqual(
+      expect.arrayContaining([
+        { name: '出水温度', value: '32.5' },
+        { name: '风机转速', value: '0' },
+      ]),
+    );
 
     expect(story.devices).toHaveLength(1);
     expect(story.devices[0]).toMatchObject({
@@ -408,6 +414,30 @@ describe('buildStory', () => {
     const waiting = latest?.steps.find((step) => step.title.includes('重连授权'));
     expect(waiting?.status).toBe('running');
     expect(waiting?.detail).toContain('离线传感器重连');
+  });
+
+  it('uses only the latest assistant settlement as the turn conclusion', () => {
+    const model = timelineOf(
+      event(1, 'turn/start', { turnId: 't-final' }),
+      event(2, 'assistant/message', {
+        turnId: 't-final',
+        stepId: 't-final:s1',
+        messageId: 'm-step-1',
+        text: '中间过程：我先继续读取下一台设备。',
+      }),
+      event(3, 'tool/call', { toolCallId: 'c1', tool: 'read_device', args: { thingId: 'dev-1' } }),
+      event(4, 'tool/result', { toolCallId: 'c1', tool: 'read_device', result: JSON.stringify(deviceResult) }),
+      event(5, 'assistant/message', {
+        turnId: 't-final',
+        stepId: 't-final:s2',
+        messageId: 'm-step-2',
+        text: '最终结论：本轮巡检完成。',
+      }),
+      event(6, 'turn/end', { turnId: 't-final', outcome: 'completed' }),
+    );
+    const story = buildStory(model.blocks, []);
+    expect(story.sections[0].conclusion).toBe('最终结论：本轮巡检完成。');
+    expect(story.sections[0].conclusion).not.toContain('中间过程');
   });
 
   it('turns a failed turn into business copy and one retry summary', () => {

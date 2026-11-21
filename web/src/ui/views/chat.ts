@@ -78,7 +78,7 @@ export class ChatView extends LitElement {
     this.handleA2uiAction(functionId, data),
   );
   private a2uiHydrated = false;
-  private stickToBottom = true;
+  @state() private stickToBottom = true;
   private threadObserver: ResizeObserver | null = null;
   private historyBefore: number | null = null;
   private historyHasMore = false;
@@ -439,12 +439,19 @@ export class ChatView extends LitElement {
     `;
   }
 
+  private turnRunning(): boolean {
+    return (
+      this.sending ||
+      this.timeline.blocks.some((block) => block.kind === 'turn' && block.status === 'running')
+    );
+  }
+
   private renderComposer() {
     const fullAccess = this.permissionMode === 'full_access';
     return html`
       ${
-        this.timeline.todos.some((todo) => todo.status !== 'completed')
-          ? html`<task-plan-panel .todos=${this.timeline.todos}></task-plan-panel>`
+        this.stickToBottom && this.timeline.todos.some((todo) => todo.status !== 'completed')
+          ? html`<task-plan-panel .todos=${this.timeline.todos} ?running=${this.turnRunning()}></task-plan-panel>`
           : nothing
       }
       <div class="composer-dock">

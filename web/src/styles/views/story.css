@@ -1035,6 +1035,43 @@ view-story {
   white-space: pre-wrap;
 }
 
+.story-step__metrics {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px;
+  margin: 8px 0 0;
+  padding: 8px 10px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  background: var(--bg-subtle);
+}
+
+.story-step__metric {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  min-width: 0;
+  padding: 3px 0;
+}
+
+.story-step__metric dt {
+  flex: none;
+  color: var(--muted);
+  font-size: 10.5px;
+}
+
+.story-step__metric dd {
+  min-width: 0;
+  margin: 0;
+  overflow: hidden;
+  color: var(--text-strong);
+  font-family: var(--mono);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .story-step__meta {
   display: flex;
   align-items: center;

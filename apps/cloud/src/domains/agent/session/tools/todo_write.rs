@@ -82,7 +82,7 @@ impl Tool for TodoWriteTool {
     }
 
     fn description(&self) -> &str {
-        "Create or replace the session todo list. For multi-step work, call it before starting and after every step: mark finished items completed and the next item in_progress. Keep at most one item in_progress; mark every item completed before the final response."
+        "Create or replace the session todo list. For multi-step work, call it before starting and after every step: mark finished items completed and the next item in_progress. Keep at most one item in_progress. Do not write a final conclusion while any item is pending or in_progress: finish it, or replace the list without obsolete items first."
     }
 
     fn parameters_schema(&self) -> serde_json::Value {
@@ -132,7 +132,7 @@ mod tests {
 
         assert!(tool.description().contains("after every step"));
         assert!(tool.description().contains("at most one item in_progress"));
-        assert!(tool.description().contains("before the final response"));
+        assert!(tool.description().contains("Do not write a final conclusion"));
     }
 
     #[tokio::test]
