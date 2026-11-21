@@ -1,36 +1,35 @@
 # 设备管理 (Device Management)
 
-管理和操作 IoT 设备：搜索、查看、属性读写、命令下发、设备生命周期管理。
+管理和操作 IoT 设备：查看设备清单、读取状态、属性读写、执行设备动作。
 
 ## 可用工具
 
 | 工具 | 用途 | 风险 |
 |---|---|---|
-| `search_things` | 列出/搜索设备，支持按名称、类型、状态过滤 | 低 |
-| `get_thing` | 获取设备完整信息：属性列表、标签、元数据 | 低 |
-| `read_properties` | 读取设备的实时属性值 | 低 |
-| `write_properties` | 修改设备属性值 | **高** |
-| `send_command` | 向设备下发命令（如重启、切换模式） | **高** |
-| `create_thing` | 在工作空间中注册新设备 | 中 |
-| `delete_thing` | 删除设备（不可恢复） | **高** |
+| `list_devices` | 列出设备，支持按名称、类型、状态过滤 | 低 |
+| `read_device` | 读取设备实时快照：状态、健康度、区域、属性值；可用 `properties` 过滤属性，用 `sources` 读取画面/检测结果 | 低 |
+| `set_device` | 写入设备属性值 | **高** |
+| `call_device` | 执行设备动作/命令（如重启、切换模式） | **高** |
+| `get_thing_tree` | 查看空间、楼层、产线和设备的层级关系 | 低 |
+| `query_events` | 回看设备事件和历史 | 低 |
+| `list_composites` / `run_composite` | 查看或执行预定义动作链 | 低 / **高** |
 
 ## 典型场景
 
 ### 查询设备
-- "有哪些设备在线？" → `search_things` 列出所有设备
-- "传感器 A 的温度是多少？" → `search_things` 找到设备 → `read_properties` 读取温度
-- "设备 B 的详细信息" → `get_thing` 获取完整 Profile
+- "有哪些设备在线？" → `list_devices` 列出设备并统计在线状态
+- "传感器 A 的温度是多少？" → `list_devices` 找到设备 → `read_device(properties=["温度"])`
+- "设备 B 的详细信息" → `read_device` 获取状态、属性和区域
+- "3 号楼有哪些设备？" → `get_thing_tree` 或 `list_devices` 按区域过滤
 
 ### 控制设备
-- "把空调调到 26 度" → `search_things` 确认设备 → 向用户确认 → `write_properties` 写入
-- "重启网关设备" → `search_things` 确认设备 → 向用户确认 → `send_command`
-
-### 设备生命周期
-- "帮我加一个新传感器" → `create_thing`
-- "删除这个不再使用的设备" → 向用户确认影响范围 → `delete_thing`
+- "把空调调到 26 度" → `list_devices` 确认设备 → 向用户确认 → `set_device`
+- "重启网关设备" → `list_devices` 确认设备 → 向用户确认 → `call_device`
+- 动作链优先使用 `list_composites` 查看，再按需 `run_composite`
 
 ## 注意事项
-- `write_properties`、`send_command`、`delete_thing` 必须先获得用户明确确认
-- 属性值类型必须匹配（字符串、数字、布尔），写入前先 `read_properties` 了解类型
-- 离线设备无法写入属性或下发命令，先检查设备状态
-- `create_thing` 需要知道设备名称、Driver 类型和连接参数
+- `set_device`、`call_device`、`run_composite` 必须服从当前权限、Policy、审批和 Effect 边界
+- 写入前先 `read_device` 确认设备在线和当前值，写入后回读验证
+- 属性值类型必须匹配（字符串、数字、布尔）
+- 离线设备无法写入或执行动作，先检查设备状态
+- 设备注册/删除不在当前 Agent 工具集中；如用户需要，说明应通过平台设备管理界面完成

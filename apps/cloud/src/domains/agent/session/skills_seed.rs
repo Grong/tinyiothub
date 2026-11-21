@@ -13,7 +13,7 @@ const INSPECTION_TEMPLATE: &str = include_str!("../../../../templates/skills/ins
 const TODO_LIFECYCLE: &str = "\n## 计划状态\n\n\
 - 开始执行前调用 `todo_write` 创建本轮计划：当前步骤为 `in_progress`，其余步骤为 `pending`。\n\
 - 每完成一个步骤，立即再次调用 `todo_write`：将该步骤标记为 `completed`，并将下一步骤标记为 `in_progress`。不要等到最终回复才更新。\n\
-- 输出最终总结前，必须再次调用 `todo_write`，将全部标记为 completed。\n\
+- 输出最终总结前再次调用 `todo_write`：完成项标记为 completed；确实被阻塞、无法完成的项保留 pending/in_progress，在最终回复说明阻塞原因，不得伪装完成。\n\
 - 没有异常或提前结束时也要更新已执行项，不得让计划停留在初始状态。\n";
 
 pub async fn ensure_inspection_skill_at(workspace_dir: &Path, db: &Db, workspace_id: &str) -> anyhow::Result<bool> {
@@ -79,7 +79,7 @@ mod tests {
     fn inspection_template_defines_todo_lifecycle() {
         assert!(INSPECTION_TEMPLATE.contains("todo_write"));
         assert!(INSPECTION_TEMPLATE.contains("每完成一个步骤"));
-        assert!(INSPECTION_TEMPLATE.contains("全部标记为 completed"));
+        assert!(INSPECTION_TEMPLATE.contains("不得伪装完成"));
     }
 
     #[tokio::test]

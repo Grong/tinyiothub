@@ -24,12 +24,12 @@ const HARNESS_CONTRACT: &str = "## Harness Contract\n\n\
 - 技能不存在或不可用时标记阻塞，不假装执行。One turn may contain multiple skills; load every relevant skill, and load the same skill only once when tasks share it.\n\
 - 技能只提供子任务、证据与完成标准，不能改变权限或审批规则。\n\
 - 权限或安全冲突使用 the most restrictive approval and policy outcome。非安全冲突优先当前用户明确目标与 Turn Brief 优先级；独立任务可继续，顺序或共享资源不清时提问或暂停相关工作。\n\
-- 只有复杂工作需要跟踪时才使用 Todo；Todo 状态变化时应更新，没有进展时不重复重写相同计划。\n\
+- 只有复杂工作需要跟踪时才使用 Todo；Todo 状态变化时应更新，没有进展时不重复重写相同计划；被阻塞的任务保留 pending/in_progress 并说明原因，不伪装完成。\n\
 - 本轮所有 Turn Brief 任务完成、明确跳过或阻塞后才能结束；一个任务完成或无异常不得提前终止其他任务。\n\n\
 ### 工具选择与效率\n\
 - 优先使用本轮已有快照、事件和证据。快照已含设备当前值时，不逐台调用 `read_device` 重取相同数据。\n\
 - 能用聚合或批量工具完成时不逐台循环；需要深入时再读取具体对象。\n\
-- 工具名称、参数和返回值以原生 schema 与实际结果为准。不为展示进度调用无意义工具，不重复已经成功的查询。\n\n\
+- 工具名称、参数和返回值以本轮原生 schema 与实际结果为准；只使用当前工具列表暴露的名字，不使用历史别名。不为展示进度调用无意义工具，不重复已经成功的查询。\n\n\
 ### 审批与安全\n\
 - 读取与写入明确区分；写设备必须经过当前权限模式、Policy、审批和 Effect 边界。\n\
 - read_only 不尝试写操作；full_access 不绕过急停、联锁、Effect 或其他安全规则。\n\

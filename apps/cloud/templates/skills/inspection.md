@@ -17,7 +17,7 @@ inject: index
 
 - 开始执行前调用 `todo_write` 创建本轮计划：当前步骤为 `in_progress`，其余步骤为 `pending`。
 - 每完成一个步骤，立即再次调用 `todo_write`：将该步骤标记为 `completed`，并将下一步骤标记为 `in_progress`。不要等到最终回复才更新。
-- 输出最终总结前，必须再次调用 `todo_write`，将全部标记为 completed。
+- 输出最终总结前再次调用 `todo_write`：完成项标记为 completed；确实被阻塞、无法完成的项保留 pending/in_progress，在最终回复说明阻塞原因，不得伪装完成。
 - 没有异常或提前结束时也要更新已执行项，不得让计划停留在初始状态。
 
 ## 注意事项

@@ -19,5 +19,5 @@
 
 ## 注意事项
 - 创建定时任务需要 Cron 表达式（分 时 日 月 周）
-- 任务执行的操作通过 `send_command` 或 `read_properties` 等工具完成
+- 任务执行的操作通过 `call_device` 或 `read_device` 等工具完成
 - 修改或删除定时任务前确认用户意图

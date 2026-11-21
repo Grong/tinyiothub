@@ -29,18 +29,18 @@ multiple results, pick the one with the highest relevance or the first `.glb`/`.
 
 NEVER use fake numbers. For 综合情况/overview you MUST query ALL of:
 
-1. `search_things` → device count, status breakdown
-2. `alarm_list` → alarm count, recent alarms
-3. `list_schedules` → schedule count
+1. `list_devices` → device count, status breakdown
+2. 如当前工具列表提供告警查询工具，查询告警数量
+3. 如当前工具列表提供定时任务工具，查询任务数量
 
 | User is asking about | Required queries |
 |---------------------|------------------|
-| 综合情况 / 概览 | `search_things` + `alarm_list` + `list_schedules` |
-| 查看 XX 楼层 / 区域 | `search_things` (filter by area) |
-| 查看 XX 设备 | `get_thing` |
-| 告警 | `alarm_list` |
-| 任务 / 调度 | `list_schedules` |
-| 驱动 | `list_drivers` |
+| 综合情况 / 概览 | `list_devices` + 当前可用的告警/任务工具 |
+| 查看 XX 楼层 / 区域 | `list_devices` (filter by area) |
+| 查看 XX 设备 | `read_device` |
+| 告警 | 当前可用的告警查询工具 |
+| 任务 / 调度 | 当前可用的任务查询工具 |
+| 驱动 | 当前可用的驱动查询工具 |
 
 ### 2b. Push A2UI — BOTH Stage AND Insight
 
@@ -55,7 +55,7 @@ Push StatRow first (key metrics), then lists/tables.
 
 #### Scenario 1: Overview / 综合情况
 
-Query `search_things` + `alarm_list` + `list_schedules` first, then push:
+Query `list_devices` and the available alarm/task tools first, then push:
 
 ```jsonl
 {"createSurface":{"id":"scene","surfaceKind":"stage"}}
@@ -75,7 +75,7 @@ Query `search_things` + `alarm_list` + `list_schedules` first, then push:
 
 #### Scenario 3: View specific device / 查看 XX 设备
 
-Query `get_thing` for device details + `read_properties` for live properties.
+Query `read_device` for the device snapshot and live properties.
 
 ```jsonl
 {"createSurface":{"id":"scene","surfaceKind":"stage"}}

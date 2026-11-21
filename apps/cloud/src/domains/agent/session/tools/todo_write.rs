@@ -82,7 +82,7 @@ impl Tool for TodoWriteTool {
     }
 
     fn description(&self) -> &str {
-        "Create or replace the session todo list. For multi-step work, call it before starting and after every step: mark finished items completed and the next item in_progress. Keep at most one item in_progress. Do not write a final conclusion while any item is pending or in_progress: finish it, or replace the list without obsolete items first."
+        "Create or replace the session todo list. For multi-step work, call it before starting and after every step: mark finished items completed and the next item in_progress. Keep at most one item in_progress. Do not write a final conclusion while any item is pending or in_progress: finish it, or replace the list without obsolete items first. If an item is genuinely blocked, keep its real status and state the blocker explicitly; never mark it completed."
     }
 
     fn parameters_schema(&self) -> serde_json::Value {
