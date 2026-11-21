@@ -23,6 +23,68 @@ pub enum GuardDecision {
     Stop(String),
 }
 
+/// Coarse failure classes used to decide whether a retry can ever help.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum ToolFailureKind {
+    /// The tool or device does not expose the requested capability.
+    Unsupported,
+    /// A referenced id/record does not exist.
+    NotFound,
+    /// The arguments or their types are invalid.
+    InvalidArgs,
+    /// Policy or approval rejected the call.
+    Permission,
+    /// The call was cancelled by a deadline.
+    Timeout,
+    /// Network/provider failure that may recover.
+    Transient,
+    /// Unclassified execution failure.
+    Unknown,
+}
+
+/// Classify a tool error message without depending on a specific tool's
+/// wording. This is intentionally conservative: only explicit capability
+/// failures stop the retry loop.
+pub fn classify_failure(message: &str) -> ToolFailureKind {
+    let text = message.to_ascii_lowercase();
+    if text.contains("no declaration")
+        || text.contains("not declared")
+        || text.contains("not supported")
+        || text.contains("unsupported")
+        || text.contains("unknown tool")
+        || text.contains("command '") && text.contains("not found")
+        || text.contains("property '") && text.contains("not found")
+    {
+        ToolFailureKind::Unsupported
+    } else if text.contains("not found") || text.contains("未找到") || text.contains("不存在") {
+        ToolFailureKind::NotFound
+    } else if text.contains("permission")
+        || text.contains("denied")
+        || text.contains("forbidden")
+        || text.contains("not allowed")
+        || text.contains("approval")
+    {
+        ToolFailureKind::Permission
+    } else if text.contains("timeout") || text.contains("timed out") {
+        ToolFailureKind::Timeout
+    } else if text.contains("invalid")
+        || text.contains("required")
+        || text.contains("validation")
+        || text.contains("参数")
+    {
+        ToolFailureKind::InvalidArgs
+    } else if text.contains("network")
+        || text.contains("connect")
+        || text.contains("rate limit")
+        || text.contains("429")
+        || text.contains("503")
+    {
+        ToolFailureKind::Transient
+    } else {
+        ToolFailureKind::Unknown
+    }
+}
+
 /// Per-turn execution policy. Thresholds follow DSH's repeat-reminder tiers:
 /// 3 and 5 are advisory skips, 8 is a hard stop.
 #[derive(Debug, Clone)]
@@ -46,6 +108,7 @@ pub struct ToolGuard {
     policy: ToolGuardPolicy,
     total_calls: usize,
     repeats: HashMap<String, usize>,
+    failures: HashMap<ToolFailureKind, usize>,
 }
 
 impl Default for ToolGuard {
@@ -60,6 +123,7 @@ impl ToolGuard {
             policy,
             total_calls: 0,
             repeats: HashMap::new(),
+            failures: HashMap::new(),
         }
     }
 
@@ -102,6 +166,24 @@ impl ToolGuard {
             ));
         }
         GuardDecision::Run
+    }
+
+    /// Observe a failed result. Capability failures are stopped after three
+    /// distinct attempts; retryable/transient failures are left to the model's
+    /// normal retry path.
+    pub fn after(&mut self, message: &str) -> Option<GuardDecision> {
+        let kind = classify_failure(message);
+        if !matches!(kind, ToolFailureKind::Unsupported | ToolFailureKind::NotFound) {
+            return None;
+        }
+        let count = self.failures.entry(kind).or_insert(0);
+        *count += 1;
+        if *count < 3 {
+            return None;
+        }
+        Some(GuardDecision::Stop(format!(
+            "连续 {count} 次遇到能力不存在或不支持（{kind:?}）。不要再用同义工具名重试；本轮停止并说明阻塞。"
+        )))
     }
 
     pub fn total_calls(&self) -> usize {
@@ -197,6 +279,40 @@ mod tests {
             let _ = guard.before("call_device", args);
         }
         assert!(matches!(guard.before("call_device", args), GuardDecision::Stop(_)));
+    }
+
+    #[test]
+    fn classifies_capability_and_transient_failures() {
+        assert_eq!(
+            classify_failure("Command 'reconnect' not found on thing"),
+            ToolFailureKind::Unsupported
+        );
+        assert_eq!(
+            classify_failure("no declaration for thing 'device-cam-02'"),
+            ToolFailureKind::Unsupported
+        );
+        assert_eq!(classify_failure("报警未找到: alarm-005"), ToolFailureKind::NotFound);
+        assert_eq!(classify_failure("HTTP 503: unavailable"), ToolFailureKind::Transient);
+        assert_eq!(classify_failure("permission denied"), ToolFailureKind::Permission);
+    }
+
+    #[test]
+    fn unsupported_failures_stop_after_three_attempts() {
+        let mut guard = ToolGuard::default();
+        assert!(guard.after("no declaration for thing 'dev-1'").is_none());
+        assert!(guard.after("no declaration for thing 'dev-2'").is_none());
+        assert!(matches!(
+            guard.after("no declaration for thing 'dev-3'"),
+            Some(GuardDecision::Stop(_))
+        ));
+    }
+
+    #[test]
+    fn transient_failures_do_not_trip_the_capability_stop() {
+        let mut guard = ToolGuard::default();
+        for _ in 0..10 {
+            assert!(guard.after("HTTP 503: unavailable").is_none());
+        }
     }
 
     #[test]

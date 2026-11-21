@@ -6,10 +6,10 @@ use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 
 use futures::StreamExt;
-use rig_agent::agent::hook::ToolCall as ToolCallEvent;
+use rig_agent::agent::hook::{ToolCall as ToolCallEvent, ToolResultEvent};
 use rig_agent::agent::{
     Agent, AgentBuilder, AgentHook, CompletionCallAction, CompletionCallEvent, HookContext, InvalidToolCallAction,
-    InvalidToolCallContext, MultiTurnStreamItem, RequestPatch, ToolCallAction,
+    InvalidToolCallContext, MultiTurnStreamItem, RequestPatch, ToolCallAction, ToolResultAction,
 };
 use rig_agent::completion::{Document, Prompt};
 use rig_agent::streaming::StreamingPrompt;
@@ -248,6 +248,42 @@ impl AgentHook for ToolGuardHook {
             GuardDecision::Stop(message) => ToolCallAction::Stop(message),
         }
     }
+
+    async fn on_tool_result(&self, _ctx: &HookContext, event: ToolResultEvent<'_>) -> ToolResultAction {
+        let Some(message) = failed_result_message(&event) else {
+            return ToolResultAction::Keep;
+        };
+        let decision = self
+            .guard
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .after(&message);
+        match decision {
+            Some(GuardDecision::Stop(reason)) => ToolResultAction::Stop(reason),
+            _ => ToolResultAction::Keep,
+        }
+    }
+}
+
+/// The port returns ordinary `Ok(ToolResult { success: false })` values for
+/// most device errors, so inspect both the rig error channel and the rendered
+/// JSON result. Successful outputs are never classified as failures.
+fn failed_result_message(event: &ToolResultEvent<'_>) -> Option<String> {
+    if let Some(error) = event.raw_result.error() {
+        return Some(error.message().to_string());
+    }
+    let text = event
+        .raw_result
+        .output()
+        .as_content()
+        .iter()
+        .filter_map(|block| match block {
+            rig_core::message::ToolResultContent::Text(text) => Some(text.text.clone()),
+            _ => None,
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    (text.contains("\"success\":false") || text.contains("\"error\":")).then_some(text)
 }
 
 /// rig 默认把模型调用未暴露的工具当致命错误（`PromptError::UnknownToolCall`）
