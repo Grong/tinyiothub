@@ -134,13 +134,20 @@ export const knowledgeView: ToolView = {
   key: 'knowledge.search',
   present(input) {
     const record = recordOf(parseJson(input.result));
-    const items = record ? arrayFrom(record, ['results', 'items', 'documents', 'docs']) : [];
+    const items = record ? arrayFrom(record, ['results', 'items', 'documents', 'docs']).map(recordOf).filter((item): item is Record<string, unknown> => item !== null) : [];
     const total = record && typeof record.total === 'number' ? record.total : items.length;
     return {
       viewKey: 'knowledge.search',
       title: input.name === 'read_document' ? '查阅运行手册' : '查找知识资料',
       summary: record ? `共 ${total} 条资料` : input.result ? '已读取' : '执行中…',
       status: statusOf(input),
+      details: items.slice(0, 5).map((item, index) => ({
+        label: `资料 ${index + 1}`,
+        value: [
+          asString(item.title || item.name || item.documentId),
+          asString(item.snippet || item.summary || item.content).slice(0, 100),
+        ].filter(Boolean).join(' · '),
+      })),
     };
   },
 };
@@ -160,6 +167,7 @@ export const skillView: ToolView = {
       title: `查阅《${name}》作业规范`,
       summary: input.result ? '已载入' : '加载中…',
       status: statusOf(input),
+      details: [{ label: '技能', value: name }],
     };
   },
 };
@@ -169,7 +177,8 @@ export const todoView: ToolView = {
   present(input) {
     const record = recordOf(parseJson(input.result));
     const args = recordOf(input.args);
-    const todos = arrayFrom(record ?? args ?? {}, ['todos']);
+    const source = record && Array.isArray(record.todos) ? record : (args ?? {});
+    const todos = arrayFrom(source, ['todos']);
     const done = todos.filter((item) => recordOf(item)?.status === 'completed').length;
     return {
       viewKey: 'todo.write',
@@ -180,6 +189,13 @@ export const todoView: ToolView = {
         { label: '已计划', value: String(todos.length) },
         { label: '已完成', value: String(done) },
       ],
+      details: todos.slice(0, 8).map((item, index) => {
+        const todo = recordOf(item);
+        return {
+          label: `任务 ${index + 1}`,
+          value: `${asString(todo?.status)} · ${asString(todo?.content)}`,
+        };
+      }),
     };
   },
 };
@@ -195,6 +211,13 @@ export const questionView: ToolView = {
       title: '需要你确认一件事',
       summary: asString(first?.header) || asString(first?.question) || '等待你的回答',
       status: input.result ? 'ok' : 'running',
+      details: questions.slice(0, 4).map((item, index) => {
+        const question = recordOf(item);
+        return {
+          label: `选项组 ${index + 1}`,
+          value: asString(question?.header) || asString(question?.question),
+        };
+      }),
     };
   },
 };
@@ -208,6 +231,10 @@ export const subagentView: ToolView = {
       title: '安排专项分析',
       summary: asString(args?.description) || asString(args?.prompt) || '子代理处理中',
       status: statusOf(input),
+      details: [
+        ...(asString(args?.description) ? [{ label: '任务', value: asString(args?.description) }] : []),
+        ...(asString(args?.prompt) ? [{ label: '指令', value: asString(args?.prompt).slice(0, 120) }] : []),
+      ],
     };
   },
 };
@@ -220,6 +247,10 @@ export const watchView: ToolView = {
       title: input.name === 'unwatch' ? '取消条件等待' : '建立条件等待',
       summary: input.result ? '已生效' : '执行中…',
       status: statusOf(input),
+      details: [
+        ...(asString((recordOf(input.args) ?? {}).condition) ? [{ label: '条件', value: asString((recordOf(input.args) ?? {}).condition) }] : []),
+        ...(asString((recordOf(input.args) ?? {}).thingId) ? [{ label: '设备', value: asString((recordOf(input.args) ?? {}).thingId) }] : []),
+      ],
     };
   },
 };

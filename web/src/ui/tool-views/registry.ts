@@ -45,6 +45,7 @@ const NAME_TO_VIEW: Record<string, string> = {
   ask_user: 'interaction.ask',
   spawn_subagent: 'subagent.spawn',
   get_skill: 'skill.load',
+  search_knowledge: 'knowledge.search',
   read_document: 'knowledge.document',
   stop: 'device.stop',
   get_thing_tree: 'thing.tree',

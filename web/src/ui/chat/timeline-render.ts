@@ -373,6 +373,15 @@ function renderTool(part: ToolPart): TemplateResult {
             </dl>`
           : nothing
       }
+      ${
+        presentation.details?.length
+          ? html`<dl class="activity__details">
+              ${presentation.details.slice(0, 8).map(
+                (detail) => html`<div><dt>${detail.label}</dt><dd>${detail.value}</dd></div>`,
+              )}
+            </dl>`
+          : nothing
+      }
       <div class="activity__detail-label">参数</div>
       <pre>${JSON.stringify(part.args ?? {}, null, 2)}</pre>
       ${

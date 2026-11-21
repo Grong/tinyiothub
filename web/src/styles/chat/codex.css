@@ -479,6 +479,35 @@ details[open] > .activity__summary::after {
   white-space: nowrap;
 }
 
+.activity__details {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  margin: 4px 0 8px;
+}
+
+.activity__details > div {
+  display: flex;
+  gap: 12px;
+  min-width: 0;
+  align-items: baseline;
+}
+
+.activity__details dt {
+  flex: none;
+  min-width: 62px;
+  color: var(--asst-muted);
+  font-size: 10.5px;
+}
+
+.activity__details dd {
+  min-width: 0;
+  margin: 0;
+  color: var(--asst-ink-dim);
+  overflow-wrap: anywhere;
+  font-size: 11px;
+}
+
 .activity__detail-label {
   margin-top: 6px;
   font-family: var(--asst-mono);

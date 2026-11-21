@@ -91,6 +91,39 @@ describe('tool views', () => {
     );
   });
 
+  it('prefers an explicit backend viewKey over the local name map', () => {
+    const view = presentTool({
+      name: 'external_read',
+      viewKey: 'device.read',
+      args: { thingId: 'dev-2' },
+      result: JSON.stringify({ thingId: 'dev-2', name: '泵 2', online: true, health: 'ok', state: { 压力: '1.2' } }),
+      status: 'ok',
+    });
+    expect(view.viewKey).toBe('device.read');
+    expect(view.title).toContain('泵 2');
+  });
+
+  it('renders todo and knowledge details', () => {
+    const todo = presentTool({
+      name: 'todo_write',
+      args: { todos: [{ content: '检查告警', status: 'completed' }, { content: '读取设备', status: 'in_progress' }] },
+      result: '{"ok":true}',
+      status: 'ok',
+    });
+    expect(todo.viewKey).toBe('todo.write');
+    expect(todo.metrics).toContainEqual({ label: '已完成', value: '1' });
+    expect(todo.details?.[0].value).toContain('检查告警');
+
+    const knowledge = presentTool({
+      name: 'search_knowledge',
+      args: {},
+      result: JSON.stringify({ total: 1, results: [{ title: '巡检规范', snippet: '检查设备状态' }] }),
+      status: 'ok',
+    });
+    expect(knowledge.viewKey).toBe('knowledge.search');
+    expect(knowledge.details?.[0].value).toContain('巡检规范');
+  });
+
   it('falls back to generic for unknown tools and failures', () => {
     expect(toolViewKey('external_tool')).toBe('generic');
     const failed = presentTool({ name: 'read_device', args: {}, result: null, status: 'failed', error: '设备不存在' });
