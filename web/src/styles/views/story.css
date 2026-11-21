@@ -440,6 +440,28 @@ view-story {
   color: var(--text);
 }
 
+.story-waiting__approvals {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 10px 0 0 34px;
+}
+
+.story-waiting__approvals approval-card {
+  max-width: none;
+  margin: 0;
+}
+
+.story-waiting--approval {
+  border-color: color-mix(in srgb, var(--warn) 42%, var(--border));
+  background: var(--bg-elevated);
+}
+
+.story-waiting--approval .story-waiting__mark {
+  background: var(--warn);
+  color: var(--bg);
+}
+
 .story-waiting__action {
   margin: 10px 0 0 34px;
   padding: 6px 12px;

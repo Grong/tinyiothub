@@ -134,6 +134,26 @@ describe('view-story', () => {
     hoisted.getWorkspaceId.mockReturnValue('ws-1');
   });
 
+  it('renders a pending approval inline with direct actions', async () => {
+    hoisted.fetchSessionEvents.mockResolvedValueOnce({
+      events: [
+        event(1, 'trigger/received', { trigger: 'schedule' }),
+        event(2, 'turn/start', { turnId: 't-approval' }),
+        event(3, 'approval/requested', {
+          turnId: 't-approval',
+          approvalId: 'a1',
+          action: 'set_device',
+          summary: '将冷却塔 A 的目标温度调整为 26°C',
+        }),
+      ],
+      highWatermark: 3,
+    });
+    const el = document.createElement('view-story') as StoryView;
+    document.body.appendChild(el);
+    await vi.waitFor(() => expect(el.querySelector('approval-card')).toBeTruthy());
+    expect(el.querySelector('.story-waiting--approval')).toBeTruthy();
+  });
+
   it('renders the business story, device deck and brain achievements', async () => {
     const el = document.createElement('view-story') as StoryView;
     document.body.appendChild(el);

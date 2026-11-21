@@ -40,6 +40,7 @@ import {
 } from '../story/story-achievements.js';
 import '../story/achievements-panel.js';
 import '../chat/task-plan-panel.js';
+import '../chat/approval-card.js';
 import '../story/device-deck.js';
 import '../story/vision-deck.js';
 import '../../styles/views/story.css';
@@ -699,18 +700,35 @@ export class StoryView extends LitElement {
   }
 
   private renderWaiting() {
+    const approvals = this.timeline.pendingApprovals;
+    if (approvals.length > 0) {
+      return html`<div class="story-waiting story-waiting--approval" role="status">
+        <div class="story-waiting__head">
+          <span class="story-waiting__mark" aria-hidden="true">!</span>
+          <div>
+            <strong>等待你批准</strong>
+            <p>可以直接在这里处理，批准后 AI 会继续执行。</p>
+          </div>
+        </div>
+        <div class="story-waiting__approvals">
+          ${approvals.map(
+            (approval) => html`<approval-card
+              .sessionKey=${this.sessionKey}
+              .pending=${approval}
+              @answered=${(event: CustomEvent<string>) => this.onApprovalAnswered(event)}
+            ></approval-card>`,
+          )}
+        </div>
+        <button class="story-waiting__action" @click=${(event: Event) => this.openEngineer(event)}>
+          查看完整上下文
+        </button>
+      </div>`;
+    }
     const question = this.timeline.pendingQuestion;
-    const approval = this.timeline.pendingApprovals[0];
-    if (!question && !approval) return nothing;
-    const first = question?.questions[0];
-    const title = question
-      ? first?.header
-        ? `等待你确认：${first.header}`
-        : '等待你确认'
-      : `等待审批：${approval?.tool ?? '操作'}`;
-    const body = question
-      ? (first?.question ?? 'AI 需要你的回答才能继续。')
-      : (approval?.summary ?? '有一个操作需要你的批准。');
+    if (!question) return nothing;
+    const first = question.questions[0];
+    const title = first?.header ? `等待你确认：${first.header}` : '等待你确认';
+    const body = first?.question ?? 'AI 需要你的回答才能继续。';
     const options = first?.options.slice(0, 3) ?? [];
     return html`<div class="story-waiting" role="status">
       <div class="story-waiting__head">
@@ -731,6 +749,27 @@ export class StoryView extends LitElement {
         去对话处理
       </button>
     </div>`;
+  }
+
+  private onApprovalAnswered(event: CustomEvent<string>): void {
+    this.timeline.pendingApprovals = this.timeline.pendingApprovals.filter(
+      (approval) => approval.approvalId !== event.detail,
+    );
+    this.rebuild();
+    void this.refreshAfterApproval();
+  }
+
+  private async refreshAfterApproval(): Promise<void> {
+    const key = this.sessionKey;
+    if (!key) return;
+    try {
+      const page = await fetchSessionEvents(key, this.timeline.highWatermark, 200);
+      if (key !== this.sessionKey) return;
+      this.timeline.ingest(page);
+      this.rebuild();
+    } catch {
+      // SSE will deliver the approval/resolved and turn continuation.
+    }
   }
 
   private renderFailureNotice() {
