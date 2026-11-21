@@ -47,6 +47,50 @@ describe('tool views', () => {
     expect(view.summary).toBe('温度：25.5 °C');
   });
 
+  it('renders alarm and event details', () => {
+    const alarms = presentTool({
+      name: 'alarm_list',
+      args: {},
+      result: JSON.stringify({
+        total: 2,
+        alarms: [
+          { level: 'critical', thingName: '冷却塔 A', message: '设备离线', isAcknowledged: false },
+          { level: 'warning', thingName: '送风机 1', message: '温度偏高', isAcknowledged: true },
+        ],
+      }),
+      status: 'ok',
+    });
+    expect(alarms.viewKey).toBe('alarm.list');
+    expect(alarms.metrics).toContainEqual({ label: '严重', value: '1' });
+    expect(alarms.details?.[0].value).toContain('冷却塔 A');
+
+    const events = presentTool({
+      name: 'query_events',
+      args: {},
+      result: JSON.stringify({ total: 1, events: [{ type: 'offline', thingName: '冷却塔 A', time: '12:00' }] }),
+      status: 'ok',
+    });
+    expect(events.viewKey).toBe('event.history');
+    expect(events.details?.[0].value).toContain('offline');
+  });
+
+  it('renders action target and parameters', () => {
+    const view = presentTool({
+      name: 'call_device',
+      args: { thingId: 'dev-1', action: 'restart', params: { force: true } },
+      result: JSON.stringify({ status: 'ok' }),
+      status: 'ok',
+    });
+    expect(view.viewKey).toBe('device.action');
+    expect(view.title).toContain('dev-1');
+    expect(view.details).toEqual(
+      expect.arrayContaining([
+        { label: '设备', value: 'dev-1' },
+        { label: '动作', value: 'restart' },
+      ]),
+    );
+  });
+
   it('falls back to generic for unknown tools and failures', () => {
     expect(toolViewKey('external_tool')).toBe('generic');
     const failed = presentTool({ name: 'read_device', args: {}, result: null, status: 'failed', error: '设备不存在' });

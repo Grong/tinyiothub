@@ -895,6 +895,18 @@ export class StoryView extends LitElement {
                 </dl>`
               : nothing
           }
+          ${
+            step.details && step.details.length > 0
+              ? html`<dl class="story-step__details">
+                  ${step.details.map(
+                    (detail) => html`<div class="story-step__detail-row">
+                      <dt>${detail.label}</dt>
+                      <dd>${detail.value}</dd>
+                    </div>`,
+                  )}
+                </dl>`
+              : nothing
+          }
           <div class="story-step__meta">
             <time>${formatStoryClock(step.at)}</time>
             <span>${STEP_STATUS[step.status]}</span>

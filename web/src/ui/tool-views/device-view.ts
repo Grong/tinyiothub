@@ -92,6 +92,10 @@ export const deviceListView: ToolView = {
         { label: '在线', value: String(active) },
         { label: '离线', value: String(facts.items.length - active) },
       ],
+      details: facts.items.slice(0, 5).map((item, index) => ({
+        label: `设备 ${index + 1}`,
+        value: [item.name, item.online === false ? '离线' : item.online ? '在线' : ''].filter(Boolean).join(' · '),
+      })),
     };
   },
 };
@@ -123,7 +127,10 @@ export const propertyReadView: ToolView = {
       title: `读取${property ? `「${property}」` : ''}的运行参数`,
       summary: `${property || '属性'}：${value}${unit}`,
       status: statusOf(input),
-      details: property ? [{ label: '属性', value: property }] : [],
+      details: [
+        ...(property ? [{ label: '属性', value: property }] : []),
+        { label: '当前值', value: `${value}${unit}` },
+      ],
     };
   },
 };
@@ -132,12 +139,15 @@ export const deviceWriteView: ToolView = {
   key: 'device.write',
   present(input) {
     const failed = input.status === 'failed';
+    const args = (input.args && typeof input.args === 'object' ? input.args : {}) as Record<string, unknown>;
+    const target = typeof args.thingId === 'string' ? args.thingId : '';
     const detail = failed ? clampText(input.error || '写入失败', 120) : '设置已提交';
     return {
       viewKey: 'device.write',
-      title: '调整设备设置',
+      title: target ? `调整「${target}」的设置` : '调整设备设置',
       summary: detail,
       status: failed ? 'failed' : statusOf(input),
+      details: target ? [{ label: '设备', value: target }] : [],
     };
   },
 };
@@ -146,14 +156,23 @@ export const deviceActionView: ToolView = {
   key: 'device.action',
   present(input) {
     const failed = input.status === 'failed';
-    const action = typeof (input.args as Record<string, unknown> | null)?.action === 'string'
-      ? String((input.args as Record<string, unknown>).action)
-      : '';
+    const args = (input.args && typeof input.args === 'object' ? input.args : {}) as Record<string, unknown>;
+    const target = typeof args.thingId === 'string' ? args.thingId : typeof args.deviceId === 'string' ? args.deviceId : '';
+    const action = typeof args.action === 'string' ? args.action : '';
     return {
       viewKey: 'device.action',
-      title: action ? `执行「${action}」` : '执行设备操作',
+      title: target
+        ? `让「${target}」执行${action ? `「${action}」` : '动作'}`
+        : action ? `执行「${action}」` : '执行设备操作',
       summary: failed ? clampText(input.error || '执行失败', 120) : input.result ? '已提交执行' : '执行中…',
       status: failed ? 'failed' : statusOf(input),
+      details: [
+        ...(target ? [{ label: '设备', value: target }] : []),
+        ...(action ? [{ label: '动作', value: action }] : []),
+        ...(args.params && typeof args.params === 'object'
+          ? [{ label: '参数', value: JSON.stringify(args.params).slice(0, 160) }]
+          : []),
+      ],
     };
   },
 };

@@ -16,6 +16,7 @@
 import type { TodoItem } from '../../api/assistant.js';
 import { toolFailure, type PendingQuestion, type TimelineBlock } from '../chat/timeline-model.js';
 import { presentTool } from '../tool-views/registry.js';
+import type { ToolDetail } from '../tool-views/types.js';
 
 export type StoryTone =
   | 'read'
@@ -79,6 +80,8 @@ export interface StoryStep {
   finding?: string;
   /** 设备步骤展开后的具体运行参数。 */
   metrics?: StoryDeviceMetric[];
+  /** 工具 presentation 提供的结构化展开字段。 */
+  details?: ToolDetail[];
 }
 
 export type StorySectionStatus = 'running' | 'done' | 'failed' | 'cancelled';
@@ -623,6 +626,7 @@ function stepFromTool(
     visionIds: visionOf(part, device).map((item) => item.evidenceId),
     finding: findingOf(part, device),
     metrics: presentation.metrics?.map((metric) => ({ name: metric.label, value: metric.value })) ?? device?.metrics,
+    details: presentation.details,
   };
 }
 

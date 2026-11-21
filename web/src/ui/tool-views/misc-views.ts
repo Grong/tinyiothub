@@ -67,14 +67,35 @@ export const alarmListView: ToolView = {
           }
         : null;
     }
-    const alarms = arrayFrom(record, ['alarms', 'items']);
+    const alarms = arrayFrom(record, ['alarms', 'items'])
+      .map(recordOf)
+      .filter((item): item is Record<string, unknown> => item !== null);
     const total = typeof record.total === 'number' ? record.total : alarms.length;
+    const critical = alarms.filter((alarm) =>
+      ['critical', 'error', 'high'].includes(asString(alarm.level || alarm.severity)),
+    ).length;
+    const unacknowledged = alarms.filter((alarm) => alarm.isAcknowledged !== true).length;
+    const details = alarms.slice(0, 5).map((alarm, index) => ({
+      label: `告警 ${index + 1}`,
+      value: [
+        asString(alarm.level || alarm.severity),
+        asString(alarm.thingName || alarm.deviceName || alarm.thingId),
+        asString(alarm.message || alarm.ruleName || alarm.name),
+      ]
+        .filter(Boolean)
+        .join(' · '),
+    }));
     return {
       viewKey: 'alarm.list',
       title: '检查当前告警',
       summary: total > 0 ? `${total} 条待关注` : '当前没有告警',
       status: statusOf(input),
-      metrics: [{ label: '告警数', value: String(total) }],
+      metrics: [
+        { label: '告警数', value: String(total) },
+        { label: '严重', value: String(critical) },
+        { label: '未确认', value: String(unacknowledged) },
+      ],
+      details,
     };
   },
 };
@@ -84,14 +105,27 @@ export const eventHistoryView: ToolView = {
   present(input) {
     const record = recordOf(parseJson(input.result));
     if (!record) return null;
-    const events = arrayFrom(record, ['events', 'items', 'history']);
+    const events = arrayFrom(record, ['events', 'items', 'history'])
+      .map(recordOf)
+      .filter((item): item is Record<string, unknown> => item !== null);
     const total = typeof record.total === 'number' ? record.total : events.length;
+    const details = events.slice(0, 5).map((event, index) => ({
+      label: `事件 ${index + 1}`,
+      value: [
+        asString(event.occurredAt || event.time || event.at),
+        asString(event.type || event.eventType),
+        asString(event.message || event.text),
+      ]
+        .filter(Boolean)
+        .join(' · '),
+    }));
     return {
       viewKey: 'event.history',
       title: '回看设备最近的事件',
       summary: `回看 ${total} 条事件`,
       status: statusOf(input),
       metrics: [{ label: '事件数', value: String(total) }],
+      details,
     };
   },
 };
