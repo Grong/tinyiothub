@@ -932,6 +932,42 @@ mod tests {
     }
 
     /// Loop that emits a fixed script of events, then returns a fixed result.
+    struct CheckpointLoop;
+
+    #[async_trait::async_trait]
+    impl AgentLoop for CheckpointLoop {
+        async fn turn_streamed(
+            &self,
+            _message: &str,
+            tx: tokio::sync::mpsc::Sender<crate::domains::agent::session::runner::TurnEvent>,
+            _cancel: Option<CancellationToken>,
+        ) -> anyhow::Result<String> {
+            let ack = tinyiothub_agent::port::events::ToolCheckpointAck::new();
+            tx.send(crate::domains::agent::session::runner::TurnEvent::ToolCheckpoint {
+                id: "c1".into(),
+                name: "read_device".into(),
+                ack: ack.clone(),
+            })
+            .await
+            .unwrap();
+            assert!(ack.wait().await, "runner must acknowledge the checkpoint");
+            tx.send(crate::domains::agent::session::runner::TurnEvent::Chunk { delta: "ok".into() })
+                .await
+                .unwrap();
+            Ok("ok".into())
+        }
+
+        async fn run_single(&self, _message: &str) -> anyhow::Result<String> {
+            unimplemented!()
+        }
+
+        async fn clear_history(&self) {}
+
+        async fn seed_history(&self, _messages: &[ChatMessage]) -> anyhow::Result<()> {
+            Ok(())
+        }
+    }
+
     struct ScriptedLoop {
         events: Vec<TurnEvent>,
         result: Result<String, String>,
@@ -1160,6 +1196,15 @@ mod tests {
         assert!(!super::todos_all_completed(&json!({
             "todos": [{"content": "a", "status": "completed"}, {"content": "b", "status": "pending"}]
         })));
+    }
+
+    #[tokio::test]
+    async fn runner_persists_and_acknowledges_tool_checkpoint() {
+        let (runner, sink) = runner_and_sink();
+        let outcome = runner.run_turn(&CheckpointLoop, &ctx(), "go", None, None).await;
+        assert!(matches!(outcome, TurnOutcome::Completed { .. }));
+        let events = sink.events.lock().await;
+        assert!(events.iter().any(|event| event.event_type == "tool/checkpoint"));
     }
 
     #[tokio::test]
