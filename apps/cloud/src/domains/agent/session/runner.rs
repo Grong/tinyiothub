@@ -470,11 +470,9 @@ impl SessionRunner {
                             if let Some(key) = agenda_key(&args) {
                                 if let Some(index) = agenda.iter().position(|item| item.key == key) {
                                     let changed = agenda[index].status != AgendaStatus::InProgress;
-                                    for item in &mut agenda {
-                                        if item.status == AgendaStatus::InProgress && item.key != key {
-                                            item.status = AgendaStatus::Completed;
-                                        }
-                                    }
+                                    // Loading the next skill does not prove the previous skill's
+                                    // steps ran. Keep prior skills open until Todo completion or
+                                    // final settlement; otherwise agenda jumps to N/N at load time.
                                     agenda[index].status = AgendaStatus::InProgress;
                                     if changed {
                                         let _ = events_for_agenda
@@ -488,26 +486,6 @@ impl SessionRunner {
                                             ))
                                             .await;
                                     }
-                                }
-                            }
-                            if name == "todo_write" && todos_all_completed(&args) {
-                                let active = agenda.iter().any(|item| item.status == AgendaStatus::InProgress);
-                                if active {
-                                    for item in &mut agenda {
-                                        if item.status == AgendaStatus::InProgress {
-                                            item.status = AgendaStatus::Completed;
-                                        }
-                                    }
-                                    let _ = events_for_agenda
-                                        .emit(session_event(
-                                            &agenda_context,
-                                            "agenda/update",
-                                            json!({
-                                                "turnId": &agenda_context.turn_id,
-                                                "items": &agenda,
-                                            }),
-                                        ))
-                                        .await;
                                 }
                             }
                             if events
@@ -555,6 +533,26 @@ impl SessionRunner {
                                 .is_err()
                             {
                                 failed += 1;
+                            }
+                            if name == "todo_write" && todo_result_all_completed(output) {
+                                let active = agenda.iter().any(|item| item.status == AgendaStatus::InProgress);
+                                if active {
+                                    for item in &mut agenda {
+                                        if item.status == AgendaStatus::InProgress {
+                                            item.status = AgendaStatus::Completed;
+                                        }
+                                    }
+                                    let _ = events_for_agenda
+                                        .emit(session_event(
+                                            &agenda_context,
+                                            "agenda/update",
+                                            json!({
+                                                "turnId": &agenda_context.turn_id,
+                                                "items": &agenda,
+                                            }),
+                                        ))
+                                        .await;
+                                }
                             }
                         }
                         TurnEvent::Thinking { delta } => {
@@ -839,16 +837,20 @@ impl SessionRunner {
     }
 }
 
-fn todos_all_completed(args: &serde_json::Value) -> bool {
-    let Some(todos) = args.get("todos").and_then(|value| value.as_array()) else {
+fn todo_result_all_completed(output: &str) -> bool {
+    let Ok(value) = serde_json::from_str::<serde_json::Value>(output) else {
         return false;
     };
-    !todos.is_empty()
-        && todos.iter().all(|todo| {
-            todo.get("status")
-                .and_then(|status| status.as_str())
-                .is_some_and(|status| status == "completed")
-        })
+    value.get("ok").and_then(serde_json::Value::as_bool) == Some(true)
+        && value
+            .get("todos")
+            .and_then(serde_json::Value::as_array)
+            .is_some_and(|todos| {
+                !todos.is_empty()
+                    && todos
+                        .iter()
+                        .all(|todo| todo.get("status").and_then(serde_json::Value::as_str) == Some("completed"))
+            })
 }
 
 fn agenda_todos(agenda: &[AgendaItem]) -> Vec<Todo> {
@@ -1189,13 +1191,16 @@ mod tests {
     }
 
     #[test]
-    fn completed_todo_list_settles_the_active_agenda() {
-        assert!(super::todos_all_completed(&json!({
-            "todos": [{"content": "a", "status": "completed"}, {"content": "b", "status": "completed"}]
-        })));
-        assert!(!super::todos_all_completed(&json!({
-            "todos": [{"content": "a", "status": "completed"}, {"content": "b", "status": "pending"}]
-        })));
+    fn todo_result_settles_agenda_only_after_a_successful_all_completed_write() {
+        assert!(super::todo_result_all_completed(
+            r#"{"ok":true,"todos":[{"content":"a","status":"completed"},{"content":"b","status":"completed"}]}"#
+        ));
+        assert!(!super::todo_result_all_completed(
+            r#"{"ok":true,"todos":[{"content":"a","status":"completed"},{"content":"b","status":"pending"}]}"#
+        ));
+        assert!(!super::todo_result_all_completed(
+            r#"{"success":false,"error":"only one todo may move to completed"}"#
+        ));
     }
 
     #[tokio::test]
