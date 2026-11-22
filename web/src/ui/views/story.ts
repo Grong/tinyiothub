@@ -42,6 +42,7 @@ import {
 import '../story/achievements-panel.js';
 import '../chat/task-plan-panel.js';
 import '../chat/approval-card.js';
+import '../chat/question-card.js';
 import '../story/device-deck.js';
 import '../story/vision-deck.js';
 import '../../styles/views/story.css';
@@ -744,29 +745,22 @@ export class StoryView extends LitElement {
     }
     const question = this.timeline.pendingQuestion;
     if (!question) return nothing;
-    const first = question.questions[0];
-    const title = first?.header ? `等待你确认：${first.header}` : '等待你确认';
-    const body = first?.question ?? 'AI 需要你的回答才能继续。';
-    const options = first?.options.slice(0, 3) ?? [];
-    return html`<div class="story-waiting" role="status">
-      <div class="story-waiting__head">
-        <span class="story-waiting__mark" aria-hidden="true">?</span>
-        <div>
-          <strong>${title}</strong>
-          <p>${body}</p>
-        </div>
-      </div>
-      ${
-        options.length > 0
-          ? html`<ul class="story-waiting__options">
-              ${options.map((option) => html`<li>${option.label}</li>`)}
-            </ul>`
-          : nothing
-      }
+    return html`<div class="story-waiting story-waiting--question" role="status">
+      <question-card
+        .sessionKey=${this.sessionKey}
+        .pending=${question}
+        @answered=${() => this.onQuestionAnswered()}
+      ></question-card>
       <button class="story-waiting__action" @click=${(event: Event) => this.openEngineer(event)}>
-        去对话处理
+        查看完整上下文
       </button>
     </div>`;
+  }
+
+  private onQuestionAnswered(): void {
+    this.timeline.pendingQuestion = null;
+    this.rebuild();
+    void this.refreshAfterApproval();
   }
 
   private onApprovalAnswered(event: CustomEvent<string>): void {

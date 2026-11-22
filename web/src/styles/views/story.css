@@ -479,6 +479,21 @@ view-story {
   margin: 0;
 }
 
+.story-waiting--question {
+  padding: 8px;
+  border-color: var(--border);
+  background: var(--bg-elevated);
+}
+
+.story-waiting--question question-card {
+  max-width: none;
+  margin: 0;
+}
+
+.story-waiting--question .story-waiting__action {
+  margin-left: 0;
+}
+
 .story-waiting--approval {
   border-color: color-mix(in srgb, var(--warn) 42%, var(--border));
   background: var(--bg-elevated);

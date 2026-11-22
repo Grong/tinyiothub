@@ -179,6 +179,35 @@ describe('view-story', () => {
     expect(hoisted.fetchSessionEvents.mock.calls[1][1]).toBe(1);
   });
 
+  it('renders a pending question with the inline question card', async () => {
+    hoisted.fetchSessionProjection.mockResolvedValueOnce({
+      turn: { turnId: 't-question', phase: 'executing', agenda: [], lastSeq: 2 },
+      highWatermark: 2,
+    });
+    hoisted.fetchSessionEvents.mockResolvedValueOnce({
+      events: [
+        event(1, 'turn/start', { turnId: 't-question' }),
+        event(2, 'question/asked', {
+          turnId: 't-question',
+          questionId: 'q1',
+          questions: [
+            {
+              header: '执行范围',
+              question: '是否对这两台设备执行重连？',
+              options: [{ label: '执行' }, { label: '跳过' }],
+              multiSelect: false,
+            },
+          ],
+        }),
+      ],
+      highWatermark: 2,
+    });
+    const el = document.createElement('view-story') as StoryView;
+    document.body.appendChild(el);
+    await vi.waitFor(() => expect(el.querySelector('question-card')).toBeTruthy());
+    expect(el.querySelector('.story-waiting--question')).toBeTruthy();
+  });
+
   it('renders the business story, device deck and brain achievements', async () => {
     const el = document.createElement('view-story') as StoryView;
     document.body.appendChild(el);
