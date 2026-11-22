@@ -144,6 +144,7 @@ export class StoryView extends LitElement {
   private historyEpoch = 0;
   private pinPending = false;
   private suppressScroll = false;
+  private pinning = false;
   private feedObserver: ResizeObserver | null = null;
 
   connectedCallback(): void {
@@ -330,11 +331,15 @@ export class StoryView extends LitElement {
     const feed = this.feedScroller();
     const previousHeight = feed?.scrollHeight ?? 0;
     const previousTop = feed?.scrollTop ?? 0;
+    const previousBlocks = this.timeline.blocks.length;
     this.loadingOlder = true;
     try {
       const page = await fetchSessionEvents(key, 0, 200, { turns: 1, before });
       if (key !== this.sessionKey || epoch !== this.historyEpoch) return;
       this.timeline.ingest(page);
+      if (this.timeline.blocks.length === previousBlocks) {
+        this.historyHasMore = false;
+      }
       const nextBefore = page.nextBefore ?? null;
       this.historyBefore = nextBefore;
       this.historyHasMore = Boolean(page.hasMore && nextBefore !== null);
@@ -608,16 +613,26 @@ export class StoryView extends LitElement {
 
   /** Pin after a load or while new content is appended. */
   private pinFeedToBottom(): void {
+    if (!this.stickToLatest || this.manualScroll || this.pinning) return;
+    this.pinning = true;
     const pin = () => {
+      if (!this.stickToLatest || this.manualScroll) {
+        this.pinning = false;
+        return;
+      }
       const feed = this.feedScroller();
       if (feed) feed.scrollTop = feed.scrollHeight;
     };
     pin();
-    requestAnimationFrame(pin);
+    requestAnimationFrame(() => {
+      pin();
+      this.pinning = false;
+    });
   }
 
   /** One-shot initial pin: ignore the scroll events our own scroll causes. */
   private pinToLatest(): void {
+    this.pinning = false;
     this.suppressScroll = true;
     const pin = () => {
       const feed = this.feedScroller();
@@ -639,7 +654,18 @@ export class StoryView extends LitElement {
     this.pinFeedToBottom();
   }
 
-  render() {
+  protected render() {
+    try {
+      return this.renderShell();
+    } catch (error) {
+      console.error('story render failed', error);
+      return html`<div class="story-shell">
+        <div class="story-error">页面暂时无法渲染。请刷新页面或切换到其他记录。</div>
+      </div>`;
+    }
+  }
+
+  private renderShell() {
     const session = this.currentSession();
     return html`
       <div class="story-shell">
