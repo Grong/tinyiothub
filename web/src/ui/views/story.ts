@@ -134,6 +134,7 @@ export class StoryView extends LitElement {
   private manualSelection = false;
   private historyLocked = false;
   @state() private stickToLatest = true;
+  private manualScroll = false;
   private historyEpoch = 0;
   private pinPending = false;
   private suppressScroll = false;
@@ -264,6 +265,7 @@ export class StoryView extends LitElement {
     this.loadingOlder = false;
     this.historyLocked = false;
     this.stickToLatest = true;
+    this.manualScroll = false;
     this.pinPending = true;
     try {
       const [page, projection] = await Promise.all([
@@ -349,7 +351,10 @@ export class StoryView extends LitElement {
   }
 
   private onFeedWheel(event: WheelEvent): void {
-    if (event.deltaY < 0) this.stickToLatest = false;
+    if (event.deltaY < 0) {
+      this.manualScroll = true;
+      this.stickToLatest = false;
+    }
   }
 
   private onFeedScroll(): void {
@@ -357,7 +362,19 @@ export class StoryView extends LitElement {
     const feed = this.feedScroller();
     if (!feed) return;
     const distanceToBottom = feed.scrollHeight - feed.scrollTop - feed.clientHeight;
-    this.stickToLatest = distanceToBottom < 96;
+    if (this.manualScroll) {
+      // A wheel-up gesture must not be cancelled by the scroll event that it
+      // just produced. Only an explicit return to the very bottom resumes
+      // live-follow mode.
+      if (distanceToBottom <= 4) {
+        this.manualScroll = false;
+        this.stickToLatest = true;
+      } else {
+        this.stickToLatest = false;
+      }
+    } else {
+      this.stickToLatest = distanceToBottom < 96;
+    }
     // 一次上滑只放一轮：先离开顶部再回来，才允许继续自动加载。
     if (feed.scrollTop > 140) {
       this.historyLocked = false;
@@ -424,6 +441,7 @@ export class StoryView extends LitElement {
     this.historyLocked = false;
     this.loadingOlder = false;
     this.stickToLatest = true;
+    this.manualScroll = false;
     this.rebuild();
   }
 
