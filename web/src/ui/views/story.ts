@@ -488,14 +488,6 @@ export class StoryView extends LitElement {
     return false;
   }
 
-  private workingDetail(): string {
-    if (this.story.running) return this.story.running.title;
-    if (this.story.sections.some((section) => section.status === 'running')) {
-      return '正在思考下一步';
-    }
-    return '正在处理新的任务';
-  }
-
   private statusText(): string {
     if (this.isWorking()) return ASSISTANT_STATUS.working;
     if (this.timeline.pendingQuestion || this.timeline.pendingApprovals.length > 0) {
@@ -564,14 +556,6 @@ export class StoryView extends LitElement {
               <div class="story-topbar__sub">看得懂的业务视角</div>
             </div>
           </div>
-          ${
-            this.isWorking()
-              ? html`<span class="story-topbar__working">
-                  <span class="story-topbar__working-dot" aria-hidden="true"></span>
-                  大脑工作中
-                </span>`
-              : nothing
-          }
           <span class="story-topbar__spacer"></span>
           <label class="story-select">
             <span class="story-select__label">切换记录</span>
@@ -609,7 +593,6 @@ export class StoryView extends LitElement {
             ${this.renderAgenda()}
             ${this.renderHero()}
             ${this.renderFailureNotice()} ${this.renderWaiting()}
-            ${this.isWorking() ? this.renderWorking() : nothing}
           </div>
           <main class="story-main" @scroll=${() => this.onFeedScroll()}>
             <div class="story-feed">
@@ -822,19 +805,6 @@ export class StoryView extends LitElement {
         <p>${copy.detail}${retry}</p>
       </div>
     </div>`;
-  }
-
-  private renderWorking() {
-    return html`
-      <div class="story-working" role="status" aria-live="polite">
-        <span class="story-working__orb" aria-hidden="true"><span></span></span>
-        <div class="story-working__text">
-          <strong>AI 大脑正在工作</strong>
-          <span>${this.workingDetail()}</span>
-        </div>
-        <span class="story-working__bars" aria-hidden="true"> <i></i><i></i><i></i><i></i> </span>
-      </div>
-    `;
   }
 
   private renderPrompt() {
