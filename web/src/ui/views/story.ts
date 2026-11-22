@@ -47,6 +47,8 @@ import '../story/device-deck.js';
 import '../story/vision-deck.js';
 import '../../styles/views/story.css';
 
+const GENERIC_TITLES = new Set(['巡检', '对话', '事件处置', '本班', '日常巡检']);
+
 const KIND_LABEL: Record<string, string> = {
   chat: '对话',
   scheduled: '巡检',
@@ -513,13 +515,31 @@ export class StoryView extends LitElement {
   }
 
   private headline(): string {
+    const findings = this.story.latestFindings;
+    if (findings.length === 1) {
+      const finding = findings[0];
+      return clampText(
+        finding.label.includes(finding.deviceName)
+          ? finding.label
+          : `${finding.deviceName}：${finding.label}`,
+        34,
+      );
+    }
+    if (findings.length > 1) {
+      return `发现 ${findings.length} 项异常，优先处理 ${findings[0].deviceName}`;
+    }
+    const latest = this.story.sections[this.story.sections.length - 1];
+    if (latest?.status === 'failed') return '本轮工作未完成';
+    if (latest?.status === 'partial') return '本轮工作部分完成';
+    const stats = this.story.latestStats;
+    if (stats.actions > 0) return `已完成 ${stats.actions} 项设备处置`;
+    if (stats.devices > 0) return `${stats.devices} 台设备检查完成，未见异常`;
     const session = this.currentSession();
-    if (session?.label) return session.label;
+    const label = session?.label?.trim();
+    if (label && !GENERIC_TITLES.has(label)) return label;
     const prompt = this.story.prompts[this.story.prompts.length - 1]?.text;
     if (prompt) return clampText(prompt, 30);
-    const kind = KIND_LABEL[session?.kind ?? ''] ?? '本班';
-    const latest = this.story.sections[this.story.sections.length - 1];
-    return latest ? `${formatStoryClock(latest.startedAt)} 的${kind}` : `${kind}纪实`;
+    return '本班工作记录';
   }
 
   private isWorking(): boolean {

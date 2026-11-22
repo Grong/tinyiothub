@@ -239,6 +239,8 @@ describe('view-story', () => {
 
     expect(el.textContent).toContain('AI 工作纪实');
     expect(el.textContent).toContain('3 号楼夜间巡检');
+    expect(el.querySelector('.story-hero__title')?.textContent).toContain('冷却塔 A');
+    expect(el.querySelector('.story-hero__title')?.textContent).not.toBe('3 号楼夜间巡检');
     expect(el.textContent).toContain('查看「冷却塔 A」的实时状态');
     expect(hoisted.fetchSessionEvents.mock.calls[0][3]).toEqual({ turns: 2 });
     expect(el.textContent).toContain('AI 大脑功绩');
