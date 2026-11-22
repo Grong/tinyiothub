@@ -47,6 +47,7 @@ import '../../styles/views/story.css';
 
 const MAX_HISTORY_STEPS = 1200;
 const MAX_HISTORY_SECTIONS = 80;
+const MAX_TIMELINE_BLOCKS = 2400;
 
 const GENERIC_TITLES = new Set(['巡检', '对话', '事件处置', '本班', '日常巡检']);
 
@@ -504,6 +505,7 @@ export class StoryView extends LitElement {
   }
 
   private rebuild(): void {
+    if (this.stickToLatest) this.timeline.trimToRecent(MAX_TIMELINE_BLOCKS);
     try {
       this.story = buildStory(
         this.timeline.blocks,
@@ -738,9 +740,9 @@ export class StoryView extends LitElement {
                   ? this.renderSkeleton()
                   : this.story.sections.length === 0
                     ? this.renderEmpty()
-                    : this.story.sections.map((section, index) =>
-                        this.renderSection(section, index),
-                      )
+                    : this.story.sections
+                        .slice(-MAX_HISTORY_SECTIONS)
+                        .map((section, index) => this.renderSection(section, index))
               }
               ${this.renderLive()}
               ${this.error ? html`<div class="story-error">${this.error}</div>` : nothing}

@@ -207,6 +207,12 @@ export class TimelineModel {
     this.blocks.splice(index, 0, block);
   }
 
+  /** Drop the oldest rendered blocks after a long live session; the event log remains durable. */
+  trimToRecent(maxBlocks: number): void {
+    if (maxBlocks <= 0 || this.blocks.length <= maxBlocks) return;
+    this.blocks = this.blocks.slice(this.blocks.length - maxBlocks);
+  }
+
   ingest(page: SessionEventPage): void {
     this.highWatermark = Math.max(this.highWatermark, page.highWatermark);
     const ordered = [...page.events].sort((a, b) => a.seq - b.seq);

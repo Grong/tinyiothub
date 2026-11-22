@@ -388,6 +388,16 @@ describe('TimelineModel', () => {
     expect(model.todos).toEqual([]);
   });
 
+  it('trims old rendered blocks after a long live session', () => {
+    const model = new TimelineModel();
+    for (let index = 1; index <= 10; index += 1) {
+      model.ingestEvent(event(index, 'assistant/message', { text: `m${index}` }));
+    }
+    model.trimToRecent(3);
+    expect(model.blocks).toHaveLength(3);
+    expect(model.blocks[0].kind === 'assistant' ? model.blocks[0].text : '').toBe('m8');
+  });
+
   it('does not replace current todos with an older history page', () => {
     const model = new TimelineModel();
     const current = [{ content: '当前任务', status: 'in_progress' as const, activeForm: '执行当前任务' }];
