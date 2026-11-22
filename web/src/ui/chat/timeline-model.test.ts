@@ -72,6 +72,22 @@ describe('TimelineModel', () => {
     expect(notice?.kind === 'notice' ? notice.text : '').toContain('检查告警');
   });
 
+  it('does not surface an incomplete notice after the plan is fully completed', () => {
+    const model = new TimelineModel();
+    model.ingestEvent(event(1, 'turn/start', { turnId: 't1' }));
+    model.ingestEvent(
+      event(2, 'todo/write', {
+        turnId: 't1',
+        todos: [
+          { content: '检查告警', status: 'completed' },
+          { content: '生成摘要', status: 'completed' },
+        ],
+      }),
+    );
+    model.ingestEvent(event(3, 'turn/incomplete', { turnId: 't1', pending: [] }));
+    expect(model.blocks.some((block) => block.kind === 'notice' && block.tone === 'incomplete')).toBe(false);
+  });
+
   it('pairs tools by toolCallId and records evidence', () => {
     const model = new TimelineModel();
     model.ingestEvent(

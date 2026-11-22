@@ -300,6 +300,9 @@ export class TimelineModel {
         break;
       }
       case 'turn/incomplete': {
+        if (this.todos.length > 0 && this.todos.every((todo) => todo.status === 'completed')) {
+          break;
+        }
         const pending = Array.isArray(payload.pending)
           ? payload.pending
               .map((item) => (typeof item === 'object' && item !== null ? String((item as Record<string, unknown>).content ?? '') : ''))
@@ -459,6 +462,13 @@ export class TimelineModel {
         if (Array.isArray(payload.todos) && event.seq >= this.todoSeq) {
           this.todoSeq = event.seq;
           this.todos = payload.todos as TodoItem[];
+          if (this.todos.length > 0 && this.todos.every((todo) => todo.status === 'completed')) {
+            const turnId = asString(payload.turnId);
+            this.blocks = this.blocks.filter(
+              (block) =>
+                !(block.kind === 'notice' && block.tone === 'incomplete' && (!turnId || block.id === `${turnId}:incomplete`)),
+            );
+          }
         }
         break;
       case 'question/asked':
