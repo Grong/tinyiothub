@@ -179,6 +179,7 @@ export interface SessionProjectionView {
     turnId: string | null;
     phase: string;
     agenda: SessionProjectionAgendaItem[];
+    todos?: TodoItem[];
     lastSeq: number;
   };
   highWatermark: number;
@@ -192,13 +193,6 @@ export async function fetchSessionProjection(sessionKey: string): Promise<Sessio
   return rawJson<SessionProjectionView>(response, '加载会话状态失败');
 }
 
-export async function fetchSessionTodos(sessionKey: string): Promise<TodoItem[]> {
-  const response = await fetch(buildUrl(sessionPath(sessionKey, '/todos')), {
-    headers: authHeaders(),
-    credentials: 'include',
-  });
-  return rawJson<TodoItem[]>(response, '加载任务清单失败');
-}
 
 export async function answerQuestion(
   sessionKey: string,

@@ -4,7 +4,7 @@ import { getWorkspaceId } from '../../api/client.js';
 import {
   connectSessionEvents,
   fetchSessionEvents,
-  fetchSessionTodos,
+  fetchSessionProjection,
   listChatSessions,
   updateSessionPermission,
   type HudSnapshot,
@@ -195,16 +195,17 @@ export class ChatView extends LitElement {
     const key = sessionKey;
     const chatState = this.chatState;
     try {
-      const page = await fetchSessionEvents(key, 0, 200, { turns: 5 });
+      const [page, projection] = await Promise.all([
+        fetchSessionEvents(key, 0, 200, { turns: 5 }),
+        fetchSessionProjection(key).catch(() => null),
+      ]);
       if (key !== this.sessionKey) return;
       this.timeline.ingest(page);
+      if (projection?.turn?.todos) this.timeline.todos = projection.turn.todos;
       if (initializeHistory) {
         this.historyBefore = page.nextBefore ?? null;
         this.historyHasMore = page.hasMore ?? false;
       }
-      const todos = await fetchSessionTodos(key);
-      if (key !== this.sessionKey) return;
-      if (todos.length > 0 && this.timeline.todos.length === 0) this.timeline.todos = todos;
       if (chatState && !this.a2uiHydrated) {
         await loadChatHistory(chatState);
         if (key !== this.sessionKey) return;

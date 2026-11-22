@@ -74,7 +74,7 @@ describe('assistant api', () => {
   it('fetches the durable session projection', async () => {
     const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
       jsonResponse({
-        turn: { turnId: 't1', phase: 'executing', agenda: [{ key: 'inspection', label: '巡检', status: 'in_progress' }], lastSeq: 9 },
+        turn: { turnId: 't1', phase: 'executing', agenda: [{ key: 'inspection', label: '巡检', status: 'in_progress' }], todos: [{ content: '检查设备', status: 'in_progress' }], lastSeq: 9 },
         highWatermark: 12,
       }),
     );
@@ -82,6 +82,7 @@ describe('assistant api', () => {
     const [url] = fetchMock.mock.calls[0];
     expect(String(url)).toBe('/api/v1/chat/sessions/agent%3Aws-1%3Adefault%2Fa/projection');
     expect(projection.turn.agenda[0].key).toBe('inspection');
+    expect(projection.turn.todos?.[0].content).toBe('检查设备');
     expect(projection.highWatermark).toBe(12);
   });
 

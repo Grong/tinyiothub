@@ -9,6 +9,23 @@ use serde_json::Value;
 
 use super::turn_state::{AgendaItem, AgendaStatus, TurnPhase};
 
+/// One projected todo item. The status vocabulary matches the model-facing
+/// todo tool (`pending` / `in_progress` / `completed`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ProjectedTodoStatus {
+    Pending,
+    InProgress,
+    Completed,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProjectedTodo {
+    pub content: String,
+    pub status: ProjectedTodoStatus,
+}
+
 /// Current projection of one turn, advanced by session events in seq order.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -16,6 +33,7 @@ pub struct TurnProjection {
     pub turn_id: Option<String>,
     pub phase: TurnPhase,
     pub agenda: Vec<AgendaItem>,
+    pub todos: Vec<ProjectedTodo>,
     pub last_seq: i64,
 }
 
@@ -25,6 +43,7 @@ impl Default for TurnProjection {
             turn_id: None,
             phase: TurnPhase::Planning,
             agenda: Vec::new(),
+            todos: Vec::new(),
             last_seq: 0,
         }
     }
@@ -40,9 +59,11 @@ impl TurnProjection {
             "turn/start" => {
                 self.turn_id = payload.get("turnId").and_then(Value::as_str).map(str::to_string);
                 self.phase = TurnPhase::Planning;
+                self.todos.clear();
                 true
             }
             "agenda/set" | "agenda/update" => self.apply_agenda(payload),
+            "todo/write" => self.apply_todos(payload),
             "step/start" => {
                 self.phase = TurnPhase::Executing;
                 true
@@ -66,6 +87,27 @@ impl TurnProjection {
             self.last_seq = seq;
         }
         changed
+    }
+
+    fn apply_todos(&mut self, payload: &Value) -> bool {
+        let Some(items) = payload.get("todos").and_then(Value::as_array) else {
+            return false;
+        };
+        self.todos = items
+            .iter()
+            .filter_map(|item| {
+                let record = item.as_object()?;
+                let content = record.get("content")?.as_str()?.to_string();
+                let status = match record.get("status")?.as_str()? {
+                    "in_progress" => ProjectedTodoStatus::InProgress,
+                    "completed" => ProjectedTodoStatus::Completed,
+                    _ => ProjectedTodoStatus::Pending,
+                };
+                Some(ProjectedTodo { content, status })
+            })
+            .collect();
+        self.phase = TurnPhase::Executing;
+        true
     }
 
     fn apply_agenda(&mut self, payload: &Value) -> bool {
@@ -124,13 +166,23 @@ mod tests {
                 {"key": "energy", "label": "节能", "status": "in_progress"}
             ]}),
         );
-        projection.apply(4, "turn/end", &json!({"outcome": "partial"}));
+        projection.apply(
+            4,
+            "todo/write",
+            &json!({"todos": [
+                {"content": "扫描告警", "status": "completed"},
+                {"content": "生成摘要", "status": "in_progress"}
+            ]}),
+        );
+        projection.apply(5, "turn/end", &json!({"outcome": "partial"}));
 
         assert_eq!(projection.turn_id.as_deref(), Some("t1"));
         assert_eq!(projection.phase, TurnPhase::Partial);
         assert_eq!(projection.agenda[0].status, AgendaStatus::Completed);
         assert_eq!(projection.agenda[1].status, AgendaStatus::InProgress);
-        assert_eq!(projection.last_seq, 4);
+        assert_eq!(projection.todos[0].content, "扫描告警");
+        assert_eq!(projection.todos[1].status, ProjectedTodoStatus::InProgress);
+        assert_eq!(projection.last_seq, 5);
     }
 
     #[test]

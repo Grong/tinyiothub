@@ -10,7 +10,7 @@ use tinyiothub_agent::harness::TurnProjection;
 use tinyiothub_storage::{Db, DbError};
 
 const PROJECTION_NAME: &str = "turn.v1";
-const PROJECTION_VERSION: i64 = 1;
+const PROJECTION_VERSION: i64 = 2;
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]

@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 const hoisted = vi.hoisted(() => ({
   fetchSessionEvents: vi.fn(),
   connectSessionEvents: vi.fn((_opts: { sessionKey: string; after: number }) => () => {}),
-  fetchSessionTodos: vi.fn(),
+  fetchSessionProjection: vi.fn(),
   listChatSessions: vi.fn().mockResolvedValue([]),
   updateSessionPermission: vi.fn(),
   fetchAssistantHud: vi.fn(),
@@ -48,7 +48,10 @@ describe('view-chat codex layout', () => {
     hoisted.listChatSessions.mockResolvedValue([]);
     hoisted.connectSessionEvents.mockReturnValue(() => {});
     hoisted.getWorkspaceId.mockReturnValue('ws-1');
-    hoisted.fetchSessionTodos.mockResolvedValue([]);
+    hoisted.fetchSessionProjection.mockResolvedValue({
+      turn: { turnId: 't1', phase: 'executing', agenda: [], todos: [], lastSeq: 1 },
+      highWatermark: 1,
+    });
   });
 
   beforeEach(() => {
@@ -56,7 +59,10 @@ describe('view-chat codex layout', () => {
     hoisted.listChatSessions.mockResolvedValue([]);
     hoisted.connectSessionEvents.mockReturnValue(() => {});
     hoisted.getWorkspaceId.mockReturnValue('ws-1');
-    hoisted.fetchSessionTodos.mockResolvedValue([]);
+    hoisted.fetchSessionProjection.mockResolvedValue({
+      turn: { turnId: 't1', phase: 'executing', agenda: [], todos: [], lastSeq: 1 },
+      highWatermark: 1,
+    });
     hoisted.loadChatHistory.mockResolvedValue(undefined);
     hoisted.fetchAssistantHud.mockResolvedValue({
       assistant: { status: 'idle', lastOutcome: null },
@@ -90,7 +96,10 @@ describe('view-chat codex layout', () => {
       ],
       highWatermark: 2,
     });
-    hoisted.fetchSessionTodos.mockResolvedValue([]);
+    hoisted.fetchSessionProjection.mockResolvedValue({
+      turn: { turnId: 't1', phase: 'executing', agenda: [], todos: [], lastSeq: 1 },
+      highWatermark: 1,
+    });
     const el = document.createElement('view-chat') as ChatView;
     document.body.appendChild(el);
     await el.updateComplete;
@@ -206,6 +215,7 @@ describe('view-chat codex layout', () => {
     const el = document.createElement('view-chat') as ChatView;
     document.body.appendChild(el);
     await el.updateComplete;
+    await vi.waitFor(() => expect((el as any).loading).toBe(false));
     await vi.waitFor(() => expect((el as any).chatState?.onA2ui).toBeTruthy());
 
     (el as any).chatState.onA2ui(
