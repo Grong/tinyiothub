@@ -13,7 +13,6 @@ const hoisted = vi.hoisted(() => ({
     }) =>
       () => {},
   ),
-  fetchSessionTodos: vi.fn(),
   listChatSessions: vi.fn(),
   fetchAssistantHud: vi.fn(),
   getWorkspaceId: vi.fn(() => 'ws-1'),
@@ -70,7 +69,6 @@ describe('view-story', () => {
   beforeEach(() => {
     localStorage.setItem('workspace-id', 'ws-1');
     hoisted.listChatSessions.mockResolvedValue([session]);
-    hoisted.fetchSessionTodos.mockResolvedValue([]);
     hoisted.fetchAssistantHud.mockResolvedValue({
       assistant: { status: 'idle', lastOutcome: 'completed' },
       devices: { total: 12, online: 10, offline: 2 },
@@ -206,6 +204,55 @@ describe('view-story', () => {
     document.body.appendChild(el);
     await vi.waitFor(() => expect(el.querySelector('question-card')).toBeTruthy());
     expect(el.querySelector('.story-waiting--question')).toBeTruthy();
+  });
+
+  it('renders projection todos in the bottom dock and plan diffs inside details', async () => {
+    hoisted.fetchSessionProjection.mockResolvedValueOnce({
+      turn: {
+        turnId: 't-plan',
+        phase: 'executing',
+        agenda: [],
+        todos: [
+          { content: '扫描告警', status: 'completed' },
+          { content: '生成摘要', status: 'in_progress' },
+        ],
+        lastSeq: 8,
+      },
+      highWatermark: 8,
+    });
+    const initial = [
+      { content: '扫描告警', status: 'in_progress' },
+      { content: '生成摘要', status: 'pending' },
+    ];
+    const next = [
+      { content: '扫描告警', status: 'completed' },
+      { content: '生成摘要', status: 'in_progress' },
+    ];
+    hoisted.fetchSessionEvents.mockResolvedValueOnce({
+      events: [
+        event(1, 'turn/start', { turnId: 't-plan' }),
+        event(2, 'todo/write', { todos: initial }),
+        event(3, 'tool/call', { toolCallId: 'p1', tool: 'todo_write', args: { todos: initial } }),
+        event(4, 'tool/result', { toolCallId: 'p1', tool: 'todo_write', result: '{"ok":true}' }),
+        event(5, 'todo/write', { todos: next }),
+        event(6, 'tool/call', { toolCallId: 'p2', tool: 'todo_write', args: { todos: next } }),
+        event(7, 'tool/result', { toolCallId: 'p2', tool: 'todo_write', result: '{"ok":true}' }),
+        event(8, 'turn/end', { turnId: 't-plan', outcome: 'completed' }),
+      ],
+      highWatermark: 8,
+    });
+    const el = document.createElement('view-story') as StoryView;
+    document.body.appendChild(el);
+    await vi.waitFor(() => expect(el.querySelector('.story-task-dock')).toBeTruthy());
+    expect(el.querySelector('.story-task-dock')?.textContent).toContain('已完成 1 · 1 进行中');
+    expect(el.textContent).not.toContain('本轮计划');
+    const planStep = [...el.querySelectorAll('.story-step')]
+      .filter((node) => node.textContent?.includes('更新计划'))
+      .at(-1) as HTMLDetailsElement | undefined;
+    expect(planStep).toBeTruthy();
+    expect(el.querySelector('.story-process')).toBeTruthy();
+    expect(planStep?.querySelector('.story-plan-diff')).toBeTruthy();
+    expect(planStep?.querySelectorAll('.story-plan-diff__item').length).toBe(2);
   });
 
   it('opens the session switcher menu without a native select', async () => {

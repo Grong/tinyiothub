@@ -10,12 +10,10 @@
 import { LitElement, html, nothing } from 'lit';
 import { customElement, state } from 'lit/decorators.js';
 import { unsafeHTML } from 'lit/directives/unsafe-html.js';
-import type { TodoItem } from '../../api/assistant.js';
 import {
   connectSessionEvents,
   fetchSessionEvents,
   fetchSessionProjection,
-  fetchSessionTodos,
   listChatSessions,
   type SessionEvent,
   type SessionSummary,
@@ -295,9 +293,9 @@ export class StoryView extends LitElement {
       }
       this.historyBefore = page.nextBefore ?? null;
       this.historyHasMore = Boolean(page.hasMore && this.historyBefore !== null);
-      const todos = await fetchSessionTodos(key);
-      if (seq !== this.loadSeq) return;
-      if (todos.length > 0) this.timeline.todos = todos;
+      if (projection?.turn?.todos) {
+        this.timeline.todos = projection.turn.todos;
+      }
       this.rebuild();
       this.capHistory();
       this.loading = false;
@@ -723,7 +721,7 @@ export class StoryView extends LitElement {
             </div>
           </main>
           ${
-            this.stickToLatest && this.story.plans.some((todo) => todo.status !== 'completed')
+            this.story.plans.length > 0
               ? html`<div class="story-task-dock">
                   <task-plan-panel
                     .todos=${this.story.plans}
@@ -963,14 +961,7 @@ export class StoryView extends LitElement {
               : nothing
           }
         </header>
-        ${isLast ? this.renderPlan() : nothing}
-        ${
-          section.steps.length > 0
-            ? html`<div class="story-steps">
-                ${section.steps.map((step) => this.renderStep(step))}
-              </div>`
-            : nothing
-        }
+        ${this.renderProcessGroups(section, isLast)}
         ${
           section.conclusion
             ? html`<div class="story-conclusion">
@@ -986,42 +977,52 @@ export class StoryView extends LitElement {
     `;
   }
 
-  private renderPlan() {
-    const todos: TodoItem[] = this.story.plans;
-    if (todos.length === 0) return nothing;
-    const done = todos.filter((todo) => todo.status === 'completed').length;
-    const active = todos.filter((todo) => todo.status === 'in_progress').length;
-    const pending = todos.length - done - active;
-    const summary = [
-      done > 0 ? `已完成 ${done}` : '',
-      active > 0 ? `${active} 进行中` : '',
-      pending > 0 ? `${pending} 待处理` : '',
-    ]
-      .filter(Boolean)
-      .join(' · ');
-    const percent = Math.round((done / todos.length) * 100);
-    return html`
-      <details class="story-plan">
-        <summary class="story-plan__head">
-          <span>本轮计划</span>
-          <span class="story-plan__count">${summary}</span>
-        </summary>
-        <div class="story-plan__meter" aria-hidden="true">
-          <span style=${`width:${percent}%`}></span>
-        </div>
-        <ol class="story-plan__list">
-          ${todos.map(
-            (todo) =>
-              html`<li class="story-plan__item story-plan__item--${todo.status}">
-                <span class="story-plan__mark" aria-hidden="true">
-                  ${todo.status === 'completed' ? '✓' : todo.status === 'in_progress' ? '▸' : '·'}
-                </span>
-                <span>${todo.content}</span>
-              </li>`,
-          )}
-        </ol>
-      </details>
-    `;
+  private processCategory(step: StoryStep): { key: string; label: string; mark: string } {
+    switch (step.tone) {
+      case 'plan':
+        return { key: 'plan', label: '计划', mark: '☷' };
+      case 'write':
+        return { key: 'write', label: '处置', mark: '✎' };
+      case 'read':
+        return { key: 'read', label: '读取', mark: '◉' };
+      case 'alarm':
+        return { key: 'alarm', label: '告警', mark: '!' };
+      case 'ask':
+        return { key: 'ask', label: '确认', mark: '?' };
+      case 'skill':
+        return { key: 'skill', label: '技能', mark: '◇' };
+      case 'analysis':
+      case 'think':
+        return { key: 'analysis', label: '分析', mark: '∿' };
+      default:
+        return { key: 'other', label: '过程', mark: '·' };
+    }
+  }
+
+  private renderProcessGroups(section: StorySection, latest: boolean) {
+    if (section.steps.length === 0) return nothing;
+    const groups: { key: string; label: string; mark: string; steps: StoryStep[] }[] = [];
+    for (const step of section.steps) {
+      const category = this.processCategory(step);
+      const previous = groups[groups.length - 1];
+      if (previous?.key === category.key) previous.steps.push(step);
+      else groups.push({ ...category, steps: [step] });
+    }
+    return html`<div class="story-processes">
+      ${groups.map(
+        (group) => html`<details class="story-process" ?open=${latest}>
+          <summary class="story-process__head">
+            <span class="story-process__mark" aria-hidden="true">${group.mark}</span>
+            <span class="story-process__label">${group.label}</span>
+            <span class="story-process__count">${group.steps.length}</span>
+            <span class="story-process__chevron" aria-hidden="true">⌄</span>
+          </summary>
+          <div class="story-process__body">
+            ${group.steps.map((step) => this.renderStep(step))}
+          </div>
+        </details>`,
+      )}
+    </div>`;
   }
 
   private renderStep(step: StoryStep) {
@@ -1070,6 +1071,30 @@ export class StoryView extends LitElement {
                     </div>`,
                   )}
                 </dl>`
+              : nothing
+          }
+          ${
+            step.planDiff && step.planDiff.items.length > 0
+              ? html`<div class="story-plan-diff">
+                  <div class="story-plan-diff__head">计划变更</div>
+                  <ul class="story-plan-diff__list">
+                    ${step.planDiff.items.map(
+                      (item) => html`<li class="story-plan-diff__item" data-change=${item.change}>
+                        <span class="story-plan-diff__mark">${
+                          item.change === 'added' ? '+' : item.change === 'removed' ? '−' : '~'
+                        }</span>
+                        <span class="story-plan-diff__content">${item.content}</span>
+                        <span class="story-plan-diff__status">${
+                          item.change === 'removed'
+                            ? '已移除'
+                            : item.previousStatus
+                              ? `${item.previousStatus} → ${item.status}`
+                              : item.status
+                        }</span>
+                      </li>`,
+                    )}
+                  </ul>
+                </div>`
               : nothing
           }
           <div class="story-step__meta">

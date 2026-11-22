@@ -82,6 +82,20 @@ export interface StoryStep {
   metrics?: StoryDeviceMetric[];
   /** 工具 presentation 提供的结构化展开字段。 */
   details?: ToolDetail[];
+  /** todo_write 相对上一次快照的差异，只在展开工具详情时显示。 */
+  planDiff?: StoryPlanDiff;
+}
+
+export interface StoryPlanDiff {
+  added: number;
+  updated: number;
+  removed: number;
+  items: {
+    content: string;
+    status: string;
+    previousStatus?: string;
+    change: 'added' | 'updated' | 'removed';
+  }[];
 }
 
 export type StorySectionStatus = 'running' | 'done' | 'failed' | 'cancelled' | 'partial';
@@ -462,6 +476,50 @@ function visionOf(
   });
 }
 
+function todoItemsFromArgs(args: unknown): { content: string; status: string }[] {
+  const record = recordOf(args);
+  const items = Array.isArray(record?.todos) ? record.todos : [];
+  return items
+    .map((item) => {
+      const todo = recordOf(item);
+      const content = firstString(todo, ['content']);
+      const status = firstString(todo, ['status']);
+      return content && status ? { content, status } : null;
+    })
+    .filter((item): item is { content: string; status: string } => item !== null);
+}
+
+function planDiff(
+  previous: { content: string; status: string }[],
+  current: { content: string; status: string }[],
+): StoryPlanDiff {
+  const before = new Map(previous.map((item) => [item.content, item.status]));
+  const items: StoryPlanDiff['items'] = [];
+  let added = 0;
+  let updated = 0;
+  for (const item of current) {
+    const previousStatus = before.get(item.content);
+    before.delete(item.content);
+    if (previousStatus === undefined) {
+      added += 1;
+      items.push({ content: item.content, status: item.status, change: 'added' });
+    } else if (previousStatus !== item.status) {
+      updated += 1;
+      items.push({
+        content: item.content,
+        status: item.status,
+        previousStatus,
+        change: 'updated',
+      });
+    }
+  }
+  const removed = before.size;
+  for (const content of before.keys()) {
+    items.push({ content, status: '', change: 'removed' });
+  }
+  return { added, updated, removed, items };
+}
+
 function stepFromTool(
   part: Extract<TimelineBlock, { kind: 'tool' }>,
   device: StoryDevice | null,
@@ -553,6 +611,7 @@ export function buildStory(
   let current: StorySection | null = null;
   let pendingOrigin: string | undefined;
   let order = 0;
+  let previousTodos: { content: string; status: string }[] = [];
 
   const ensureSection = (at: string): StorySection => {
     if (!current) {
@@ -579,6 +638,7 @@ export function buildStory(
         pendingOrigin = part.source;
         break;
       case 'turn':
+        previousTodos = [];
         current = {
           id: part.id,
           status: statusOf(part.status),
@@ -669,7 +729,28 @@ export function buildStory(
         break;
       }
       case 'tool': {
-        if (part.name === 'canvas' || part.name === 'todo_write') break;
+        if (part.name === 'canvas') break;
+        if (part.name === 'todo_write') {
+          const items = todoItemsFromArgs(part.args);
+          if (items.length === 0) break;
+          const section = current ?? ensureSection(part.at);
+          const done = items.filter((item) => item.status === 'completed').length;
+          const active = items.find((item) => item.status === 'in_progress')?.content;
+          const diff = planDiff(previousTodos, items);
+          previousTodos = items;
+          section.steps.push({
+            id: part.id,
+            title: '更新计划',
+            detail: `${done}/${items.length} 项完成${active ? ` · ${active}` : ''}`,
+            at: part.at,
+            status: part.status === 'failed' ? 'failed' : part.result ? 'done' : 'running',
+            tone: 'plan',
+            tool: part.name,
+            visionIds: [],
+            planDiff: diff,
+          });
+          break;
+        }
         const device = collectDevices(devices, part, order);
         order += 1;
         const step = stepFromTool(part, device);
