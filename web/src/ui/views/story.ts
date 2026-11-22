@@ -990,12 +990,21 @@ export class StoryView extends LitElement {
     const todos: TodoItem[] = this.story.plans;
     if (todos.length === 0) return nothing;
     const done = todos.filter((todo) => todo.status === 'completed').length;
+    const active = todos.filter((todo) => todo.status === 'in_progress').length;
+    const pending = todos.length - done - active;
+    const summary = [
+      done > 0 ? `已完成 ${done}` : '',
+      active > 0 ? `${active} 进行中` : '',
+      pending > 0 ? `${pending} 待处理` : '',
+    ]
+      .filter(Boolean)
+      .join(' · ');
     const percent = Math.round((done / todos.length) * 100);
     return html`
       <details class="story-plan">
         <summary class="story-plan__head">
           <span>本轮计划</span>
-          <span class="story-plan__count">${done}/${todos.length}</span>
+          <span class="story-plan__count">${summary}</span>
         </summary>
         <div class="story-plan__meter" aria-hidden="true">
           <span style=${`width:${percent}%`}></span>

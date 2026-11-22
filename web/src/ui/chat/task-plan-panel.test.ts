@@ -9,7 +9,7 @@ describe('task-plan-panel', () => {
     panel.todos = [{ content: '扫描告警', activeForm: '正在扫描告警', status: 'in_progress' }];
     document.body.append(panel);
     await panel.updateComplete;
-    expect(panel.textContent).toContain('任务 1 进行中');
+    expect(panel.textContent).toContain('1 进行中');
     expect(panel.textContent).not.toContain('正在扫描告警');
     panel.querySelector('button')?.click();
     await panel.updateComplete;
@@ -26,9 +26,9 @@ describe('task-plan-panel', () => {
     ];
     document.body.append(panel);
     await panel.updateComplete;
-    expect(panel.textContent).toContain('任务 1 进行中 · 1 待处理');
+    expect(panel.textContent).toContain('已完成 1 · 1 进行中 · 1 待处理');
     expect(panel.textContent).toContain('正在读取设备状态');
-    expect(panel.textContent).toContain('1/3');
+    expect(panel.textContent).not.toContain('1/3');
     panel.remove();
   });
 });

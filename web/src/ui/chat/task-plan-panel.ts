@@ -30,14 +30,13 @@ export class TaskPlanPanel extends LitElement {
     const active = this.todos.filter((todo) => todo.status === 'in_progress');
     const pending = this.todos.filter((todo) => todo.status === 'pending');
     const done = this.todos.filter((todo) => todo.status === 'completed');
-    const summary =
-      active.length > 0
-        ? `任务 ${active.length} 进行中 · ${pending.length} 待处理`
-        : done.length === total
-          ? '任务全部完成'
-          : this.running
-            ? `任务 ${pending.length} 待处理`
-            : `本轮结束 · ${pending.length} 项未完成`;
+    const summary = [
+      done.length > 0 ? `已完成 ${done.length}` : '',
+      active.length > 0 ? `${active.length} 进行中` : '',
+      pending.length > 0 ? `${pending.length} 待处理` : '',
+    ]
+      .filter(Boolean)
+      .join(' · ');
     const warning = !this.running && pending.length > 0;
     return html`<section class="task-plan" aria-label="本轮任务">
       <button
@@ -47,8 +46,7 @@ export class TaskPlanPanel extends LitElement {
         @click=${() => this.toggle()}
       >
         <span class="task-plan__kicker">任务</span>
-        <span class="task-plan__summary" data-warning=${warning || nothing}>${summary}</span>
-        <span class="task-plan__done">${done.length}/${total}</span>
+        <span class="task-plan__summary" data-warning=${warning || nothing}>${summary || '暂无进行中的任务'}</span>
         <span class="task-plan__chevron" aria-hidden="true">${this.expanded ? '⌄' : '›'}</span>
       </button>
       ${

@@ -44,12 +44,6 @@
   color: var(--warn);
 }
 
-.task-plan__done {
-  color: var(--muted);
-  font-family: var(--mono);
-  font-size: 10.5px;
-}
-
 .task-plan__chevron {
   color: var(--muted);
   font-family: var(--mono);

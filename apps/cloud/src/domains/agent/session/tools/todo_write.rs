@@ -7,7 +7,7 @@ use tinyiothub_agent::port::tool::{Tool, ToolResult};
 use crate::domains::agent::session::context::TurnContextRegistry;
 use crate::domains::agent::session::events::{SessionEventSink, session_event};
 use crate::domains::agent::session::todos::TodoStore;
-use crate::domains::agent::session::types::{TodoList, TodoStatus};
+use crate::domains::agent::session::types::TodoList;
 
 pub struct TodoWriteTool {
     assistant_id: String,
@@ -42,26 +42,6 @@ impl TodoWriteTool {
             serde_json::from_value(args).map_err(|error| anyhow::anyhow!("invalid todo list: {error}"))?;
         if let Err(message) = list.validate() {
             return Ok(failed(message));
-        }
-        let before = self.store.get(&context.session_key);
-        let newly_completed = if before.len() == list.todos.len() {
-            before
-                .iter()
-                .zip(&list.todos)
-                .filter(|(old, new)| old.status != TodoStatus::Completed && new.status == TodoStatus::Completed)
-                .count()
-        } else if before.is_empty() {
-            0
-        } else {
-            list.todos
-                .iter()
-                .filter(|todo| todo.status == TodoStatus::Completed)
-                .count()
-        };
-        if newly_completed > 1 {
-            return Ok(failed(
-                "only one todo may move to completed per todo_write call; mark the finished item completed, mark the next item in_progress, and submit again",
-            ));
         }
         let todos = self.store.replace(&context.session_key, list.todos.clone());
         self.events
@@ -102,7 +82,7 @@ impl Tool for TodoWriteTool {
     }
 
     fn description(&self) -> &str {
-        "Create or replace the session todo list. For a turn with multiple skills, you may start with one item per skill as a placeholder. Do not guess steps before loading a skill: after loading a skill, replace its placeholder with one item per concrete step from its instructions and keep the other skill items unchanged. Track one active skill at a time. Mark finished items completed and the next item in_progress; keep at most one item in_progress. Only one item may move to completed per call: update progress as each step finishes instead of marking several pending items completed at once. Do not write a final conclusion while any item is pending or in_progress: finish it, or replace the list without obsolete items first. If an item is genuinely blocked, keep its real status and state the blocker explicitly; never mark it completed."
+        "Create or replace the session todo list. For a turn with multiple skills, you may start with one item per skill as a placeholder. Do not guess steps before loading a skill: after loading a skill, replace its placeholder with one item per concrete step from its instructions and keep the other skill items unchanged. Track one active skill at a time. Mark finished items completed and the next item in_progress; keep at most one item in_progress. Do not write a final conclusion while any item is pending or in_progress: finish it, or replace the list without obsolete items first. If an item is genuinely blocked, keep its real status and state the blocker explicitly; never mark it completed."
     }
 
     fn parameters_schema(&self) -> serde_json::Value {
@@ -138,7 +118,7 @@ mod tests {
     use super::*;
     use crate::domains::agent::session::context::TurnContext;
     use crate::domains::agent::session::events::test_support::RecordingSink;
-    use crate::domains::agent::session::types::Todo;
+    use crate::domains::agent::session::types::{Todo, TodoStatus};
     use serde_json::json;
     use std::sync::Arc;
 
@@ -222,7 +202,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn todo_write_rejects_batch_completion_without_mutating_store() {
+    async fn todo_write_accepts_batch_completion_like_a_whole_list_snapshot() {
         let contexts = Arc::new(TurnContextRegistry::default());
         let store = Arc::new(TodoStore::default());
         let sink = Arc::new(RecordingSink::default());
@@ -265,10 +245,13 @@ mod tests {
             .await
             .unwrap();
 
-        assert!(!result.success);
-        assert!(result.error.unwrap().contains("only one todo"));
-        let stored = store.get("agent:ws:agent_main/s1");
-        assert_eq!(stored[1].status, TodoStatus::InProgress);
+        assert!(result.success);
+        assert!(
+            store
+                .get("agent:ws:agent_main/s1")
+                .iter()
+                .all(|todo| todo.status == TodoStatus::Completed)
+        );
     }
 
     #[tokio::test]
