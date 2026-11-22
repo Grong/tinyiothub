@@ -135,6 +135,7 @@ export class StoryView extends LitElement {
   private historyLocked = false;
   @state() private stickToLatest = true;
   private manualScroll = false;
+  private lastFeedTop = 0;
   private historyEpoch = 0;
   private pinPending = false;
   private suppressScroll = false;
@@ -266,6 +267,7 @@ export class StoryView extends LitElement {
     this.historyLocked = false;
     this.stickToLatest = true;
     this.manualScroll = false;
+    this.lastFeedTop = 0;
     this.pinPending = true;
     try {
       const [page, projection] = await Promise.all([
@@ -350,6 +352,16 @@ export class StoryView extends LitElement {
     return this.querySelector('.story-body') as HTMLElement | null;
   }
 
+  private onFeedPointerDown(event: PointerEvent): void {
+    const feed = this.feedScroller();
+    if (!feed) return;
+    const rect = feed.getBoundingClientRect();
+    if (event.clientX >= rect.right - 18) {
+      this.manualScroll = true;
+      this.stickToLatest = false;
+    }
+  }
+
   private onFeedWheel(event: WheelEvent): void {
     if (event.deltaY < 0) {
       this.manualScroll = true;
@@ -361,7 +373,10 @@ export class StoryView extends LitElement {
     if (this.suppressScroll || this.pinPending) return;
     const feed = this.feedScroller();
     if (!feed) return;
-    const distanceToBottom = feed.scrollHeight - feed.scrollTop - feed.clientHeight;
+    const top = feed.scrollTop;
+    if (top < this.lastFeedTop - 1) this.manualScroll = true;
+    this.lastFeedTop = top;
+    const distanceToBottom = feed.scrollHeight - top - feed.clientHeight;
     if (this.manualScroll) {
       // A wheel-up gesture must not be cancelled by the scroll event that it
       // just produced. Only an explicit return to the very bottom resumes
@@ -442,6 +457,7 @@ export class StoryView extends LitElement {
     this.loadingOlder = false;
     this.stickToLatest = true;
     this.manualScroll = false;
+    this.lastFeedTop = 0;
     this.rebuild();
   }
 
@@ -606,7 +622,12 @@ export class StoryView extends LitElement {
           </button>
         </header>
 
-        <div class="story-body" @scroll=${() => this.onFeedScroll()} @wheel=${(event: WheelEvent) => this.onFeedWheel(event)}>
+        <div
+          class="story-body"
+          @scroll=${() => this.onFeedScroll()}
+          @wheel=${(event: WheelEvent) => this.onFeedWheel(event)}
+          @pointerdown=${(event: PointerEvent) => this.onFeedPointerDown(event)}
+        >
           <div class="story-work">
           <div class="story-head">
             ${this.renderAgenda()}
