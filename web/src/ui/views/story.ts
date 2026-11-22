@@ -604,31 +604,40 @@ export class StoryView extends LitElement {
             </div>
           </div>
           <span class="story-topbar__spacer"></span>
-          <label class="story-select">
-            <span class="story-select__label">切换记录</span>
-            <select
-              class="story-select__input"
-              .value=${this.sessionKey}
-              @change=${(event: Event) => {
-                this.manualSelection = true;
-                void this.selectSession((event.target as HTMLSelectElement).value);
-              }}
-            >
-              ${this.sessions
-                .slice(0, 20)
-                .map(
-                  (item) =>
-                    html`<option value=${item.sessionKey}>
-                      ${this.sessionOptionLabel(item)}
-                    </option>`,
-                )}
+          <details class="story-switcher">
+            <summary class="story-switcher__button" aria-label="切换工作记录">
+              <span class="story-switcher__label">切换记录</span>
+              <span class="story-switcher__value">${session?.label || '当前记录'}</span>
+              <span class="story-switcher__chevron" aria-hidden="true">⌄</span>
+            </summary>
+            <div class="story-switcher__menu" role="listbox" aria-label="工作记录">
+              ${this.sessions.slice(0, 20).map(
+                (item) => html`<button
+                  class="story-switcher__item"
+                  role="option"
+                  aria-selected=${item.sessionKey === this.sessionKey}
+                  @click=${(event: Event) => {
+                    event.preventDefault();
+                    this.manualSelection = true;
+                    void this.selectSession(item.sessionKey);
+                    (event.currentTarget as HTMLElement)
+                      .closest('details')
+                      ?.removeAttribute('open');
+                  }}
+                >
+                  <span class="story-switcher__item-label">${item.label || this.sessionOptionLabel(item)}</span>
+                  <span class="story-switcher__item-time">${formatSessionTime(item.updatedAt)}</span>
+                </button>`,
+              )}
               ${
                 session === undefined && this.sessionKey
-                  ? html`<option value=${this.sessionKey}>当前记录</option>`
+                  ? html`<button class="story-switcher__item" role="option" aria-selected="true">
+                      当前记录
+                    </button>`
                   : nothing
               }
-            </select>
-          </label>
+            </div>
+          </details>
           <button class="story-topbar__link" @click=${(event: Event) => this.openEngineer(event)}>
             工程师视图 →
           </button>

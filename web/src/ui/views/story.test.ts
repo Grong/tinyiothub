@@ -208,6 +208,16 @@ describe('view-story', () => {
     expect(el.querySelector('.story-waiting--question')).toBeTruthy();
   });
 
+  it('opens the session switcher menu without a native select', async () => {
+    const el = document.createElement('view-story') as StoryView;
+    document.body.appendChild(el);
+    await vi.waitFor(() => expect(el.querySelector('.story-switcher__button')).toBeTruthy());
+    (el.querySelector('.story-switcher__button') as HTMLElement).click();
+    await el.updateComplete;
+    expect(el.querySelector('.story-switcher__menu')).toBeTruthy();
+    expect(el.querySelector('.story-switcher__item')).toBeTruthy();
+  });
+
   it('shows a jump-to-latest control after the reader scrolls up', async () => {
     const el = document.createElement('view-story') as StoryView;
     document.body.appendChild(el);
