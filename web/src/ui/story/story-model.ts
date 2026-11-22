@@ -669,7 +669,7 @@ export function buildStory(
         break;
       }
       case 'tool': {
-        if (part.name === 'canvas') break;
+        if (part.name === 'canvas' || part.name === 'todo_write') break;
         const device = collectDevices(devices, part, order);
         order += 1;
         const step = stepFromTool(part, device);

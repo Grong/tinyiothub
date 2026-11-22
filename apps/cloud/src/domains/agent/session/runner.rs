@@ -535,13 +535,14 @@ impl SessionRunner {
                                 failed += 1;
                             }
                             if name == "todo_write" && todo_result_all_completed(output) {
-                                let active = agenda.iter().any(|item| item.status == AgendaStatus::InProgress);
-                                if active {
-                                    for item in &mut agenda {
-                                        if item.status == AgendaStatus::InProgress {
-                                            item.status = AgendaStatus::Completed;
-                                        }
-                                    }
+                                let unresolved = agenda.iter().any(|item| {
+                                    !matches!(
+                                        item.status,
+                                        AgendaStatus::Completed | AgendaStatus::Skipped | AgendaStatus::Blocked
+                                    )
+                                });
+                                if unresolved {
+                                    settle_agenda(&mut agenda);
                                     let _ = events_for_agenda
                                         .emit(session_event(
                                             &agenda_context,
@@ -681,9 +682,19 @@ impl SessionRunner {
                 // active skill has finished. Settle that skill explicitly so a
                 // normal turn does not stay partial merely because it was the
                 // last skill loaded. Pending skills remain unresolved.
-                if pending.is_empty() && agenda.iter().any(|item| item.status == AgendaStatus::InProgress) {
+                if pending.is_empty()
+                    && agenda.iter().any(|item| {
+                        !matches!(
+                            item.status,
+                            AgendaStatus::Completed | AgendaStatus::Skipped | AgendaStatus::Blocked
+                        )
+                    })
+                {
                     for item in &mut agenda {
-                        if item.status == AgendaStatus::InProgress {
+                        if !matches!(
+                            item.status,
+                            AgendaStatus::Completed | AgendaStatus::Skipped | AgendaStatus::Blocked
+                        ) {
                             item.status = AgendaStatus::Completed;
                         }
                     }
@@ -851,6 +862,17 @@ fn todo_result_all_completed(output: &str) -> bool {
                         .iter()
                         .all(|todo| todo.get("status").and_then(serde_json::Value::as_str) == Some("completed"))
             })
+}
+
+fn settle_agenda(agenda: &mut [AgendaItem]) {
+    for item in agenda {
+        if !matches!(
+            item.status,
+            AgendaStatus::Completed | AgendaStatus::Skipped | AgendaStatus::Blocked
+        ) {
+            item.status = AgendaStatus::Completed;
+        }
+    }
 }
 
 fn agenda_todos(agenda: &[AgendaItem]) -> Vec<Todo> {
@@ -1167,6 +1189,31 @@ mod tests {
                 "costUsd": 0.001
             })
         );
+    }
+
+    #[test]
+    fn settling_completes_pending_and_in_progress_skills() {
+        let mut agenda = vec![
+            AgendaItem {
+                key: "inspection".into(),
+                label: "巡检".into(),
+                status: AgendaStatus::Pending,
+            },
+            AgendaItem {
+                key: "alarm".into(),
+                label: "告警".into(),
+                status: AgendaStatus::InProgress,
+            },
+            AgendaItem {
+                key: "skip".into(),
+                label: "跳过".into(),
+                status: AgendaStatus::Skipped,
+            },
+        ];
+        super::settle_agenda(&mut agenda);
+        assert_eq!(agenda[0].status, AgendaStatus::Completed);
+        assert_eq!(agenda[1].status, AgendaStatus::Completed);
+        assert_eq!(agenda[2].status, AgendaStatus::Skipped);
     }
 
     #[test]
