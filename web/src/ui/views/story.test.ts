@@ -218,7 +218,6 @@ describe('view-story', () => {
     expect(el.textContent).toContain('查看「冷却塔 A」的实时状态');
     expect(hoisted.fetchSessionEvents.mock.calls[0][3]).toEqual({ turns: 2 });
     expect(el.textContent).toContain('AI 大脑功绩');
-    expect(el.textContent).toContain('本轮发现');
     expect(el.textContent).toContain('需要关注');
     const step = el.querySelector('details.story-step') as HTMLDetailsElement | null;
     expect(step).toBeTruthy();

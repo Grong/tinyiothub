@@ -608,9 +608,8 @@ export class StoryView extends LitElement {
                         this.renderSection(section, index),
                       )
               }
-              ${this.renderFindings()} ${this.renderLive()}
+              ${this.renderLive()}
               ${this.error ? html`<div class="story-error">${this.error}</div>` : nothing}
-              ${this.renderFooter()}
             </div>
           </main>
           ${
@@ -960,36 +959,6 @@ export class StoryView extends LitElement {
     `;
   }
 
-  private renderFindings() {
-    if (this.story.sections.length === 0 || this.story.latestStats.devices === 0) return nothing;
-    if (this.story.latestFindings.length === 0) {
-      if (this.isWorking()) return nothing;
-      return html`<section class="story-findings story-findings--clear" aria-label="本轮发现">
-        <div class="story-findings__head">
-          <span class="story-findings__eyebrow">本轮发现</span>
-          <span class="story-findings__count">0 项</span>
-        </div>
-        <p class="story-findings__clear">最近一轮没有发现异常，设备状态正常。</p>
-      </section>`;
-    }
-    return html`<section class="story-findings" aria-label="本轮发现">
-      <div class="story-findings__head">
-        <span class="story-findings__eyebrow">本轮发现</span>
-        <span class="story-findings__count">${this.story.latestFindings.length} 项</span>
-      </div>
-      <ul class="story-findings__list">
-        ${this.story.latestFindings.map(
-          (finding) =>
-            html`<li class="story-findings__item">
-              <span class="story-findings__device">${finding.deviceName}</span>
-              <span class="story-findings__label">${finding.label}</span>
-              <time>${formatStoryClock(finding.at)}</time>
-            </li>`,
-        )}
-      </ul>
-    </section>`;
-  }
-
   private renderLive() {
     const running = this.story.running;
     if (!running) return nothing;
@@ -1019,15 +988,7 @@ export class StoryView extends LitElement {
     </div>`;
   }
 
-  private renderFooter() {
-    if (!this.sessionKey) return nothing;
-    return html`<footer class="story-foot">
-      <span>这是 AI 的工作纪实，原始工具轨迹可在工程师视图中查看。</span>
-      <button class="story-foot__link" @click=${(event: Event) => this.openEngineer(event)}>
-        查看完整轨迹 →
-      </button>
-    </footer>`;
-  }
+
 }
 
 declare global {
