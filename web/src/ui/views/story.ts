@@ -134,6 +134,7 @@ export class StoryView extends LitElement {
   private manualSelection = false;
   private historyLocked = false;
   @state() private stickToLatest = true;
+  @state() private unseenEvents = 0;
   private manualScroll = false;
   private lastFeedTop = 0;
   private historyEpoch = 0;
@@ -266,6 +267,7 @@ export class StoryView extends LitElement {
     this.loadingOlder = false;
     this.historyLocked = false;
     this.stickToLatest = true;
+    this.unseenEvents = 0;
     this.manualScroll = false;
     this.lastFeedTop = 0;
     this.pinPending = true;
@@ -352,6 +354,13 @@ export class StoryView extends LitElement {
     return this.querySelector('.story-body') as HTMLElement | null;
   }
 
+  private jumpToLatest(): void {
+    this.manualScroll = false;
+    this.stickToLatest = true;
+    this.unseenEvents = 0;
+    this.pinToLatest();
+  }
+
   private onFeedPointerDown(event: PointerEvent): void {
     const feed = this.feedScroller();
     if (!feed) return;
@@ -384,6 +393,7 @@ export class StoryView extends LitElement {
       if (distanceToBottom <= 4) {
         this.manualScroll = false;
         this.stickToLatest = true;
+        this.unseenEvents = 0;
       } else {
         this.stickToLatest = false;
       }
@@ -413,12 +423,13 @@ export class StoryView extends LitElement {
       after,
       onEvent: (event) => {
         if (this.sessionKey !== key) return;
-        if (event.eventType === 'turn/start') {
+        if (event.eventType === 'turn/start' && this.stickToLatest) {
           this.startStreamingTurn(key, event);
           return;
         }
         this.timeline.ingestEvent(event);
         this.rebuild();
+        if (!this.stickToLatest) this.unseenEvents += 1;
       },
       onLive: (frame) => {
         if (this.sessionKey !== key) return;
@@ -456,6 +467,7 @@ export class StoryView extends LitElement {
     this.historyLocked = false;
     this.loadingOlder = false;
     this.stickToLatest = true;
+    this.unseenEvents = 0;
     this.manualScroll = false;
     this.lastFeedTop = 0;
     this.rebuild();
@@ -660,6 +672,15 @@ export class StoryView extends LitElement {
                     ?startCollapsed=${true}
                   ></task-plan-panel>
                 </div>`
+              : nothing
+          }
+          ${
+            !this.stickToLatest
+              ? html`<button class="story-jump" @click=${() => this.jumpToLatest()}>
+                  <span class="story-jump__dot" aria-hidden="true"></span>
+                  ${this.unseenEvents > 0 ? `${this.unseenEvents} 条新动态` : '回到最新'}
+                  <span class="story-jump__arrow" aria-hidden="true">↓</span>
+                </button>`
               : nothing
           }
           </div>

@@ -208,6 +208,20 @@ describe('view-story', () => {
     expect(el.querySelector('.story-waiting--question')).toBeTruthy();
   });
 
+  it('shows a jump-to-latest control after the reader scrolls up', async () => {
+    const el = document.createElement('view-story') as StoryView;
+    document.body.appendChild(el);
+    await vi.waitFor(() => expect(el.querySelector('.story-body')).toBeTruthy());
+    const body = el.querySelector('.story-body') as HTMLElement;
+    body.dispatchEvent(new WheelEvent('wheel', { deltaY: -120, bubbles: true }));
+    await el.updateComplete;
+    const jump = el.querySelector('.story-jump') as HTMLButtonElement | null;
+    expect(jump).toBeTruthy();
+    jump?.click();
+    await el.updateComplete;
+    expect(el.querySelector('.story-jump')).toBeNull();
+  });
+
   it('renders the business story, device deck and brain achievements', async () => {
     const el = document.createElement('view-story') as StoryView;
     document.body.appendChild(el);
