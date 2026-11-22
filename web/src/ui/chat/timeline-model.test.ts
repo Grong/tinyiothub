@@ -378,6 +378,16 @@ describe('TimelineModel', () => {
       source: 'user',
     });
   });
+  it('clears todos when a newer turn starts but not for older history', () => {
+    const model = new TimelineModel();
+    model.ingestEvent(event(1, 'turn/start', { turnId: 't1' }));
+    model.ingestEvent(event(2, 'todo/write', { todos: [{ content: '当前', status: 'in_progress' }] }));
+    model.ingestEvent(event(10, 'turn/start', { turnId: 't2' }));
+    expect(model.todos).toEqual([]);
+    model.ingestEvent(event(3, 'turn/start', { turnId: 't0' }));
+    expect(model.todos).toEqual([]);
+  });
+
   it('does not replace current todos with an older history page', () => {
     const model = new TimelineModel();
     const current = [{ content: '当前任务', status: 'in_progress' as const, activeForm: '执行当前任务' }];

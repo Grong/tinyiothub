@@ -279,6 +279,10 @@ export class TimelineModel {
         break;
       }
       case 'turn/start':
+        if (event.seq >= this.todoSeq) {
+          this.todos = [];
+          this.todoSeq = event.seq;
+        }
         this.pushBlock(
           { kind: 'turn', id: asString(payload.turnId) || event.eventId, status: 'running', at },
           event.seq,
