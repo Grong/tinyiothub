@@ -552,6 +552,30 @@ impl Db {
         rows.into_iter().map(|row| row.into_event(workspace_id)).collect()
     }
 
+    /// Latest assistant conclusion in one session, used as cross-turn context
+    /// for recurring scheduled work.
+    pub async fn latest_assistant_message(&self, workspace_id: &str, session_id: &str) -> Result<Option<String>> {
+        let pool = self.workspace_pool(workspace_id).await?;
+        let row = sqlx::query_scalar::<_, String>(
+            "SELECT payload_json FROM session_events
+             WHERE execution_mode = 'production' AND session_id = ? AND type = 'assistant/message'
+             ORDER BY seq DESC LIMIT 1",
+        )
+        .bind(session_id)
+        .fetch_optional(&pool)
+        .await?;
+        let Some(payload) = row else {
+            return Ok(None);
+        };
+        let value: Value = serde_json::from_str(&payload)?;
+        Ok(value
+            .get("text")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|text| !text.is_empty())
+            .map(str::to_string))
+    }
+
     /// 最近事件（跨会话，Production），按发生时间倒序。
     /// 只用于 HUD/概览；会话回放仍走 `session_event_page`。
     pub async fn recent_session_events(&self, workspace_id: &str, limit: i64) -> Result<Vec<HarnessEvent>> {

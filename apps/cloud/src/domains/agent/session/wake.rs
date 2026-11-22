@@ -356,6 +356,25 @@ impl WakeRunner {
         prior.saturating_add(1)
     }
 
+    /// Recurring inspections otherwise re-report the same unresolved state.
+    /// Add the last conclusion plus delta rules to the turn input; the event
+    /// log remains the source and no new memory store is introduced.
+    async fn with_previous_conclusion(&self, workspace_id: &str, assistant_id: &str, turn_input: String) -> String {
+        let session_key = format!("agent:{workspace_id}:{assistant_id}/main");
+        let Ok(Some(previous)) = self.db.latest_assistant_message(workspace_id, &session_key).await else {
+            return turn_input;
+        };
+        let previous = previous.chars().take(4000).collect::<String>();
+        format!(
+            "{turn_input}\n\n## 上一轮结论（同一巡检会话）\n{previous}\n\n\
+             ## 连续巡检规则\n\
+             - 先对比上一轮结论与当前证据；优先报告新增、变化、已解决和仍待处理的项。\n\
+             - 未变化的设备/告警不要逐条重复，用一行汇总即可。\n\
+             - 仍未解决的项保留，并写明首次发现或持续时长（有证据时）；没有证据不要标记为已解决。\n\
+             - 不要因为上一轮提过就当作当前已验证；以本轮工具读数为准。"
+        )
+    }
+
     /// The one full-input prompt builder used by scheduled wake, reconcile and
     /// event wake. The caller passes the single Session Events capture so the
     /// user cursor and the semantic events come from the same read.
@@ -367,6 +386,9 @@ impl WakeRunner {
         semantic_events: &[SemanticSessionEvent],
         observation: Option<&SuppressionObservation>,
     ) -> anyhow::Result<crate::domains::agent::prompt::assistant::PromptPackage> {
+        let turn_input = self
+            .with_previous_conclusion(workspace_id, assistant_id, turn_input)
+            .await;
         if let Some(captured) = observation.and_then(|observation| observation.captured.as_ref())
             && !captured.resolved.is_empty()
         {
