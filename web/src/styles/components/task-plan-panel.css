@@ -57,6 +57,9 @@
 }
 
 .task-plan__list {
+  max-height: min(24vh, 190px);
+  overflow-y: auto;
+  scrollbar-width: thin;
   margin: 0;
   padding: 2px 12px 10px;
   list-style: none;

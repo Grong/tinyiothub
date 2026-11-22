@@ -222,7 +222,7 @@ view-story {
 
 .story-head {
   flex: none;
-  padding: 24px var(--story-gutter) 0;
+  padding: 16px var(--story-gutter) 0;
 }
 
 .story-head > * {
@@ -848,6 +848,9 @@ view-story {
 }
 
 .story-plan__list {
+  max-height: min(22vh, 180px);
+  overflow-y: auto;
+  scrollbar-width: thin;
   margin: 0;
   padding: 0;
   list-style: none;

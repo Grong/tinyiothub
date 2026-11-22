@@ -271,10 +271,10 @@ export class StoryView extends LitElement {
       ]);
       if (seq !== this.loadSeq) return;
       this.timeline.ingest(page);
-      if (projection && projection.turn.agenda.length > 0) {
+      if (projection?.turn?.agenda?.length) {
         this.timeline.agenda = projection.turn.agenda;
       }
-      if (projection && projection.highWatermark > page.highWatermark) {
+      if (projection?.highWatermark && projection.highWatermark > page.highWatermark) {
         const missing = await fetchSessionEvents(key, page.highWatermark, 200);
         if (seq !== this.loadSeq) return;
         this.timeline.ingest(missing);
@@ -632,7 +632,11 @@ export class StoryView extends LitElement {
           ${
             this.stickToLatest && this.story.plans.some((todo) => todo.status !== 'completed')
               ? html`<div class="story-task-dock">
-                  <task-plan-panel .todos=${this.story.plans} ?running=${this.isWorking()}></task-plan-panel>
+                  <task-plan-panel
+                    .todos=${this.story.plans}
+                    ?running=${this.isWorking()}
+                    ?startCollapsed=${true}
+                  ></task-plan-panel>
                 </div>`
               : nothing
           }
@@ -906,7 +910,7 @@ export class StoryView extends LitElement {
     const done = todos.filter((todo) => todo.status === 'completed').length;
     const percent = Math.round((done / todos.length) * 100);
     return html`
-      <details class="story-plan" open>
+      <details class="story-plan">
         <summary class="story-plan__head">
           <span>本轮计划</span>
           <span class="story-plan__count">${done}/${todos.length}</span>

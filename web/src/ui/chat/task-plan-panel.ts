@@ -1,4 +1,4 @@
-import { LitElement, html, nothing } from 'lit';
+import { LitElement, html, nothing, type PropertyValues } from 'lit';
 import { customElement, property, state } from 'lit/decorators.js';
 import type { TodoItem } from '../../api/assistant.js';
 import '../../styles/components/task-plan-panel.css';
@@ -11,7 +11,14 @@ export class TaskPlanPanel extends LitElement {
 
   @property({ attribute: false }) todos: TodoItem[] = [];
   @property({ type: Boolean }) running = true;
+  @property({ type: Boolean }) startCollapsed = false;
   @state() private expanded = true;
+
+  protected willUpdate(changed: PropertyValues): void {
+    if (!this.hasUpdated && changed.has('startCollapsed')) {
+      this.expanded = !this.startCollapsed;
+    }
+  }
 
   private toggle(): void {
     this.expanded = !this.expanded;

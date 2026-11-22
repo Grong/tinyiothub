@@ -3,6 +3,20 @@ import './task-plan-panel.js';
 import { TaskPlanPanel } from './task-plan-panel.js';
 
 describe('task-plan-panel', () => {
+  it('can start collapsed without hiding the task summary', async () => {
+    const panel = document.createElement('task-plan-panel') as TaskPlanPanel;
+    panel.startCollapsed = true;
+    panel.todos = [{ content: '扫描告警', activeForm: '正在扫描告警', status: 'in_progress' }];
+    document.body.append(panel);
+    await panel.updateComplete;
+    expect(panel.textContent).toContain('任务 1 进行中');
+    expect(panel.textContent).not.toContain('正在扫描告警');
+    panel.querySelector('button')?.click();
+    await panel.updateComplete;
+    expect(panel.textContent).toContain('正在扫描告警');
+    panel.remove();
+  });
+
   it('shows the active task, remaining count, and completed progress', async () => {
     const panel = document.createElement('task-plan-panel') as TaskPlanPanel;
     panel.todos = [
