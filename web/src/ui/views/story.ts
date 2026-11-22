@@ -701,7 +701,7 @@ export class StoryView extends LitElement {
           <div class="story-head">
             ${this.renderAgenda()}
             ${this.renderHero()}
-            ${this.renderFailureNotice()} ${this.renderWaiting()}
+            ${this.renderFailureNotice()}
           </div>
           <main class="story-main" @scroll=${() => this.onFeedScroll()}>
             <div class="story-feed">
@@ -720,6 +720,7 @@ export class StoryView extends LitElement {
               ${this.error ? html`<div class="story-error">${this.error}</div>` : nothing}
             </div>
           </main>
+          ${this.renderWaitingDock()}
           ${
             this.story.plans.length > 0
               ? html`<div class="story-task-dock">
@@ -832,6 +833,13 @@ export class StoryView extends LitElement {
         </span>`,
       )}
     </div>`;
+  }
+
+  private renderWaitingDock() {
+    if (!this.timeline.pendingQuestion && this.timeline.pendingApprovals.length === 0) {
+      return nothing;
+    }
+    return html`<div class="story-waiting-dock">${this.renderWaiting()}</div>`;
   }
 
   private renderWaiting() {
@@ -961,7 +969,7 @@ export class StoryView extends LitElement {
               : nothing
           }
         </header>
-        ${this.renderProcessGroups(section, isLast)}
+        ${this.renderProcessGroups(section)}
         ${
           section.conclusion
             ? html`<div class="story-conclusion">
@@ -999,18 +1007,18 @@ export class StoryView extends LitElement {
     }
   }
 
-  private renderProcessGroups(section: StorySection, latest: boolean) {
+  private renderProcessGroups(section: StorySection) {
     if (section.steps.length === 0) return nothing;
-    const groups: { key: string; label: string; mark: string; steps: StoryStep[] }[] = [];
+    const groups = new Map<string, { key: string; label: string; mark: string; steps: StoryStep[] }>();
     for (const step of section.steps) {
       const category = this.processCategory(step);
-      const previous = groups[groups.length - 1];
-      if (previous?.key === category.key) previous.steps.push(step);
-      else groups.push({ ...category, steps: [step] });
+      const existing = groups.get(category.key);
+      if (existing) existing.steps.push(step);
+      else groups.set(category.key, { ...category, steps: [step] });
     }
     return html`<div class="story-processes">
-      ${groups.map(
-        (group) => html`<details class="story-process" ?open=${latest}>
+      ${[...groups.values()].map(
+        (group) => html`<details class="story-process">
           <summary class="story-process__head">
             <span class="story-process__mark" aria-hidden="true">${group.mark}</span>
             <span class="story-process__label">${group.label}</span>

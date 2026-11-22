@@ -526,6 +526,21 @@ view-story {
 }
 
 /* ── Waiting for the user ───────────────────────────── */
+.story-waiting-dock {
+  flex: none;
+  max-height: min(46vh, 430px);
+  overflow-y: auto;
+  padding: 8px var(--story-gutter) 10px;
+  border-top: 1px solid var(--border-subtle);
+  background: var(--bg-elevated);
+  scrollbar-width: thin;
+}
+
+.story-waiting-dock .story-waiting {
+  max-width: var(--story-content);
+  margin: 0 auto;
+}
+
 .story-waiting {
   margin-top: var(--space-4);
   padding: 12px 14px;
@@ -2308,6 +2323,16 @@ view-story {
     bottom: 0;
     left: 0;
     z-index: 30;
+    padding-bottom: max(12px, env(safe-area-inset-bottom));
+  }
+
+  .story-waiting-dock {
+    position: fixed;
+    right: 0;
+    bottom: 0;
+    left: 0;
+    z-index: 31;
+    max-height: min(50vh, 430px);
     padding-bottom: max(12px, env(safe-area-inset-bottom));
   }
 
