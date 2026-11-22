@@ -108,7 +108,7 @@ pub struct ToolGuard {
     policy: ToolGuardPolicy,
     total_calls: usize,
     repeats: HashMap<String, usize>,
-    failures: HashMap<ToolFailureKind, usize>,
+    unsupported: HashMap<String, usize>,
 }
 
 impl Default for ToolGuard {
@@ -123,7 +123,7 @@ impl ToolGuard {
             policy,
             total_calls: 0,
             repeats: HashMap::new(),
-            failures: HashMap::new(),
+            unsupported: HashMap::new(),
         }
     }
 
@@ -171,18 +171,20 @@ impl ToolGuard {
     /// Observe a failed result. Capability failures are stopped after three
     /// distinct attempts; retryable/transient failures are left to the model's
     /// normal retry path.
-    pub fn after(&mut self, message: &str) -> Option<GuardDecision> {
+    pub fn after(&mut self, name: &str, raw_args: &str, message: &str) -> Option<GuardDecision> {
         let kind = classify_failure(message);
-        if !matches!(kind, ToolFailureKind::Unsupported | ToolFailureKind::NotFound) {
+        if kind != ToolFailureKind::Unsupported {
             return None;
         }
-        let count = self.failures.entry(kind).or_insert(0);
+        let family = tool_family(name);
+        let key = format!("{family}\0{}", normalized_args(family, raw_args));
+        let count = self.unsupported.entry(key).or_insert(0);
         *count += 1;
         if *count < 3 {
             return None;
         }
         Some(GuardDecision::Stop(format!(
-            "连续 {count} 次遇到能力不存在或不支持（{kind:?}）。不要再用同义工具名重试；本轮停止并说明阻塞。"
+            "同一能力连续 {count} 次被明确拒绝为不支持。不要再用同义工具名重试；本轮停止并说明阻塞。"
         )))
     }
 
@@ -299,19 +301,45 @@ mod tests {
     #[test]
     fn unsupported_failures_stop_after_three_attempts() {
         let mut guard = ToolGuard::default();
-        assert!(guard.after("no declaration for thing 'dev-1'").is_none());
-        assert!(guard.after("no declaration for thing 'dev-2'").is_none());
+        let args = r#"{"thingId":"dev-1","action":"reconnect"}"#;
+        assert!(
+            guard
+                .after("send_command", args, "no declaration for thing 'dev-1'")
+                .is_none()
+        );
+        assert!(
+            guard
+                .after("invoke_action", args, "no declaration for thing 'dev-1'")
+                .is_none()
+        );
         assert!(matches!(
-            guard.after("no declaration for thing 'dev-3'"),
+            guard.after("call_device", args, "no declaration for thing 'dev-1'"),
             Some(GuardDecision::Stop(_))
         ));
+    }
+
+    #[test]
+    fn unsupported_failures_on_different_arguments_do_not_stop() {
+        let mut guard = ToolGuard::default();
+        for thing in ["dev-1", "dev-2", "dev-3", "dev-4"] {
+            let args = format!(r#"{{"thingId":"{thing}","propertyName":"commands"}}"#);
+            assert!(
+                guard
+                    .after("read_properties", &args, "Property 'commands' not found")
+                    .is_none()
+            );
+        }
     }
 
     #[test]
     fn transient_failures_do_not_trip_the_capability_stop() {
         let mut guard = ToolGuard::default();
         for _ in 0..10 {
-            assert!(guard.after("HTTP 503: unavailable").is_none());
+            assert!(
+                guard
+                    .after("read_device", r#"{"thingId":"dev-1"}"#, "HTTP 503: unavailable")
+                    .is_none()
+            );
         }
     }
 

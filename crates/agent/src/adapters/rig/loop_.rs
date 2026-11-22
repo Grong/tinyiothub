@@ -309,11 +309,11 @@ impl AgentHook for ToolGuardHook {
         let Some(message) = failed_result_message(&event) else {
             return ToolResultAction::Keep;
         };
-        let decision = self
-            .guard
-            .lock()
-            .unwrap_or_else(|error| error.into_inner())
-            .after(&message);
+        let decision =
+            self.guard
+                .lock()
+                .unwrap_or_else(|error| error.into_inner())
+                .after(event.tool_name, event.args, &message);
         match decision {
             Some(GuardDecision::Stop(reason)) => ToolResultAction::Stop(reason),
             _ => ToolResultAction::Keep,
