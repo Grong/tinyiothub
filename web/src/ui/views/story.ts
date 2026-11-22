@@ -47,6 +47,9 @@ import '../story/device-deck.js';
 import '../story/vision-deck.js';
 import '../../styles/views/story.css';
 
+const MAX_HISTORY_STEPS = 1200;
+const MAX_HISTORY_SECTIONS = 80;
+
 const GENERIC_TITLES = new Set(['巡检', '对话', '事件处置', '本班', '日常巡检']);
 
 const KIND_LABEL: Record<string, string> = {
@@ -135,6 +138,7 @@ export class StoryView extends LitElement {
   private brainSummary: BrainEventsSummary | null = null;
   private manualSelection = false;
   private historyLocked = false;
+  private historyLimitReached = false;
   @state() private stickToLatest = true;
   @state() private unseenEvents = 0;
   private manualScroll = false;
@@ -268,6 +272,7 @@ export class StoryView extends LitElement {
     this.historyHasMore = false;
     this.loadingOlder = false;
     this.historyLocked = false;
+    this.historyLimitReached = false;
     this.stickToLatest = true;
     this.unseenEvents = 0;
     this.manualScroll = false;
@@ -294,6 +299,7 @@ export class StoryView extends LitElement {
       if (seq !== this.loadSeq) return;
       if (todos.length > 0) this.timeline.todos = todos;
       this.rebuild();
+      this.capHistory();
       this.loading = false;
       this.connect(key, this.timeline.highWatermark);
       await this.updateComplete;
@@ -336,6 +342,7 @@ export class StoryView extends LitElement {
       this.historyHasMore = Boolean(page.hasMore && nextBefore !== null);
       if (nextBefore === before) this.historyHasMore = false;
       this.rebuild();
+      this.capHistory();
       await this.updateComplete;
       if (feed && feed.isConnected) {
         feed.scrollTop = previousTop + feed.scrollHeight - previousHeight;
@@ -429,14 +436,23 @@ export class StoryView extends LitElement {
           this.startStreamingTurn(key, event);
           return;
         }
-        this.timeline.ingestEvent(event);
-        this.rebuild();
-        if (!this.stickToLatest) this.unseenEvents += 1;
+        try {
+          this.timeline.ingestEvent(event);
+          this.rebuild();
+          if (!this.stickToLatest) this.unseenEvents += 1;
+        } catch (error) {
+          console.error('story event ingest failed', error);
+          this.error = '这条工作记录暂时无法展示，请切换记录或打开工程师视图。';
+        }
       },
       onLive: (frame) => {
         if (this.sessionKey !== key) return;
-        this.timeline.applyLive(frame);
-        this.rebuild();
+        try {
+          this.timeline.applyLive(frame);
+          this.rebuild();
+        } catch (error) {
+          console.error('story live frame failed', error);
+        }
       },
       onError: (error) => {
         if (this.sessionKey !== key) return;
@@ -468,6 +484,7 @@ export class StoryView extends LitElement {
     this.historyHasMore = this.historyBefore !== null;
     this.historyLocked = false;
     this.loadingOlder = false;
+    this.historyLimitReached = false;
     this.stickToLatest = true;
     this.unseenEvents = 0;
     this.manualScroll = false;
@@ -475,13 +492,26 @@ export class StoryView extends LitElement {
     this.rebuild();
   }
 
+  private capHistory(): void {
+    const steps = this.story.sections.reduce((total, section) => total + section.steps.length, 0);
+    if (steps >= MAX_HISTORY_STEPS || this.story.sections.length >= MAX_HISTORY_SECTIONS) {
+      this.historyHasMore = false;
+      this.historyLimitReached = true;
+    }
+  }
+
   private rebuild(): void {
-    this.story = buildStory(
-      this.timeline.blocks,
-      this.timeline.todos,
-      this.timeline.pendingQuestion,
-    );
-    this.recomputeAchievements();
+    try {
+      this.story = buildStory(
+        this.timeline.blocks,
+        this.timeline.todos,
+        this.timeline.pendingQuestion,
+      );
+      this.recomputeAchievements();
+    } catch (error) {
+      console.error('story rebuild failed', error);
+      this.error = '这一轮记录暂时无法展示，请切换记录或打开工程师视图。';
+    }
   }
 
   private recomputeAchievements(): void {
@@ -749,7 +779,7 @@ export class StoryView extends LitElement {
                     ↑ 加载更早记录
                   </button>
                   <span class="story-history__hint">向上滚动自动加载 · 每次 1 轮</span>`
-              : html`<span class="story-history__end">已到最早记录</span>`
+              : html`<span class="story-history__end">${this.historyLimitReached ? '已加载最近记录，更多请打开工程师视图' : '已到最早记录'}</span>`
         }
       </div>
     `;
