@@ -484,11 +484,16 @@ export class StoryView extends LitElement {
       return;
     }
     this.historyEpoch += 1;
+    // The reset shortens the feed and browsers clamp scrollTop to 0. Lock the
+    // history trigger until the new turn is actually rendered and pinned;
+    // otherwise that clamp is mistaken for a user request to load older turns.
+    this.pinPending = true;
+    this.suppressScroll = true;
+    this.historyLocked = true;
     this.timeline.reset();
     this.timeline.ingestEvent(trigger);
     this.historyBefore = trigger.seq > 0 ? trigger.seq : null;
     this.historyHasMore = this.historyBefore !== null;
-    this.historyLocked = false;
     this.loadingOlder = false;
     this.historyLimitReached = false;
     this.stickToLatest = true;
@@ -496,6 +501,9 @@ export class StoryView extends LitElement {
     this.manualScroll = false;
     this.lastFeedTop = 0;
     this.rebuild();
+    void this.updateComplete.then(() => {
+      if (key === this.sessionKey && this.stickToLatest) this.pinToLatest();
+    });
   }
 
   private capHistory(): void {
