@@ -197,6 +197,7 @@ impl AutonomousAgentFactory {
             available_capabilities: self.available_capabilities.clone(),
             tool_call_ids: Some(tool_call_ids.clone()),
             checkpoint_before_tool: true,
+            max_tool_calls: 512,
         };
         let agent = match rig_loop_factory(cfg) {
             Ok(agent) => agent,

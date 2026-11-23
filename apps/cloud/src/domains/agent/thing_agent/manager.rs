@@ -660,6 +660,7 @@ pub(crate) mod tests {
                 available_capabilities: vec![],
                 tool_call_ids: None,
                 checkpoint_before_tool: true,
+                max_tool_calls: 512,
             };
             let handle = tinyiothub_agent::adapters::rig::loop_::rig_loop_factory(cfg).expect("build stub loop");
             Self {

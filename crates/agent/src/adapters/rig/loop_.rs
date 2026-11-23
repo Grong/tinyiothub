@@ -76,6 +76,7 @@ pub struct RigAgentLoop {
     /// pre-execution hook and read by tools that freeze a durable identity.
     tool_call_ids: Option<crate::port::tool::ToolCallIdSlot>,
     checkpoint_before_tool: bool,
+    max_tool_calls: usize,
     retry_events: super::provider::RetryEvents,
 }
 
@@ -88,6 +89,7 @@ impl RigAgentLoop {
             redactions: std::collections::HashMap::new(),
             tool_call_ids: None,
             checkpoint_before_tool: false,
+            max_tool_calls: 512,
             retry_events: super::provider::RetryEvents::default(),
         }
     }
@@ -104,6 +106,11 @@ impl RigAgentLoop {
 
     pub fn with_checkpoints(mut self, enabled: bool) -> Self {
         self.checkpoint_before_tool = enabled;
+        self
+    }
+
+    pub fn with_tool_budget(mut self, max_tool_calls: usize) -> Self {
+        self.max_tool_calls = max_tool_calls.max(1);
         self
     }
 
@@ -433,7 +440,10 @@ impl AgentLoop for RigAgentLoop {
             });
         }
         let mut request = request.add_hook(ToolGuardHook {
-            guard: Arc::new(std::sync::Mutex::new(ToolGuard::default())),
+            guard: Arc::new(std::sync::Mutex::new(ToolGuard::new(crate::harness::ToolGuardPolicy {
+                max_tool_calls: self.max_tool_calls,
+                ..Default::default()
+            }))),
         });
         // conversation_memory=false：历史由 cloud DB 每轮 seed，经 .history() 传入。
         let seeded = self.seeded_history().await;
@@ -661,6 +671,7 @@ pub fn rig_loop_factory(cfg: AgentLoopConfig) -> anyhow::Result<AgentLoopHandle>
             .with_redactions(redactions)
             .with_tool_call_ids(cfg.tool_call_ids)
             .with_checkpoints(cfg.checkpoint_before_tool)
+            .with_tool_budget(cfg.max_tool_calls)
             .with_retry_events(retry_events),
     ));
     Ok(handle)
