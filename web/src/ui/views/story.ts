@@ -21,6 +21,7 @@ import {
 import { getWorkspaceId } from '../../api/client.js';
 import { brainEventApi, type BrainEvent, type BrainEventsSummary } from '../../api/brain-events.js';
 import { TimelineModel } from '../chat/timeline-model.js';
+import { StoryScrollFollow } from './story-scroll.js';
 import { md } from '../shared/markdown.js';
 import {
   buildStory,
@@ -140,8 +141,7 @@ export class StoryView extends LitElement {
   private historyLimitReached = false;
   @state() private stickToLatest = true;
   @state() private unseenEvents = 0;
-  private manualScroll = false;
-  private lastFeedTop = 0;
+  private scrollFollow = new StoryScrollFollow(true);
   private historyEpoch = 0;
   private pinPending = false;
   private suppressScroll = false;
@@ -270,6 +270,7 @@ export class StoryView extends LitElement {
     this.story = EMPTY_STORY;
     this.historyEpoch += 1;
     this.processOpen.clear();
+    this.scrollFollow.reset(true);
     this.historyBefore = null;
     this.historyHasMore = false;
     this.loadingOlder = false;
@@ -277,8 +278,6 @@ export class StoryView extends LitElement {
     this.historyLimitReached = false;
     this.stickToLatest = true;
     this.unseenEvents = 0;
-    this.manualScroll = false;
-    this.lastFeedTop = 0;
     this.pinPending = true;
     try {
       const [page, projection] = await Promise.all([
@@ -330,6 +329,7 @@ export class StoryView extends LitElement {
     const key = this.sessionKey;
     const before = this.historyBefore;
     const epoch = this.historyEpoch;
+    this.scrollFollow.setFollowing(false);
     this.stickToLatest = false;
     const feed = this.feedScroller();
     const previousHeight = feed?.scrollHeight ?? 0;
@@ -370,7 +370,7 @@ export class StoryView extends LitElement {
   }
 
   private jumpToLatest(): void {
-    this.manualScroll = false;
+    this.scrollFollow.setFollowing(true);
     this.stickToLatest = true;
     this.unseenEvents = 0;
     this.pinToLatest();
@@ -381,14 +381,14 @@ export class StoryView extends LitElement {
     if (!feed) return;
     const rect = feed.getBoundingClientRect();
     if (event.clientX >= rect.right - 18) {
-      this.manualScroll = true;
+      this.scrollFollow.setFollowing(false);
       this.stickToLatest = false;
     }
   }
 
   private onFeedWheel(event: WheelEvent): void {
     if (event.deltaY < 0) {
-      this.manualScroll = true;
+      this.scrollFollow.wheelUp();
       this.stickToLatest = false;
     }
   }
@@ -398,23 +398,9 @@ export class StoryView extends LitElement {
     const feed = this.feedScroller();
     if (!feed) return;
     const top = feed.scrollTop;
-    if (top < this.lastFeedTop - 1) this.manualScroll = true;
-    this.lastFeedTop = top;
-    const distanceToBottom = feed.scrollHeight - top - feed.clientHeight;
-    if (this.manualScroll) {
-      // A wheel-up gesture must not be cancelled by the scroll event that it
-      // just produced. Only an explicit return to the very bottom resumes
-      // live-follow mode.
-      if (distanceToBottom <= 4) {
-        this.manualScroll = false;
-        this.stickToLatest = true;
-        this.unseenEvents = 0;
-      } else {
-        this.stickToLatest = false;
-      }
-    } else {
-      this.stickToLatest = distanceToBottom < 96;
-    }
+    const following = this.scrollFollow.sample(top, feed.scrollHeight - feed.clientHeight);
+    this.stickToLatest = following;
+    if (following) this.unseenEvents = 0;
     // 一次上滑只放一轮：先离开顶部再回来，才允许继续自动加载。
     if (feed.scrollTop > 140) {
       this.historyLocked = false;
@@ -496,10 +482,9 @@ export class StoryView extends LitElement {
     this.historyHasMore = this.historyBefore !== null;
     this.loadingOlder = false;
     this.historyLimitReached = false;
+    this.scrollFollow.reset(true);
     this.stickToLatest = true;
     this.unseenEvents = 0;
-    this.manualScroll = false;
-    this.lastFeedTop = 0;
     this.rebuild();
     void this.updateComplete.then(() => {
       if (key === this.sessionKey && this.stickToLatest) this.pinToLatest();
@@ -625,10 +610,11 @@ export class StoryView extends LitElement {
 
   /** Pin after a load or while new content is appended. */
   private pinFeedToBottom(): void {
-    if (!this.stickToLatest || this.manualScroll || this.pinning) return;
+    if (!this.scrollFollow.active || this.pinning) return;
     this.pinning = true;
+    this.scrollFollow.beginProgrammatic();
     const pin = () => {
-      if (!this.stickToLatest || this.manualScroll) {
+      if (!this.scrollFollow.active) {
         this.pinning = false;
         return;
       }
@@ -638,6 +624,8 @@ export class StoryView extends LitElement {
     pin();
     requestAnimationFrame(() => {
       pin();
+      const feed = this.feedScroller();
+      this.scrollFollow.endProgrammatic(feed?.scrollTop ?? 0);
       this.pinning = false;
     });
   }
@@ -646,6 +634,8 @@ export class StoryView extends LitElement {
   private pinToLatest(): void {
     this.pinning = false;
     this.suppressScroll = true;
+    this.scrollFollow.setFollowing(true);
+    this.scrollFollow.beginProgrammatic();
     const pin = () => {
       const feed = this.feedScroller();
       if (feed) feed.scrollTop = feed.scrollHeight;
@@ -655,6 +645,8 @@ export class StoryView extends LitElement {
       pin();
       requestAnimationFrame(() => {
         pin();
+        const feed = this.feedScroller();
+        this.scrollFollow.endProgrammatic(feed?.scrollTop ?? 0);
         this.suppressScroll = false;
         this.pinPending = false;
       });
