@@ -830,28 +830,20 @@ view-story {
   color: var(--warn);
 }
 
-/* ── Process groups（按 DSH 的 read / write / plan 分类） ── */
-.story-processes {
-  margin: 6px 0 0;
-  display: flex;
-  flex-direction: column;
-  gap: 5px;
-}
-
+/* ── One chronological process per turn ──────────────── */
 .story-process {
-  border: 1px solid var(--border-subtle);
-  border-radius: var(--radius-md);
-  background: color-mix(in srgb, var(--bg-subtle) 58%, transparent);
-  overflow: hidden;
+  margin: 8px 0 0;
+  border-top: 1px solid var(--border-subtle);
+  border-bottom: 1px solid var(--border-subtle);
 }
 
 .story-process__head {
   display: flex;
   align-items: center;
   gap: 7px;
-  padding: 6px 9px;
+  padding: 7px 4px;
   color: var(--muted);
-  font-size: 11.5px;
+  font-size: 11px;
   cursor: pointer;
   list-style: none;
 }
@@ -860,13 +852,16 @@ view-story {
   display: none;
 }
 
+.story-process__head:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: -2px;
+}
+
 .story-process__mark {
   display: grid;
   place-items: center;
   width: 16px;
   height: 16px;
-  border-radius: 4px;
-  background: var(--bg-elevated);
   color: var(--accent);
   font-family: var(--mono);
   font-size: 10px;
@@ -874,21 +869,32 @@ view-story {
 
 .story-process__label {
   color: var(--text);
+  font-size: 12px;
 }
 
 .story-process__count {
   padding: 0 5px;
+  border: 1px solid var(--border-subtle);
   border-radius: var(--radius-full);
-  background: var(--bg-elevated);
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: 9px;
+}
+
+.story-process__summary {
+  overflow: hidden;
   color: var(--muted);
   font-family: var(--mono);
   font-size: 9.5px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .story-process__chevron {
   margin-left: auto;
   color: var(--muted);
   font-size: 12px;
+  transition: transform var(--duration-fast) var(--ease-out);
 }
 
 .story-process[open] .story-process__chevron {
@@ -896,8 +902,18 @@ view-story {
 }
 
 .story-process__body {
-  padding: 0 5px 4px 9px;
-  border-top: 1px solid color-mix(in srgb, var(--border) 55%, transparent);
+  position: relative;
+  padding: 1px 0 5px;
+}
+
+.story-process__body::before {
+  content: '';
+  position: absolute;
+  top: 10px;
+  bottom: 12px;
+  left: 13px;
+  width: 1px;
+  background: color-mix(in srgb, var(--border) 72%, transparent);
 }
 
 .story-plan-diff {
@@ -972,10 +988,11 @@ view-story {
 }
 
 .story-step__line {
+  position: relative;
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 5px 8px;
+  gap: 7px;
+  padding: 6px 4px 6px 2px;
   border-radius: var(--radius-sm);
   cursor: pointer;
   list-style: none;
@@ -1015,6 +1032,8 @@ view-story {
 }
 
 .story-step__mark {
+  position: relative;
+  z-index: 1;
   flex: none;
   display: grid;
   place-items: center;
@@ -1074,9 +1093,18 @@ view-story {
   animation: story-step-pulse 1.6s ease-in-out infinite;
 }
 
+.story-step__type {
+  flex: none;
+  width: 32px;
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: 9.5px;
+  white-space: nowrap;
+}
+
 .story-step__title {
   flex: none;
-  max-width: 45%;
+  max-width: 34%;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -2396,6 +2424,14 @@ view-story {
   }
 
   .story-step__brief {
+    display: none;
+  }
+
+  .story-step__type {
+    display: none;
+  }
+
+  .story-process__summary {
     display: none;
   }
 

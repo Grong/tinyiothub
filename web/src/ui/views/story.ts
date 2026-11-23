@@ -146,6 +146,7 @@ export class StoryView extends LitElement {
   private pinPending = false;
   private suppressScroll = false;
   private pinning = false;
+  private processOpen = new Map<string, boolean>();
   private feedObserver: ResizeObserver | null = null;
 
   connectedCallback(): void {
@@ -268,6 +269,7 @@ export class StoryView extends LitElement {
     this.timeline.reset();
     this.story = EMPTY_STORY;
     this.historyEpoch += 1;
+    this.processOpen.clear();
     this.historyBefore = null;
     this.historyHasMore = false;
     this.loadingOlder = false;
@@ -997,7 +999,7 @@ export class StoryView extends LitElement {
               : nothing
           }
         </header>
-        ${this.renderProcessGroups(section)}
+        ${this.renderProcess(section, isLast)}
         ${
           section.conclusion
             ? html`<div class="story-conclusion">
@@ -1035,30 +1037,39 @@ export class StoryView extends LitElement {
     }
   }
 
-  private renderProcessGroups(section: StorySection) {
+  private renderProcess(section: StorySection, latest: boolean) {
     if (section.steps.length === 0) return nothing;
-    const groups = new Map<string, { key: string; label: string; mark: string; steps: StoryStep[] }>();
+    const counts = new Map<string, { label: string; mark: string; count: number }>();
     for (const step of section.steps) {
       const category = this.processCategory(step);
-      const existing = groups.get(category.key);
-      if (existing) existing.steps.push(step);
-      else groups.set(category.key, { ...category, steps: [step] });
+      const existing = counts.get(category.key);
+      if (existing) existing.count += 1;
+      else counts.set(category.key, { label: category.label, mark: category.mark, count: 1 });
     }
-    return html`<div class="story-processes">
-      ${[...groups.values()].map(
-        (group) => html`<details class="story-process">
-          <summary class="story-process__head">
-            <span class="story-process__mark" aria-hidden="true">${group.mark}</span>
-            <span class="story-process__label">${group.label}</span>
-            <span class="story-process__count">${group.steps.length}</span>
-            <span class="story-process__chevron" aria-hidden="true">⌄</span>
-          </summary>
-          <div class="story-process__body">
-            ${group.steps.map((step) => this.renderStep(step))}
-          </div>
-        </details>`,
-      )}
-    </div>`;
+    const summary = [...counts.values()]
+      .map((item) => `${item.label} ${item.count}`)
+      .join(' · ');
+    const open = this.processOpen.get(section.id) ?? latest;
+    return html`<details
+      class="story-process"
+      ?open=${open}
+      @toggle=${(event: Event) => {
+        if (!event.isTrusted) return;
+        const details = event.currentTarget as HTMLDetailsElement;
+        this.processOpen.set(section.id, details.open);
+      }}
+    >
+      <summary class="story-process__head">
+        <span class="story-process__mark" aria-hidden="true">☷</span>
+        <span class="story-process__label">过程</span>
+        <span class="story-process__count">${section.steps.length} 步</span>
+        <span class="story-process__summary">${summary}</span>
+        <span class="story-process__chevron" aria-hidden="true">⌄</span>
+      </summary>
+      <div class="story-process__body">
+        ${section.steps.map((step) => this.renderStep(step))}
+      </div>
+    </details>`;
   }
 
   private renderStep(step: StoryStep) {
@@ -1068,6 +1079,7 @@ export class StoryView extends LitElement {
           <span class="story-step__mark" aria-hidden="true">
             <span class="story-step__icon">${STEP_ICON[step.tone]}</span>
           </span>
+          <span class="story-step__type">${this.processCategory(step).label}</span>
           <span class="story-step__title">
             <span class="story-step__title-closed">${step.title}</span>
             <span class="story-step__title-open">${step.title} · 详情</span>
