@@ -895,6 +895,17 @@ export function buildStory(
   }
   findings.reverse();
 
+  // A terminal Turn owns no live work. Subagent completion events can be
+  // missing on abort/error paths; settle any orphaned running rows here so the
+  // bottom "正在..." banner cannot outlive the Turn.
+  for (const section of sections) {
+    if (section.status === 'running') continue;
+    const settled = section.status === 'failed' || section.status === 'cancelled' ? 'failed' : 'done';
+    for (const step of section.steps) {
+      if (step.status === 'running') step.status = settled;
+    }
+  }
+
   const sortedDevices = [...devices.values()]
     .filter((device) => device.touches > 0)
     .sort((a, b) => b.lastOrder - a.lastOrder);

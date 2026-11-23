@@ -84,6 +84,7 @@ export type TimelineBlock =
       kind: 'subagent';
       id: string;
       description: string;
+      turnId?: string;
       subagentType?: string;
       status?: string;
       summary?: string;
@@ -367,6 +368,11 @@ export class TimelineModel {
           this.pendingQuestionSeq = 0;
         }
         this.latestTurnCompletedSeq = Math.max(this.latestTurnCompletedSeq, event.seq);
+        for (const item of this.blocks) {
+          if (item.kind === 'subagent' && item.status === 'running' && (item.turnId === id || item.turnId === undefined)) {
+            item.status = mapped === 'failed' || mapped === 'cancelled' ? 'failed' : 'completed';
+          }
+        }
         this.pendingApprovals = this.pendingApprovals.filter((approval) => approval.turnId !== id);
         break;
       }
@@ -568,6 +574,7 @@ export class TimelineModel {
             id: asString(payload.subagentId) || event.eventId,
             description: asString(payload.description),
             subagentType: asString(payload.subagentType),
+            turnId: asString(payload.turnId) || undefined,
             status: 'running',
             at,
           },

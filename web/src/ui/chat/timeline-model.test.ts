@@ -174,6 +174,14 @@ describe('TimelineModel', () => {
     expect(model.pendingApprovals.map((pending) => pending.approvalId)).toEqual(['a2']);
   });
 
+  it('settles an orphaned running subagent when its turn ends', () => {
+    const model = new TimelineModel();
+    model.ingestEvent(event(1, 'subagent/started', { turnId: 't1', subagentId: 's1', description: '巡检 20 个传感器' }));
+    model.ingestEvent(event(2, 'turn/end', { turnId: 't1', outcome: 'completed' }));
+    const subagent = model.blocks.find((block) => block.kind === 'subagent');
+    expect(subagent?.kind === 'subagent' ? subagent.status : '').toBe('completed');
+  });
+
   it('updates subagent lifecycle and turn status', () => {
     const model = new TimelineModel();
     model.ingestEvent(
