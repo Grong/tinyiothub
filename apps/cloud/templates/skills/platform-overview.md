@@ -1,5 +1,6 @@
 ---
 name: platform-overview
+title: 平台总览
 description: TinyIoTHub 的平台能力、Agent 角色和工具使用总览。
 version: "1"
 trigger: /platform-overview

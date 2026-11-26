@@ -86,6 +86,8 @@ export interface StoryStep {
   details?: ToolDetail[];
   /** todo_write 相对上一次快照的差异，只在展开工具详情时显示。 */
   planDiff?: StoryPlanDiff;
+  /** Loaded skill metadata; rendered by the skill tool-view component. */
+  skill?: { name: string; title: string; description: string };
 }
 
 export interface StoryPlanDiff {
@@ -778,6 +780,7 @@ export function buildStory(
           tone: 'skill',
           tool: 'get_skill',
           visionIds: [],
+          skill: { name: part.name, title: copy.title, description: copy.description },
         });
         break;
       }

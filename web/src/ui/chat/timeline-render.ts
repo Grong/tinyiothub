@@ -1,6 +1,7 @@
 import { html, nothing, type TemplateResult } from 'lit';
 import { unsafeHTML } from 'lit/directives/unsafe-html.js';
 import { md } from '../shared/markdown.js';
+import '../tool-views/skill-view.js';
 import { skillDisplay } from './skill-copy.js';
 import type { ContentPart } from './timeline-model.js';
 import type { TodoItem } from '../../api/assistant.js';
@@ -422,8 +423,13 @@ function renderSkill(part: Extract<ContentPart, { kind: 'skill' }>): TemplateRes
   const copy = skillDisplay(part.name, part.title, part.description);
   return activity(html`
     <span class="activity__icon" aria-hidden="true">◆</span>
-    <span class="activity__label">技能 · ${copy.title}${part.version ? ` ${part.version}` : ''}</span>
-    ${copy.description ? html`<span class="activity__meta">${copy.description}</span>` : nothing}
+    <span class="activity__label">技能 ·</span>
+    <skill-view
+      .name=${part.name}
+      .title=${copy.title}
+      .description=${copy.description}
+    ></skill-view>
+    ${part.version ? html`<span class="activity__meta">${part.version}</span>` : nothing}
   `);
 }
 

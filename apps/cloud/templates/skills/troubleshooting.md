@@ -1,5 +1,6 @@
 ---
 name: troubleshooting
+title: 故障诊断
 description: 诊断设备异常，结合事件、告警和知识库定位原因并给出修复建议。
 version: "1"
 trigger: /troubleshooting

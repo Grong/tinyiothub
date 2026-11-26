@@ -1,5 +1,6 @@
 ---
 name: device-management
+title: 设备管理
 description: 查看设备清单和状态，读写设备属性并执行设备动作。
 version: "1"
 trigger: /device-management
@@ -15,6 +16,7 @@ inject: index
 | 工具 | 用途 | 风险 |
 |---|---|---|
 | `list_devices` | 列出设备，支持按名称、类型、状态过滤 | 低 |
+| `get_device_profile` | 一次读取设备/空间的完整档案：属性定义与当前值、动作、知识文档正文、最近事件 | 低 |
 | `read_device` | 读取设备实时快照：状态、健康度、区域、属性值；可用 `properties` 过滤属性，用 `sources` 读取画面/检测结果 | 低 |
 | `set_device` | 写入设备属性值 | **高** |
 | `call_device` | 执行设备动作/命令（如重启、切换模式） | **高** |
@@ -26,8 +28,8 @@ inject: index
 
 ### 查询设备
 - "有哪些设备在线？" → `list_devices` 列出设备并统计在线状态
-- "传感器 A 的温度是多少？" → `list_devices` 找到设备 → `read_device(properties=["温度"])`
-- "设备 B 的详细信息" → `read_device` 获取状态、属性和区域
+- "传感器 A 的温度是多少？" → `list_devices` 找到设备 → `get_device_profile`（档案里已含当前值）或 `read_device(properties=["温度"])`
+- "设备 B 的详细信息 / 手册 / 怎么巡检 / 告警怎么处理" → `get_device_profile` 一次取回属性、动作和知识文档，不要逐属性读取
 - "3 号楼有哪些设备？" → `get_thing_tree` 或 `list_devices` 按区域过滤
 
 ### 控制设备

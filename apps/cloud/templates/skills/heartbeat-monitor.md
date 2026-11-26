@@ -1,5 +1,6 @@
 ---
 name: heartbeat-monitor
+title: 定时巡检
 description: 按计划巡检设备健康、告警和数据连续性，主动报告异常。
 version: "1"
 trigger: /heartbeat-monitor

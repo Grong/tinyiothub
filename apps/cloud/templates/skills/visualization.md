@@ -1,5 +1,6 @@
 ---
 name: visualization
+title: 可视化展示
 description: 当任务需要以卡片、表格、图表或控制面板展示设备、告警和趋势时，使用 canvas 推送 A2UI。
 version: "1"
 inject: index

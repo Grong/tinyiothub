@@ -252,13 +252,12 @@ pub async fn send_message(
                 } else {
                     hit.cleaned_message
                 };
-                let version = skills
-                    .iter()
-                    .find(|skill| skill.name == hit.name)
-                    .map(|skill| skill.version.clone())
-                    .unwrap_or_default();
+                let skill = skills.iter().find(|skill| skill.name == hit.name);
+                let version = skill.map(|skill| skill.version.clone()).unwrap_or_default();
+                let title = skill.map(|skill| skill.title.clone()).unwrap_or_default();
+                let description = skill.map(|skill| skill.description.clone()).unwrap_or_default();
                 let turn = tinyiothub_skills::wrap_injected_skill(&hit.name, &hit.body, &user_text);
-                (turn, user_text, Some((hit.name, version)))
+                (turn, user_text, Some((hit.name, version, title, description)))
             }
             None => (message.to_string(), message.to_string(), None),
         }
@@ -397,7 +396,7 @@ pub async fn send_message(
         {
             tracing::warn!(%error, %session_key, "Failed to persist user session event");
         }
-        if let Some((skill_name, skill_version)) = trigger_skill
+        if let Some((skill_name, skill_version, skill_title, skill_description)) = trigger_skill
             && let Err(error) = session_runtime
                 .events
                 .emit(crate::domains::agent::session::session_event(
@@ -406,6 +405,8 @@ pub async fn send_message(
                     serde_json::json!({
                         "skillId": skill_name,
                         "name": skill_name,
+                        "title": skill_title,
+                        "description": skill_description,
                         "version": skill_version
                     }),
                 ))

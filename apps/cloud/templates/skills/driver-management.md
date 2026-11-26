@@ -1,5 +1,6 @@
 ---
 name: driver-management
+title: 驱动管理
 description: 查看和测试 IoT 设备接入驱动。
 version: "1"
 trigger: /driver-management

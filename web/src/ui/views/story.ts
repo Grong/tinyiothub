@@ -42,6 +42,7 @@ import '../story/achievements-panel.js';
 import '../chat/task-plan-panel.js';
 import '../chat/approval-card.js';
 import '../chat/question-card.js';
+import '../tool-views/skill-view.js';
 import '../story/device-deck.js';
 import '../story/vision-deck.js';
 import '../../styles/views/story.css';
@@ -1117,6 +1118,15 @@ export class StoryView extends LitElement {
         </summary>
         <div class="story-step__expand">
           ${step.detail ? html`<p class="story-step__detail">${step.detail}</p>` : nothing}
+          ${
+            step.skill
+              ? html`<skill-view
+                  .name=${step.skill.name}
+                  .title=${step.skill.title}
+                  .description=${step.skill.description}
+                ></skill-view>`
+              : nothing
+          }
           ${
             step.metrics && step.metrics.length > 0
               ? html`<dl class="story-step__metrics">

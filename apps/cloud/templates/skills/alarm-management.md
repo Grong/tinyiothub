@@ -1,5 +1,6 @@
 ---
 name: alarm-management
+title: 告警管理
 description: 查询设备告警、确认告警并按严重程度给出处置建议。
 version: "1"
 trigger: /alarm-management

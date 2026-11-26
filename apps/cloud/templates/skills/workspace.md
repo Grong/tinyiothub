@@ -1,5 +1,6 @@
 ---
 name: workspace
+title: 工作空间
 description: 工作空间可视化：查找场景并推送 A2UI 卡片、表格和 3D 场景。
 version: "2.1"
 ---

@@ -1,5 +1,6 @@
 ---
 name: inspection
+title: 巡检
 description: 检查离线设备和高优先级告警，生成设备状态摘要。
 version: "1"
 trigger: /inspection
