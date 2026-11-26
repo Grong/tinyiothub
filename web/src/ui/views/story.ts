@@ -50,6 +50,8 @@ const MAX_HISTORY_STEPS = 1200;
 const MAX_HISTORY_SECTIONS = 80;
 const MAX_TIMELINE_BLOCKS = 2400;
 
+const STORY_SESSION_KEY = 'tinyiothub_story_last_session';
+
 const GENERIC_TITLES = new Set(['巡检', '对话', '事件处置', '本班', '日常巡检']);
 
 const KIND_LABEL: Record<string, string> = {
@@ -188,7 +190,12 @@ export class StoryView extends LitElement {
     try {
       const sessions = await listChatSessions();
       this.sessions = sessions;
-      const selected = pickDefaultSession(sessions);
+      const stored = localStorage.getItem(STORY_SESSION_KEY);
+      const storedSession = stored
+        ? sessions.find((item) => item.sessionKey === stored)
+        : undefined;
+      if (storedSession) this.manualSelection = true;
+      const selected = storedSession ?? pickDefaultSession(sessions);
       if (selected) await this.selectSession(selected.sessionKey);
       else this.loading = false;
     } catch (error) {
@@ -216,8 +223,13 @@ export class StoryView extends LitElement {
         this.sessions = sessions;
         const preferred = pickDefaultSession(sessions);
         const current = previous.find((session) => session.sessionKey === this.sessionKey);
+        const waiting =
+          this.timeline.pendingQuestion !== null ||
+          this.timeline.pendingApprovals.length > 0 ||
+          this.story.sections.some((section) => section.status === 'running');
         if (
           !this.manualSelection &&
+          !waiting &&
           preferred &&
           preferred.sessionKey !== this.sessionKey &&
           current?.status !== 'active'
@@ -264,6 +276,7 @@ export class StoryView extends LitElement {
     this.closeEvents = null;
     const seq = ++this.loadSeq;
     this.sessionKey = key;
+    localStorage.setItem(STORY_SESSION_KEY, key);
     this.loading = true;
     this.error = '';
     this.timeline.reset();

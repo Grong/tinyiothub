@@ -137,6 +137,23 @@ describe('view-story', () => {
     hoisted.getWorkspaceId.mockReturnValue('ws-1');
   });
 
+  it('restores the last story session instead of jumping to the newest one', async () => {
+    const ticket = {
+      ...session,
+      sessionKey: 'agent:ws-1:default/ticket-5',
+      label: '工单 #5 车间烟雾火警：烟雾浓度 当前值 7.98（阈值 > 5）',
+      kind: 'event' as const,
+      updatedAt: Date.now() + 10_000,
+    };
+    hoisted.listChatSessions.mockResolvedValue([session, ticket]);
+    localStorage.setItem('tinyiothub_story_last_session', session.sessionKey);
+    const el = document.createElement('view-story') as StoryView;
+    document.body.appendChild(el);
+    await vi.waitFor(() => expect(hoisted.fetchSessionEvents).toHaveBeenCalled());
+    expect(hoisted.fetchSessionEvents.mock.calls[0][0]).toBe(session.sessionKey);
+    expect(el.querySelector('.story-hero__title')?.textContent).not.toContain('工单 #5');
+  });
+
   it('renders a pending approval inline with direct actions', async () => {
     hoisted.fetchSessionEvents.mockResolvedValueOnce({
       events: [
