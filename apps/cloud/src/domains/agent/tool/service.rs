@@ -133,6 +133,11 @@ pub fn chat_builtin_tools_provider(
             session.contexts.clone(),
             session.approvals.clone(),
             session.events.clone(),
+            Some(std::sync::Arc::new(
+                crate::domains::agent::session::ThingApprovalLabels::new(std::sync::Arc::new(
+                    crate::domains::thing::service::ThingService::new(db_pool.clone()),
+                )),
+            )),
         )
     })
 }
@@ -145,6 +150,7 @@ pub(crate) fn apply_permission_guard(
     contexts: std::sync::Arc<crate::domains::agent::session::TurnContextRegistry>,
     approvals: std::sync::Arc<crate::domains::agent::session::ApprovalBroker>,
     events: std::sync::Arc<dyn crate::domains::agent::session::SessionEventSink>,
+    labels: Option<std::sync::Arc<crate::domains::agent::session::ThingApprovalLabels>>,
 ) -> Vec<(Box<dyn Tool>, ToolSafety)> {
     let Some(agent_id) = agent_id else {
         return tools;
@@ -156,15 +162,18 @@ pub(crate) fn apply_permission_guard(
                 (tool, safety)
             } else {
                 (
-                    Box::new(crate::domains::agent::session::PermissionGuardTool::new(
-                        tool,
-                        agent_id.clone(),
-                        contexts.clone(),
-                        approvals.clone(),
-                        events.clone(),
-                        safety,
-                        crate::domains::agent::session::APPROVAL_TIMEOUT,
-                    )) as Box<dyn Tool>,
+                    Box::new(
+                        crate::domains::agent::session::PermissionGuardTool::new(
+                            tool,
+                            agent_id.clone(),
+                            contexts.clone(),
+                            approvals.clone(),
+                            events.clone(),
+                            safety,
+                            crate::domains::agent::session::APPROVAL_TIMEOUT,
+                        )
+                        .with_labels(labels.clone()),
+                    ) as Box<dyn Tool>,
                     safety,
                 )
             }
@@ -308,6 +317,7 @@ mod tests {
             contexts,
             Arc::new(ApprovalBroker::default()),
             Arc::new(RecordingSink::default()),
+            None,
         );
         assert_eq!(guarded.len(), 2);
 
@@ -333,6 +343,7 @@ mod tests {
             contexts,
             Arc::new(ApprovalBroker::default()),
             Arc::new(RecordingSink::default()),
+            None,
         );
         let result = guarded.pop().unwrap().0.execute(serde_json::json!({})).await.unwrap();
         assert!(!result.success);

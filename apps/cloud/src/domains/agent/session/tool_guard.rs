@@ -11,6 +11,7 @@ use tinyiothub_agent::port::tool::{Tool, ToolResult};
 use tinyiothub_skills::trust::ToolSafety;
 use tokio::time::timeout;
 
+use crate::domains::agent::session::approval_labels::ThingApprovalLabels;
 use crate::domains::agent::session::approvals::{ApprovalBroker, ApprovalDecision};
 use crate::domains::agent::session::context::TurnContextRegistry;
 use crate::domains::agent::session::events::{SessionEventSink, session_event};
@@ -26,6 +27,7 @@ pub struct PermissionGuardTool {
     events: Arc<dyn SessionEventSink>,
     safety: ToolSafety,
     timeout: Duration,
+    labels: Option<Arc<ThingApprovalLabels>>,
 }
 
 impl PermissionGuardTool {
@@ -46,7 +48,13 @@ impl PermissionGuardTool {
             events,
             safety,
             timeout,
+            labels: None,
         }
+    }
+
+    pub fn with_labels(mut self, labels: Option<Arc<ThingApprovalLabels>>) -> Self {
+        self.labels = labels;
+        self
     }
 
     fn denied(message: impl Into<String>) -> anyhow::Result<ToolResult> {
@@ -172,8 +180,18 @@ impl Tool for PermissionGuardTool {
             PermissionMode::Ask => {
                 let summary = serde_json::to_string(&args).unwrap_or_default();
                 let summary = summary.chars().take(200).collect::<String>();
-                let title = approval_title(self.inner.name(), &args);
-                let description = approval_description(self.inner.name(), &args);
+                let resolved = match self.labels.as_ref() {
+                    Some(labels) => labels.resolve(&context.workspace_id, self.inner.name(), &args).await,
+                    None => None,
+                };
+                let title = resolved
+                    .as_ref()
+                    .map(|label| label.title.clone())
+                    .unwrap_or_else(|| approval_title(self.inner.name(), &args));
+                let description = resolved
+                    .as_ref()
+                    .map(|label| label.description.clone())
+                    .unwrap_or_else(|| approval_description(self.inner.name(), &args));
                 let (approval_id, receiver) =
                     self.approvals
                         .register(&context.session_key, self.inner.name(), &summary);

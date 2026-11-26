@@ -11,6 +11,7 @@ pub fn is_public_session_event(event_type: &str) -> bool {
 
 pub mod agenda;
 pub mod agent_host;
+pub mod approval_labels;
 pub mod approvals;
 pub mod chat;
 pub mod chat_types;
@@ -45,6 +46,7 @@ pub mod workspace_api;
 #[cfg(test)]
 pub(crate) mod test_utils;
 
+pub use approval_labels::{ApprovalLabel, ThingApprovalLabels};
 pub use approvals::{ApprovalBroker, ApprovalDecision, ApprovalError, ApprovalSummary};
 pub use context::*;
 pub use events::*;
