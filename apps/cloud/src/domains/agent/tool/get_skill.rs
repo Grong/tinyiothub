@@ -69,6 +69,8 @@ impl GetSkillTool {
                 serde_json::json!({
                     "skillId": skill.name,
                     "name": skill.name,
+                    "title": skill.title,
+                    "description": skill.description,
                     "version": skill.version
                 }),
             ))

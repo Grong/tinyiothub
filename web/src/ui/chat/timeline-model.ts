@@ -54,6 +54,8 @@ export type TimelineBlock =
       id: string;
       approvalId: string;
       tool: string;
+      title?: string;
+      description?: string;
       summary: string;
       outcome: 'pending' | 'resolved';
       at: string;
@@ -70,7 +72,7 @@ export type TimelineBlock =
       error?: string;
       at: string;
     }
-  | { kind: 'skill'; id: string; name: string; version: string; at: string }
+  | { kind: 'skill'; id: string; name: string; title?: string; description?: string; version: string; at: string }
   | {
       kind: 'reasoning';
       id: string;
@@ -107,6 +109,8 @@ export interface PendingQuestion {
 export interface PendingApproval {
   approvalId: string;
   tool: string;
+  title?: string;
+  description?: string;
   summary: string;
   turnId?: string;
 }
@@ -468,6 +472,8 @@ export class TimelineModel {
             kind: 'skill',
             id: asString(payload.skillId) || event.eventId,
             name: asString(payload.name),
+            title: asString(payload.title) || undefined,
+            description: asString(payload.description) || undefined,
             version: asString(payload.version),
             at,
           },
@@ -528,6 +534,8 @@ export class TimelineModel {
           this.pendingApprovals.push({
             approvalId,
             tool: asString(payload.action),
+            title: asString(payload.title) || undefined,
+            description: asString(payload.description) || undefined,
             summary: asString(payload.summary),
             turnId: asString(payload.turnId) || undefined,
           });
@@ -538,6 +546,8 @@ export class TimelineModel {
             id: approvalId || event.eventId,
             approvalId,
             tool: asString(payload.action),
+            title: asString(payload.title) || undefined,
+            description: asString(payload.description) || undefined,
             summary: asString(payload.summary),
             outcome: 'pending',
             at,

@@ -3,6 +3,7 @@ import { customElement, property, state } from 'lit/decorators.js';
 import { answerApproval } from '../../api/assistant.js';
 import { ApiError } from '../../api/client.js';
 import type { PendingApproval } from './timeline-model.js';
+import { approvalCopy } from './approval-copy.js';
 
 @customElement('approval-card')
 export class ApprovalCard extends LitElement {
@@ -134,11 +135,12 @@ export class ApprovalCard extends LitElement {
 
   render() {
     if (!this.pending) return html``;
+    const copy = approvalCopy(this.pending);
     return html`
       <section class="card" aria-label="需要审批">
         <div class="head">需要你的批准</div>
-        <div class="tool">${this.pending.tool}</div>
-        <div class="summary">${this.pending.summary}</div>
+        <div class="tool">${copy.title}</div>
+        <div class="summary">${copy.description}</div>
         ${this.error ? html`<div class="error">${this.error}</div>` : ''}
         <div class="actions">
           ${

@@ -59,6 +59,58 @@ impl PermissionGuardTool {
     }
 }
 
+fn approval_title(tool: &str, args: &serde_json::Value) -> String {
+    match tool {
+        "call_device" | "invoke_action" | "send_command" => {
+            let action = args.get("action").and_then(serde_json::Value::as_str).unwrap_or("");
+            match action {
+                "turn_on" => "开启设备",
+                "turn_off" => "关闭设备",
+                "reboot" => "重启设备",
+                "reconnect" => "重连设备",
+                _ => "执行设备操作",
+            }
+            .to_string()
+        }
+        "set_device" | "write_properties" => "调整设备属性".to_string(),
+        _ => crate::domains::agent::tools::catalog::tool_label(tool).to_string(),
+    }
+}
+
+fn approval_description(tool: &str, args: &serde_json::Value) -> String {
+    let thing = args.get("thingId").and_then(serde_json::Value::as_str);
+    match tool {
+        "call_device" | "invoke_action" | "send_command" => {
+            let action = args.get("action").and_then(serde_json::Value::as_str).unwrap_or("操作");
+            let action = match action {
+                "turn_on" => "开启",
+                "turn_off" => "关闭",
+                "reboot" => "重启",
+                "reconnect" => "重连",
+                other => other,
+            };
+            match thing {
+                Some(thing) => format!("设备：{thing}\n动作：{action}"),
+                None => format!("动作：{action}"),
+            }
+        }
+        "set_device" | "write_properties" => match thing {
+            Some(thing) => format!("设备：{thing}\n内容：调整属性值"),
+            None => "调整设备属性值".to_string(),
+        },
+        _ => {
+            let mut clean = args.clone();
+            if let Some(object) = clean.as_object_mut() {
+                object.remove("confirmationToken");
+                object.remove("confirmation_token");
+            }
+            let text = serde_json::to_string(&clean).unwrap_or_default();
+            let text = text.chars().take(500).collect::<String>();
+            format!("{}\n{}", crate::domains::agent::tools::catalog::tool_label(tool), text)
+        }
+    }
+}
+
 #[async_trait::async_trait]
 impl Tool for PermissionGuardTool {
     fn name(&self) -> &str {
@@ -91,6 +143,8 @@ impl Tool for PermissionGuardTool {
             PermissionMode::Ask => {
                 let summary = serde_json::to_string(&args).unwrap_or_default();
                 let summary = summary.chars().take(200).collect::<String>();
+                let title = approval_title(self.inner.name(), &args);
+                let description = approval_description(self.inner.name(), &args);
                 let (approval_id, receiver) =
                     self.approvals
                         .register(&context.session_key, self.inner.name(), &summary);
@@ -102,6 +156,8 @@ impl Tool for PermissionGuardTool {
                         json!({
                             "approvalId": approval_id,
                             "action": self.inner.name(),
+                            "title": title,
+                            "description": description,
                             "summary": summary
                         }),
                     ))
