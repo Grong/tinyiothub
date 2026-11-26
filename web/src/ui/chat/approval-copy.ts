@@ -11,6 +11,11 @@ const ACTION_LABELS: Record<string, string> = {
   turn_off: '关闭设备',
   reboot: '重启设备',
   reconnect: '重连设备',
+  lock: '上锁',
+  unlock: '解锁',
+  set_brightness: '调整亮度',
+  open: '打开',
+  close: '关闭',
 };
 
 const TOOL_LABELS: Record<string, string> = {
@@ -43,7 +48,11 @@ function sanitized(summary: string): string {
 
 export function approvalCopy(input: ApprovalCopyInput): { title: string; description: string } {
   const args = parseArgs(input.summary);
-  const rawAction = typeof args?.action === 'string' ? args.action : '';
+  const rawAction = typeof args?.action === 'string'
+    ? args.action
+    : typeof args?.actionName === 'string'
+      ? args.actionName
+      : '';
   const title = input.title
     || ACTION_LABELS[rawAction]
     || TOOL_LABELS[input.tool]
@@ -51,10 +60,21 @@ export function approvalCopy(input: ApprovalCopyInput): { title: string; descrip
   if (input.description) return { title, description: input.description };
   const thingId = typeof args?.thingId === 'string' ? args.thingId : '';
   if (rawAction || thingId) {
-    const action = ACTION_LABELS[rawAction]?.replace('设备', '') || rawAction || '操作';
+    const label = ACTION_LABELS[rawAction]?.replace('设备', '') || rawAction || '未提供';
+    const params = args?.params && typeof args.params === 'object' && !Array.isArray(args.params)
+      ? { ...(args.params as Record<string, unknown>) }
+      : null;
+    if (params) {
+      delete params.confirmationToken;
+      delete params.confirmation_token;
+    }
     return {
       title,
-      description: [thingId ? `设备：${thingId}` : '', `动作：${action}`]
+      description: [
+        thingId ? `设备：${thingId}` : '',
+        `动作：${label}（${rawAction || '未提供'}）`,
+        params && Object.keys(params).length > 0 ? `参数：${JSON.stringify(params)}` : '',
+      ]
         .filter(Boolean)
         .join('\n'),
     };

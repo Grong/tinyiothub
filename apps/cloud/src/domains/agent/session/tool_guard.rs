@@ -59,18 +59,45 @@ impl PermissionGuardTool {
     }
 }
 
+fn approval_action(args: &serde_json::Value) -> Option<&str> {
+    args.get("action")
+        .or_else(|| args.get("actionName"))
+        .and_then(serde_json::Value::as_str)
+}
+
+fn approval_action_label(action: &str) -> &str {
+    match action {
+        "turn_on" => "开启",
+        "turn_off" => "关闭",
+        "reboot" => "重启",
+        "reconnect" => "重连",
+        "lock" => "上锁",
+        "unlock" => "解锁",
+        "set_brightness" => "调整亮度",
+        "open" => "打开",
+        "close" => "关闭",
+        other => other,
+    }
+}
+
+fn approval_params(args: &serde_json::Value) -> Option<String> {
+    let params = args.get("params")?.as_object()?;
+    let mut clean = params.clone();
+    clean.remove("confirmationToken");
+    clean.remove("confirmation_token");
+    if clean.is_empty() {
+        return None;
+    }
+    serde_json::to_string(&clean).ok()
+}
+
 fn approval_title(tool: &str, args: &serde_json::Value) -> String {
     match tool {
         "call_device" | "invoke_action" | "send_command" => {
-            let action = args.get("action").and_then(serde_json::Value::as_str).unwrap_or("");
-            match action {
-                "turn_on" => "开启设备",
-                "turn_off" => "关闭设备",
-                "reboot" => "重启设备",
-                "reconnect" => "重连设备",
-                _ => "执行设备操作",
-            }
-            .to_string()
+            let Some(action) = approval_action(args) else {
+                return "执行设备操作".to_string();
+            };
+            approval_action_label(action).to_string()
         }
         "set_device" | "write_properties" => "调整设备属性".to_string(),
         _ => crate::domains::agent::tools::catalog::tool_label(tool).to_string(),
@@ -81,18 +108,20 @@ fn approval_description(tool: &str, args: &serde_json::Value) -> String {
     let thing = args.get("thingId").and_then(serde_json::Value::as_str);
     match tool {
         "call_device" | "invoke_action" | "send_command" => {
-            let action = args.get("action").and_then(serde_json::Value::as_str).unwrap_or("操作");
-            let action = match action {
-                "turn_on" => "开启",
-                "turn_off" => "关闭",
-                "reboot" => "重启",
-                "reconnect" => "重连",
-                other => other,
+            let Some(action) = approval_action(args) else {
+                return thing
+                    .map(|thing| format!("设备：{thing}\n动作：未提供"))
+                    .unwrap_or_else(|| "动作：未提供".to_string());
             };
-            match thing {
-                Some(thing) => format!("设备：{thing}\n动作：{action}"),
-                None => format!("动作：{action}"),
+            let mut lines = Vec::new();
+            if let Some(thing) = thing {
+                lines.push(format!("设备：{thing}"));
             }
+            lines.push(format!("动作：{}（{action}）", approval_action_label(action)));
+            if let Some(params) = approval_params(args) {
+                lines.push(format!("参数：{params}"));
+            }
+            lines.join("\n")
         }
         "set_device" | "write_properties" => match thing {
             Some(thing) => format!("设备：{thing}\n内容：调整属性值"),
