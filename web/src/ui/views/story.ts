@@ -51,6 +51,7 @@ const MAX_HISTORY_SECTIONS = 80;
 const MAX_TIMELINE_BLOCKS = 2400;
 
 const STORY_SESSION_KEY = 'tinyiothub_story_last_session';
+const STORY_SESSION_MANUAL = 'tinyiothub_story_session_manual';
 
 const GENERIC_TITLES = new Set(['巡检', '对话', '事件处置', '本班', '日常巡检']);
 
@@ -108,7 +109,9 @@ function clampText(value: string, max: number): string {
 /** 默认记录：最近更新的会话；更新时间相同才优先 active。 */
 export function pickDefaultSession(sessions: SessionSummary[]): SessionSummary | null {
   if (sessions.length === 0) return null;
-  return [...sessions].sort(
+  const scheduled = sessions.filter((session) => session.kind === 'scheduled');
+  const candidates = scheduled.length > 0 ? scheduled : sessions;
+  return [...candidates].sort(
     (left, right) =>
       right.updatedAt - left.updatedAt ||
       (right.status === 'active' ? 1 : 0) - (left.status === 'active' ? 1 : 0),
@@ -191,7 +194,8 @@ export class StoryView extends LitElement {
       const sessions = await listChatSessions();
       this.sessions = sessions;
       const stored = localStorage.getItem(STORY_SESSION_KEY);
-      const storedSession = stored
+      const manual = localStorage.getItem(STORY_SESSION_MANUAL) === '1';
+      const storedSession = manual && stored
         ? sessions.find((item) => item.sessionKey === stored)
         : undefined;
       if (storedSession) this.manualSelection = true;
@@ -276,7 +280,10 @@ export class StoryView extends LitElement {
     this.closeEvents = null;
     const seq = ++this.loadSeq;
     this.sessionKey = key;
-    localStorage.setItem(STORY_SESSION_KEY, key);
+    if (this.manualSelection) {
+      localStorage.setItem(STORY_SESSION_KEY, key);
+      localStorage.setItem(STORY_SESSION_MANUAL, '1');
+    }
     this.loading = true;
     this.error = '';
     this.timeline.reset();
