@@ -368,6 +368,7 @@ impl Tool for ReadDeviceTool {
     fn description(&self) -> &str {
         "读取单个设备的实时摘要：state（属性值）+ health（ok/attention/bad/unknown）\
          + zone（空间归属）+ online，并附一句给模型的 text。\
+         需要属性定义和动作时用 get_device_profile；需要知识文档正文时用 read_device_knowledge。\
          properties 可选——只回指定属性；缺省回全部已上报值。\
          sources 可选——按 Source ID 读取 detections 或一张图片。"
     }
@@ -489,9 +490,6 @@ impl Tool for ReadDeviceTool {
             "actions": actions,
             "text": text,
         });
-        if let Some(knowledge_docs) = &thing.knowledge_docs {
-            payload["knowledgeDocs"] = json!(knowledge_docs);
-        }
         let mut attachments = Vec::new();
         if let Some(requested) = input.sources.as_deref().filter(|sources| !sources.is_empty()) {
             match self.read_model_sources(&input.thing_id, requested).await {
@@ -514,6 +512,90 @@ impl Tool for ReadDeviceTool {
         let mut result = tool_ok(payload)?;
         result.attachments = attachments;
         Ok(result)
+    }
+}
+
+// ============================================================================
+// read_device_knowledge：按需读取指定设备的知识文档
+// ============================================================================
+
+pub(super) struct ReadDeviceKnowledgeTool {
+    pub(super) thing_service: Arc<ThingService>,
+    pub(super) workspace_id: String,
+}
+
+#[async_trait]
+impl Tool for ReadDeviceKnowledgeTool {
+    fn name(&self) -> &str {
+        "read_device_knowledge"
+    }
+
+    fn description(&self) -> &str {
+        "按需读取指定设备关联的知识文档。read_device 只返回实时状态和属性值，不返回文档正文；\
+         需要设备手册、巡检规范或历史处置说明时，才调用本工具。"
+    }
+
+    fn parameters_schema(&self) -> Value {
+        json!({
+            "type": "object",
+            "properties": {
+                "thingId": { "type": "string", "description": "物 ID（必需）" },
+                "docId": { "type": "string", "description": "可选：只读取指定文档 ID" }
+            },
+            "required": ["thingId"]
+        })
+    }
+
+    async fn execute(&self, args: Value) -> anyhow::Result<ToolResult> {
+        let thing_id = args
+            .get("thingId")
+            .or_else(|| args.get("thing_id"))
+            .and_then(Value::as_str)
+            .ok_or_else(|| anyhow::anyhow!("缺少必需参数: thingId"))?;
+        let doc_id = args.get("docId").and_then(Value::as_str);
+        let thing = match self.thing_service.get_thing(thing_id, &self.workspace_id).await {
+            Ok(thing) => thing,
+            Err(error) => return tool_err(error.to_string()),
+        };
+        let mut docs = thing.knowledge_docs.unwrap_or_default();
+        if let Some(doc_id) = doc_id {
+            docs.retain(|doc| doc.get("id").and_then(Value::as_str) == Some(doc_id));
+        }
+        // Keep the result valid JSON for the event/SSE budget; full bodies stay
+        // available through read_document.
+        let mut budget = 10_000usize;
+        for doc in &mut docs {
+            let Some(obj) = doc.as_object_mut() else { continue };
+            let Some(content) = obj.get("content").and_then(Value::as_str).map(str::to_string) else {
+                obj.insert("contentAvailable".to_string(), json!(false));
+                continue;
+            };
+            let chars: Vec<char> = content.chars().collect();
+            let allowed = chars.len().min(4_000).min(budget);
+            if allowed < chars.len() {
+                let mut truncated: String = chars[..allowed].iter().collect();
+                truncated.push_str("\n\n…[内容已截断，完整正文用 read_document]");
+                obj.insert("content".to_string(), json!(truncated));
+                obj.insert("contentTruncated".to_string(), json!(true));
+            }
+            obj.insert("contentLength".to_string(), json!(chars.len()));
+            budget = budget.saturating_sub(allowed);
+        }
+        tool_ok(json!({
+            "thingId": thing_id,
+            "name": thing.display_name.unwrap_or(thing.name),
+            "knowledgeDocs": docs,
+        }))
+    }
+}
+
+impl Attributable for ReadDeviceKnowledgeTool {
+    fn role(&self) -> Role {
+        Role::Tool(ToolKind::Search)
+    }
+
+    fn alias(&self) -> &str {
+        self.name()
     }
 }
 

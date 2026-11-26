@@ -34,13 +34,35 @@ pub const TOOL_CATALOG: &[ToolCatalogEntry] = &[
         visible: true,
     },
     ToolCatalogEntry {
+        name: "get_device_profile",
+        aliases: &["get_thing_profile"],
+        view_key: "device.profile",
+        label: "读取设备档案",
+        group: "device",
+        group_label: "设备管理",
+        description: "一次读取设备/空间的完整档案：属性定义与当前值、动作、知识文档与最近事件",
+        danger: false,
+        visible: true,
+    },
+    ToolCatalogEntry {
         name: "read_device",
-        aliases: &["get_thing", "get_thing_profile"],
+        aliases: &["get_thing"],
         view_key: "device.read",
         label: "读取设备",
         group: "device",
         group_label: "设备管理",
         description: "读取设备实时状态、健康度、空间归属和属性值",
+        danger: false,
+        visible: true,
+    },
+    ToolCatalogEntry {
+        name: "read_device_knowledge",
+        aliases: &[],
+        view_key: "device.knowledge",
+        label: "读取设备知识文档",
+        group: "device",
+        group_label: "设备管理",
+        description: "按需读取指定设备关联的知识文档正文",
         danger: false,
         visible: true,
     },
@@ -458,7 +480,8 @@ mod tests {
         }
         assert_eq!(canonical_tool_name("get_thing"), "read_device");
         assert_eq!(canonical_tool_name("invoke_action"), "call_device");
-        assert_eq!(tool_view_key("get_thing_profile"), "device.read");
+        assert_eq!(canonical_tool_name("get_thing_profile"), "get_device_profile");
+        assert_eq!(tool_view_key("get_thing_profile"), "device.profile");
         assert_eq!(tool_view_key("alarm_list"), "alarm.list");
         assert_eq!(tool_view_key("unknown_tool"), "generic");
     }

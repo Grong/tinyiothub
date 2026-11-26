@@ -37,6 +37,7 @@ inject: index
 ### 设备与本体
 - `list_devices` — 列出/搜索设备
 - `read_device` — 读取设备状态、属性、画面/检测结果
+- `read_device_knowledge` — 按需读取指定设备的知识文档正文
 - `set_device` — 写入设备属性（高风险）
 - `call_device` — 执行设备动作（高风险）
 - `get_thing_tree` — 查看空间与设备层级

@@ -224,3 +224,34 @@ export const deviceActionView: ToolView = {
     };
   },
 };
+
+
+export const deviceKnowledgeView: ToolView = {
+  key: 'device.knowledge',
+  present(input) {
+    if (input.status === 'failed') {
+      return {
+        viewKey: 'device.knowledge',
+        title: '读取设备知识文档失败',
+        summary: clampText(input.error || '读取失败', 120),
+        status: 'failed',
+      };
+    }
+    const record = recordOf(parseJson(input.result));
+    const docs = Array.isArray(record?.knowledgeDocs) ? record.knowledgeDocs : [];
+    const name = typeof record?.name === 'string' ? record.name : '';
+    return {
+      viewKey: 'device.knowledge',
+      title: name ? `查看「${name}」的知识文档` : '读取设备知识文档',
+      summary: docs.length > 0 ? `${docs.length} 份文档` : '没有关联知识文档',
+      status: statusOf(input),
+      details: docs.slice(0, 5).map((item, index) => {
+        const doc = recordOf(item);
+        return {
+          label: `文档 ${index + 1}`,
+          value: [doc?.name, doc?.description].filter((value): value is string => typeof value === 'string' && Boolean(value)).join(' · '),
+        };
+      }),
+    };
+  },
+};

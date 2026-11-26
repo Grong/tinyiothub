@@ -177,6 +177,22 @@ describe('tool views', () => {
     );
   });
 
+  it('renders device knowledge documents by display name', () => {
+    const view = presentTool({
+      name: 'read_device_knowledge',
+      viewKey: 'device.knowledge',
+      args: { thingId: 'device-light-corridor' },
+      result: JSON.stringify({
+        thingId: 'device-light-corridor',
+        name: '走廊智能照明',
+        knowledgeDocs: [{ name: '走廊智能照明 巡检与故障处置', description: '巡检清单' }],
+      }),
+      status: 'ok',
+    });
+    expect(view.title).toBe('查看「走廊智能照明」的知识文档');
+    expect(view.summary).toBe('1 份文档');
+  });
+
   it('uses the backend viewKey, even when the tool name is unknown', () => {
     const view = presentTool({
       name: 'external_read',

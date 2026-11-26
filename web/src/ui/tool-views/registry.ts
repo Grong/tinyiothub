@@ -2,6 +2,8 @@ import type { ToolPresentation, ToolView, ToolViewInput } from './types.js';
 import {
   deviceActionView,
   deviceListView,
+  deviceProfileView,
+  deviceKnowledgeView,
   deviceReadView,
   deviceWriteView,
   propertyReadView,
@@ -24,10 +26,12 @@ import {
 
 const VIEWS: Record<string, ToolView> = {
   [deviceReadView.key]: deviceReadView,
+  [deviceProfileView.key]: deviceProfileView,
   [deviceListView.key]: deviceListView,
   [propertyReadView.key]: propertyReadView,
   [deviceWriteView.key]: deviceWriteView,
   [deviceActionView.key]: deviceActionView,
+  [deviceKnowledgeView.key]: deviceKnowledgeView,
   [alarmListView.key]: alarmListView,
   [alarmActionView.key]: alarmActionView,
   [deviceStopView.key]: deviceStopView,

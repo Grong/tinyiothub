@@ -7,6 +7,7 @@
 //   1. list_things       — list things in workspace (paginated)        [list.rs]
 //   2. get_thing         — lightweight thing view                       [get.rs]
 //   3. get_thing_profile — full snapshot (properties + events + docs)   [profile.rs]
+//      get_device_profile — model-visible one-shot profile wrapper       [profile.rs]
 //   4. get_thing_tree    — hierarchical tree                            [tree.rs]
 //   5. read_property     — current property value from device_cache     [read_property.rs]
 //   6. invoke_action     — execute a device action (type='device' guard)[invoke_action.rs]
@@ -16,6 +17,8 @@
 //
 // Shared homes: confirmation store [pending_action.rs], param validation
 // [validate.rs], the create_thing_tools factory and helpers live here.
+
+use serde_json::{Value, json};
 
 mod composite_tools;
 mod device;
@@ -256,6 +259,18 @@ pub fn create_thing_tools(
     let mut tools: Vec<(Box<dyn Tool>, ToolSafety)> = vec![
         // ── 固定设备工具（模型可见）──
         read_only(device::list_devices_tool(thing_service.clone(), ws.clone())),
+        read_only(Box::new(device::ToolAlias::new(
+            Box::new(GetThingProfileTool {
+                thing_service: thing_service.clone(),
+                workspace_id: ws.clone(),
+                live: runtime.live.clone(),
+                device_cache: runtime.device_cache.clone(),
+                demand: runtime.demand.clone(),
+            }),
+            "get_device_profile",
+            "获取设备/空间的完整档案：基本信息 + 属性定义与当前值 + 动作 + 知识文档正文 + 最近事件。一次调用完成详情读取。",
+            get_device_profile_schema,
+        ))),
         read_only(Box::new(device::ReadDeviceTool {
             thing_service: thing_service.clone(),
             workspace_id: ws.clone(),
@@ -269,6 +284,10 @@ pub fn create_thing_tools(
             evidence: runtime.evidence.clone(),
             run_ctx: runtime.run_ctx.clone(),
             runtime_recorder: runtime.runtime_recorder.clone(),
+        })),
+        read_only(Box::new(device::ReadDeviceKnowledgeTool {
+            thing_service: thing_service.clone(),
+            workspace_id: ws.clone(),
         })),
         destructive(device::call_device_tool(Box::new(InvokeActionTool {
             thing_service: thing_service.clone(),
@@ -364,6 +383,7 @@ pub fn create_thing_tools(
             thing_service: thing_service.clone(),
             workspace_id: ws.clone(),
             live: runtime.live.clone(),
+            device_cache: runtime.device_cache.clone(),
             demand: runtime.demand.clone(),
         })))),
         read_only(Box::new(device::HiddenTool(Box::new(ReadPropertyTool {
@@ -392,6 +412,16 @@ pub fn create_thing_tools(
     // 工具名唯一性由注册表/测试保证；这里只排序让输出稳定（测试友好）。
     tools.sort_by(|a, b| a.0.name().cmp(b.0.name()));
     tools
+}
+
+fn get_device_profile_schema() -> Value {
+    json!({
+        "type": "object",
+        "properties": {
+            "thingId": { "type": "string", "description": "设备或空间 ID（必需）" }
+        },
+        "required": ["thingId"]
+    })
 }
 
 // ============================================================================
@@ -587,6 +617,7 @@ mod tests {
             exposed,
             vec![
                 "call_device",
+                "get_device_profile",
                 "get_thing_tree",
                 "list_composites",
                 "list_devices",
@@ -879,7 +910,7 @@ mod tests {
         let mut values = std::collections::HashMap::new();
         values.insert("温度".to_string(), "31.5".to_string());
         let tool = device::ReadDeviceTool {
-            thing_service: service,
+            thing_service: service.clone(),
             workspace_id: "ws".into(),
             live: Some(Arc::new(StubLive(ThingLiveSummary {
                 health: Health::Attention,
@@ -903,11 +934,22 @@ mod tests {
         assert_eq!(v["health"], "attention");
         assert_eq!(v["zone"], "园区A/3号楼");
         assert_eq!(v["state"]["温度"], "31.5");
-        assert_eq!(v["knowledgeDocs"][0]["name"], "温感维护手册");
-        assert_eq!(v["knowledgeDocs"][0]["content"], "每六个月校准一次");
-        assert!(v["knowledgeDocs"][0]["url"].as_str().unwrap().contains("doc-temp-1"));
+        assert!(v.get("knowledgeDocs").is_none());
         assert!(v["text"].as_str().unwrap().contains("园区A/3号楼"));
         assert_eq!(v["v"], 1);
+
+        let knowledge = device::ReadDeviceKnowledgeTool {
+            thing_service: service,
+            workspace_id: "ws".into(),
+        };
+        let docs = knowledge
+            .execute(serde_json::json!({"thingId": created.id}))
+            .await
+            .unwrap();
+        assert!(docs.success, "{}", docs.error.unwrap_or_default());
+        let docs: serde_json::Value = serde_json::from_str(&docs.output).unwrap();
+        assert_eq!(docs["knowledgeDocs"][0]["name"], "温感维护手册");
+        assert_eq!(docs["knowledgeDocs"][0]["content"], "每六个月校准一次");
     }
 
     // ── E4b：读取写入 DemandRecorder ─────────────────────
