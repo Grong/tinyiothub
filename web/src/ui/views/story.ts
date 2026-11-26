@@ -1140,6 +1140,14 @@ export class StoryView extends LitElement {
               : nothing
           }
           ${
+            step.rawResult
+              ? html`<div class="story-step__raw">
+                  <div class="story-step__raw-head">工具返回结果</div>
+                  <pre>${step.rawResult}</pre>
+                </div>`
+              : nothing
+          }
+          ${
             step.details && step.details.length > 0
               ? html`<dl class="story-step__details">
                   ${step.details.map(

@@ -107,6 +107,7 @@ describe('buildStory', () => {
         { name: '风机转速', value: '0' },
       ]),
     );
+    expect(story.sections[0].steps[0].rawResult).toContain('"thingId":"dev-1"');
 
     expect(story.devices).toHaveLength(1);
     expect(story.devices[0]).toMatchObject({

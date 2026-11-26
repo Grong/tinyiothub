@@ -88,6 +88,8 @@ export interface StoryStep {
   planDiff?: StoryPlanDiff;
   /** Loaded skill metadata; rendered by the skill tool-view component. */
   skill?: { name: string; title: string; description: string };
+  /** Tool result as stored on the event, shown only when the step is expanded. */
+  rawResult?: string;
 }
 
 export interface StoryPlanDiff {
@@ -558,6 +560,7 @@ function stepFromTool(
     finding: findingOf(part, device),
     metrics: presentation.metrics?.map((metric) => ({ name: metric.label, value: metric.value })) ?? device?.metrics,
     details: presentation.details,
+    rawResult: part.result,
   };
 }
 

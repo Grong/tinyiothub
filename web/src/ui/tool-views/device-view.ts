@@ -1,5 +1,5 @@
 import type { ToolPresentation, ToolView, ToolViewInput } from './types.js';
-import { clampText, deviceFacts } from './parse.js';
+import { clampText, deviceFacts, parseJson, recordOf } from './parse.js';
 
 const HEALTH_LABEL: Record<string, string> = {
   ok: '健康正常',
@@ -24,7 +24,7 @@ export const deviceReadView: ToolView = {
     const facts = deviceFacts(input.result, input.args);
     if (!facts && !input.status) return null;
     const name = facts?.name ?? '';
-    const profile = input.name === 'get_thing' || input.name === 'get_thing_profile';
+    const profile = input.name === 'get_thing' || input.name === 'get_thing_profile' || input.name === 'get_device_profile';
     const title = profile
       ? `查看${label(name)}的档案`
       : `查看${label(name)}的实时状态`;
@@ -64,6 +64,41 @@ export const deviceReadView: ToolView = {
   },
 };
 
+export const deviceProfileView: ToolView = {
+  key: 'device.profile',
+  present(input) {
+    const base = deviceReadView.present(input);
+    if (!base) return null;
+    const facts = deviceFacts(input.result, input.args);
+    const record = recordOf(parseJson(input.result)) ?? recordOf(input.result);
+    const docs = Array.isArray(record?.knowledgeDocs) ? record.knowledgeDocs : [];
+    const properties = Array.isArray(record?.properties) ? record.properties : [];
+    const actions = Array.isArray(record?.actions) ? record.actions : [];
+    return {
+      ...base,
+      viewKey: 'device.profile',
+      title: `查看${label(facts?.name ?? '')}的完整档案`,
+      summary: `${properties.length} 项属性 · ${actions.length} 个动作 · ${docs.length} 份知识文档`,
+      metrics: [
+        ...(base.metrics ?? []).slice(0, 6),
+        { label: '知识文档', value: String(docs.length) },
+      ],
+      details: [
+        ...(base.details ?? []),
+        ...docs.slice(0, 3).map((doc, index) => {
+          const row = recordOf(doc);
+          return {
+            label: `文档 ${index + 1}`,
+            value: [row?.name, row?.resourceType ?? row?.resource_type, row?.contentTruncated ? '正文已截断' : '']
+              .filter(Boolean)
+              .join(' · '),
+          };
+        }),
+      ],
+    };
+  },
+};
+
 export const deviceListView: ToolView = {
   key: 'device.list',
   present(input) {
@@ -83,7 +118,7 @@ export const deviceListView: ToolView = {
         const items = raw
           .filter((item): item is Record<string, unknown> => typeof item === 'object' && item !== null)
           .map((item) => ({
-            name: typeof item.name === 'string' ? item.name : '',
+            name: typeof item.displayName === 'string' && item.displayName ? item.displayName : typeof item.name === 'string' ? item.name : '',
             online: typeof item.online === 'boolean' ? item.online : undefined,
           }));
         return { total: typeof record.total === 'number' ? record.total : items.length, items };
@@ -151,7 +186,8 @@ export const deviceWriteView: ToolView = {
   present(input) {
     const failed = input.status === 'failed';
     const args = (input.args && typeof input.args === 'object' ? input.args : {}) as Record<string, unknown>;
-    const target = typeof args.thingId === 'string' ? args.thingId : '';
+    const facts = deviceFacts(input.result, input.args);
+    const target = facts?.name || facts?.id || (typeof args.thingId === 'string' ? args.thingId : '');
     const detail = failed ? clampText(input.error || '写入失败', 120) : '设置已提交';
     return {
       viewKey: 'device.write',
@@ -168,8 +204,9 @@ export const deviceActionView: ToolView = {
   present(input) {
     const failed = input.status === 'failed';
     const args = (input.args && typeof input.args === 'object' ? input.args : {}) as Record<string, unknown>;
-    const target = typeof args.thingId === 'string' ? args.thingId : typeof args.deviceId === 'string' ? args.deviceId : '';
-    const action = typeof args.action === 'string' ? args.action : '';
+    const facts = deviceFacts(input.result, input.args);
+    const target = facts?.name || facts?.id || (typeof args.thingId === 'string' ? args.thingId : typeof args.deviceId === 'string' ? args.deviceId : '');
+    const action = typeof args.action === 'string' ? args.action : typeof args.actionName === 'string' ? args.actionName : '';
     return {
       viewKey: 'device.action',
       title: target

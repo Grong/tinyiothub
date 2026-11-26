@@ -1275,6 +1275,34 @@ view-story {
   color: var(--text);
 }
 
+.story-step__raw {
+  margin: 8px 0;
+  padding: 8px 10px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  background: var(--bg-subtle);
+}
+
+.story-step__raw-head {
+  margin-bottom: 5px;
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: 9.5px;
+  letter-spacing: 0.08em;
+}
+
+.story-step__raw pre {
+  max-height: 240px;
+  overflow: auto;
+  margin: 0;
+  color: var(--text);
+  font-family: var(--mono);
+  font-size: 10.5px;
+  line-height: 1.55;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
 .story-step__meta {
   display: flex;
   align-items: center;

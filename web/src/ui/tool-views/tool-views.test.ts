@@ -40,6 +40,52 @@ describe('tool views', () => {
     }
   });
 
+  it('renders a complete device profile with docs', () => {
+    const profile = JSON.stringify({
+      thingId: 'dev-2',
+      name: '冷库温度仪',
+      health: 'ok',
+      online: true,
+      zone: '冷库',
+      state: { temperature: '4.2' },
+      properties: [
+        { name: 'temperature', displayName: '温度', unit: '°C', currentValue: '4.2' },
+        { name: 'door_open', displayName: '门状态', currentValue: 'false' },
+      ],
+      actions: [{ name: 'set_alarm', description: '设置告警阈值' }],
+      knowledgeDocs: [
+        { id: 'doc-1', name: '冷链设备档案', resourceType: 'document', content: '# 手册' },
+        { id: 'doc-2', name: '冷链巡检 SOP', resourceType: 'document', content: '# 巡检' },
+      ],
+    });
+    const view = presentTool({
+      name: 'get_device_profile',
+      viewKey: 'device.profile',
+      args: { thingId: 'dev-2' },
+      result: profile,
+      status: 'ok',
+    });
+    expect(view.viewKey).toBe('device.profile');
+    expect(view.title).toContain('冷库温度仪');
+    expect(view.summary).toContain('2 项属性');
+    expect(view.summary).toContain('2 份知识文档');
+    expect(view.details).toEqual(
+      expect.arrayContaining([{ label: '文档 1', value: '冷链设备档案 · document' }]),
+    );
+  });
+
+  it('renders skill metadata from the loaded skill frontmatter', () => {
+    const view = presentTool({
+      name: 'get_skill',
+      viewKey: 'skill.load',
+      args: { skill_name: 'job-management' },
+      result: '---\nname: job-management\ntitle: 定时任务管理\ndescription: 管理定时任务和自动化规则。\n---\n\n# Job\n\nbody',
+      status: 'ok',
+    });
+    expect(view.title).toBe('查阅「定时任务管理」作业规范');
+    expect(view.summary).toBe('管理定时任务和自动化规则。');
+  });
+
   it('renders a device list with totals', () => {
     const view = presentTool({
       name: 'list_things',
@@ -117,7 +163,7 @@ describe('tool views', () => {
     const view = presentTool({
       name: 'call_device',
       viewKey: 'device.action',
-      args: { thingId: 'dev-1', action: 'restart', params: { force: true } },
+      args: { thingId: 'dev-1', actionName: 'restart', params: { force: true } },
       result: JSON.stringify({ status: 'ok' }),
       status: 'ok',
     });

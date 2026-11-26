@@ -177,17 +177,45 @@ export const knowledgeDocumentView: ToolView = {
   key: 'knowledge.document',
 };
 
+function skillMetadata(result: string | null | undefined): { title: string; description: string } {
+  if (!result || !result.startsWith('---')) return { title: '', description: '' };
+  const end = result.indexOf('---', 3);
+  if (end < 0) return { title: '', description: '' };
+  const frontmatter = result.slice(3, end);
+  const read = (key: string): string =>
+    frontmatter
+      .split(/\r?\n/)
+      .find((line) => line.trimStart().startsWith(`${key}:`))
+      ?.split(':')
+      .slice(1)
+      .join(':')
+      .trim()
+      .replace(/^["']|["']$/g, '') ?? '';
+  const heading = result
+    .slice(end + 3)
+    .split(/\r?\n/)
+    .find((line) => line.startsWith('# '))
+    ?.slice(2)
+    .trim() ?? '';
+  return { title: read('title') || heading, description: read('description') };
+}
+
 export const skillView: ToolView = {
   key: 'skill.load',
   present(input) {
     const args = recordOf(input.args);
-    const name = asString(args?.skill_name) || asString(args?.skillId) || '作业规范';
+    const name = asString(args?.skill_name) || asString(args?.skillId) || '';
+    const meta = skillMetadata(input.result);
+    const title = meta.title || name || '作业规范';
     return {
       viewKey: 'skill.load',
-      title: `查阅《${name}》作业规范`,
-      summary: input.result ? '已载入' : '加载中…',
+      title: `查阅「${title}」作业规范`,
+      summary: meta.description || (input.result ? '已载入' : '加载中…'),
       status: statusOf(input),
-      details: [{ label: '技能', value: name }],
+      details: [
+        { label: '技能', value: title },
+        ...(meta.description ? [{ label: '说明', value: meta.description }] : []),
+      ],
     };
   },
 };
