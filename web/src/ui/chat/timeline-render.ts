@@ -1,6 +1,7 @@
 import { html, nothing, type TemplateResult } from 'lit';
 import { unsafeHTML } from 'lit/directives/unsafe-html.js';
 import { md } from '../shared/markdown.js';
+import { skillDisplay } from './skill-copy.js';
 import type { ContentPart } from './timeline-model.js';
 import type { TodoItem } from '../../api/assistant.js';
 import { presentTool } from '../tool-views/registry.js';
@@ -418,11 +419,11 @@ function renderSubagent(part: Extract<ContentPart, { kind: 'subagent' }>): Templ
 }
 
 function renderSkill(part: Extract<ContentPart, { kind: 'skill' }>): TemplateResult {
+  const copy = skillDisplay(part.name, part.title, part.description);
   return activity(html`
     <span class="activity__icon" aria-hidden="true">◆</span>
-    <span class="activity__label"
-      >技能 · ${part.name}${part.version ? ` ${part.version}` : ''}</span
-    >
+    <span class="activity__label">技能 · ${copy.title}${part.version ? ` ${part.version}` : ''}</span>
+    ${copy.description ? html`<span class="activity__meta">${copy.description}</span>` : nothing}
   `);
 }
 
