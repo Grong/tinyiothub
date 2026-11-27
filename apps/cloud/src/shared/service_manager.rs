@@ -282,6 +282,9 @@ impl ServiceManager {
             registry.register(Box::new(tinyiothub_runtime::EventRetentionExecutor::new(Arc::new(
                 crate::shared::runtime_ports::EventRetentionAdapter((*app_state.db).clone()),
             ))));
+            registry.register(Box::new(tinyiothub_runtime::HubLedgerRetentionExecutor::new(Arc::new(
+                crate::shared::runtime_ports::HubLedgerRetentionAdapter((*app_state.db).clone()),
+            ))));
             // T6：审批超时升级（24h 未响应的判断自动转工单）
             registry.register(Box::new(tinyiothub_runtime::ApprovalTimeoutExecutor::new(Arc::new(
                 crate::shared::runtime_ports::ApprovalTimeoutAdapter {
@@ -683,11 +686,17 @@ impl ServiceManager {
                     manager: thing_agent_manager.clone(),
                 })),
             );
-            let trigger_router = Arc::new(crate::domains::agent::session::TriggerRouter::new_with_event_bus(
-                app_state.db.clone(),
-                wake_runner,
-                Some(app_state.event_bus.clone()),
-            ));
+            let foreground_contexts = app_state.session_runtime.contexts.clone();
+            let trigger_router = Arc::new(
+                crate::domains::agent::session::TriggerRouter::new_with_event_bus(
+                    app_state.db.clone(),
+                    wake_runner,
+                    Some(app_state.event_bus.clone()),
+                )
+                .with_foreground_check(Arc::new(move |workspace_id| {
+                    foreground_contexts.count_for_workspace(workspace_id) > 0
+                })),
+            );
             thing_agent_manager.set_session_router(trigger_router.clone());
             // Manual suppression API (preflight/wake/reconcile) shares the
             // same TriggerRouter in-flight slot and WakeRunner. Durable

@@ -76,6 +76,7 @@ pub struct TriggerRouter {
     rate: DashMap<String, RateWindow>,
     clock: RouterClock,
     preflight_gate: Arc<PreflightGate>,
+    foreground_check: Option<Arc<dyn Fn(&str) -> bool + Send + Sync>>,
 }
 
 /// RAII guard for the per-workspace in-flight marker.
@@ -113,7 +114,16 @@ impl TriggerRouter {
             rate: DashMap::new(),
             clock: Arc::new(Utc::now),
             preflight_gate: crate::domains::agent::session::suppression::preflight::global_preflight_gate(),
+            foreground_check: None,
         }
+    }
+
+    /// Scheduled wakes are lower priority than an active user or event Turn.
+    /// The check reads shared session activity; a deferred schedule stays due
+    /// and is retried on the next tick instead of starting a parallel Turn.
+    pub fn with_foreground_check(mut self, check: Arc<dyn Fn(&str) -> bool + Send + Sync>) -> Self {
+        self.foreground_check = Some(check);
+        self
     }
 
     /// Inject the completion-time clock (tests).
@@ -199,6 +209,17 @@ impl TriggerRouter {
         let mut handles = Vec::new();
         for schedule in due {
             if !schedule.enabled {
+                continue;
+            }
+            if self
+                .foreground_check
+                .as_ref()
+                .is_some_and(|check| check(&schedule.workspace_id))
+            {
+                tracing::debug!(
+                    workspace_id = %schedule.workspace_id,
+                    "scheduled wake deferred: foreground work is active"
+                );
                 continue;
             }
             // Coalescing arbiter: every due request for the same
@@ -1105,6 +1126,34 @@ mod tests {
             })
             .is_none()
         );
+    }
+
+    #[tokio::test]
+    async fn tick_defers_scheduled_wake_while_foreground_is_active() {
+        let db = Arc::new(test_db().await);
+        let now = ts(1_800_000_000);
+        db.ensure_assistant_schedule("ws-1", "__assistant__ws-1", now)
+            .await
+            .unwrap();
+        let executor = Arc::new(RecordingExecutor::default());
+        let active = Arc::new(std::sync::atomic::AtomicBool::new(true));
+        let active_for_check = active.clone();
+        let router = Arc::new(
+            TriggerRouter::new(db.clone(), executor.clone())
+                .with_clock(move || now)
+                .with_foreground_check(Arc::new(move |_| active_for_check.load(Ordering::SeqCst))),
+        );
+
+        assert!(router.tick(now).await.is_empty());
+        assert_eq!(executor.calls.load(Ordering::SeqCst), 0);
+
+        active.store(false, Ordering::SeqCst);
+        let handles = router.tick(now).await;
+        assert_eq!(handles.len(), 1);
+        for handle in handles {
+            handle.await.unwrap();
+        }
+        assert_eq!(executor.calls.load(Ordering::SeqCst), 1);
     }
 
     #[tokio::test]
