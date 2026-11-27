@@ -3,7 +3,7 @@
 //! 每 30 秒：确保所有 workspace 有 Schedule 行 → 扫描到期且启用的行 →
 //! 每个 workspace 至多一个在途 wake → 交给 `WakeExecutor` 并推进 `next_wake_at`。
 
-use std::collections::VecDeque;
+use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -77,6 +77,23 @@ pub struct TriggerRouter {
     clock: RouterClock,
     preflight_gate: Arc<PreflightGate>,
     foreground_check: Option<Arc<dyn Fn(&str) -> bool + Send + Sync>>,
+    pending_events: Arc<ParkingMutex<HashMap<String, Vec<EventWake>>>>,
+}
+
+fn merge_event_wakes(batch: Vec<EventWake>) -> EventWake {
+    let mut merged = batch[0].clone();
+    merged.source_id = batch
+        .iter()
+        .map(|wake| wake.source_id.as_str())
+        .collect::<Vec<_>>()
+        .join(",");
+    merged.summary = batch
+        .iter()
+        .map(|wake| wake.summary.as_str())
+        .collect::<Vec<_>>()
+        .join("；");
+    merged.dedup_key = None;
+    merged
 }
 
 /// RAII guard for the per-workspace in-flight marker.
@@ -115,6 +132,7 @@ impl TriggerRouter {
             clock: Arc::new(Utc::now),
             preflight_gate: crate::domains::agent::session::suppression::preflight::global_preflight_gate(),
             foreground_check: None,
+            pending_events: Arc::new(ParkingMutex::new(HashMap::new())),
         }
     }
 
@@ -152,9 +170,6 @@ impl TriggerRouter {
     /// `{workspace}:{trigger}:{dedup_key}`（无 dedup 时退化为
     /// `{workspace}:{trigger}`）60 秒窗口内超过 3 次时拒绝。
     pub fn submit_event(&self, wake: EventWake) -> bool {
-        if self.in_flight.contains(&wake.workspace_id) {
-            return false;
-        }
         let key = wake.rate_key();
         let now = Instant::now();
         {
@@ -174,7 +189,39 @@ impl TriggerRouter {
             }
             window.hits.push_back(now);
         }
+        if self.in_flight.contains(&wake.workspace_id) {
+            self.pending_events
+                .lock()
+                .entry(wake.workspace_id.clone())
+                .or_default()
+                .push(wake);
+            return true;
+        }
         self.event_tx.try_send(wake).is_ok()
+    }
+
+    fn flush_pending_events(self: &Arc<Self>, workspace_id: String) {
+        let batch = self.pending_events.lock().remove(&workspace_id);
+        let Some(batch) = batch.filter(|batch| !batch.is_empty()) else {
+            return;
+        };
+        if !self.in_flight.insert(workspace_id.clone()) {
+            let mut pending = self.pending_events.lock();
+            pending.entry(workspace_id).or_default().splice(0..0, batch);
+            return;
+        }
+        let guard = InFlightGuard {
+            set: Arc::clone(&self.in_flight),
+            key: workspace_id.clone(),
+        };
+        let merged = merge_event_wakes(batch);
+        let router = Arc::clone(&self);
+        tokio::spawn(async move {
+            let dispatch = Arc::clone(&router);
+            dispatch.dispatch_event(merged).await;
+            drop(guard);
+            router.flush_pending_events(workspace_id);
+        });
     }
 
     /// 扫描并派发到期的 wake；返回已派发任务的句柄（生产方忽略，测试可 await）。
@@ -235,10 +282,13 @@ impl TriggerRouter {
                 set: Arc::clone(&self.in_flight),
                 key: schedule.workspace_id.clone(),
             };
+            let workspace_id = schedule.workspace_id.clone();
             let router = Arc::clone(self);
             handles.push(tokio::spawn(async move {
-                let _guard = guard;
-                router.dispatch(schedule).await;
+                let dispatch = Arc::clone(&router);
+                dispatch.dispatch(schedule).await;
+                drop(guard);
+                router.flush_pending_events(workspace_id);
             }));
         }
         handles
@@ -385,21 +435,24 @@ impl TriggerRouter {
                             let Some(wake) = wake else { return };
                             let workspace_id = wake.workspace_id.clone();
                             if !router.in_flight.insert(workspace_id.clone()) {
-                                tracing::warn!(
-                                    workspace_id = %workspace_id,
-                                    source_id = %wake.source_id,
-                                    "event wake dropped: workspace wake in flight"
-                                );
+                                router
+                                    .pending_events
+                                    .lock()
+                                    .entry(workspace_id)
+                                    .or_default()
+                                    .push(wake);
                                 continue;
                             }
                             let guard = InFlightGuard {
                                 set: Arc::clone(&router.in_flight),
-                                key: workspace_id,
+                                key: workspace_id.clone(),
                             };
                             let router = Arc::clone(&router);
                             tokio::spawn(async move {
-                                let _guard = guard;
-                                router.dispatch_event(wake).await;
+                                let dispatch = Arc::clone(&router);
+                                dispatch.dispatch_event(wake).await;
+                                drop(guard);
+                                router.flush_pending_events(workspace_id);
                             });
                         }
                     }
@@ -1475,7 +1528,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn event_wake_dedupes_while_in_flight_then_dispatches() {
+    async fn event_wake_queues_and_merges_while_in_flight() {
         let db = Arc::new(test_db().await);
         let now = ts(1_800_000_000);
         db.ensure_assistant_schedule("ws-1", "__assistant__ws-1", now)
@@ -1523,17 +1576,27 @@ mod tests {
             dedup_key: None,
         }));
         executor.started.notified().await;
-        assert!(!router.submit_event(EventWake {
+        assert!(router.submit_event(EventWake {
             workspace_id: "ws-1".into(),
             trigger: "alarm".into(),
             source_id: "alarm-2".into(),
             summary: "another".into(),
             dedup_key: None,
         }));
+        assert!(router.submit_event(EventWake {
+            workspace_id: "ws-1".into(),
+            trigger: "alarm".into(),
+            source_id: "alarm-3".into(),
+            summary: "third".into(),
+            dedup_key: None,
+        }));
         assert_eq!(executor.calls.load(Ordering::SeqCst), 0);
         executor.release.notify_one();
         tokio::time::sleep(std::time::Duration::from_millis(50)).await;
         assert_eq!(executor.calls.load(Ordering::SeqCst), 1);
+        executor.release.notify_one();
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        assert_eq!(executor.calls.load(Ordering::SeqCst), 2);
     }
 
     #[tokio::test]
