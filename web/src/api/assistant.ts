@@ -134,6 +134,27 @@ export async function deleteChatSession(sessionKey: string): Promise<void> {
   await ApiClient.delete(sessionPath(sessionKey));
 }
 
+export interface WorkspacePermissionPolicy {
+  permissionMode: 'read_only' | 'ask' | 'full_access' | string;
+  allowedActions: string[];
+  deniedActions: string[];
+  maxActionsPerRun: number;
+  maxActionsPerHour: number;
+}
+
+export async function getWorkspacePermissionPolicy(workspaceId: string): Promise<WorkspacePermissionPolicy | null> {
+  const response = await ApiClient.get<WorkspacePermissionPolicy>(`/workspaces/${workspaceId}/agent/policy`);
+  return response.result ?? null;
+}
+
+export async function updateWorkspacePermissionPolicy(
+  workspaceId: string,
+  policy: WorkspacePermissionPolicy,
+): Promise<WorkspacePermissionPolicy | null> {
+  const response = await ApiClient.put<WorkspacePermissionPolicy>(`/workspaces/${workspaceId}/agent/policy`, policy);
+  return response.result ?? null;
+}
+
 export async function updateSessionPermission(
   sessionKey: string,
   mode: 'read_only' | 'ask' | 'full_access',

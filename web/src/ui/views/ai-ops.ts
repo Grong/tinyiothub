@@ -21,14 +21,6 @@ interface HeartbeatConfig {
   tasks: HeartbeatTask[];
 }
 
-interface AutonomyPolicy {
-  permissionMode: "read_only" | "ask" | "full_access" | string;
-  allowedActions: string[];
-  deniedActions: string[];
-  maxActionsPerRun: number;
-  maxActionsPerHour: number;
-}
-
 interface HeartbeatTask {
   priority: string;
   text: string;
@@ -92,8 +84,6 @@ export class ViewAiOps extends LitElement {
   @state() private wsLoading = true;
 
   @state() private config: HeartbeatConfig | null = null;
-  @state() private policy: AutonomyPolicy | null = null;
-  @state() private policySaving = false;
   @state() private logs: ExecutionRecord[] = [];
   @state() private approvals: PendingProposal[] = [];
   @state() private loading = false;
@@ -156,17 +146,15 @@ export class ViewAiOps extends LitElement {
     }
     this.error = null;
     try {
-      const [cfgRes, logsRes, apprRes, policyRes] = await Promise.all([
+      const [cfgRes, logsRes, apprRes] = await Promise.all([
         apiGet<HeartbeatConfig>(`/workspaces/${this.selectedWsId}/heartbeat/config`),
         apiGet<{ logs: ExecutionRecord[] }>(`/workspaces/${this.selectedWsId}/heartbeat/logs`),
         apiGet<{ proposals: PendingProposal[] }>(`/workspaces/${this.selectedWsId}/heartbeat/approvals`),
-        apiGet<AutonomyPolicy>(`/workspaces/${this.selectedWsId}/agent/policy`),
       ]);
       if (cfgRes.result && typeof cfgRes.result.tasks === "string") {
         cfgRes.result.tasks = JSON.parse(cfgRes.result.tasks);
       }
       this.config = cfgRes.result || null;
-      this.policy = policyRes.result || null;
       this.logs = logsRes.result?.logs ?? [];
       this.approvals = apprRes.result?.proposals ?? [];
       this.initialLoadDone = true;
@@ -228,23 +216,6 @@ export class ViewAiOps extends LitElement {
       this.error = String(err);
     } finally {
       this.saving = false;
-    }
-  }
-
-  private async changePermissionMode(e: Event): Promise<void> {
-    const mode = (e.target as HTMLSelectElement).value;
-    if (!this.policy || mode === this.policy.permissionMode) return;
-    this.policySaving = true;
-    try {
-      const response = await apiPut<AutonomyPolicy>(`/workspaces/${this.selectedWsId}/agent/policy`, {
-        ...this.policy,
-        permissionMode: mode,
-      });
-      this.policy = response.result || { ...this.policy, permissionMode: mode };
-    } catch (err) {
-      this.error = String(err);
-    } finally {
-      this.policySaving = false;
     }
   }
 
@@ -449,22 +420,6 @@ export class ViewAiOps extends LitElement {
               <span class="ao-toggle-text">${this.config.enabled ? '运行中' : '已停止'}</span>
             </label>
           </div>
-          <div class="ao-config-row">
-            <span>权限模式</span>
-            <select
-              class="ao-interval-select"
-              .value=${this.policy?.permissionMode ?? "ask"}
-              ?disabled=${this.saving || this.policySaving}
-              @change=${this.changePermissionMode}
-            >
-              <option value="read_only" ?selected=${this.policy?.permissionMode === "read_only"}>只读</option>
-              <option value="ask" ?selected=${this.policy?.permissionMode === "ask"}>默认审批</option>
-              <option value="full_access" ?selected=${this.policy?.permissionMode === "full_access"}>完全权限</option>
-            </select>
-          </div>
-          <p class="ao-hint">
-            默认审批：写入和动作逐次确认。完全权限：免逐次审批，但急停、联锁、审批记录仍保留。
-          </p>
           <div class="ao-config-row">
             <span>巡检间隔</span>
             <select

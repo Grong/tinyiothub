@@ -7,7 +7,10 @@ import {
   fetchSessionProjection,
   listChatSessions,
   updateSessionPermission,
+  getWorkspacePermissionPolicy,
+  updateWorkspacePermissionPolicy,
   type HudSnapshot,
+  type WorkspacePermissionPolicy,
   type SessionSummary,
 } from '../../api/assistant.js';
 import {
@@ -66,6 +69,7 @@ export class ChatView extends LitElement {
   @state() private loading = true;
   @state() private error = '';
   @state() private permissionMode: PermissionMode = 'ask';
+  private workspacePolicy: WorkspacePermissionPolicy | null = null;
   @state() private drawerOpen = false;
   @state() private activeSessions = 0;
   @state() private activeSessionList: SessionSummary[] = [];
@@ -337,8 +341,25 @@ export class ChatView extends LitElement {
       if (mode === 'read_only' || mode === 'ask' || mode === 'full_access') {
         this.permissionMode = mode;
       }
+      await this.syncWorkspacePolicy(current.sessionKey);
     } catch {
       // 读取失败保持当前值；发送/审批仍受后端会话模式约束。
+    }
+  }
+
+  private async syncWorkspacePolicy(sessionKey: string): Promise<void> {
+    const policy = await getWorkspacePermissionPolicy(this.workspaceId).catch(() => null);
+    if (!policy) return;
+    this.workspacePolicy = policy;
+    const mode = policy.permissionMode;
+    if (mode !== 'read_only' && mode !== 'ask' && mode !== 'full_access') return;
+    if (mode === this.permissionMode) return;
+    const previous = this.permissionMode;
+    this.permissionMode = mode;
+    try {
+      await updateSessionPermission(sessionKey, mode);
+    } catch {
+      this.permissionMode = previous;
     }
   }
 
@@ -348,6 +369,18 @@ export class ChatView extends LitElement {
     const previous = this.permissionMode;
     this.permissionMode = mode;
     try {
+      try {
+        const policy = this.workspacePolicy ?? (await getWorkspacePermissionPolicy(this.workspaceId));
+        if (policy) {
+          this.workspacePolicy = await updateWorkspacePermissionPolicy(this.workspaceId, {
+            ...policy,
+            permissionMode: mode,
+          }) ?? { ...policy, permissionMode: mode };
+        }
+      } catch {
+        // Non-admin chat may not be allowed to edit workspace policy; the
+        // session override still works and the global tab remains admin-only.
+      }
       await updateSessionPermission(key, mode);
       if (this.sessionKey !== key) return;
       this.refreshDrawer();
