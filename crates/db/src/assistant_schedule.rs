@@ -76,28 +76,18 @@ fn parse_ts(value: &str) -> Option<DateTime<Utc>> {
         .map(|parsed| parsed.with_timezone(&Utc))
 }
 
-/// Workspace-level schedules are never allowed to carry `FullAccess` (that is
-/// session-explicit only); normalize it to `Ask` on read and write.
-fn workspace_scoped(mode: PermissionMode) -> PermissionMode {
-    match mode {
-        PermissionMode::FullAccess => PermissionMode::Ask,
-        other => other,
-    }
-}
-
 fn map_row(row: &SqliteRow) -> Result<AssistantSchedule> {
     Ok(AssistantSchedule {
         workspace_id: row.try_get("workspace_id")?,
         assistant_id: row.try_get("assistant_id")?,
         interval_seconds: row.try_get::<i64, _>("interval_seconds")?.max(0) as u32,
         enabled: row.try_get::<i64, _>("enabled")? != 0,
-        permission_mode: workspace_scoped(
-            row.try_get::<String, _>("permission_mode")
-                .ok()
-                .and_then(|value| PermissionMode::parse(&value))
-                // Unknown/corrupt values fall back to the column default.
-                .unwrap_or(PermissionMode::Ask),
-        ),
+        permission_mode: row
+            .try_get::<String, _>("permission_mode")
+            .ok()
+            .and_then(|value| PermissionMode::parse(&value))
+            // Unknown/corrupt values fall back to the column default.
+            .unwrap_or(PermissionMode::Ask),
         prompt: row.try_get("prompt")?,
         next_wake_at: row
             .try_get::<Option<String>, _>("next_wake_at")?
@@ -217,7 +207,7 @@ pub(crate) async fn update(
     .bind(interval_seconds.map(i64::from))
     .bind(prompt)
     .bind(next_wake_at.map(format_ts))
-    .bind(permission_mode.map(|mode| workspace_scoped(mode).as_str()))
+    .bind(permission_mode.map(|mode| mode.as_str()))
     .bind(format_ts(Utc::now()))
     .bind(workspace_id)
     .execute(pool)
@@ -638,16 +628,12 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn full_access_is_normalized_for_workspace_schedules() {
+    async fn full_access_is_preserved_for_workspace_schedules() {
         let db = test_db().await;
         let now = ts(1_800_000_000);
         seed_existing_schedule(&db, "ws-full", true, "full_access").await;
         let row = db.get_assistant_schedule("ws-full").await.unwrap().unwrap();
-        assert_eq!(
-            row.permission_mode,
-            PermissionMode::Ask,
-            "read must not expose workspace full_access"
-        );
+        assert_eq!(row.permission_mode, PermissionMode::FullAccess);
 
         db.ensure_assistant_schedule("ws-update", "__assistant__ws-update", now)
             .await
@@ -656,10 +642,6 @@ mod tests {
             .await
             .unwrap();
         let row = db.get_assistant_schedule("ws-update").await.unwrap().unwrap();
-        assert_eq!(
-            row.permission_mode,
-            PermissionMode::Ask,
-            "write must not persist full_access"
-        );
+        assert_eq!(row.permission_mode, PermissionMode::FullAccess);
     }
 }
