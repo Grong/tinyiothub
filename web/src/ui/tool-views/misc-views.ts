@@ -67,6 +67,27 @@ export const thingTreeView: ToolView = {
   },
 };
 
+const ALARM_LEVEL_LABEL: Record<string, string> = {
+  critical: '严重',
+  error: '错误',
+  high: '严重',
+  warning: '警告',
+  info: '提示',
+};
+
+function alarmLevelLabel(value: unknown): string {
+  const level = asString(value).toLowerCase();
+  return ALARM_LEVEL_LABEL[level] ?? asString(value);
+}
+
+function alarmThingLabel(alarm: Record<string, unknown>): string {
+  const thing = recordOf(alarm.thing);
+  if (thing) {
+    return asString(thing.displayName) || asString(thing.name) || asString(thing.id);
+  }
+  return asString(alarm.thingDisplayName) || asString(alarm.thingName) || asString(alarm.deviceName) || asString(alarm.thingId);
+}
+
 export const alarmListView: ToolView = {
   key: 'alarm.list',
   present(input) {
@@ -84,23 +105,21 @@ export const alarmListView: ToolView = {
     const alarms = arrayFrom(record, ['alarms', 'items', 'data'])
       .map(recordOf)
       .filter((item): item is Record<string, unknown> => item !== null);
-    const pagination = recordOf(record.pagination);
-    const total =
-      typeof record.total === 'number'
-        ? record.total
-        : typeof pagination?.total_count === 'number'
-          ? pagination.total_count
-          : alarms.length;
-    const critical = alarms.filter((alarm) =>
-      ['critical', 'error', 'high'].includes(asString(alarm.alarmLevel || alarm.level || alarm.severity)),
+    const active = alarms.filter((alarm) => {
+      const status = asString(alarm.status).toLowerCase();
+      return alarm.isResolved !== true && status !== 'resolved' && status !== 'closed';
+    });
+    const critical = active.filter((alarm) =>
+      ['critical', 'error', 'high'].includes(asString(alarm.alarmLevel || alarm.level || alarm.severity).toLowerCase()),
     ).length;
-    const unacknowledged = alarms.filter((alarm) => alarm.isAcknowledged !== true).length;
-    const details = alarms.slice(0, 5).map((alarm, index) => ({
-      label: `告警 ${index + 1}`,
+    const unacknowledged = active.filter((alarm) => alarm.isAcknowledged !== true).length;
+    const details = active.slice(0, 5).map((alarm, index) => ({
+      label: `${alarmLevelLabel(alarm.alarmLevel || alarm.level || alarm.severity)}告警 ${index + 1}`,
       value: [
-        asString(alarm.alarmLevel || alarm.level || alarm.severity),
-        asString(alarm.thingName || alarm.deviceName || alarm.thingId),
+        alarmThingLabel(alarm),
         asString(alarm.message || alarm.ruleName || alarm.name),
+        asString(alarm.alarmTime || alarm.createdAt),
+        alarm.isAcknowledged === true ? '已确认' : '未确认',
       ]
         .filter(Boolean)
         .join(' · '),
@@ -108,10 +127,10 @@ export const alarmListView: ToolView = {
     return {
       viewKey: 'alarm.list',
       title: '检查当前告警',
-      summary: total > 0 ? `${total} 条待关注` : '当前没有告警',
+      summary: active.length > 0 ? `${active.length} 条待处理 · ${critical} 条严重` : '当前没有待处理告警',
       status: statusOf(input),
       metrics: [
-        { label: '告警数', value: String(total) },
+        { label: '待处理', value: String(active.length) },
         { label: '严重', value: String(critical) },
         { label: '未确认', value: String(unacknowledged) },
       ],

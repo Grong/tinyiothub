@@ -525,6 +525,9 @@ impl ThingService {
             parent_id: row.parent_id.clone(),
             template_id: row.template_id.clone(),
             state: row.state,
+            status: None,
+            online: None,
+            health: None,
             driver_name: row.driver_name.clone(),
             protocol_type: row.protocol_type.clone(),
             address: row.address.clone(),
@@ -576,6 +579,28 @@ impl ThingService {
                 Vec::new()
             }
         }
+    }
+
+    /// Typed property models for the canonical read model.
+    pub(crate) async fn load_property_models(
+        &self,
+        thing_id: &str,
+    ) -> Vec<tinyiothub_core::models::thing_property::ThingProperty> {
+        Db::new(self.pool.clone())
+            .find_thing_properties_by_thing_id(thing_id)
+            .await
+            .unwrap_or_default()
+    }
+
+    /// Typed command/action models for the canonical read model.
+    pub(crate) async fn load_command_models(
+        &self,
+        thing_id: &str,
+    ) -> Vec<tinyiothub_core::models::thing_command::ThingCommand> {
+        Db::new(self.pool.clone())
+            .find_thing_commands_by_thing_id(thing_id)
+            .await
+            .unwrap_or_default()
     }
 
     /// Load properties from the storage layer (single source of SQL for
@@ -681,13 +706,17 @@ impl ThingService {
         Some(
             rows.into_iter()
                 .filter_map(|r| {
+                    let has_file = !r.file_path.is_empty();
                     let mut v = serde_json::to_value(r).ok()?;
-                    // T6：补可访问 url（与 search_knowledge 工具一致），Agent 据此加载资源。
-                    let id = v.get("id")?.as_str()?.to_string();
-                    v.as_object_mut()?.insert(
-                        "url".to_string(),
-                        serde_json::json!(super::handler::resources::resource_file_url(&id)),
-                    );
+                    // Inline Markdown docs (A-scheme) have no file; only file
+                    // resources get a download URL.
+                    if has_file {
+                        let id = v.get("id")?.as_str()?.to_string();
+                        v.as_object_mut()?.insert(
+                            "url".to_string(),
+                            serde_json::json!(super::handler::resources::resource_file_url(&id)),
+                        );
+                    }
                     Some(v)
                 })
                 .collect(),

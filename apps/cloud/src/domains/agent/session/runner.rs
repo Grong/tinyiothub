@@ -525,7 +525,7 @@ impl SessionRunner {
                                         "toolCallId": id,
                                         "tool": name,
                                         "viewKey": crate::domains::agent::tools::catalog::tool_view_key(name),
-                                        "result": truncate(output, 12_000),
+                                        "result": truncate(output, 64_000),
                                         "evidence": evidence
                                     }),
                                 ))

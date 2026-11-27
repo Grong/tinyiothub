@@ -5,17 +5,16 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use serde::Deserialize;
 use serde_json::{Value, json};
-use sqlx::SqlitePool;
 use tinyiothub_agent::port::attribution::{Attributable, Role, ToolKind};
 use tinyiothub_agent::port::tool::{Tool, ToolResult};
 use tinyiothub_runtime::access::DemandRecorder;
 
 use super::tool_ok;
 use crate::domains::thing::service::ThingService;
+use crate::domains::thing::types::{ThingProperties, ThingPropertyResponse};
 
 pub struct ReadPropertyTool {
     pub(super) thing_service: Arc<ThingService>,
-    pub(super) pool: SqlitePool,
     pub(super) workspace_id: String,
     pub(super) device_cache: Option<Arc<tinyiothub_storage::cache::ThingCache>>,
     /// E4b：成功读取后写入 DemandTracker（None = 未接线）。
@@ -38,7 +37,7 @@ impl Tool for ReadPropertyTool {
     }
 
     fn description(&self) -> &str {
-        "读取设备上某个属性的当前值和时间戳。\
+        "读取设备上一组属性的完整定义和当前值。\
          当你需要查询设备的最新数据（如温度、湿度、开关状态）时使用此工具。"
     }
 
@@ -50,80 +49,76 @@ impl Tool for ReadPropertyTool {
                     "type": "string",
                     "description": "物ID（必需）"
                 },
-                "propertyName": {
-                    "type": "string",
-                    "description": "属性名称（必需）"
+                "properties": {
+                    "type": "array",
+                    "items": { "type": "string" },
+                    "description": "属性名称列表（必需）"
                 }
             },
-            "required": ["thingId", "propertyName"]
+            "required": ["thingId", "properties"]
         })
     }
 
     async fn execute(&self, args: Value) -> anyhow::Result<ToolResult> {
         #[derive(Deserialize)]
+        #[serde(untagged)]
+        enum PropertyNames {
+            One(String),
+            Many(Vec<String>),
+        }
+
+        #[derive(Deserialize)]
         #[serde(rename_all = "camelCase")]
         struct Input {
-            // alias：提案/报告的 parameters 常随模板写成蛇形键。
             #[serde(alias = "thing_id")]
             thing_id: String,
-            #[serde(alias = "property_name")]
-            property_name: String,
+            #[serde(alias = "property_name", alias = "propertyName")]
+            properties: PropertyNames,
         }
 
         let input: Input = serde_json::from_value(args).map_err(|e| anyhow::anyhow!("参数解析失败: {}", e))?;
+        let properties = match input.properties {
+            PropertyNames::One(name) => vec![name],
+            PropertyNames::Many(names) => names,
+        };
+        if properties.is_empty() {
+            return Err(anyhow::anyhow!("properties 不能为空"));
+        }
 
-        // Verify thing exists
-        self.thing_service
+        let mut thing = self
+            .thing_service
             .get_thing(&input.thing_id, &self.workspace_id)
             .await
             .map_err(|e| anyhow::anyhow!("物不存在: {}", e))?;
+        thing.knowledge_docs = None;
 
-        // Query property definition from DB
-        let prop = tinyiothub_storage::Db::new(self.pool.clone())
-            .find_thing_property(&input.thing_id, &input.property_name)
-            .await
-            .map_err(|e| anyhow::anyhow!("数据库查询失败: {}", e))?
-            .ok_or_else(|| anyhow::anyhow!("属性 '{}' 在物 {} 上未找到", input.property_name, input.thing_id))?;
-
-        // Try device_cache for live value; design 六: no cache → null + hint
-        let cached = self
-            .device_cache
-            .as_ref()
-            .and_then(|cache| cache.get(&input.thing_id))
-            .and_then(|d| {
-                let val = d
-                    .properties
-                    .as_ref()
-                    .and_then(|props| props.iter().find(|p| p.name == input.property_name))
-                    .and_then(|p| p.current_value.clone());
-                let ts = d.last_heartbeat.clone();
-                val.map(|v| (v, ts))
-            });
-
-        let (current_value, last_heartbeat, hint) = match cached {
-            Some((v, ts)) => (json!(v), json!(ts), Value::Null),
-            None => (Value::Null, Value::Null, json!("该属性暂无上报数据")),
-        };
-
-        // 读取成功（物与属性都存在）→ 近期读取需求，供 demandOnly 采样。
-        if let Some(demand) = &self.demand {
-            demand.record_read(&self.workspace_id, &input.thing_id, &prop.name);
+        let definitions = self.thing_service.load_property_models(&input.thing_id).await;
+        let live = self.device_cache.as_ref().and_then(|cache| cache.get(&input.thing_id));
+        let mut response = Vec::with_capacity(properties.len());
+        for name in &properties {
+            let definition = definitions
+                .iter()
+                .find(|property| &property.name == name)
+                .ok_or_else(|| anyhow::anyhow!("属性 '{}' 在物 {} 上未找到", name, input.thing_id))?;
+            let mut property = ThingPropertyResponse::from(definition.clone());
+            property.current_value = live
+                .as_ref()
+                .and_then(|device| device.properties.as_ref())
+                .and_then(|properties| {
+                    properties.iter().find(|property| {
+                        &property.name == name || property.display_name.as_deref() == Some(name.as_str())
+                    })
+                })
+                .and_then(|property| property.current_value.clone());
+            if let Some(demand) = &self.demand {
+                demand.record_read(&self.workspace_id, &input.thing_id, name);
+            }
+            response.push(property);
         }
 
-        tool_ok(json!({
-            "thingId": input.thing_id,
-            "propertyName": prop.name,
-            "displayName": prop.display_name,
-            "description": prop.description,
-            "dataType": prop.data_type,
-            "unit": prop.unit,
-            "minValue": prop.min_value,
-            "maxValue": prop.max_value,
-            "defaultValue": prop.default_value,
-            "isReadOnly": prop.is_read_only,
-            "currentValue": current_value,
-            "lastHeartbeat": last_heartbeat,
-            "hint": hint,
-        }))
+        tool_ok(serde_json::to_value(ThingProperties {
+            thing,
+            properties: response,
+        })?)
     }
 }

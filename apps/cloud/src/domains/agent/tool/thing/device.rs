@@ -22,6 +22,7 @@ use tinyiothub_runtime::event_bus::EventBus;
 use super::profile::health_str;
 use super::{LiveSummarySource, resource_specs, tool_err, tool_ok};
 use crate::domains::thing::service::ThingService;
+use crate::domains::thing::types::{CommandExecution, ThingCommandResponse, ThingDetail, ThingPropertyResponse};
 
 /// 隐藏别名：注册可解析（存量提案/批准通道），但不进模型工具列表与目录。
 pub(super) struct HiddenTool(pub(super) Box<dyn Tool>);
@@ -460,36 +461,47 @@ impl Tool for ReadDeviceTool {
             Some(s) => (health_str(s.health), s.zone.clone(), s.online),
             None => ("unknown", String::new(), false),
         };
-        let display = thing.display_name.as_deref().unwrap_or(&thing.name);
-        let zone_text = if zone.is_empty() {
-            "未归属区域".to_string()
-        } else {
-            zone.clone()
-        };
-        let text = format!(
-            "{display}（{}）位于 {zone_text}，健康度 {health}，{}",
-            thing.thing_type,
-            if online { "在线" } else { "离线" }
-        );
-
-        let actions = self
+        let commands: Vec<ThingCommandResponse> = self
             .thing_service
-            .load_actions(&input.thing_id)
+            .load_command_models(&input.thing_id)
             .await
-            .unwrap_or_default();
-        let mut payload = json!({
-            "v": 1,
-            "thingId": input.thing_id,
-            "name": display,
-            "thingType": thing.thing_type,
-            "health": health,
-            "zone": zone,
-            "online": online,
-            "position": thing.address,
-            "state": state,
-            "actions": actions,
-            "text": text,
-        });
+            .into_iter()
+            .map(ThingCommandResponse::from)
+            .collect();
+        let mut properties: Vec<ThingPropertyResponse> = self
+            .thing_service
+            .load_property_models(&input.thing_id)
+            .await
+            .into_iter()
+            .map(ThingPropertyResponse::from)
+            .collect();
+        for property in &mut properties {
+            property.current_value = state
+                .get(&property.name)
+                .or_else(|| {
+                    property
+                        .display_name
+                        .as_deref()
+                        .and_then(|display_name| state.get(display_name))
+                })
+                .and_then(Value::as_str)
+                .map(str::to_string);
+        }
+        if let Some(wanted) = &input.properties {
+            properties.retain(|property| wanted.iter().any(|name| name == &property.name));
+        }
+        let mut thing = thing;
+        thing.knowledge_docs = None;
+        thing.health = Some(health.to_string());
+        thing.online = Some(online);
+        let mut payload = serde_json::to_value(ThingDetail {
+            thing,
+            properties,
+            commands,
+            zone: (!zone.is_empty()).then_some(zone),
+            sources: None,
+        })
+        .map_err(|error| anyhow::anyhow!("设备结果序列化失败: {error}"))?;
         let mut attachments = Vec::new();
         if let Some(requested) = input.sources.as_deref().filter(|sources| !sources.is_empty()) {
             match self.read_model_sources(&input.thing_id, requested).await {
@@ -503,9 +515,10 @@ impl Tool for ReadDeviceTool {
                 Err(error) => return tool_err(error),
             }
         }
+        let state_payload = serde_json::to_value(&state).unwrap_or_default();
         self.record_read(
             &input.thing_id,
-            payload["state"].clone(),
+            state_payload,
             input.sources.clone().unwrap_or_default(),
         )
         .await;
@@ -718,7 +731,6 @@ impl Tool for SetDeviceTool {
             Ok(p) => p,
             Err(e) => return tool_err(format!("属性查询失败: {e}")),
         };
-        let mut updated = Vec::new();
         for (name, value) in &input.properties {
             let Some(prop) = props.iter().find(|p| &p.name == name) else {
                 return tool_err(format!("属性不存在: {name}"));
@@ -747,21 +759,34 @@ impl Tool for SetDeviceTool {
                     content: format!("Current value: {text}"),
                     format: TextFormat::Plain,
                 }],
-            );
+            )
+            .with_metadata(
+                "property_name".to_string(),
+                serde_json::Value::String(prop.name.clone()),
+            )
+            .with_metadata(
+                "property_display_name".to_string(),
+                serde_json::Value::String(prop.display_name.clone().unwrap_or_else(|| prop.name.clone())),
+            )
+            .with_metadata("value".to_string(), serde_json::Value::String(text.clone()));
             let event = Event::new_property_change_event(input.thing_id.clone(), prop.id.clone(), source, content)
                 .map_err(|e| anyhow::anyhow!("事件构造失败: {e}"))?;
             if let Err(e) = event_bus.publish(event).await {
                 return tool_err(format!("属性写入失败: {e}"));
             }
-            updated.push(name.clone());
         }
 
-        tool_ok(json!({
-            "v": 1,
-            "thingId": input.thing_id,
-            "status": "ok",
-            "updated": updated,
-        }))
+        let mut thing = thing;
+        thing.knowledge_docs = None;
+        tool_ok(serde_json::to_value(json!({
+            "thing": thing,
+            "execution": CommandExecution {
+                success: true,
+                cancelled: false,
+                error: None,
+                result: None,
+            },
+        }))?)
     }
 }
 
@@ -1099,7 +1124,8 @@ mod tests {
         let ok = tool.execute(args).await.expect("execute");
         assert!(ok.success, "资源空闲必须放行: {:?}", ok.error);
         let payload: Value = serde_json::from_str(&ok.output).unwrap();
-        assert_eq!(payload["updated"], json!(["level", "mode"]));
+        assert_eq!(payload["execution"]["success"], true);
+        assert!(payload.get("updated").is_none());
     }
 
     /// 未知资源 id fail-closed：写入被拒绝且不发布任何属性事件。
@@ -1537,7 +1563,7 @@ mod tests {
 
         let result = tool.execute(json!({"thingId":"dev-1"})).await.expect("execute");
         assert!(result.success, "{:?}", result.error);
-        assert!(result.output.contains("\"actions\""));
+        assert!(result.output.contains("\"commands\""));
         let events = db
             .runtime_events_after("ws-set", None, Some("task-read"), 10)
             .await

@@ -57,15 +57,20 @@ function timelineOf(...events: SessionEvent[]): TimelineModel {
 }
 
 const deviceResult = {
-  v: 1,
-  thingId: 'dev-1',
-  name: '冷却塔 A',
-  thingType: 'device',
-  health: 'bad',
+  thing: {
+    id: 'dev-1',
+    name: 'cooling_tower_a',
+    displayName: '冷却塔 A',
+    thingType: 'device',
+    health: 'bad',
+    online: false,
+  },
+  properties: [
+    { name: 'outlet_temperature', displayName: '出水温度', currentValue: '32.5', unit: '°C' },
+    { name: 'fan_speed', displayName: '风机转速', currentValue: '0', unit: 'rpm' },
+  ],
+  commands: [],
   zone: '3 号楼屋面',
-  online: false,
-  state: { 出水温度: '32.5', 风机转速: '0' },
-  text: '冷却塔 A 位于 3 号楼屋面，健康度 bad，离线',
 };
 
 const evidence = [
@@ -103,11 +108,11 @@ describe('buildStory', () => {
     expect(story.sections[0].steps).toHaveLength(1);
     expect(story.sections[0].steps[0].metrics).toEqual(
       expect.arrayContaining([
-        { name: '出水温度', value: '32.5' },
-        { name: '风机转速', value: '0' },
+        { name: '出水温度', value: '32.5 °C' },
+        { name: '风机转速', value: '0 rpm' },
       ]),
     );
-    expect(story.sections[0].steps[0].rawResult).toContain('"thingId":"dev-1"');
+    expect(story.sections[0].steps[0].rawResult).toContain('"id":"dev-1"');
 
     expect(story.devices).toHaveLength(1);
     expect(story.devices[0]).toMatchObject({
@@ -120,14 +125,14 @@ describe('buildStory', () => {
     expect(story.devices[0].metrics).toHaveLength(2);
 
     expect(story.sections[0].steps[0]).toMatchObject({
-      title: '查看「冷却塔 A」的实时状态',
+      title: '读取「冷却塔 A」的实时状态',
       status: 'done',
       tone: 'read',
       deviceId: 'dev-1',
       finding: '设备离线',
     });
     expect(story.sections[0].steps[0].detail).toContain('离线');
-    expect(story.sections[0].steps[0].detail).toContain('2 项运行参数');
+    expect(story.sections[0].steps[0].detail).toContain('2 项属性');
 
     expect(story.vision).toHaveLength(1);
     expect(story.vision[0]).toMatchObject({

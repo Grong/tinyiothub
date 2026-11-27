@@ -138,7 +138,13 @@ function structuredToolResult(part: ToolPart): StructuredToolResult | null {
   }
 
   if (['read_device', 'get_thing', 'get_thing_profile'].includes(part.name)) {
-    return { kind: 'device', device: result };
+    const thing = record(result.thing);
+    return {
+      kind: 'device',
+      device: thing
+        ? { ...thing, properties: result.properties, zone: result.zone ?? thing.zone }
+        : result,
+    };
   }
   return null;
 }
@@ -183,10 +189,10 @@ function structuredSummary(result: StructuredToolResult): string {
   }
   if (result.kind === 'devices') return `共 ${result.total ?? result.devices.length} 台`;
   const online = deviceOnline(result.device);
-  const state = record(result.device.state);
+  const properties = Array.isArray(result.device.properties) ? result.device.properties : [];
   return [
     online === undefined ? '' : online ? '在线' : '离线',
-    state ? `${Object.keys(state).length} 项属性` : '',
+    properties.length > 0 ? `${properties.length} 项属性` : '',
   ]
     .filter(Boolean)
     .join('，');
@@ -314,7 +320,9 @@ function renderStructuredResult(result: StructuredToolResult): TemplateResult {
 
   const { device } = result;
   const online = deviceOnline(device);
-  const state = record(device.state);
+  const properties = (Array.isArray(device.properties) ? device.properties : [])
+    .map(record)
+    .filter((property): property is Record<string, unknown> => property !== null);
   const context = [thingTypeLabel(device.thingType), device.zone, healthLabel(device.health)]
     .filter((value) => typeof value === 'string' && value)
     .map((value) => String(value));
@@ -324,11 +332,12 @@ function renderStructuredResult(result: StructuredToolResult): TemplateResult {
       ${online === undefined ? nothing : html`<span class="structured-device__status ${online ? 'is-online' : 'is-offline'}">${online ? '在线' : '离线'}</span>`}
     </div>
     ${context.length > 0 ? html`<div class="structured-device__context">${context.map((value) => html`<span>${value}</span>`)}</div>` : nothing}
-    ${state && Object.keys(state).length > 0
+    ${properties.length > 0
       ? html`<dl class="structured-properties">
-          ${Object.entries(state).map(
-            ([name, value]) => html`<div class="structured-property"><dt>${name}</dt><dd>${displayValue(value)}</dd></div>`,
-          )}
+          ${properties.map((property) => html`<div class="structured-property">
+            <dt>${typeof property.displayName === 'string' ? property.displayName : property.name}</dt>
+            <dd>${displayValue(property.currentValue)}${typeof property.unit === 'string' && property.unit ? ` ${property.unit}` : ''}</dd>
+          </div>`)}
         </dl>`
       : nothing}
   </section>`;

@@ -11,6 +11,7 @@ use tinyiothub_core::models::thing::CreateThingRequest;
 use tinyiothub_storage::thing::{ThingCriteria, ThingSortBy, ThingSortOrder};
 
 use crate::domains::thing::legacy::thing_query::{find_thing_by_id, find_thing_by_id_with_tags, load_tags_for_things};
+use crate::domains::thing::types::{ThingProperties, ThingPropertyResponse};
 
 use crate::domains::mcp::McpState;
 use crate::domains::mcp::tool_registry::{InputSchema, PropertySchema, ToolError, ToolHandler};
@@ -192,7 +193,7 @@ impl ToolHandler for ThingPropertyGetHandler {
     }
 
     fn description(&self) -> &str {
-        "Get the definition and current value of a specific property on a thing"
+        "Get full property definitions and current values for a thing"
     }
 
     fn input_schema(&self) -> InputSchema {
@@ -205,98 +206,81 @@ impl ToolHandler for ThingPropertyGetHandler {
             },
         );
         props.insert(
-            "propertyName".to_string(),
+            "properties".to_string(),
             PropertySchema {
-                prop_type: "string".to_string(),
-                description: Some("Property name (required)".to_string()),
+                prop_type: "array".to_string(),
+                description: Some("Property names (required)".to_string()),
             },
         );
-        InputSchema::object(vec!["thingId".to_string(), "propertyName".to_string()], props)
+        InputSchema::object(vec!["thingId".to_string(), "properties".to_string()], props)
     }
 
     async fn execute(&self, args: Value) -> Result<Value, ToolError> {
         #[derive(Deserialize)]
+        #[serde(untagged)]
+        enum PropertyNames {
+            One(String),
+            Many(Vec<String>),
+        }
+
+        #[derive(Deserialize)]
         #[serde(rename_all = "camelCase")]
         struct Input {
-            #[serde(rename = "thingId", alias = "deviceId")]
+            #[serde(rename = "thingId", alias = "deviceId", alias = "thing_id")]
             thing_id: String,
-            property_name: String,
+            #[serde(alias = "propertyName", alias = "property_name")]
+            properties: PropertyNames,
         }
 
         let input: Input = serde_json::from_value(args).map_err(|e| ToolError::InvalidParams(e.to_string()))?;
+        let names = match input.properties {
+            PropertyNames::One(name) => vec![name],
+            PropertyNames::Many(names) => names,
+        };
+        if names.is_empty() {
+            return Err(ToolError::InvalidParams("properties 不能为空".to_string()));
+        }
 
         let state = self
             .state
             .as_ref()
             .ok_or_else(|| ToolError::Internal("AppState not initialized".to_string()))?;
-
         let workspace_id = crate::domains::mcp::handlers::get_mcp_context()
             .ok_or_else(|| ToolError::Unauthorized("MCP context not initialized".to_string()))?
             .workspace_id;
-
-        let _device = find_thing_by_id(state.db(), &input.thing_id)
+        let service = crate::domains::thing::service::ThingService::new(state.db.pool().clone());
+        let mut thing = service
+            .get_thing(&input.thing_id, &workspace_id)
             .await
-            .map_err(|e| ToolError::Internal(e.to_string()))?
-            .ok_or_else(|| ToolError::NotFound(format!("Thing {} not found", input.thing_id)))?;
-
-        let all_properties = state
-            .db()
-            .find_thing_properties_by_thing_id(&input.thing_id)
-            .await
-            .map_err(|e| ToolError::Internal(e.to_string()))?;
-
-        let prop = all_properties
-            .iter()
-            .find(|p| p.name == input.property_name)
-            .ok_or_else(|| {
-                ToolError::NotFound(format!(
-                    "Property '{}' not found on thing {}",
-                    input.property_name, input.thing_id
-                ))
-            })?;
-
-        // E4b §3.2：读取成功即记录需求（失败/未找到在上方已 return）。
-        if let Some(access) = &state.access {
-            access.record_read(&workspace_id, &input.thing_id, &prop.name);
+            .map_err(|e| ToolError::NotFound(e.to_string()))?;
+        thing.knowledge_docs = None;
+        let definitions = service.load_property_models(&input.thing_id).await;
+        let live = state.device_cache.get(&input.thing_id);
+        let mut response = Vec::with_capacity(names.len());
+        for name in &names {
+            let definition = definitions
+                .iter()
+                .find(|property| &property.name == name)
+                .ok_or_else(|| {
+                    ToolError::NotFound(format!("Property '{}' not found on thing {}", name, input.thing_id))
+                })?;
+            if let Some(access) = &state.access {
+                access.record_read(&workspace_id, &input.thing_id, &definition.name);
+            }
+            let mut property = ThingPropertyResponse::from(definition.clone());
+            property.current_value = live
+                .as_ref()
+                .and_then(|device| device.properties.as_ref())
+                .and_then(|properties| properties.iter().find(|property| &property.name == name))
+                .and_then(|property| property.current_value.clone());
+            response.push(property);
         }
 
-        let current_value = state
-            .device_cache
-            .get(&input.thing_id)
-            .and_then(|d| d.properties)
-            .and_then(|props| props.into_iter().find(|p| p.name == input.property_name))
-            .and_then(|p| p.current_value);
-
-        #[derive(Serialize)]
-        #[serde(rename_all = "camelCase")]
-        struct PropertyDetailResponse {
-            thing_id: String,
-            property_name: String,
-            display_name: Option<String>,
-            description: Option<String>,
-            data_type: Option<String>,
-            unit: Option<String>,
-            min_value: Option<f64>,
-            max_value: Option<f64>,
-            default_value: Option<String>,
-            is_read_only: bool,
-            current_value: Option<String>,
-        }
-
-        Ok(serde_json::to_value(PropertyDetailResponse {
-            thing_id: input.thing_id,
-            property_name: prop.name.clone(),
-            display_name: prop.display_name.clone(),
-            description: prop.description.clone(),
-            data_type: prop.data_type.clone(),
-            unit: prop.unit.clone(),
-            min_value: prop.min_value,
-            max_value: prop.max_value,
-            default_value: prop.default_value.clone(),
-            is_read_only: prop.is_read_only == 1,
-            current_value,
+        serde_json::to_value(ThingProperties {
+            thing,
+            properties: response,
         })
-        .unwrap())
+        .map_err(|e| ToolError::Internal(e.to_string()))
     }
 }
 

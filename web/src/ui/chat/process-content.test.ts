@@ -33,15 +33,15 @@ describe('process detail surfaces', () => {
           kind: 'tool',
           id: 'c1',
           name: 'read_device',
+          viewKey: 'device.read',
           args: {},
           result: JSON.stringify({
-            thingId: 'dev-1',
-            name: '3号楼温度传感器',
-            thingType: 'device',
-            online: true,
-            health: 'ok',
+            thing: { id: 'dev-1', name: 'temp_sensor', displayName: '3号楼温度传感器', thingType: 'device', online: true, health: 'ok' },
+            properties: [
+              { name: 'temperature', displayName: '温度', currentValue: '24.5', unit: '°C' },
+              { name: 'humidity', displayName: '湿度', currentValue: '60', unit: '%' },
+            ],
             zone: '3号楼一层',
-            state: { 温度: 24.5, 湿度: '60%' },
           }),
           at,
         },
@@ -54,8 +54,8 @@ describe('process detail surfaces', () => {
     expect(host.querySelector('.structured-device__context')?.textContent).toContain('设备');
     expect(host.querySelector('.structured-device__context')?.textContent).toContain('健康正常');
     const properties = [...host.querySelectorAll('.structured-property')].map((row) => row.textContent);
-    expect(properties.some((text) => text?.includes('温度') && text.includes('24.5'))).toBe(true);
-    expect(properties.some((text) => text?.includes('湿度') && text.includes('60%'))).toBe(true);
+    expect(properties.some((text) => text?.includes('温度') && text.includes('24.5 °C'))).toBe(true);
+    expect(properties.some((text) => text?.includes('湿度') && text.includes('60 %'))).toBe(true);
     expect(host.querySelector('.activity__detail')?.textContent).not.toContain('"online"');
   });
 

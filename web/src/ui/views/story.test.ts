@@ -111,13 +111,17 @@ describe('view-story', () => {
           toolCallId: 'c1',
           tool: 'read_device',
           result: JSON.stringify({
-            thingId: 'dev-1',
-            name: '冷却塔 A',
-            thingType: 'device',
-            health: 'attention',
+            thing: {
+              id: 'dev-1',
+              name: 'cooling_tower_a',
+              displayName: '冷却塔 A',
+              thingType: 'device',
+              health: 'attention',
+              online: true,
+            },
+            properties: [{ name: 'outlet_temperature', displayName: '出水温度', currentValue: '32.5', unit: '°C' }],
+            commands: [],
             zone: '3 号楼屋面',
-            online: true,
-            state: { 出水温度: '32.5' },
           }),
         }),
         event(5, 'assistant/message', {
@@ -322,7 +326,7 @@ describe('view-story', () => {
     expect(el.textContent).toContain('3 号楼夜间巡检');
     expect(el.querySelector('.story-hero__title')?.textContent).toContain('冷却塔 A');
     expect(el.querySelector('.story-hero__title')?.textContent).not.toBe('3 号楼夜间巡检');
-    expect(el.textContent).toContain('查看「冷却塔 A」的实时状态');
+    expect(el.textContent).toContain('读取「冷却塔 A」的实时状态');
     expect(hoisted.fetchSessionEvents.mock.calls[0][3]).toEqual({ turns: 2 });
     expect(el.textContent).toContain('AI 大脑功绩');
     expect(el.textContent).toContain('需要关注');
@@ -347,13 +351,10 @@ describe('view-story', () => {
         toolCallId: `c-${id}`,
         tool: 'read_device',
         result: JSON.stringify({
-          thingId: id,
-          name,
-          thingType: 'device',
-          health: 'ok',
+          thing: { id, name: `${name}_code`, displayName: name, thingType: 'device', health: 'ok', online: true },
+          properties: [{ name: 'temperature', displayName: '温度', currentValue: '26', unit: '°C' }],
+          commands: [],
           zone: '3 号楼',
-          online: true,
-          state: { 温度: '26' },
         }),
       }),
       event(seq + 3, 'turn/end', { turnId, outcome: 'completed' }),

@@ -44,7 +44,13 @@ describe('timeline render helpers', () => {
         id: 'c1',
         name: 'read_device',
         args: { thingId: 'dev-1' },
-        result: JSON.stringify({ name: '3号楼传感器', online: true, state: { 温度: 24, 湿度: 60 } }),
+        result: JSON.stringify({
+          thing: { id: 'dev-1', name: 'sensor', displayName: '3号楼传感器', online: true },
+          properties: [
+            { name: 'temperature', displayName: '温度', currentValue: '24' },
+            { name: 'humidity', displayName: '湿度', currentValue: '60' },
+          ],
+        }),
         at: '',
       }),
     ).toBe('查看设备 dev-1 → 在线，2 项属性');

@@ -289,11 +289,18 @@ function deviceLabel(device: StoryDevice | null | undefined): string {
 }
 
 function metricEntries(record: Record<string, unknown>): StoryDeviceMetric[] {
-  const state = recordOf(record.state);
-  if (!state) return [];
-  return Object.entries(state)
+  const properties = Array.isArray(record.properties) ? record.properties : [];
+  return properties
+    .map(recordOf)
+    .filter((property): property is Record<string, unknown> => property !== null)
     .slice(0, 4)
-    .map(([name, value]) => ({ name, value: clampText(displayValue(value), 24) }));
+    .map((property) => ({
+      name: firstString(property, ['displayName', 'name']) || '属性',
+      value: clampText(
+        `${displayValue(property.currentValue)}${typeof property.unit === 'string' && property.unit ? ` ${property.unit}` : ''}`,
+        24,
+      ),
+    }));
 }
 
 function deviceFromRecord(record: Record<string, unknown>): StoryDevice | null {
@@ -327,6 +334,14 @@ function deviceRecordsFromValue(value: unknown): Record<string, unknown>[] {
     if (Array.isArray(items)) {
       return items.map(recordOf).filter((item): item is Record<string, unknown> => item !== null);
     }
+  }
+  const thing = recordOf(record.thing);
+  if (thing) {
+    return [{
+      ...thing,
+      properties: record.properties,
+      zone: record.zone ?? thing.zone,
+    }];
   }
   return [record];
 }

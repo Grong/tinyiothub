@@ -388,7 +388,6 @@ pub fn create_thing_tools(
         })))),
         read_only(Box::new(device::HiddenTool(Box::new(ReadPropertyTool {
             thing_service: thing_service.clone(),
-            pool: pool.clone(),
             workspace_id: ws.clone(),
             device_cache: runtime.device_cache.clone(),
             demand: runtime.demand.clone(),
@@ -623,6 +622,7 @@ mod tests {
                 "list_devices",
                 "query_events",
                 "read_device",
+                "read_device_knowledge",
                 "read_document",
                 "run_composite",
                 "search_knowledge",
@@ -901,6 +901,11 @@ mod tests {
             )
             .await
             .unwrap();
+        sqlx::query("INSERT INTO thing_properties (id, thing_id, name, display_name, data_type, unit, created_at, updated_at) VALUES ('prop-temp-1', ?, '温度', '温度', 'number', '°C', '2026-01-01', '2026-01-01')")
+            .bind(&created.id)
+            .execute(&pool)
+            .await
+            .unwrap();
         sqlx::query("INSERT INTO resources (id, workspace_id, thing_id, resource_type, name, file_path, content, tags, created_at, updated_at) VALUES ('doc-temp-1', 'ws', ?, 'document', '温感维护手册', '', '每六个月校准一次', '[]', '2026-01-01', '2026-01-01')")
             .bind(&created.id)
             .execute(&pool)
@@ -931,12 +936,12 @@ mod tests {
             .unwrap();
         assert!(out.success, "{}", out.error.unwrap_or_default());
         let v: serde_json::Value = serde_json::from_str(&out.output).unwrap();
-        assert_eq!(v["health"], "attention");
+        assert_eq!(v["thing"]["health"], "attention");
         assert_eq!(v["zone"], "园区A/3号楼");
-        assert_eq!(v["state"]["温度"], "31.5");
+        assert_eq!(v["properties"][0]["name"], "温度");
+        assert_eq!(v["properties"][0]["currentValue"], "31.5");
+        assert!(v.get("state").is_none());
         assert!(v.get("knowledgeDocs").is_none());
-        assert!(v["text"].as_str().unwrap().contains("园区A/3号楼"));
-        assert_eq!(v["v"], 1);
 
         let knowledge = device::ReadDeviceKnowledgeTool {
             thing_service: service,
@@ -1146,7 +1151,7 @@ mod tests {
         assert!(read.success, "{:?}", read.error);
         let read = find("read_property")
             .expect("read_property")
-            .execute(serde_json::json!({"thingId": thing_id, "propertyName": "温度"}))
+            .execute(serde_json::json!({"thingId": thing_id, "properties": ["温度"]}))
             .await
             .unwrap();
         assert!(read.success, "{:?}", read.error);
@@ -1160,14 +1165,13 @@ mod tests {
         let demand = Arc::new(RecordingDemand::default());
         let tool = ReadPropertyTool {
             thing_service: Arc::new(ThingService::new(pool.clone())),
-            pool,
             workspace_id: "ws".into(),
             device_cache: None,
             demand: Some(demand.clone()),
         };
 
         let out = tool
-            .execute(serde_json::json!({"thingId": thing_id, "propertyName": "温度"}))
+            .execute(serde_json::json!({"thingId": thing_id, "properties": ["温度"]}))
             .await
             .unwrap();
         assert!(out.success, "{}", out.error.unwrap_or_default());
@@ -1179,7 +1183,7 @@ mod tests {
         // Unknown property → not-found error, no demand recorded.
         demand.0.lock().unwrap().clear();
         let result = tool
-            .execute(serde_json::json!({"thingId": thing_id, "propertyName": "不存在"}))
+            .execute(serde_json::json!({"thingId": thing_id, "properties": ["不存在"]}))
             .await;
         assert!(result.is_err(), "unknown property must fail");
         assert!(demand.reads().is_empty());
