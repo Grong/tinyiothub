@@ -253,17 +253,6 @@ impl From<ThingCommand> for ThingCommandResponse {
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub struct CommandExecution {
-    pub success: bool,
-    pub cancelled: bool,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub error: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub result: Option<serde_json::Value>,
-}
-
-#[derive(Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
 pub struct ThingProperties {
     pub thing: ThingResponse,
     pub properties: Vec<ThingPropertyResponse>,

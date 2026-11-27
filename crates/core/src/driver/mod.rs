@@ -9,6 +9,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 
 use crate::error::Error;
 use crate::models::thing::Thing;
@@ -313,6 +314,19 @@ impl CancelToken {
 /// 设备驱动特征
 ///
 /// 定义了设备驱动的核心接口，包括数据读取、命令执行等功能
+/// Result of one driver command execution. `result` is the driver's raw
+/// payload when it has one; `None` is valid for boolean-only drivers.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CommandExecution {
+    pub success: bool,
+    pub cancelled: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub result: Option<Value>,
+}
+
 pub trait ThingDriver: Send + Sync {
     // === 基础信息获取 ===
 
@@ -384,6 +398,22 @@ pub trait ThingDriver: Send + Sync {
 
     fn read_data(&mut self, cancel: &CancelToken) -> Result<Vec<ResultValue>, Error>;
     fn execute_command(&mut self, cmd: &ThingCommand, cancel: &CancelToken) -> Result<bool, Error>;
+
+    /// Like `execute_command`, but preserves a driver payload when available.
+    /// Existing drivers keep the boolean contract through this default.
+    fn execute_command_with_result(
+        &mut self,
+        cmd: &ThingCommand,
+        cancel: &CancelToken,
+    ) -> Result<CommandExecution, Error> {
+        let success = self.execute_command(cmd, cancel)?;
+        Ok(CommandExecution {
+            success,
+            cancelled: false,
+            error: None,
+            result: None,
+        })
+    }
 
     /// Read the requested sources and return their correlated source items.
     /// Drivers without Source 1.1 support retain the default `Unsupported` result.

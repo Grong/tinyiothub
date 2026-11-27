@@ -22,7 +22,8 @@ use tinyiothub_runtime::event_bus::EventBus;
 use super::profile::health_str;
 use super::{LiveSummarySource, resource_specs, tool_err, tool_ok};
 use crate::domains::thing::service::ThingService;
-use crate::domains::thing::types::{CommandExecution, ThingCommandResponse, ThingDetail, ThingPropertyResponse};
+use crate::domains::thing::types::{ThingCommandResponse, ThingDetail, ThingPropertyResponse};
+use tinyiothub_core::driver::CommandExecution;
 
 /// 隐藏别名：注册可解析（存量提案/批准通道），但不进模型工具列表与目录。
 pub(super) struct HiddenTool(pub(super) Box<dyn Tool>);
