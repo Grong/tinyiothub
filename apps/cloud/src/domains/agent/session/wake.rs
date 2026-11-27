@@ -385,10 +385,14 @@ impl WakeRunner {
         turn_input: String,
         semantic_events: &[SemanticSessionEvent],
         observation: Option<&SuppressionObservation>,
+        continuation: bool,
     ) -> anyhow::Result<crate::domains::agent::prompt::assistant::PromptPackage> {
-        let turn_input = self
-            .with_previous_conclusion(workspace_id, assistant_id, turn_input)
-            .await;
+        let turn_input = if continuation {
+            self.with_previous_conclusion(workspace_id, assistant_id, turn_input)
+                .await
+        } else {
+            turn_input
+        };
         if let Some(captured) = observation.and_then(|observation| observation.captured.as_ref())
             && !captured.resolved.is_empty()
         {
@@ -1000,6 +1004,7 @@ impl WakeRunner {
                     message,
                     &semantic_events,
                     Some(&observation),
+                    true,
                 )
                 .await
             {
@@ -1489,6 +1494,7 @@ impl WakeRunner {
                 message,
                 &semantic_events,
                 observation.as_ref(),
+                true,
             )
             .await
         {
@@ -1631,9 +1637,12 @@ impl WakeRunner {
         }
         let permission_mode = schedule.permission_mode;
         let message = match wake.trigger.as_str() {
-            "watch" => format!("收到设备值守命中：{}\n请评估影响；涉及写设备必须走审批。", wake.summary),
+            "watch" => format!(
+                "收到设备值守命中：{}\n请只针对本次命中做判断，不要重新执行整轮巡检，也不要重复读取未变化的设备；涉及写设备必须走审批。",
+                wake.summary
+            ),
             "thing_event" => format!(
-                "收到设备事件：{}\n请判断是否需要处理；涉及写设备必须走审批。",
+                "收到设备事件：{}\n请只针对本次事件做判断，不要重新执行整轮巡检；涉及写设备必须走审批。",
                 wake.summary
             ),
             _ => format!(
@@ -1656,7 +1665,14 @@ impl WakeRunner {
             }
         };
         let prompt = match self
-            .wake_prompt(&wake.workspace_id, &assistant_id, message, &semantic_events, None)
+            .wake_prompt(
+                &wake.workspace_id,
+                &assistant_id,
+                message,
+                &semantic_events,
+                None,
+                false,
+            )
             .await
         {
             Ok(prompt) => prompt,
@@ -2747,7 +2763,7 @@ mod tests {
         });
 
         let package = wake
-            .wake_prompt("ws", "assistant", "turn".into(), &[], None)
+            .wake_prompt("ws", "assistant", "turn".into(), &[], None, true)
             .await
             .unwrap();
         assert!(package.system_prompt.contains("configured-workspace-marker"));
@@ -2803,7 +2819,14 @@ mod tests {
             .await
             .unwrap();
         let package = wake
-            .wake_prompt("ws", &assistant_agent_id("ws"), "turn".into(), &capture.events, None)
+            .wake_prompt(
+                "ws",
+                &assistant_agent_id("ws"),
+                "turn".into(),
+                &capture.events,
+                None,
+                true,
+            )
             .await
             .unwrap();
         assert_eq!(package.system_prompt.matches("short-term-wake-marker").count(), 1);
