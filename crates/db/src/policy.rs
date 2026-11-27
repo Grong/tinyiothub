@@ -18,8 +18,8 @@ pub use tinyiothub_core::policy::*;
 // ──────────────────────────────────────────────
 
 pub(crate) async fn load_autonomy(pool: &SqlitePool, workspace_id: &str) -> Result<Option<AutonomyPolicy>> {
-    let row: Option<(String, String, String, i64, i64)> = sqlx::query_as(
-        "SELECT mode, allowed_actions, denied_actions,
+    let row: Option<(String, Option<String>, String, String, i64, i64)> = sqlx::query_as(
+        "SELECT mode, permission_mode, allowed_actions, denied_actions,
                     max_actions_per_run, max_actions_per_hour
              FROM workspace_autonomy_policy WHERE workspace_id = ?",
     )
@@ -27,18 +27,18 @@ pub(crate) async fn load_autonomy(pool: &SqlitePool, workspace_id: &str) -> Resu
     .fetch_optional(pool)
     .await?;
 
-    let Some((mode, allowed, denied, max_run, max_hour)) = row else {
+    let Some((mode, persisted_mode, allowed, denied, max_run, max_hour)) = row else {
         return Ok(None);
     };
-    // Legacy three-state mode maps onto a permission mode. `off`/`diagnose`
-    // both mean "no autonomous writes"; `act` maps to Ask (never FullAccess).
-    // Unknown values fail closed to ReadOnly (the CHECK constraint should
-    // make that unreachable).
-    let permission_mode = match mode.to_ascii_lowercase().as_str() {
-        "act" => PermissionMode::Ask,
-        "diagnose" | "off" => PermissionMode::ReadOnly,
-        _ => PermissionMode::ReadOnly,
-    };
+    // Prefer the new column; fall back to the legacy three-state mode for
+    // rows written before the permission_mode migration.
+    let permission_mode = persisted_mode
+        .as_deref()
+        .and_then(PermissionMode::parse)
+        .unwrap_or_else(|| match mode.to_ascii_lowercase().as_str() {
+            "act" => PermissionMode::Ask,
+            _ => PermissionMode::ReadOnly,
+        });
     Ok(Some(AutonomyPolicy {
         permission_mode,
         allowed_actions: serde_json::from_str(&allowed)?,
@@ -56,11 +56,12 @@ pub(crate) async fn save_autonomy(
 ) -> Result<()> {
     sqlx::query(
         "INSERT INTO workspace_autonomy_policy
-                 (workspace_id, mode, allowed_actions, denied_actions,
+                 (workspace_id, mode, permission_mode, allowed_actions, denied_actions,
                   max_actions_per_run, max_actions_per_hour, updated_by, updated_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'))
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
              ON CONFLICT(workspace_id) DO UPDATE SET
                  mode = excluded.mode,
+                 permission_mode = excluded.permission_mode,
                  allowed_actions = excluded.allowed_actions,
                  denied_actions = excluded.denied_actions,
                  max_actions_per_run = excluded.max_actions_per_run,
@@ -73,6 +74,7 @@ pub(crate) async fn save_autonomy(
     // (`off`/`diagnose`/`act`) for one version. Ask -> act, ReadOnly ->
     // diagnose; FullAccess is session-only and persists as act (never widens).
     .bind(legacy_mode(policy.permission_mode))
+    .bind(policy.permission_mode.as_str())
     .bind(serde_json::to_string(&policy.allowed_actions)?)
     .bind(serde_json::to_string(&policy.denied_actions)?)
     .bind(policy.max_actions_per_run as i64)

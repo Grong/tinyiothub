@@ -247,7 +247,7 @@ pub async fn ack_run(
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PolicyView {
-    /// `read_only` | `ask`（`full_access` 仅会话级，工作区策略拒绝）。
+    /// `read_only` | `ask` | `full_access`。
     /// 一版兼容：旧 body 的 `mode` 字段仍被接受（alias）。
     #[serde(alias = "mode")]
     pub permission_mode: String,
@@ -274,11 +274,11 @@ fn default_max_actions_per_hour() -> u32 {
 }
 
 impl PolicyView {
-    /// 无持久化行时的默认视图：没有策略行时 gate 拒绝一切写动作，
-    /// 因此对外的等价权限是 `read_only`。
-    fn default_read_only() -> Self {
+    /// 无持久化行时的默认视图：默认审批。真正执行时没有策略行仍按
+    /// fail-closed 处理，但 UI 不再把缺省误报为只读。
+    fn default_ask() -> Self {
         Self {
-            permission_mode: PermissionMode::ReadOnly.as_str().to_string(),
+            permission_mode: PermissionMode::Ask.as_str().to_string(),
             allowed_actions: vec!["*".to_string()],
             denied_actions: vec![],
             max_actions_per_run: 3,
@@ -308,7 +308,7 @@ pub async fn get_policy(
 
     match state.db.load_autonomy_policy(&workspace_id).await {
         Ok(Some(policy)) => ApiResponseBuilder::success(PolicyView::from(policy)),
-        Ok(None) => ApiResponseBuilder::success(PolicyView::default_read_only()),
+        Ok(None) => ApiResponseBuilder::success(PolicyView::default_ask()),
         Err(e) => {
             tracing::error!(%workspace_id, "Failed to load autonomy policy: {}", e);
             ApiResponseBuilder::error("读取策略失败")
@@ -336,14 +336,9 @@ pub async fn update_policy(
     let Some(permission_mode) = PermissionMode::parse(normalized) else {
         return ApiResponseBuilder::error_with_code(
             400,
-            "无效的 permissionMode，可选: read_only / ask（兼容旧 act/diagnose/off）",
+            "无效的 permissionMode，可选: read_only / ask / full_access（兼容旧 act/diagnose/off）",
         );
     };
-    // `full_access` is session-explicit only; a workspace policy must never
-    // grant it.
-    if permission_mode == PermissionMode::FullAccess {
-        return ApiResponseBuilder::error_with_code(400, "full_access 仅会话级可用");
-    }
     let policy = AutonomyPolicy {
         permission_mode,
         allowed_actions: req.allowed_actions,
