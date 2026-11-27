@@ -249,15 +249,15 @@ pub async fn ack_run(
 pub struct PolicyView {
     /// `read_only` | `ask` | `full_access`。
     /// 一版兼容：旧 body 的 `mode` 字段仍被接受（alias）。
-    #[serde(alias = "mode")]
+    #[serde(alias = "mode", alias = "permission_mode")]
     pub permission_mode: String,
-    #[serde(default = "default_allowed_actions")]
+    #[serde(default = "default_allowed_actions", alias = "allowed_actions")]
     pub allowed_actions: Vec<String>,
-    #[serde(default)]
+    #[serde(default, alias = "denied_actions")]
     pub denied_actions: Vec<String>,
-    #[serde(default = "default_max_actions_per_run")]
+    #[serde(default = "default_max_actions_per_run", alias = "max_actions_per_run")]
     pub max_actions_per_run: u32,
-    #[serde(default = "default_max_actions_per_hour")]
+    #[serde(default = "default_max_actions_per_hour", alias = "max_actions_per_hour")]
     pub max_actions_per_hour: u32,
 }
 
