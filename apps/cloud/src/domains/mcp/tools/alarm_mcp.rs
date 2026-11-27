@@ -178,10 +178,16 @@ impl ToolHandler for AlarmListHandler {
             if parsed.is_empty() { None } else { Some(parsed) }
         });
 
-        let statuses = input.statuses.as_ref().and_then(|s| {
-            let parsed: Vec<AlarmStatus> = s.iter().filter_map(|status| AlarmStatus::parse_str(status)).collect();
-            if parsed.is_empty() { None } else { Some(parsed) }
-        });
+        let statuses = input
+            .statuses
+            .as_ref()
+            .map(|s| {
+                s.iter()
+                    .filter_map(|status| AlarmStatus::parse_str(status))
+                    .collect::<Vec<_>>()
+            })
+            .filter(|statuses| !statuses.is_empty())
+            .or_else(|| Some(vec![AlarmStatus::Active, AlarmStatus::Acknowledged]));
 
         let criteria = AlarmQueryCriteria {
             workspace_id: Some(claims.workspace_id.clone()),
@@ -306,7 +312,15 @@ impl ToolHandler for AlarmAcknowledgeHandler {
                 input.note.map(|s| s.to_string()),
             )
             .await
-            .map_err(|e| ToolError::Internal(format!("Failed to acknowledge alarm: {}", e)))?;
+            .map_err(|e| match e {
+                crate::domains::alarm::AlarmError::NotFound(id) => {
+                    ToolError::NotFound(format!("Alarm not found: {id}"))
+                }
+                crate::domains::alarm::AlarmError::InvalidStatusTransition { .. } => {
+                    ToolError::InvalidParams(e.to_string())
+                }
+                _ => ToolError::Internal(format!("Failed to acknowledge alarm: {e}")),
+            })?;
 
         Ok(serde_json::json!({
             "success": true,
