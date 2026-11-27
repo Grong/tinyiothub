@@ -561,8 +561,19 @@ export class StoryView extends LitElement {
 
   private originLabel(): string {
     const origin = this.story.origin;
-    if (!origin) return '手动发起';
-    return STORY_ORIGIN_LABEL[origin] ?? origin;
+    if (origin) return STORY_ORIGIN_LABEL[origin] ?? origin;
+    // Trigger rows can sit just before the turn window. Fall back to the
+    // session kind instead of mislabeling an event wake as a manual run.
+    switch (this.currentSession()?.kind) {
+      case 'scheduled':
+        return '定时巡检';
+      case 'event':
+        return '事件触发';
+      case 'chat':
+        return '手动发起';
+      default:
+        return '事件触发';
+    }
   }
 
   private headline(): string {
@@ -993,7 +1004,9 @@ export class StoryView extends LitElement {
   private renderSection(section: StorySection, index: number) {
     const isLast = index === this.story.sections.length - 1;
     const isLatest = section.id === this.story.latestSectionId;
-    const origin = STORY_ORIGIN_LABEL[section.origin ?? ''] ?? '手动发起';
+    const origin = section.origin
+      ? (STORY_ORIGIN_LABEL[section.origin] ?? section.origin)
+      : this.originLabel();
     return html`
       <article
         class="story-chapter story-chapter--${section.status} ${
