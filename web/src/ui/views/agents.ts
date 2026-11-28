@@ -12,7 +12,7 @@ const panelLabels: Record<AgentsPanel, string> = {
   overview: "工作区设定",
   tools: "工具权限",
   skills: "技能",
-  permissions: "全局权限",
+  permissions: "权限与巡检",
 };
 
 @customElement("view-agents")

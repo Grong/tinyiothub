@@ -229,8 +229,9 @@ does not create a Prepared Effect. Confirmed actions do traverse
 state machine" as the target, not as a current invariant.
 
 `hub_ledger` (`runtime.v1`) remains telemetry: watch-rule, media-evidence and
-device-read facts only. No Task/Run/Job lifecycle may be written there — those
-are workspace Harness events. `scripts/guards/legacy-writers.sh` enforces the
+command-cancellation facts only. E3's property-change `state_change` rows were
+retired with the Flow/World workbench. No Task/Run/Job lifecycle may be written
+there — those are workspace Harness events. `scripts/guards/legacy-writers.sh` enforces the
 boundary with a production-scope scan. A lexical scanner masks strings, raw
 strings, char literals and comments, then skips every `#[cfg(test)]` item or
 statement for its own scope: block items through their balanced braces,

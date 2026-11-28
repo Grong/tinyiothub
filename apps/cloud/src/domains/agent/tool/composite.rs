@@ -321,7 +321,16 @@ impl CompositeExecutor {
                     content: format!("Current value: {text}"),
                     format: TextFormat::Plain,
                 }],
-            );
+            )
+            .with_metadata(
+                "property_name".to_string(),
+                serde_json::Value::String(prop.name.clone()),
+            )
+            .with_metadata(
+                "property_display_name".to_string(),
+                serde_json::Value::String(prop.display_name.clone().unwrap_or_else(|| prop.name.clone())),
+            )
+            .with_metadata("value".to_string(), serde_json::Value::String(text.clone()));
             let event = Event::new_property_change_event(thing_id.to_string(), prop.id.clone(), source, content)
                 .map_err(|e| e.to_string())?;
             event_bus.publish(event).await.map_err(|e| e.to_string())?;

@@ -1,15 +1,18 @@
 ---
 name: device-management
 title: 设备管理
-description: 查看设备清单和状态，读写设备属性并执行设备动作。
-version: "1"
+description: 设备读取与写入的唯一入口：清单、档案、属性读写、设备动作和动作链。写操作服从审批与回读验证。
+version: "2"
 trigger: /device-management
 inject: index
+builtin: "3"
 ---
 
 # 设备管理 (Device Management)
 
 管理和操作 IoT 设备：查看设备清单、读取状态、属性读写、执行设备动作。
+
+本技能是设备读写的唯一入口；告警查询用 `alarm-management`，根因分析用 `troubleshooting`，可视化用 `visualization`。
 
 ## 可用工具
 
@@ -30,6 +33,7 @@ inject: index
 - "有哪些设备在线？" → `list_devices` 列出设备并统计在线状态
 - "传感器 A 的温度是多少？" → `list_devices` 找到设备 → `get_device_profile`（档案里已含当前值）或 `read_device(properties=["温度"])`
 - "设备 B 的详细信息 / 手册 / 怎么巡检 / 告警怎么处理" → `get_device_profile` 一次取回属性、动作和知识文档，不要逐属性读取
+- "看一下摄像头画面 / 拍照" → `call_device(thingId, action="snapshot")`（返回图片证据）
 - "3 号楼有哪些设备？" → `get_thing_tree` 或 `list_devices` 按区域过滤
 
 ### 控制设备

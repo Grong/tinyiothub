@@ -142,13 +142,8 @@ pub struct AppState {
     /// AI subsystem orchestrator (set during async startup)
     pub orchestrator: Option<Arc<crate::domains::agent::orchestrator::Orchestrator>>,
 
-    /// 统一循环 heartbeat 最近 tick 完成时间表（Task 12 透出，T13 bootstrap
-    /// 注入同一张表）——get_config 的 last_tick 唯一读源（T15 起）。
-    pub heartbeat_last_ticks: Option<Arc<dashmap::DashMap<String, chrono::DateTime<chrono::Utc>>>>,
-
-    /// 统一循环管理器（T13 bootstrap 装配注入）——heartbeat handler 的
-    /// enabled/interval/trust/tasks 读写源（T15 起唯一）。
-    /// None = AI 子系统未接线（测试/降级路径），handler 返回 503。
+    /// 统一循环管理器（T13 bootstrap 装配注入）。
+    /// None = AI 子系统未接线（测试/降级路径），相关端点返回 503。
     pub thing_agents: Option<Arc<crate::domains::agent::thing_agent::ThingAgentManager>>,
 
     /// Agent MemoryService（set during async startup）—— Task 6 起由 cloud 侧
@@ -589,7 +584,6 @@ impl AppState {
             suppression_ops: None,
             suppression_gate_allow_synthetic: false,
             orchestrator: None,
-            heartbeat_last_ticks: None,
             thing_agents: None, // T13 bootstrap 装配时注入
             memory_service: None,
             user_service,
@@ -1103,7 +1097,6 @@ impl axum::extract::FromRef<AppState> for crate::domains::agent::AgentState {
             workspace_access: state.workspace_access.clone(),
             directive_sink: state.directive_sink.clone(),
             active_runs: state.active_runs.clone(),
-            heartbeat_last_ticks: state.heartbeat_last_ticks.clone(),
             thing_agents: state.thing_agents.clone(),
             orchestrator: state.orchestrator.clone(),
             memory_service: state.memory_service.clone(),

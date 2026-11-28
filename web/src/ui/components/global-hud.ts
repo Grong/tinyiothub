@@ -16,6 +16,7 @@ const EVENT_LABEL: Record<string, string> = {
   'tool/call': '调用工具',
   'tool/result': '工具返回',
   'skill/loaded': '载入技能',
+  'skill/completed': '结算技能',
   'todo/write': '计划更新',
   'question/asked': '向你提问',
   'approval/requested': '请求审批',

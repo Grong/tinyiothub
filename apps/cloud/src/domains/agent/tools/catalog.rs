@@ -264,6 +264,33 @@ pub const TOOL_CATALOG: &[ToolCatalogEntry] = &[
         danger: false,
         visible: true,
     },
+    ToolCatalogEntry {
+        name: "complete_skill",
+        aliases: &[],
+        view_key: "skill.complete",
+        label: "结算技能",
+        group: "workflow",
+        group_label: "工作流",
+        description: "结算当前技能并加载下一个",
+        danger: false,
+        visible: true,
+    },
+];
+
+/// 平台扩展平面（MCP registry，见 `domains/mcp/tools/`）的模型可见工具名。
+/// 这些工具不属静态目录，是否可用取决于当前工作区工具列表；技能正文引用它们时
+/// 必须写明"仅在当前工具列表提供时可用"。
+pub const PLATFORM_PLANE_TOOLS: &[&str] = &[
+    "alarm_list",
+    "alarm_acknowledge",
+    "alarm_rule_add",
+    "list_drivers",
+    "test_driver",
+    "list_schedules",
+    "create_schedule",
+    "update_schedule",
+    "delete_schedule",
+    "search_workspace_resources",
 ];
 
 pub fn catalog_entry(name: &str) -> Option<&'static ToolCatalogEntry> {

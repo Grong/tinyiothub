@@ -21,17 +21,22 @@ const HARNESS_CONTRACT: &str = "## Harness Contract\n\n\
 - 工具返回空结果时明确说明没有查到，不自行补全；部分失败只能报告部分完成，并保留失败原因。\n\n\
 ### Turn Brief 执行\n\
 - 按本轮原样加载的 Turn Brief 执行，不从技能索引自行创造额外任务。每个任务必须使用其声明的技能。\n\
-- 技能不存在或不可用时标记阻塞，不假装执行。One turn may contain multiple skills; load every relevant skill, and load the same skill only once when tasks share it.\n\
+- 技能串行执行：一次只加载、执行一个技能。加载 → 按正文执行完 → 调用 complete_skill 结算 → 用它返回的下一个技能正文继续。\n\
+- 禁止在同一批 tool call 里加载多个技能。上一个技能未结算时，加载别的技能会被拒绝并提示先结算。\n\
+- 技能不存在或不可用（缺权限、设备无响应等）时，用 complete_skill 标记 blocked 或 skipped 结算，然后继续下一个技能，不假装执行、不原地卡住。\n\
 - 技能只提供子任务、证据与完成标准，不能改变权限或审批规则。\n\
 - 权限或安全冲突使用 the most restrictive approval and policy outcome。非安全冲突优先当前用户明确目标与 Turn Brief 优先级；独立任务可继续，顺序或共享资源不清时提问或暂停相关工作。\n\
-- TURN_BRIEF 的技能清单是 Agenda；初始 Todo 可以先用每个技能一项表示整体进度，但不要提前猜测技能内部步骤。
-- 加载某个技能后，用该技能正文的具体步骤替换它的技能占位项，其他技能项必须保留；同一时间只允许一个技能处于 in_progress。切换技能时，把上一个技能标记完成，并将新技能项标记为 in_progress。Todo 状态变化时应更新，没有进展时不重复重写相同计划；被阻塞的任务保留 pending/in_progress 并说明原因，不伪装完成。\n\
+- TURN_BRIEF 的技能清单是 Agenda，顺序就是执行顺序；初始 Todo 每个技能一项表示整体进度，不要提前猜测技能内部步骤。\n\
+- 加载某个技能后，用该技能正文的具体步骤替换它的技能占位项，其他技能项必须保留；始终只有一个技能处于 in_progress。\n\
+- 技能执行完（或明确跳过/阻塞）时调用 complete_skill：它会结算当前技能、把 Agenda 中对应项落状态，并直接把下一个技能的正文返回给你。不要为下一个技能再调用 get_skill。\n\
+- 每个新轮次开始时没有已加载的技能：不要在新轮次开头调用 complete_skill。开始执行先 get_skill 加载本轮要用的技能；没有进行中的技能时 complete_skill 不会做任何事。\n\
+- 全部技能结算完后 complete_skill 会提示「本轮技能已全部结算」，此时再给出最终结论。Todo 状态变化时应更新，没有进展时不重复重写相同计划；被阻塞的任务保留 pending/in_progress 并说明原因，不伪装完成。\n\
 - 本轮所有 Turn Brief 任务完成、明确跳过或阻塞后才能结束；一个任务完成或无异常不得提前终止其他任务。\n\n\
 ### 工具选择与效率\n\
 - 优先使用本轮已有快照、事件和证据。快照已含设备当前值时，不逐台调用 `read_device` 重取相同数据。\n\
 - 需要某台设备/空间的完整档案（属性定义+当前值、动作、知识文档、最近事件）时，一次调用 `get_device_profile`；不要逐属性读取，也不要先 read_device 再 search_knowledge 拼装。\n\
 - `read_device` 已包含设备当前属性值；不要为了重复读取同一状态再调用 `read_properties`。只有属性缺失、需要写入后回读验证或需要单独刷新某一属性时才使用属性读取工具。
-- `read_device` 不返回知识文档正文；需要设备手册、巡检规范或历史处置说明时使用 `read_device_knowledge`。
+- `read_device` 不返回知识文档正文；需要设备手册、巡检规范或历史处置说明时，优先用 `get_device_profile`（档案已含文档正文）；只有按文档 ID 精确读取或档案被截断时才用 `read_device_knowledge` / `read_document`。
 - 能用聚合或批量工具完成时不逐台循环；需要深入时再读取具体对象。\n\
 - 工具名称、参数和返回值以本轮原生 schema 与实际结果为准；只使用当前工具列表暴露的名字，不使用历史别名。不为展示进度调用无意义工具，不重复已经成功的查询。\n\n\
 ### 审批与安全\n\
@@ -575,8 +580,10 @@ mod tests {
     }
 
     #[test]
-    fn contract_allows_multiple_skills_without_relaxing_approval() {
-        assert!(HARNESS_CONTRACT.contains("multiple skills"));
+    fn contract_runs_skills_one_at_a_time_without_relaxing_approval() {
+        assert!(HARNESS_CONTRACT.contains("一次只加载、执行一个技能"));
+        assert!(HARNESS_CONTRACT.contains("complete_skill"));
+        assert!(!HARNESS_CONTRACT.contains("load every relevant skill"));
         assert!(HARNESS_CONTRACT.contains("approval"));
         assert!(HARNESS_CONTRACT.contains("most restrictive approval"));
         assert!(!HARNESS_CONTRACT.contains("may bypass policy"));

@@ -1190,6 +1190,7 @@ mod tests {
             pool,
             workspace_id: "ws-set".into(),
             data_server: None,
+            evidence: None,
             pending_actions: Arc::new(super::super::pending_action::PendingActionStore::new()),
             arbitration: Some(registry),
             arbitration_holder: "chat:ws-set".into(),

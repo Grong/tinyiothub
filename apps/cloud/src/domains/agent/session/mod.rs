@@ -26,11 +26,12 @@ pub mod index;
 pub mod judge;
 pub mod notify;
 pub mod persist;
-pub mod pool_adapter;
+
 pub mod ports;
 pub mod projection;
 pub mod questions;
 pub mod runner;
+pub mod skill_sequencer;
 pub mod skills_seed;
 pub mod subagent;
 pub mod suppression;
@@ -52,7 +53,10 @@ pub use context::*;
 pub use events::*;
 pub use questions::QuestionBroker;
 pub use runner::{SessionRunner, TurnObserver, TurnOutcome};
-pub use skills_seed::ensure_inspection_skill;
+pub use skill_sequencer::{SkillEntry, SkillOutcome, SkillSequencer};
+pub use skills_seed::{
+    ensure_builtin_skills, ensure_global_skills, ensure_inspection_skill, ensure_video_inspection_skill,
+};
 pub use subagent::{SubagentReport, SubagentRequest, SubagentRunner, SubagentSlot, SubagentStatus};
 pub use todos::TodoStore;
 pub use tool_guard::{APPROVAL_TIMEOUT, PermissionGuardTool};
@@ -73,6 +77,7 @@ pub struct SessionRuntime {
     pub questions: Arc<QuestionBroker>,
     pub approvals: Arc<ApprovalBroker>,
     pub subagents: Arc<SubagentSlot>,
+    pub skills: Arc<SkillSequencer>,
     pub runner: Arc<SessionRunner>,
     pub live: Arc<SessionLiveHub>,
     pub system_prompts: Arc<tinyiothub_core::config::SystemPromptsConfig>,
@@ -87,7 +92,12 @@ impl SessionRuntime {
         let questions = Arc::new(QuestionBroker::default());
         let approvals = Arc::new(ApprovalBroker::default());
         let subagents = Arc::new(SubagentSlot::default());
-        let runner = Arc::new(SessionRunner::new(events.clone(), contexts.clone()).with_todos(todos.clone()));
+        let skills = Arc::new(SkillSequencer::new());
+        let runner = Arc::new(
+            SessionRunner::new(events.clone(), contexts.clone())
+                .with_todos(todos.clone())
+                .with_skills(skills.clone()),
+        );
         Self {
             events,
             contexts,
@@ -95,6 +105,7 @@ impl SessionRuntime {
             questions,
             approvals,
             subagents,
+            skills,
             runner,
             live,
             system_prompts: Arc::new(tinyiothub_core::config::SystemPromptsConfig::default()),

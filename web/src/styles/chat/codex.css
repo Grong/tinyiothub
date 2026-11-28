@@ -381,6 +381,24 @@ details[open] > .activity__summary::after {
   display: none;
 }
 
+.activity__thumb {
+  display: block;
+  flex: none;
+  width: 42px;
+  height: 28px;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+}
+
+.activity__thumb .evidence-image {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
 .activity__icon {
   width: 16px;
   flex: none;
@@ -419,6 +437,36 @@ details[open] > .activity__summary::after {
 
 .activity--done {
   color: var(--ok);
+}
+
+.activity__images {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: var(--space-2);
+  margin-bottom: var(--space-3);
+}
+
+.activity__image {
+  margin: 0;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface-2);
+}
+
+.activity__image evidence-image,
+.activity__image .evidence-image {
+  display: block;
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  object-fit: cover;
+}
+
+.activity__image figcaption {
+  padding: 6px 8px;
+  color: var(--muted-foreground);
+  font-size: 11px;
+  line-height: 1.3;
 }
 
 .activity__detail {

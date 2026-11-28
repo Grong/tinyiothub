@@ -5,9 +5,6 @@
 //! `AlarmAiPublisher` so the alarm crate never names agent types. The
 //! `AlarmEvent` payload is shared via the event crate (P4-Task22), so no
 //! field mapping is needed here.
-//!
-//! (The AgentPool -> AgentPoolLike half of the old ai_adapter moved into the
-//! agent crate as `host::pool_adapter::HostAgentPoolAdapter` in P4-Task22.)
 
 use std::sync::Arc;
 

@@ -18,6 +18,11 @@ import {
   type SessionEvent,
   type SessionSummary,
 } from '../../api/assistant.js';
+import {
+  SESSION_KIND_LABEL,
+  formatSessionTime,
+  pickDefaultSession,
+} from '../story/story-session.js';
 import { getWorkspaceId } from '../../api/client.js';
 import { brainEventApi, type BrainEvent, type BrainEventsSummary } from '../../api/brain-events.js';
 import { TimelineModel } from '../chat/timeline-model.js';
@@ -45,6 +50,7 @@ import '../chat/question-card.js';
 import '../tool-views/skill-view.js';
 import '../story/device-deck.js';
 import '../story/vision-deck.js';
+import '../story/evidence-image.js';
 import '../../styles/views/story.css';
 
 const MAX_HISTORY_STEPS = 1200;
@@ -56,11 +62,7 @@ const STORY_SESSION_MANUAL = 'tinyiothub_story_session_manual';
 
 const GENERIC_TITLES = new Set(['巡检', '对话', '事件处置', '本班', '日常巡检']);
 
-const KIND_LABEL: Record<string, string> = {
-  chat: '对话',
-  scheduled: '巡检',
-  event: '事件处置',
-};
+const KIND_LABEL = SESSION_KIND_LABEL;
 
 const SECTION_STATUS: Record<string, string> = {
   running: '进行中',
@@ -95,29 +97,11 @@ const ASSISTANT_STATUS: Record<string, string> = {
   error: '异常',
 };
 
-function formatSessionTime(ms: number): string {
-  const date = new Date(ms);
-  if (!Number.isFinite(date.getTime())) return '—';
-  const clock = date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false });
-  return `${date.getMonth() + 1}月${date.getDate()}日 ${clock}`;
-}
-
 function clampText(value: string, max: number): string {
   const text = value.replace(/\s+/g, ' ').trim();
   return text.length > max ? `${text.slice(0, max)}…` : text;
 }
 
-/** 默认记录：最近更新的会话；更新时间相同才优先 active。 */
-export function pickDefaultSession(sessions: SessionSummary[]): SessionSummary | null {
-  if (sessions.length === 0) return null;
-  const scheduled = sessions.filter((session) => session.kind === 'scheduled');
-  const candidates = scheduled.length > 0 ? scheduled : sessions;
-  return [...candidates].sort(
-    (left, right) =>
-      right.updatedAt - left.updatedAt ||
-      (right.status === 'active' ? 1 : 0) - (left.status === 'active' ? 1 : 0),
-  )[0];
-}
 
 @customElement('view-story')
 export class StoryView extends LitElement {
@@ -876,7 +860,7 @@ export class StoryView extends LitElement {
           <div class="story-hero__stat"><strong>${stats.actions}</strong><span>次处置</span></div>
           ${
             needs > 0
-              ? html`<a class="story-hero__needs" href="/dispositions">${needs} 件等你确认</a>`
+              ? html`<a class="story-hero__needs" href="/chat">${needs} 件等你确认</a>`
               : nothing
           }
         </div>
@@ -1107,6 +1091,9 @@ export class StoryView extends LitElement {
   }
 
   private renderStep(step: StoryStep) {
+    const stepVisions = step.visionIds
+      .map((evidenceId) => this.story.vision.find((vision) => vision.evidenceId === evidenceId))
+      .filter((vision): vision is NonNullable<typeof vision> => Boolean(vision));
     return html`
       <details class="story-step story-step--${step.tone} story-step--${step.status}">
         <summary class="story-step__line">
@@ -1131,6 +1118,22 @@ export class StoryView extends LitElement {
         </summary>
         <div class="story-step__expand">
           ${step.detail ? html`<p class="story-step__detail">${step.detail}</p>` : nothing}
+          ${
+            stepVisions.length > 0
+              ? html`<div class="story-step__images">
+                  ${stepVisions.slice(0, 3).map(
+                    (vision) => html`<figure class="story-step__image">
+                      <evidence-image
+                        .evidenceId=${vision.evidenceId}
+                        .workspaceId=${this.workspaceId}
+                        .alt=${`${vision.deviceName} ${vision.caption}`}
+                      ></evidence-image>
+                      <figcaption>${vision.caption}</figcaption>
+                    </figure>`,
+                  )}
+                </div>`
+              : nothing
+          }
           ${
             step.skill
               ? html`<skill-view

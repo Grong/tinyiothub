@@ -102,10 +102,6 @@ pub struct AgentSettings {
     pub memory_backend: String,
     #[serde(default = "default_agent_observer_backend")]
     pub observer_backend: String,
-    #[serde(default = "default_true")]
-    pub heartbeat_enabled: bool,
-    #[serde(default = "default_heartbeat_interval")]
-    pub heartbeat_interval_minutes: u32,
     #[serde(default = "default_max_messages_before_compact")]
     pub max_messages_before_compact: usize,
     #[serde(default = "default_true")]
@@ -119,8 +115,6 @@ impl Default for AgentSettings {
         Self {
             memory_backend: default_agent_memory_backend(),
             observer_backend: default_agent_observer_backend(),
-            heartbeat_enabled: true,
-            heartbeat_interval_minutes: default_heartbeat_interval(),
             max_messages_before_compact: default_max_messages_before_compact(),
             enable_compaction: true,
             system_prompts: SystemPromptsConfig::default(),
@@ -134,10 +128,6 @@ fn default_agent_memory_backend() -> String {
 
 fn default_agent_observer_backend() -> String {
     "log".to_string()
-}
-
-fn default_heartbeat_interval() -> u32 {
-    30
 }
 
 fn default_max_messages_before_compact() -> usize {

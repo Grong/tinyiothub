@@ -22,12 +22,6 @@ pub struct WorkspaceHeartbeatConfig {
     /// 报警；Critical/Error 永不抑制）。旧行无此字段 → annotate（保守默认）。
     #[serde(default = "default_triage_mode")]
     pub triage_mode: String,
-    /// E1 同键限速覆盖（spec §3：`workspaces.heartbeat_config` JSON 加键
-    /// `rate_limit_per_key_per_min`，复用配置先例）：每 dedup_key 每分钟最多
-    /// N 次唤醒；None = 缺省 3（scheduler DEFAULT_RATE_LIMIT_PER_MIN）。
-    /// 旧行无此字段 → None。
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub rate_limit_per_key_per_min: Option<u32>,
 }
 
 fn default_ai_triage_enabled() -> bool {
@@ -51,7 +45,6 @@ impl WorkspaceHeartbeatConfig {
             interval_minutes,
             ai_triage_enabled: true,
             triage_mode: default_triage_mode(),
-            rate_limit_per_key_per_min: None,
         })
     }
 
@@ -619,31 +612,6 @@ impl Db {
     pub async fn insert_heartbeat_result(&self, workspace_id: &str, result: &HeartbeatResult) -> Result<(), RepoError> {
         insert_result(self.pool(), workspace_id, result).await
     }
-
-    /// persist 心跳支路（Task 8）：统一 Run 路径的提案落 agent_actions，
-    /// tick_id 位写 run_id（C3 联结，提案可回溯到产生它的 run）。
-    /// problem_key 就地刷新语义与 insert_heartbeat_result 同一家
-    /// （[`upsert_proposal_rows`]）。
-    pub async fn upsert_heartbeat_proposals(
-        &self,
-        workspace_id: &str,
-        agent_id: &str,
-        proposals: &[Proposal],
-        tick_id: Option<&str>,
-    ) -> Result<(), RepoError> {
-        if proposals.is_empty() {
-            return Ok(());
-        }
-        let now = chrono::Utc::now().format("%Y-%m-%d %H:%M:%S").to_string();
-        let mut tx = self
-            .pool()
-            .begin()
-            .await
-            .map_err(|e| RepoError::Database(e.to_string()))?;
-        upsert_proposal_rows(&mut tx, workspace_id, agent_id, proposals, tick_id, &now).await?;
-        tx.commit().await.map_err(|e| RepoError::Database(e.to_string()))?;
-        Ok(())
-    }
 }
 
 pub(crate) async fn insert_action_row(
@@ -751,7 +719,6 @@ mod tests {
             interval_minutes: 30,
             ai_triage_enabled: true,
             triage_mode: default_triage_mode(),
-            rate_limit_per_key_per_min: None,
         };
         let json = cfg.to_db_json();
         let loaded = WorkspaceHeartbeatConfig::from_db_json(Some(&json)).expect("parse");
@@ -1042,7 +1009,6 @@ mod tests {
             interval_minutes: 30,
             ai_triage_enabled: true,
             triage_mode: default_triage_mode(),
-            rate_limit_per_key_per_min: None,
         };
         db.save_heartbeat_config("ws_c", &cfg).await.expect("save");
         let loaded = db

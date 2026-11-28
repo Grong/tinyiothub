@@ -15,7 +15,7 @@ use serde_json::Value;
 pub use tinyiothub_core::cron::{ExecutionResult, ExecutorError, JobExecutor};
 use tinyiothub_core::models::cron_job::CronJob;
 
-use crate::ports::{ApprovalTimeoutStore, EventRetentionStore, ThingCommandQueries};
+use crate::ports::{ApprovalTimeoutStore, EventRetentionStore, HubLedgerRetentionStore, ThingCommandQueries};
 
 /// Executes device commands via DataServer.
 pub struct ThingCommandExecutor {
@@ -129,6 +129,58 @@ impl JobExecutor for EventRetentionExecutor {
             status: "success".to_string(),
             output: Some(format!(
                 "deleted {} occurrence-type events older than {} days",
+                deleted, retention_days
+            )),
+            error_message: None,
+            duration_ms,
+        })
+    }
+}
+
+/// Deletes `hub_ledger` telemetry older than `retention_days`.
+///
+/// E3 was retired, so `state_change` rows are no longer written; the ledger
+/// keeps watch/cancel/media facts only. This sweep bounds that audit tail.
+pub struct HubLedgerRetentionExecutor {
+    store: Arc<dyn HubLedgerRetentionStore>,
+}
+
+impl HubLedgerRetentionExecutor {
+    pub fn new(store: Arc<dyn HubLedgerRetentionStore>) -> Self {
+        Self { store }
+    }
+}
+
+#[async_trait]
+impl JobExecutor for HubLedgerRetentionExecutor {
+    fn can_handle(&self, job_type: &str) -> bool {
+        job_type == "hub_ledger_retention"
+    }
+
+    async fn execute(&self, job: &CronJob, _run_id: &str) -> std::result::Result<ExecutionResult, ExecutorError> {
+        let start = Instant::now();
+
+        let config: Value =
+            serde_json::from_str(&job.config).map_err(|e| ExecutorError::InvalidConfig(e.to_string()))?;
+        let retention_days = config
+            .get("retention_days")
+            .and_then(|v| v.as_i64())
+            .unwrap_or(30)
+            .clamp(1, 3650);
+        let cutoff = chrono::Utc::now() - chrono::Duration::days(retention_days);
+
+        let deleted = self
+            .store
+            .delete_hub_ledger_before(&cutoff.to_rfc3339())
+            .await
+            .map_err(|e| ExecutorError::CommandFailed(format!("hub_ledger retention purge failed: {}", e)))?;
+        let duration_ms = start.elapsed().as_millis() as i64;
+        tracing::info!(deleted, retention_days, "hub_ledger retention purge complete");
+
+        Ok(ExecutionResult {
+            status: "success".to_string(),
+            output: Some(format!(
+                "deleted {} hub_ledger rows older than {} days",
                 deleted, retention_days
             )),
             error_message: None,

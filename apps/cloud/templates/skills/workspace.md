@@ -1,15 +1,19 @@
 ---
 name: workspace
-title: 工作空间
-description: 工作空间可视化：查找场景并推送 A2UI 卡片、表格和 3D 场景。
-version: "2.1"
+title: 工作台大屏
+description: 用户在工作台页面要求"综合情况 / 看楼层 / 看设备 / 看告警"时的固定剧本：找 3D 场景，推 Stage + Insight 双面板。组件字段见 visualization 技能。
+version: "3"
+trigger: /workspace
+inject: trigger
+builtin: "3"
 ---
 
 # Workspace Visualization — MANDATORY Workflow
 
-**This skill is a BLOCKING REQUIREMENT on the Workspace page.**
-You MUST complete ALL steps. The user can ONLY see A2UI components —
-text-only responses are INVISIBLE and useless here.
+**本技能只在工作台页面（用户在看可视化大屏）时使用。**
+在这里文本回复是看不见的，必须推送 A2UI 组件；但普通聊天里的图表需求用 `visualization` 技能，不要套用本剧本。
+
+组件 `dataModel` 字段以 `visualization` 技能为准；本技能只规定页面必须出现的面板、组件组合和数据来源。
 
 ## Step 1: Find Scene Resources (MANDATORY)
 
@@ -83,12 +87,12 @@ Query `read_device` for the device snapshot and live properties.
 {"createSurface":{"id":"scene","surfaceKind":"stage"}}
 {"updateComponents":{"surfaceId":"scene","components":[{"id":"s1","componentKind":"Scene3D","dataModel":{"modelUrl":"<FILE_PATH>"}}]}}
 {"createSurface":{"id":"data","surfaceKind":"insight"}}
-{"updateComponents":{"surfaceId":"data","components":[{"id":"d1","componentKind":"ThingCard","dataModel":{"thingId":"<thing_id>","name":"<name>","status":"<status>","properties":[{"key":"温度","value":"25","unit":"°C"},{"key":"湿度","value":"60","unit":"%"}]}},{"id":"d2","componentKind":"DataChart","dataModel":{"type":"line","labels":["10:00","11:00","12:00"],"data":[25,26,24]}}]}}
+{"updateComponents":{"surfaceId":"data","components":[{"id":"d1","componentKind":"ThingCard","dataModel":{"thingId":"<thing_id>","name":"<name>","status":"<status>","properties":[{"key":"温度","value":"25","unit":"°C"},{"key":"湿度","value":"60","unit":"%"}]}},{"id":"d2","componentKind":"DataChart","dataModel":{"title":"温度趋势","unit":"°C","series":[{"name":"温度","color":"#3b82f6","data":[{"time":"10:00","value":25},{"time":"11:00","value":26},{"time":"12:00","value":24}]}]}}]}}
 ```
 
 #### Scenario 4: Alarms / 告警
 
-Query `alarm_list`, then push stats + list:
+如当前工具列表提供告警查询工具，先查告警（未提供时跳过告警面板并说明），再推统计 + 列表：
 
 ```jsonl
 {"createSurface":{"id":"scene","surfaceKind":"stage"}}
@@ -114,9 +118,7 @@ Query `alarm_list`, then push stats + list:
 - jsonl format: each `createSurface` and `updateComponents` on its own line, valid JSON
 - Push both Stage AND Insight in a SINGLE `canvas` call (all 4 lines together)
 
-## Available A2UI Components
-
-### Stage (left panel — "WHERE")
+## Stage 组件（本页专用）
 
 | Component | dataModel |
 |-----------|----------|
@@ -124,18 +126,7 @@ Query `alarm_list`, then push stats + list:
 | `Image` | `{src: "<url>", alt: "<text>"}` |
 | `Text` | `{content: "<markdown>"}` — placeholder when no scene found |
 
-### Insight (right panel — "HOW MANY / WHAT STATE")
-
-| Component | dataModel |
-|-----------|----------|
-| `StatRow` | `{items: [{label, value, unit?}]}` — horizontal stat cards |
-| `StatCard` | `{label, value, unit?, icon?}` — single stat |
-| `ThingCard` | `{thingId, name, status, properties?: [{key, value, unit?}]}` |
-| `ThingTable` | `{columns: [string], rows: [[string]]}` |
-| `AlarmCard` | `{alarmId, severity, title, message, deviceName, timestamp}` |
-| `AlarmTable` | `{alarms: [{alarmId, severity, title, deviceName, timestamp}]}` |
-| `DataChart` | `{type: "bar"|"line"|"pie", data: [number], labels?: [string]}` |
-| `Text` | `{content: "<markdown>"}` |
+Insight 面板用的 `StatRow` / `StatCard` / `ThingCard` / `ThingTable` / `AlarmCard` / `AlarmTable` / `DataChart` 字段以 `visualization` 技能为准，不要自创字段（例如 `DataChart` 用 `series[{name,color,data[{time,value}]}]`，不是 `type/labels/data`）。
 
 ## Quick Reference
 

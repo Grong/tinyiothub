@@ -17,7 +17,7 @@ import type { TodoItem } from '../../api/assistant.js';
 import type { PendingQuestion, TimelineBlock } from '../chat/timeline-model.js';
 import { approvalCopy } from '../chat/approval-copy.js';
 import { skillDisplay } from '../chat/skill-copy.js';
-import { presentTool } from '../tool-views/registry.js';
+import { presentTool, toolToneOf, toolVerbOf } from '../tool-views/registry.js';
 import type { ToolDetail } from '../tool-views/types.js';
 
 export type StoryTone =
@@ -76,6 +76,12 @@ export interface StoryStep {
   tone: StoryTone;
   /** 原始工具名（展开时可看到，折叠行保持业务语言）。 */
   tool?: string;
+  /** 工具展示键；卡片视觉族由它决定，不在页面里按工具名分支。 */
+  viewKey?: string;
+  /** 调用参数（筛选条件/时间范围等），用于区分“结果一样但参数不同”的调用。 */
+  params?: ToolDetail[];
+  /** 参数指纹：判断连续调用是否完全一致。 */
+  argsKey?: string;
   deviceId?: string;
   visionIds: string[];
   /** 这一步发现的问题；无事发生则为空。 */
@@ -177,43 +183,6 @@ export interface StoryView {
   origin?: string;
 }
 
-interface ActionCopy {
-  verb: string;
-  tone: StoryTone;
-  icon: string;
-}
-
-/** 工具名 → 业务动作。只做“翻译”，不改变任何执行语义。 */
-const STORY_ACTION_COPY: Record<string, ActionCopy> = {
-  list_things: { verb: '梳理设备清单', tone: 'read', icon: '☷' },
-  list_devices: { verb: '梳理设备清单', tone: 'read', icon: '☷' },
-  search_things: { verb: '查找设备', tone: 'read', icon: '⌕' },
-  get_thing: { verb: '查看设备档案', tone: 'read', icon: '◎' },
-  get_thing_profile: { verb: '查看设备档案', tone: 'read', icon: '◎' },
-  read_device: { verb: '查看设备状态', tone: 'read', icon: '◎' },
-  read_property: { verb: '读取运行参数', tone: 'read', icon: '◫' },
-  read_properties: { verb: '读取运行参数', tone: 'read', icon: '◫' },
-  query_events: { verb: '回看设备事件', tone: 'read', icon: '◷' },
-  get_device_history: { verb: '回看历史数据', tone: 'read', icon: '◷' },
-  query_data: { verb: '查询运行数据', tone: 'read', icon: '⌕' },
-  aggregate_data: { verb: '汇总运行数据', tone: 'read', icon: 'Σ' },
-  alarm_list: { verb: '检查告警', tone: 'alarm', icon: '⚠' },
-  list_alarms: { verb: '检查告警', tone: 'alarm', icon: '⚠' },
-  acknowledge_alarm: { verb: '确认告警', tone: 'write', icon: '✓' },
-  resolve_alarm: { verb: '解除告警', tone: 'write', icon: '✓' },
-  invoke_action: { verb: '执行设备操作', tone: 'write', icon: '▸' },
-  call_device: { verb: '执行设备操作', tone: 'write', icon: '▸' },
-  send_command: { verb: '下发设备命令', tone: 'write', icon: '▸' },
-  set_device: { verb: '调整设备设置', tone: 'write', icon: '✎' },
-  write_properties: { verb: '调整设备设置', tone: 'write', icon: '✎' },
-  todo_write: { verb: '更新工作计划', tone: 'plan', icon: '☑' },
-  update_todo: { verb: '更新工作计划', tone: 'plan', icon: '☑' },
-  ask_user: { verb: '请你决定', tone: 'ask', icon: '?' },
-  get_skill: { verb: '查阅作业规范', tone: 'skill', icon: '◆' },
-  read_document: { verb: '查阅运行手册', tone: 'skill', icon: '▤' },
-  search_knowledge: { verb: '查找知识资料', tone: 'skill', icon: '⌕' },
-  spawn_subagent: { verb: '安排专项分析', tone: 'analysis', icon: '⧉' },
-};
 
 /** 触发来源的业务文案。 */
 export const STORY_ORIGIN_LABEL: Record<string, string> = {
@@ -471,7 +440,11 @@ function visionOf(
   if (refs.length === 0) return [];
   const parsed = recordOf(parseJsonValue(part.result));
   const sources = Array.isArray(parsed?.sources) ? parsed.sources : [];
-  const analysis = firstString(parsed, ['analysis', 'verdict', 'finding', 'description']) || '';
+  const snapshot = recordOf(parsed?.snapshot);
+  const analysis =
+    firstString(parsed, ['analysis', 'verdict', 'finding', 'description']) ||
+    firstString(snapshot, ['analysis', 'finding']) ||
+    '';
   return refs.flatMap((raw) => {
     const reference = recordOf(raw);
     if (!reference) return [];
@@ -482,14 +455,15 @@ function visionOf(
       .find((entry) => entry && recordOf(entry.evidence)?.evidenceId === evidenceId);
     const sourceName =
       firstString(recordOf(sourceEntry?.evidence), ['source']) ||
-      firstString(sourceEntry, ['source']);
+      firstString(sourceEntry, ['source']) ||
+      firstString(snapshot, ['source']);
     return [
       {
         evidenceId,
         deviceId: device?.id ?? '',
         deviceName: device?.name ?? '现场设备',
         at: firstString(reference, ['mediaTime', 'media_time']) || part.at,
-        caption: sourceName ? `现场画面 · ${sourceName}` : '现场画面',
+        caption: sourceName === 'snapshot' ? '抓拍画面' : sourceName ? `现场画面 · ${sourceName}` : '现场画面',
         finding: analysis ? clampText(analysis, 100) : '',
         mime: firstString(reference, ['mime']) || 'image/jpeg',
       },
@@ -541,15 +515,23 @@ function planDiff(
   return { added, updated, removed, items };
 }
 
+/** 稳定的参数指纹：同样的筛选条件得到同样的 key。 */
+function stableArgs(value: unknown): string {
+  if (value === null || typeof value !== 'object') return JSON.stringify(value) ?? 'null';
+  if (Array.isArray(value)) return `[${value.map(stableArgs).join(',')}]`;
+  const record = value as Record<string, unknown>;
+  return `{${Object.keys(record)
+    .sort()
+    .map((key) => `${JSON.stringify(key)}:${stableArgs(record[key])}`)
+    .join(',')}}`;
+}
+
 function stepFromTool(
   part: Extract<TimelineBlock, { kind: 'tool' }>,
   device: StoryDevice | null,
 ): StoryStep {
-  const copy = STORY_ACTION_COPY[part.name] ?? {
-    verb: part.name,
-    tone: 'read' as StoryTone,
-    icon: '⚙',
-  };
+  const tone: StoryTone = toolToneOf(part.viewKey) ?? 'read';
+  const verb = toolVerbOf(part.viewKey) ?? part.name;
   const failed = part.status === 'failed';
   const status: StoryStepStatus = failed ? 'failed' : part.result ? 'done' : 'running';
   const presentation = presentTool({
@@ -564,12 +546,15 @@ function stepFromTool(
   const dedicated = presentation.viewKey !== 'generic';
   return {
     id: part.id,
-    title: dedicated ? presentation.title : device ? `${copy.verb}${deviceLabel(device)}` : presentation.title,
+    title: dedicated ? presentation.title : device ? `${verb}${deviceLabel(device)}` : verb,
     detail: presentation.summary,
     at: part.at,
     status,
-    tone: copy.tone,
+    tone,
     tool: part.name,
+    viewKey: part.viewKey,
+    params: presentation.params,
+    argsKey: stableArgs(part.args),
     deviceId: device?.id,
     visionIds: visionOf(part, device).map((item) => item.evidenceId),
     finding: findingOf(part, device),
@@ -725,6 +710,7 @@ export function buildStory(
           at: part.at,
           status: pending ? 'running' : answered ? 'done' : 'failed',
           tone: pending ? 'ask' : answered ? 'read' : 'alarm',
+          viewKey: 'interaction.ask',
           visionIds: [],
         });
         break;
@@ -740,6 +726,7 @@ export function buildStory(
           at: part.at,
           status: pending ? 'running' : 'done',
           tone: pending ? 'ask' : 'read',
+          viewKey: 'approval.request',
           visionIds: [],
         });
         break;
@@ -769,6 +756,7 @@ export function buildStory(
             status: part.status === 'failed' ? 'failed' : part.result ? 'done' : 'running',
             tone: 'plan',
             tool: part.name,
+            viewKey: 'todo.write',
             visionIds: [],
             planDiff: diff,
           });
@@ -797,6 +785,7 @@ export function buildStory(
           status: 'done',
           tone: 'skill',
           tool: 'get_skill',
+          viewKey: 'skill.load',
           visionIds: [],
           skill: { name: part.name, title: copy.title, description: copy.description },
         });
@@ -814,6 +803,7 @@ export function buildStory(
           status:
             part.status === 'failed' ? 'failed' : part.status === 'completed' ? 'done' : 'running',
           tone: 'analysis',
+          viewKey: 'subagent.spawn',
           visionIds: [],
         });
         break;
@@ -1013,11 +1003,6 @@ export function buildStory(
 }
 
 export const EMPTY_STORY: StoryView = buildStory([], []);
-
-/** 业务译文对外暴露，测试与页面标题共用同一份。 */
-export function storyActionCopy(name: string): ActionCopy {
-  return STORY_ACTION_COPY[name] ?? { verb: name, tone: 'read', icon: '⚙' };
-}
 
 /** 设备类型/健康的短标签（卡片与测试共用）。 */
 export function deviceTypeLabel(type: string): string {

@@ -155,42 +155,33 @@ describe("app navigation · assistant entry", () => {
   });
 });
 
-describe("app router · run 详情页 hash 路由（T13）", () => {
+describe("app router · 已下线 AI 页面重定向", () => {
   afterEach(() => {
     window.history.pushState({}, "", "/");
+    window.location.hash = "";
   });
 
-  it("#/ai-ops/runs/{id} 路由到 run-detail，id 容忍冒号（patrol:p1，T12 M-1 结转）", () => {
+  it("/dispositions 与 /ai-ops 都落到 AI 纪实", () => {
     window.history.pushState({}, "", "/dispositions");
-    window.location.hash = "#/ai-ops/runs/patrol:p1";
     const el = makeApp(true);
     el.handleRoute();
-    expect(el.currentRoute).toBe("run-detail");
-    expect(el.runDetailId).toBe("patrol:p1");
+    expect(el.currentRoute).toBe("story");
+    expect(window.location.pathname).toBe("/story");
   });
 
-  it("普通 runId（run-9）同样命中", () => {
-    window.history.pushState({}, "", "/dispositions");
-    window.location.hash = "#/ai-ops/runs/run-9";
+  it("旧 run 深链 hash 落到 AI 纪实且不循环", () => {
+    window.history.pushState({}, "", "/dashboard");
+    window.location.hash = "#/dispositions/runs/run-9";
     const el = makeApp(true);
     el.handleRoute();
-    expect(el.currentRoute).toBe("run-detail");
-    expect(el.runDetailId).toBe("run-9");
+    expect(el.currentRoute).toBe("story");
+    expect(window.location.pathname).toBe("/story");
   });
 
-  it("未登录访问 run 详情 → login", () => {
+  it("未登录访问旧页面 → login", () => {
     window.history.pushState({}, "", "/dispositions");
-    window.location.hash = "#/ai-ops/runs/run-9";
     const el = makeApp(false);
     el.handleRoute();
     expect(el.currentRoute).toBe("login");
-  });
-
-  it("非匹配 hash 不影响 pathname 路由", () => {
-    window.history.pushState({}, "", "/dashboard");
-    window.location.hash = "#/ai-ops";
-    const el = makeApp(true);
-    el.handleRoute();
-    expect(el.currentRoute).toBe("dashboard");
   });
 });

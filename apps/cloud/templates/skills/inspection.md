@@ -1,18 +1,19 @@
 ---
 name: inspection
-title: 巡检
-description: 检查离线设备和高优先级告警，生成设备状态摘要。
-version: "1"
+title: 设备巡检
+description: 按计划巡检：列出离线设备、扫描高优先级告警、生成状态摘要。只负责发现与报告，不展开根因诊断。
+version: "2"
 trigger: /inspection
 inject: index
+builtin: "3"
 ---
 
-# 巡检
+# 设备巡检
 
 ## 执行步骤
 
 1. 检查离线设备：列出离线超过阈值的设备，判断是否可自动重连。
-2. 扫描未处理的高优先级告警：按严重程度排序，给出处置建议。
+2. 扫描未处理的高优先级告警：一次告警查询就够（当页明细 + `summary.by_level` 数量），按严重程度排序取前几条；不要按等级拆成多次查询。
 3. 生成状态摘要：聚焦异常与离线设备，正常设备一行带过。
 
 ## 计划状态
@@ -24,11 +25,17 @@ inject: index
 
 ## 读取原则
 
-- `read_device` 已包含设备当前属性值，不要为了重复确认状态再调用 `read_properties`。
+- `read_device` 已包含设备当前属性值，不要为了重复确认状态再逐属性读取。
 - 只有属性缺失、需要写入后回读验证或需要单独刷新某一属性时，才读取单个属性。
-- 需要设备手册或巡检规范时，使用 `read_device_knowledge` 按设备读取，不要预期 `read_device` 返回文档正文。
+- 需要设备手册或巡检规范时，优先用 `get_device_profile` 一次取回（含文档正文）；只有按文档 ID 精确读取时才用 `read_device_knowledge`。
 
-## 注意事项
+## 工具边界
 
+- 本技能只用 `list_devices`、`read_device`、`get_device_profile`、`read_device_knowledge`、`get_thing_tree`、`query_events`、`todo_write`。
+- 告警查询工具属于平台扩展平面：仅在当前工具列表提供时可用；未提供时在报告中说明无法检查告警，不要假设工具名或编造结果。
+
+## 与其它技能的分工
+
+- 发现异常只给证据和初步建议；需要定位根因、给出分级修复方案时交给 `troubleshooting` 技能，不在本技能内多轮回溯。
 - 涉及写设备（重连、下发命令、改属性）必须先获得审批，不得自动执行。
 - 没有异常时简短说明即可，不要编造进度。

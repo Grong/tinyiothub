@@ -81,6 +81,13 @@ pub trait EventRetentionStore: Send + Sync {
     async fn delete_occurrence_events_before(&self, cutoff_rfc3339: &str) -> Result<u64, String>;
 }
 
+/// Hub-ledger telemetry retention (cron `hub_ledger_retention` executor).
+#[async_trait]
+pub trait HubLedgerRetentionStore: Send + Sync {
+    /// Delete `hub_ledger` rows older than `cutoff_rfc3339`. Returns rows deleted.
+    async fn delete_hub_ledger_before(&self, cutoff_rfc3339: &str) -> Result<u64, String>;
+}
+
 /// Approval-timeout escalations (cron `approval_timeout` executor, T6):
 /// awaiting_approval 超过 24h 的判断自动升级为工单（防"审批堆积"——设计
 /// 文档状态机）。返回升级的条数。

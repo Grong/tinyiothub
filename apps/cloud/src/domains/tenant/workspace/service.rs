@@ -112,12 +112,14 @@ impl WorkspaceService {
         self.db.find_workspace_resource(workspace_id, resource_id).await
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub async fn create_resource(
         &self,
         workspace_id: &str,
         resource_type: ResourceType,
         name: &str,
         description: Option<&str>,
+        content: Option<&str>,
         file_path: &str,
         tags: &[String],
         metadata: Option<&str>,
@@ -128,6 +130,7 @@ impl WorkspaceService {
                 resource_type,
                 name,
                 description,
+                content,
                 file_path,
                 tags,
                 metadata,
@@ -135,17 +138,19 @@ impl WorkspaceService {
             .await
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub async fn update_resource(
         &self,
         workspace_id: &str,
         resource_id: &str,
         name: Option<&str>,
         description: Option<&str>,
+        content: Option<&str>,
         tags: Option<&[String]>,
         metadata: Option<&str>,
     ) -> Result<Option<WorkspaceResource>> {
         self.db
-            .update_workspace_resource(workspace_id, resource_id, name, description, tags, metadata)
+            .update_workspace_resource(workspace_id, resource_id, name, description, content, tags, metadata)
             .await
     }
 

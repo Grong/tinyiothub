@@ -32,7 +32,9 @@ pub mod ports;
 pub mod watch;
 
 // Re-exports for convenience
-pub use cron_executors::{ApprovalTimeoutExecutor, EventRetentionExecutor, ThingCommandExecutor};
+pub use cron_executors::{
+    ApprovalTimeoutExecutor, EventRetentionExecutor, HubLedgerRetentionExecutor, ThingCommandExecutor,
+};
 pub use data_server::DataServer;
 pub use driver::{
     DriverWrapper, create_driver, driver_registry, get_all_driver_names, has_driver, registry::DriverRegistry,

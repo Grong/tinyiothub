@@ -2,20 +2,18 @@
  * brain-events API client 契约测试（X4）。
  *
  * 锁的是：端点路径/参数、camelCase 契约形状（learning: web-case-converter
- * 类型/运行时分叉教训）、unwrap 空响应报错、approve/reject 按 source 路由。
+ * 类型/运行时分叉教训）、unwrap 空响应报错、reject 路由。
  */
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("./client.js", () => ({
   apiGet: vi.fn(),
-  apiPost: vi.fn(),
-  getWorkspaceId: vi.fn(() => "ws-1"),
 }));
 vi.mock("./judgments.js", () => ({
   judgmentApi: { feedback: vi.fn(), reject: vi.fn() },
 }));
 
-import { apiGet, apiPost } from "./client.js";
+import { apiGet } from "./client.js";
 import { judgmentApi } from "./judgments.js";
 import { brainEventApi, type BrainEvent } from "./brain-events.js";
 
@@ -104,22 +102,9 @@ describe("brainEventApi.summary / detail", () => {
   });
 });
 
-describe("approve / reject 按 source 路由", () => {
-  it("alarm 判断执行已退役：approve 拒绝派发，reject 仍走 judgmentApi", async () => {
-    await expect(brainEventApi.approve(row)).rejects.toThrow(/已退役/);
-    expect(apiPost).not.toHaveBeenCalled();
+describe("reject 路由", () => {
+  it("alarm 源走 judgmentApi（patrol 提案审批已随 AI 工作台下线）", async () => {
     await brainEventApi.reject(row, "现在不能重启");
     expect(judgmentApi.reject).toHaveBeenCalledWith("j1", "现在不能重启");
-  });
-
-  it("patrol 源走 heartbeat approvals（reject 带原因 body，X2）", async () => {
-    const patrol: BrainEvent = { ...row, id: "patrol:p-9", source: "patrol" };
-    vi.mocked(apiPost).mockResolvedValue({ code: 0, msg: "ok", result: {} });
-    await brainEventApi.approve(patrol);
-    expect(apiPost).toHaveBeenCalledWith("/workspaces/ws-1/heartbeat/approvals/p-9/approve", {});
-    await brainEventApi.reject(patrol, "误报，无需处理");
-    expect(apiPost).toHaveBeenCalledWith("/workspaces/ws-1/heartbeat/approvals/p-9/reject", {
-      reason: "误报，无需处理",
-    });
   });
 });

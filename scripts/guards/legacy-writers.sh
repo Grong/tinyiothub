@@ -4,7 +4,7 @@
 # The Harness Core has one writer per fact:
 #   session_events / effect_intents / decisions / commands (workspace DB)
 #   task_wake_outbox / device_jobs projection (workspace DB)
-#   hub_ledger telemetry (platform DB; remains a pure telemetry ledger)
+#   hub_ledger telemetry (platform DB; watch/media/cancel only — E3 state_change retired)
 #
 # Task 19C4 retired the platform Task fact plane: the platform `agent_tasks`,
 # `task_wake_outbox`, `device_jobs`, and `task_approvals` tables have no

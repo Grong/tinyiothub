@@ -18,6 +18,7 @@ use tokio_util::sync::CancellationToken;
 use super::agenda::load_turn_agenda;
 use super::context::{TurnContext, TurnContextRegistry};
 use super::events::{SessionEventSink, session_event};
+use super::skill_sequencer::{SkillEntry, SkillOutcome, SkillSequencer};
 use super::suppression::audit::{WakeAttempt, attempt_event};
 use super::todos::TodoStore;
 use super::types::{Todo, TodoStatus};
@@ -190,6 +191,7 @@ pub struct SessionRunner {
     events: Arc<dyn SessionEventSink>,
     contexts: Arc<TurnContextRegistry>,
     todos: Option<Arc<TodoStore>>,
+    skills: Option<Arc<SkillSequencer>>,
 }
 
 /// Accumulates per-model-call usage into one `turn/end` payload.
@@ -236,6 +238,7 @@ impl SessionRunner {
             events,
             contexts,
             todos: None,
+            skills: None,
         }
     }
 
@@ -243,6 +246,12 @@ impl SessionRunner {
     /// finalize a turn whose plan still has pending work.
     pub fn with_todos(mut self, todos: Arc<TodoStore>) -> Self {
         self.todos = Some(todos);
+        self
+    }
+
+    /// 本轮技能顺序状态机：一次只允许一个技能，结算后自动推进到下一个。
+    pub fn with_skills(mut self, skills: Arc<SkillSequencer>) -> Self {
+        self.skills = Some(skills);
         self
     }
 
@@ -288,6 +297,15 @@ impl SessionRunner {
             health.failed += 1;
         }
         let agenda = load_turn_agenda(&context.workspace_id).await.unwrap_or_default();
+        if let Some(sequencer) = &self.skills {
+            sequencer.begin(
+                &context.session_key,
+                agenda
+                    .iter()
+                    .map(|item| SkillEntry::new(item.key.clone(), item.label.clone()))
+                    .collect(),
+            );
+        }
         if !agenda.is_empty() {
             let _ = self
                 .emit_turn_event(
@@ -329,6 +347,7 @@ impl SessionRunner {
             let observer = observer.clone();
             let events_for_agenda = self.events.clone();
             let agenda_context = context.clone();
+            let skills_for_agenda = self.skills.clone();
             #[allow(unused_assignments)]
             async move {
                 let mut agenda = agenda;
@@ -467,25 +486,25 @@ impl SessionRunner {
                                 open_step!();
                             }
                             tool_calls += 1;
-                            if let Some(key) = agenda_key(&args) {
-                                if let Some(index) = agenda.iter().position(|item| item.key == key) {
-                                    let changed = agenda[index].status != AgendaStatus::InProgress;
-                                    // Loading the next skill does not prove the previous skill's
-                                    // steps ran. Keep prior skills open until Todo completion or
-                                    // final settlement; otherwise agenda jumps to N/N at load time.
-                                    agenda[index].status = AgendaStatus::InProgress;
-                                    if changed {
-                                        let _ = events_for_agenda
-                                            .emit(session_event(
-                                                &agenda_context,
-                                                "agenda/update",
-                                                json!({
-                                                    "turnId": &agenda_context.turn_id,
-                                                    "items": &agenda,
-                                                }),
-                                            ))
-                                            .await;
-                                    }
+                            if let Some(key) = agenda_key(args)
+                                && let Some(index) = agenda.iter().position(|item| item.key == key)
+                            {
+                                let changed = agenda[index].status != AgendaStatus::InProgress;
+                                // Loading the next skill does not prove the previous skill's
+                                // steps ran. Keep prior skills open until Todo completion or
+                                // final settlement; otherwise agenda jumps to N/N at load time.
+                                agenda[index].status = AgendaStatus::InProgress;
+                                if changed {
+                                    let _ = events_for_agenda
+                                        .emit(session_event(
+                                            &agenda_context,
+                                            "agenda/update",
+                                            json!({
+                                                "turnId": &agenda_context.turn_id,
+                                                "items": &agenda,
+                                            }),
+                                        ))
+                                        .await;
                                 }
                             }
                             if events
@@ -533,6 +552,33 @@ impl SessionRunner {
                                 .is_err()
                             {
                                 failed += 1;
+                            }
+                            if name == "complete_skill"
+                                && let Some(sequencer) = &skills_for_agenda
+                                && let Some(done) = sequencer.last_finished(&context.session_key)
+                            {
+                                if let Some(index) = agenda.iter().position(|item| item.key == done.entry.key) {
+                                    agenda[index].status = match done.outcome {
+                                        SkillOutcome::Completed => AgendaStatus::Completed,
+                                        SkillOutcome::Skipped => AgendaStatus::Skipped,
+                                        SkillOutcome::Blocked => AgendaStatus::Blocked,
+                                    };
+                                }
+                                if let Some(next) = sequencer.active(&context.session_key)
+                                    && let Some(index) = agenda.iter().position(|item| item.key == next.key)
+                                {
+                                    agenda[index].status = AgendaStatus::InProgress;
+                                }
+                                let _ = events_for_agenda
+                                    .emit(session_event(
+                                        &agenda_context,
+                                        "agenda/update",
+                                        json!({
+                                            "turnId": &agenda_context.turn_id,
+                                            "items": &agenda,
+                                        }),
+                                    ))
+                                    .await;
                             }
                             if name == "todo_write" && todo_result_all_completed(output) {
                                 let unresolved = agenda.iter().any(|item| {
@@ -690,25 +736,43 @@ impl SessionRunner {
                         )
                     })
                 {
+                    // 显式结算（complete_skill）是常态；这里只兜底当前进行中的技能，
+                    // 不能把尚未执行的技能一起标完成，否则并行加载会被掩盖。
+                    let active_key = self
+                        .skills
+                        .as_ref()
+                        .and_then(|sequencer| sequencer.active(&context.session_key))
+                        .map(|entry| entry.key);
+                    let mut changed = false;
                     for item in &mut agenda {
-                        if !matches!(
+                        if matches!(
                             item.status,
                             AgendaStatus::Completed | AgendaStatus::Skipped | AgendaStatus::Blocked
                         ) {
+                            continue;
+                        }
+                        let settle = match &active_key {
+                            Some(key) => &item.key == key,
+                            None => self.skills.is_none(),
+                        };
+                        if settle {
                             item.status = AgendaStatus::Completed;
+                            changed = true;
                         }
                     }
-                    let _ = self
-                        .emit_turn_event(
-                            context,
-                            attempt,
-                            "agenda/update",
-                            json!({
-                                "turnId": &context.turn_id,
-                                "items": &agenda,
-                            }),
-                        )
-                        .await;
+                    if changed {
+                        let _ = self
+                            .emit_turn_event(
+                                context,
+                                attempt,
+                                "agenda/update",
+                                json!({
+                                    "turnId": &context.turn_id,
+                                    "items": &agenda,
+                                }),
+                            )
+                            .await;
+                    }
                 }
                 let pending_agenda = agenda
                     .iter()
@@ -814,6 +878,9 @@ impl SessionRunner {
                 }
             }
         };
+        if let Some(sequencer) = &self.skills {
+            sequencer.end(&context.session_key);
+        }
         (
             outcome,
             health,

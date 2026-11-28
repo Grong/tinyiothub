@@ -1,0 +1,1357 @@
+/* AI 工作纪实 · 星云流水（view-story-map）
+   全部颜色走全局 token；卡片无边框、玻璃质感。左侧语音球是整页背景层。 */
+
+.content--story-map {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  padding: 0;
+}
+
+.content--story-map > * + * {
+  margin-top: 0;
+}
+
+.content--story-map > view-story-map {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+}
+
+view-story-map {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.map-shell {
+  /* 卡片尺寸与间距 token：新增卡片只调这里，不改布局规则。 */
+  --map-card-w: 172px;
+  --map-card-h: 148px;
+  --map-card-skill-w: 164px;
+  --map-card-skill-h: 118px;
+  --map-card-vision-w: 172px;
+  --map-card-vision-h: 176px;
+  --map-card-conclusion-w: 188px;
+  --map-stack-h: 156px;
+  --map-gap: 12px;
+  --map-edge-w: 34px;
+  position: relative;
+  display: grid;
+  grid-template-columns: 330px minmax(0, 1fr);
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  background: var(--bg);
+}
+
+.map-canvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  z-index: 0;
+  pointer-events: none;
+}
+
+.map-beams {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  z-index: 2;
+  pointer-events: none;
+  overflow: visible;
+}
+
+/* ── 左：大脑 ─────────────────────────────────────────── */
+.map-brain {
+  position: relative;
+  z-index: 3;
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  padding: 26px 24px 20px;
+  min-height: 0;
+}
+
+.map-eyebrow {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  font-family: var(--mono);
+  font-size: 9px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.map-eyebrow::before {
+  content: '';
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: var(--text);
+  opacity: 0.7;
+}
+
+.map-title {
+  margin: 12px 0 0;
+  font-size: 19px;
+  font-weight: 600;
+  line-height: 1.32;
+  color: var(--text-strong);
+  letter-spacing: 0.01em;
+}
+
+.map-meta {
+  margin: 6px 0 0;
+  font-size: 11.5px;
+  color: var(--muted);
+}
+
+.map-now {
+  flex: 1 1 auto;
+  display: flex;
+  align-items: flex-end;
+  min-height: 0;
+  padding-bottom: 16px;
+}
+
+.map-now__card {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  max-height: 228px;
+  padding: 12px 13px 11px;
+  border-radius: var(--radius-lg);
+  background: var(--glass-bg);
+  box-shadow: var(--glass-shadow);
+  backdrop-filter: var(--glass-blur);
+  -webkit-backdrop-filter: var(--glass-blur);
+}
+
+.map-now__label {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-family: var(--mono);
+  font-size: 9px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.map-now__dot {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--ok);
+}
+
+.map-now__dot.is-live {
+  animation: map-breathe 2.4s ease-in-out infinite;
+}
+
+.map-now__title {
+  margin-top: 7px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-strong);
+}
+
+.map-now__body {
+  position: relative;
+  display: flex;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+.map-now__text {
+  flex: 1 1 auto;
+  min-height: 0;
+  max-height: 120px;
+  margin: 5px 0 0;
+  padding-right: 9px;
+  overflow-y: auto;
+  scrollbar-width: none;
+  mask-image: linear-gradient(180deg, #000 calc(100% - 14px), transparent 100%);
+  -webkit-mask-image: linear-gradient(180deg, #000 calc(100% - 14px), transparent 100%);
+  font-size: 11.5px;
+  line-height: 1.68;
+  color: var(--muted);
+}
+
+.map-now__text::-webkit-scrollbar {
+  display: none;
+}
+
+/* 自绘滚动条：macOS 的 overlay 滚动条默认不可见，这里保证一直有指示 */
+.map-now__bar {
+  position: absolute;
+  top: 6px;
+  right: 0;
+  bottom: 2px;
+  width: 3px;
+  border-radius: 2px;
+  background: var(--bg-hover);
+}
+
+.map-now__bar i {
+  position: absolute;
+  left: 0;
+  width: 100%;
+  border-radius: 2px;
+  background: var(--border-strong);
+}
+
+.map-now__meta {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+  font-family: var(--mono);
+  font-size: 9.5px;
+  color: var(--muted);
+}
+
+.map-now__meta i {
+  flex: 1;
+  height: 1px;
+  background: var(--border);
+}
+
+.map-scope {
+  flex: 0 0 auto;
+  margin-top: auto;
+}
+
+.map-scope__row {
+  display: flex;
+  align-items: baseline;
+  gap: 13px;
+}
+
+.map-scope__item {
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.map-scope__item b {
+  margin-right: 2px;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+}
+
+.map-lanemap {
+  display: grid;
+  gap: 5px;
+  margin-top: 12px;
+}
+
+.map-lanemap__row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 10.5px;
+  color: var(--muted);
+  padding: 3px 0;
+}
+
+.map-lanemap__bar {
+  flex: 1;
+  height: 1px;
+  background: var(--border);
+  position: relative;
+}
+
+.map-lanemap__bar::after {
+  content: '';
+  position: absolute;
+  right: 0;
+  top: -2px;
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: var(--ok);
+  opacity: 0.8;
+}
+
+.map-lanemap__t {
+  font-family: var(--mono);
+  font-size: 9px;
+}
+
+/* ── 右：流水 ─────────────────────────────────────────── */
+.map-lanes {
+  position: relative;
+  z-index: 3;
+  height: 100%;
+  overflow-y: auto;
+  padding: 20px 26px 48px;
+  scrollbar-width: thin;
+  scrollbar-color: var(--border) transparent;
+}
+
+.map-lanes::-webkit-scrollbar {
+  width: 6px;
+}
+
+.map-lanes::-webkit-scrollbar-thumb {
+  background: var(--border);
+  border-radius: 3px;
+}
+
+.map-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 14px;
+}
+
+.map-toolbar__spacer {
+  flex: 1;
+}
+
+.map-select {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.map-select select {
+  max-width: 260px;
+  padding: 4px 8px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-elevated);
+  color: var(--text);
+  font-size: 11.5px;
+}
+
+.map-live {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 10.5px;
+  color: var(--ok);
+}
+
+.map-live i {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--ok);
+  animation: map-breathe 2.4s ease-in-out infinite;
+}
+
+.map-ghost {
+  padding: 5px 10px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--muted);
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.map-ghost:hover {
+  color: var(--text);
+  border-color: var(--border-strong);
+}
+
+/* 待确认 */
+.map-pending {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 14px;
+}
+
+.map-pending__head {
+  font-size: 10.5px;
+  color: var(--muted);
+}
+
+.map-pending__head b {
+  color: var(--text);
+  font-weight: 600;
+}
+
+.map-pending__row {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.map-pending__row > approval-card,
+.map-pending__row > question-card {
+  display: block;
+  flex: 0 0 340px;
+  max-width: 100%;
+}
+
+.map-pending__card {
+  flex: 0 0 300px;
+  padding: 12px 14px 13px;
+  border-radius: var(--radius-lg);
+  background: var(--glass-bg);
+  box-shadow: var(--glass-shadow);
+  backdrop-filter: var(--glass-blur);
+  -webkit-backdrop-filter: var(--glass-blur);
+}
+
+.map-pending__card header {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.map-pending__title {
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--text-strong);
+}
+
+.map-pending__time {
+  margin-left: auto;
+  font-family: var(--mono);
+  font-size: 9px;
+  color: var(--muted);
+}
+
+.map-pending__card p {
+  margin: 6px 0 0;
+  font-size: 11px;
+  line-height: 1.6;
+  color: var(--muted);
+}
+
+.map-pending__opts {
+  display: flex;
+  gap: 6px;
+  margin-top: 10px;
+}
+
+.map-opt {
+  padding: 3px 10px;
+  border-radius: 6px;
+  border: 0;
+  background: var(--bg-hover);
+  color: var(--text);
+  font-size: 10.5px;
+  cursor: pointer;
+}
+
+.map-opt:hover {
+  background: var(--border-strong);
+}
+
+/* 本轮结论条 */
+.map-summary {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  margin-bottom: 16px;
+  padding: 13px 16px;
+  border-radius: var(--radius-lg);
+  background: var(--glass-bg);
+  box-shadow: var(--glass-shadow);
+  backdrop-filter: var(--glass-blur);
+  -webkit-backdrop-filter: var(--glass-blur);
+}
+
+.map-summary__seal {
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  flex: 0 0 auto;
+  border-radius: 50%;
+  background: var(--ok-subtle, rgba(34, 197, 94, 0.12));
+  color: var(--ok);
+  font-size: 11px;
+}
+
+.map-summary__body {
+  min-width: 0;
+}
+
+.map-summary__label {
+  font-family: var(--mono);
+  font-size: 9px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.map-summary__text {
+  margin: 3px 0 0;
+  font-size: 12.5px;
+  line-height: 1.6;
+  color: var(--text);
+}
+
+.map-summary__agenda {
+  margin-top: 5px;
+  font-size: 10.5px;
+  color: var(--muted);
+}
+
+/* 行 */
+.map-river__head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 8px;
+}
+
+.map-river__eyebrow {
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.map-river__hint {
+  font-size: 10px;
+  color: var(--muted);
+  opacity: 0.8;
+}
+
+.map-lane {
+  position: relative;
+  padding-bottom: 12px;
+}
+
+.map-lane + .map-lane {
+  margin-top: 10px;
+}
+
+.map-lane__head {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  height: 20px;
+}
+
+.map-lane__no,
+.map-lane__time,
+.map-lane__count {
+  font-family: var(--mono);
+  font-size: 9px;
+  color: var(--muted);
+}
+
+.map-lane__status {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 10px;
+  color: var(--muted);
+}
+
+.map-lane__status::before {
+  content: '';
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: var(--muted);
+  opacity: 0.6;
+}
+
+.map-lane__status.is-done::before {
+  background: var(--ok);
+  opacity: 0.9;
+}
+
+.map-lane__status.is-running::before {
+  background: var(--accent);
+  animation: map-breathe 2.4s ease-in-out infinite;
+}
+
+.map-lane__status.is-failed {
+  color: var(--danger);
+}
+
+.map-lane__status.is-failed::before {
+  background: var(--danger);
+  opacity: 1;
+}
+
+.map-flow {
+  display: flex;
+  align-items: center;
+  margin-top: 8px;
+  padding-bottom: 8px;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: thin;
+  scrollbar-color: var(--border) transparent;
+}
+
+.map-flow::-webkit-scrollbar {
+  height: 4px;
+}
+
+.map-flow::-webkit-scrollbar-thumb {
+  background: var(--border);
+  border-radius: 2px;
+}
+
+/* 思考：收在行头的「判断依据」面板里，不占动作行 */
+.map-lane__notes {
+  margin-left: auto;
+  padding: 2px 6px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 10px;
+  cursor: pointer;
+}
+
+.map-lane__notes:hover {
+  color: var(--text);
+  background: var(--bg-hover);
+}
+
+.map-lane__notes b {
+  margin-left: 4px;
+  font-weight: 400;
+}
+
+.map-lane__notes.is-static {
+  cursor: default;
+}
+
+.map-lane__notes.is-static:hover {
+  color: var(--muted);
+  background: transparent;
+}
+
+.map-notes {
+  display: grid;
+  gap: 10px;
+  max-width: 760px;
+  max-height: 280px;
+  margin: 8px 0 4px;
+  padding: 8px 8px 8px 14px;
+  border-left: 2px solid var(--border);
+  overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: var(--border) transparent;
+}
+
+.map-notes::-webkit-scrollbar {
+  width: 4px;
+}
+
+.map-notes::-webkit-scrollbar-thumb {
+  background: var(--border);
+  border-radius: 2px;
+}
+
+.map-notes__label {
+  font-family: var(--mono);
+  font-size: 9px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.map-notes__item {
+  display: grid;
+  grid-template-columns: 44px minmax(0, 1fr);
+  gap: 10px;
+  padding: 4px 6px;
+  border-radius: 8px;
+  transition: background var(--duration-fast, 160ms) ease;
+}
+
+.map-notes__item.is-focus {
+  background: var(--bg-hover);
+}
+
+.map-notes__at {
+  padding-top: 2px;
+  font-family: var(--mono);
+  font-size: 9px;
+  color: var(--muted);
+}
+
+.map-notes__text {
+  margin: 0;
+  font-size: 11.5px;
+  line-height: 1.75;
+  color: var(--text-2);
+  white-space: pre-wrap;
+}
+
+.map-notes__next {
+  margin-top: 4px;
+  font-size: 10px;
+  color: var(--muted);
+}
+
+.map-card__why {
+  flex: 0 0 auto;
+  white-space: nowrap;
+  padding: 1px 5px;
+  border: 0;
+  border-radius: 4px;
+  background: var(--bg-hover);
+  color: var(--muted);
+  font-size: 8.5px;
+  cursor: pointer;
+}
+
+.map-card__why:hover {
+  color: var(--text);
+}
+
+/* 标题/工具名浮层：fixed 防止参与 grid 布局导致整页抖动 */
+.map-tip {
+  position: fixed;
+  z-index: 70;
+  padding: 6px 9px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: var(--bg-elevated);
+  box-shadow: var(--glass-shadow-hover);
+  font-size: 10.5px;
+  line-height: 1.55;
+  color: var(--text);
+  word-break: break-word;
+  pointer-events: none;
+}
+
+/* 卡片之间的连线 */
+.map-edge {
+  flex: 0 0 var(--map-edge-w);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  height: 54px;
+}
+
+.map-edge i {
+  font-style: normal;
+  font-size: 9px;
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.map-edge b {
+  position: relative;
+  width: 100%;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, var(--border-strong));
+}
+
+.map-edge b::after {
+  content: '';
+  position: absolute;
+  right: 0;
+  top: -2px;
+  width: 4px;
+  height: 4px;
+  border-top: 1px solid var(--muted);
+  border-right: 1px solid var(--muted);
+  transform: rotate(45deg);
+}
+
+/* ── 卡片 ─────────────────────────────────────────────── */
+.map-card {
+  position: relative;
+  flex: 0 0 auto;
+  contain: paint;
+  display: flex;
+  flex-direction: column;
+  width: var(--map-card-w);
+  min-height: var(--map-card-h);
+  padding: 12px 13px 11px;
+  border: 0;
+  border-radius: var(--radius-lg);
+  background: var(--glass-bg);
+  box-shadow: var(--glass-shadow);
+  backdrop-filter: var(--glass-blur);
+  -webkit-backdrop-filter: var(--glass-blur);
+  overflow: hidden;
+  transition:
+    box-shadow var(--duration-fast, 160ms) var(--ease-out, ease),
+    transform var(--duration-fast, 160ms) var(--ease-out, ease);
+}
+
+.map-card:hover {
+  box-shadow: var(--glass-shadow-hover);
+  transform: translateY(-2px);
+}
+
+.map-card--skill {
+  width: var(--map-card-skill-w);
+  min-height: var(--map-card-skill-h);
+}
+
+.map-card--vision {
+  width: var(--map-card-vision-w);
+  height: var(--map-card-vision-h);
+  min-height: var(--map-card-vision-h);
+  padding: 0;
+}
+
+.map-card--conclusion {
+  width: var(--map-card-conclusion-w);
+}
+
+.map-card--error {
+  box-shadow:
+    0 0 0 1px var(--danger) inset,
+    var(--glass-shadow);
+}
+
+.map-card__head {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.map-card__name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--text-strong);
+}
+
+.map-card__repeat {
+  flex: 0 0 auto;
+  font-family: var(--mono);
+  font-size: 9px;
+  color: var(--muted);
+}
+
+.map-card__sub {
+  margin-top: 3px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 10px;
+  color: var(--muted);
+}
+
+.map-card__params {
+  margin-top: 2px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 9.5px;
+  color: var(--muted);
+}
+
+.map-card__rule {
+  height: 1px;
+  margin: 9px -13px;
+  background: var(--border);
+  flex: 0 0 auto;
+}
+
+.map-card__rows {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  min-height: 0;
+  max-height: 64px;
+  overflow-y: auto;
+  padding-right: 2px;
+  scrollbar-width: thin;
+  scrollbar-color: var(--border) transparent;
+}
+
+.map-card__rows::-webkit-scrollbar {
+  width: 4px;
+}
+
+.map-card__rows::-webkit-scrollbar-thumb {
+  background: var(--border);
+  border-radius: 2px;
+}
+
+.map-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 6px;
+  font-size: 10.5px;
+  color: var(--muted);
+}
+
+.map-row b {
+  font-weight: 600;
+  color: var(--text);
+  white-space: nowrap;
+}
+
+.map-card__text {
+  margin: 0;
+  font-size: 10px;
+  line-height: 1.6;
+  color: var(--muted);
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.map-card__foot {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  margin-top: auto;
+  padding-top: 7px;
+  font-family: var(--mono);
+  font-size: 9px;
+  color: var(--muted);
+}
+
+.map-card__tool {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.map-card__time {
+  flex: 0 0 auto;
+  margin-left: auto;
+}
+
+.map-card__media {
+  height: 96px;
+  flex: 0 0 auto;
+  overflow: hidden;
+  border-bottom: 1px solid var(--border);
+}
+
+.map-card__media evidence-image {
+  display: block;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+}
+
+.map-card__media evidence-image img.evidence-image,
+.map-card__media .evidence-image {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.map-card--vision .map-card__head,
+.map-card--vision .map-card__sub,
+.map-card--vision .map-card__foot {
+  margin-left: 11px;
+  margin-right: 11px;
+}
+
+.map-card--vision .map-card__foot {
+  margin-bottom: 10px;
+}
+
+.map-dot {
+  width: 5px;
+  height: 5px;
+  flex: 0 0 auto;
+  border-radius: 50%;
+  background: var(--ok);
+}
+
+.map-dot.is-warn {
+  background: var(--warn);
+}
+
+.map-pill {
+  margin-left: auto;
+  flex: 0 0 auto;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 9.5px;
+  line-height: 1.5;
+  color: var(--ok);
+  background: var(--ok-subtle, rgba(34, 197, 94, 0.12));
+}
+
+.map-pill.is-warn {
+  color: var(--warn);
+  background: var(--warn-subtle, rgba(245, 158, 11, 0.12));
+}
+
+.map-pill.is-muted {
+  color: var(--muted);
+  background: var(--bg-hover);
+}
+
+/* 叠卡 */
+.map-stack {
+  --w: var(--map-card-w);
+  --gap: var(--map-gap);
+  /* 后层往右下方叠，整叠占用的宽度要把露出的卡边算进去 */
+  --fan: 30px;
+  position: relative;
+  z-index: 3;
+  flex: 0 0 calc(var(--w) + var(--fan));
+  width: calc(var(--w) + var(--fan));
+  height: var(--map-stack-h);
+  transition:
+    width 340ms cubic-bezier(0.22, 1, 0.36, 1),
+    flex-basis 340ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.map-stack__badge {
+  position: absolute;
+  z-index: 200;
+  top: -9px;
+  right: -9px;
+  padding: 1px 7px;
+  border-radius: 999px;
+  font-family: var(--mono);
+  font-size: 9px;
+  color: var(--text);
+  background: var(--bg-elevated);
+  box-shadow: var(--glass-shadow);
+  pointer-events: none;
+}
+
+.map-stack__item {
+  position: absolute;
+  left: 0;
+  top: 0;
+  height: 100%;
+  /* 第一张是正面，后面的卡片往右下方露出边缘 */
+  z-index: calc(100 - var(--i));
+  transform: translate(calc(min(var(--i), 3) * 10px), calc(min(var(--i), 3) * 5px));
+  transition:
+    transform 340ms cubic-bezier(0.22, 1, 0.36, 1),
+    opacity 200ms;
+}
+
+.map-stack__item .map-card {
+  width: var(--w);
+  height: 100%;
+  min-height: 0;
+}
+
+/* 后层卡片用不透明底，避免玻璃叠加后透出文字 */
+.map-stack__item:not(:first-child) .map-card {
+  background: var(--bg-elevated);
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+
+.map-stack:hover .map-stack__item .map-card,
+.map-stack:focus-within .map-stack__item .map-card {
+  background: var(--glass-bg);
+  backdrop-filter: var(--glass-blur);
+  -webkit-backdrop-filter: var(--glass-blur);
+}
+
+.map-stack__item.is-ghost {
+  opacity: 0;
+}
+
+.map-stack:hover,
+.map-stack:focus-within {
+  /* flex 子项的宽度由 flex-basis 决定，光改 width 撑不开 */
+  flex-basis: calc(var(--n) * (var(--w) + var(--gap)) - var(--gap));
+  width: calc(var(--n) * (var(--w) + var(--gap)) - var(--gap));
+  z-index: 20;
+}
+
+.map-stack:hover .map-stack__item,
+.map-stack:focus-within .map-stack__item {
+  transform: translateX(calc(var(--i) * (var(--w) + var(--gap))));
+}
+
+.map-stack:hover .map-stack__item.is-ghost,
+.map-stack:focus-within .map-stack__item.is-ghost {
+  opacity: 1;
+}
+
+.map-stack:hover .map-stack__badge,
+.map-stack:focus-within .map-stack__badge {
+  opacity: 0;
+}
+
+/* 新动作提示 / 完整回答 */
+.map-jump {
+  position: fixed;
+  right: 36px;
+  bottom: 24px;
+  z-index: 50;
+  padding: 7px 13px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--bg-elevated);
+  color: var(--text);
+  box-shadow: var(--glass-shadow-hover);
+  font-size: 11.5px;
+  cursor: pointer;
+}
+
+.map-jump:hover {
+  color: var(--text-strong);
+  border-color: var(--border-strong);
+}
+
+.map-final__answer {
+  max-height: 320px;
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+  overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: var(--border) transparent;
+}
+
+.map-final__answer p {
+  margin: 0;
+  white-space: pre-wrap;
+  font-size: 12px;
+  line-height: 1.8;
+  color: var(--text);
+}
+
+.map-error .map-ghost {
+  margin-left: 10px;
+}
+
+.map-card:focus-visible,
+.map-flow:focus-visible,
+.map-stack:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.map-more {
+  padding: 10px 2px;
+  font-size: 10.5px;
+  color: var(--muted);
+}
+
+/* 空状态 */
+.map-empty,
+.map-error {
+  padding: 24px 4px;
+  font-size: 12.5px;
+  color: var(--muted);
+}
+
+.map-error {
+  color: var(--danger);
+}
+
+/* 总结 */
+.map-final {
+  margin-top: 18px;
+  padding: 20px 22px 18px;
+  border-radius: var(--radius-lg);
+  background: var(--glass-bg);
+  box-shadow: var(--glass-shadow);
+  backdrop-filter: var(--glass-blur);
+  -webkit-backdrop-filter: var(--glass-blur);
+}
+
+.map-final header {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+}
+
+.map-final__eyebrow {
+  font-family: var(--mono);
+  font-size: 9px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.map-final__time {
+  font-family: var(--mono);
+  font-size: 9px;
+  color: var(--muted);
+}
+
+.map-final header .map-pill {
+  margin-left: auto;
+}
+
+.map-final__text {
+  max-width: 900px;
+  margin: 10px 0 0;
+  font-size: 15px;
+  font-weight: 500;
+  line-height: 1.7;
+  color: var(--text-strong);
+}
+
+.map-final__cols {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 18px;
+  margin: 16px 0 0;
+  padding-top: 14px;
+  border-top: 1px solid var(--border);
+}
+
+.map-final__cols dt {
+  font-size: 10px;
+  color: var(--muted);
+}
+
+.map-final__cols dd {
+  margin: 4px 0 0;
+  font-size: 11.5px;
+  line-height: 1.75;
+  color: var(--text);
+}
+
+.map-final__foot {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 16px;
+  font-size: 10.5px;
+  color: var(--muted);
+}
+
+.map-final__btns {
+  margin-left: auto;
+  display: flex;
+  gap: 8px;
+}
+
+@keyframes map-breathe {
+  0%,
+  100% {
+    opacity: 0.35;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
+@media (max-width: 1100px) {
+  .map-shell {
+    display: block;
+  }
+
+  .map-brain {
+    height: 300px;
+    padding: 16px;
+  }
+
+  .map-title {
+    font-size: 16px;
+    margin-top: 6px;
+  }
+
+  .map-now,
+  .map-lanemap {
+    display: none;
+  }
+
+  .map-canvas {
+    display: none;
+  }
+
+  .map-lanes {
+    height: auto;
+    max-height: none;
+    padding: 14px;
+  }
+
+  .map-flow {
+    flex-direction: column;
+    align-items: stretch;
+    overflow: visible;
+  }
+
+  .map-card {
+    width: 100%;
+    max-width: 560px;
+    height: auto;
+    min-height: 128px;
+  }
+
+  .map-card--vision {
+    height: auto;
+  }
+
+  .map-edge {
+    width: auto;
+    height: 30px;
+    flex-direction: row;
+    justify-content: flex-start;
+    gap: 8px;
+    padding-left: var(--map-edge-w);
+  }
+
+  .map-edge b {
+    width: 1px;
+    height: 22px;
+    background: linear-gradient(180deg, var(--border-strong), transparent);
+  }
+
+  .map-edge b::after {
+    left: -2px;
+    right: auto;
+    top: auto;
+    bottom: -1px;
+    transform: rotate(135deg);
+  }
+
+  .map-edge i {
+    order: 2;
+  }
+
+  .map-stack {
+    width: 100% !important;
+    height: auto;
+  }
+
+  .map-stack__item {
+    position: relative;
+    transform: none !important;
+    margin-bottom: 8px;
+  }
+
+  .map-final__cols {
+    grid-template-columns: 1fr;
+    gap: 10px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .map-card,
+  .map-stack__item {
+    transition: none;
+  }
+
+  .map-now__dot.is-live,
+  .map-live i,
+  .map-lane__status.is-running::before {
+    animation: none;
+  }
+}

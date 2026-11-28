@@ -19,6 +19,25 @@ use super::super::{
 use tinyiothub_web::middleware::workspace::WorkspaceScope;
 use tinyiothub_web::response::ApiResponseBuilder;
 
+/// Merge the runtime cache's live status into a DB response. The list/detail
+/// APIs read definitions from SQLite; without this the UI renders every
+/// device as "未知" until a separate SSE event arrives.
+fn apply_cached_status(state: &AppState, thing: &mut ThingResponse) {
+    let Some(device) = state.device_cache.get(&thing.id) else {
+        return;
+    };
+    thing.status = Some(device.status.as_str().to_string());
+    thing.online = Some(device.is_online());
+    thing.health = Some(
+        match device.status {
+            tinyiothub_core::models::thing::ThingStatus::Online => "ok",
+            tinyiothub_core::models::thing::ThingStatus::Error => "bad",
+            tinyiothub_core::models::thing::ThingStatus::Offline => "attention",
+        }
+        .to_string(),
+    );
+}
+
 fn thing_service(state: &AppState) -> ThingService {
     let svc = ThingService::new(state.db.pool().clone());
     if let Some(access) = &state.access {
@@ -43,7 +62,10 @@ pub async fn list_things(
     let ws = workspace_id.unwrap_or_default();
 
     match svc.list_things(&ws, &params).await {
-        Ok(result) => {
+        Ok(mut result) => {
+            for thing in &mut result.items {
+                apply_cached_status(&state, thing);
+            }
             let data = serde_json::to_value(&result).unwrap_or_default();
             (StatusCode::OK, ApiResponseBuilder::success(data))
         }
@@ -105,7 +127,10 @@ pub async fn get_thing(
     let ws = workspace_id.unwrap_or_default();
 
     match svc.get_thing(&id, &ws).await {
-        Ok(thing) => (StatusCode::OK, ApiResponseBuilder::success(thing)),
+        Ok(mut thing) => {
+            apply_cached_status(&state, &mut thing);
+            (StatusCode::OK, ApiResponseBuilder::success(thing))
+        }
         Err(e) => {
             let status = e.status_code();
             tracing::error!(?e, "Failed to get thing");
@@ -232,6 +257,32 @@ pub async fn get_thing_profile(
 
     match svc.get_thing_profile(&id, &ws).await {
         Ok(mut profile) => {
+            apply_cached_status(&state, &mut profile.thing);
+            // The HTTP profile is also the detail page's first paint. Merge the
+            // cache's current values so it does not render "-" until the next
+            // SSE property event arrives.
+            if let Some(device) = state.device_cache.get(&id)
+                && let Some(properties) = profile.properties.as_mut()
+                && let Some(cached) = device.properties.as_ref()
+            {
+                for property in properties {
+                    let Some(name) = property.get("name").and_then(|v| v.as_str()) else {
+                        continue;
+                    };
+                    let Some(cached_property) = cached.iter().find(|p| p.name == name) else {
+                        continue;
+                    };
+                    if let Some(obj) = property.as_object_mut() {
+                        obj.insert(
+                            "currentValue".to_string(),
+                            serde_json::json!(cached_property.current_value),
+                        );
+                        if let Some(updated_at) = &cached_property.updated_at {
+                            obj.insert("updatedAt".to_string(), serde_json::json!(updated_at));
+                        }
+                    }
+                }
+            }
             // 终审 C-1：详情页派生 stale 灰点/徽标的唯一数据源——派生行注入
             // 运行状态（与 admin GET 同模式，内存态不落库，spec §二 E4）。
             if let (Some(manager), Some(props)) = (&state.derived_manager, profile.properties.as_mut()) {

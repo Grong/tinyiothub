@@ -1,15 +1,18 @@
 ---
 name: job-management
 title: 定时任务管理
-description: 管理定时任务和自动化规则，让设备操作按计划执行。
-version: "1"
+description: 定时任务与自动化规则的增删改查（Cron + 设备操作）。不负责巡检计划本身。
+version: "2"
 trigger: /job-management
 inject: index
+builtin: "3"
 ---
 
 # 定时任务管理 (Schedule Management)
 
 管理定时任务和自动化规则，让设备操作按计划自动执行。
+
+定时任务工具属于平台扩展平面，仅在当前工具列表提供时可用；未提供时说明无法查看或创建，不要假设工具名。
 
 ## 可用工具
 

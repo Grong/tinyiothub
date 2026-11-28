@@ -94,10 +94,24 @@ class ThingCache {
   setDeviceProperties(thingId: string, properties: ThingProperty[]): void {
     const map = this.$devicesMap.get();
     const device = map.get(thingId);
+    // The HTTP profile may carry definitions without values; keep the latest
+    // SSE value instead of blanking the row back to "-".
+    const previous = device?.properties ?? [];
+    const merged = properties.map((property) => {
+      const old = previous.find((item) => item.name === property.name);
+      if (old && property.currentValue == null && property.value == null) {
+        return {
+          ...property,
+          currentValue: old.currentValue ?? old.value,
+          updatedAt: property.updatedAt ?? old.updatedAt,
+        };
+      }
+      return property;
+    });
     const updated = new Map(map);
     updated.set(thingId, {
       ...(device ?? { id: thingId, name: thingId, status: 'online' }),
-      properties,
+      properties: merged,
     });
     this.$devicesMap.set(updated);
   }

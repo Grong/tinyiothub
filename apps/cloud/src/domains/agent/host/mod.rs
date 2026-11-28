@@ -7,8 +7,7 @@
 
 pub use crate::domains::agent::prompt::scaffold;
 pub use crate::domains::agent::session::{
-    agent_host, chat, chat_types, config, factory, handlers, index, judge, notify, persist, pool_adapter, ports,
-    triggers,
+    agent_host, chat, chat_types, config, factory, handlers, index, judge, notify, persist, ports, triggers,
 };
 pub use crate::domains::agent::tool;
 

@@ -17,6 +17,9 @@ function arrayFrom(record: Record<string, unknown>, keys: string[]): unknown[] {
 
 export const alarmActionView: ToolView = {
   key: 'alarm.action',
+  card: 'action',
+  tone: 'write',
+  verb: '确认告警',
   present(input) {
     const record = recordOf(parseJson(input.result));
     const failed = input.status === 'failed' || record?.success === false;
@@ -43,6 +46,9 @@ export const alarmActionView: ToolView = {
 
 export const deviceStopView: ToolView = {
   key: 'device.stop',
+  card: 'action',
+  tone: 'write',
+  verb: '停止设备',
   present(input) {
     return {
       viewKey: 'device.stop',
@@ -55,6 +61,9 @@ export const deviceStopView: ToolView = {
 
 export const thingTreeView: ToolView = {
   key: 'thing.tree',
+  card: 'list',
+  tone: 'read',
+  verb: '浏览设备层级',
   present(input) {
     const record = recordOf(parseJson(input.result));
     const nodes = record ? arrayFrom(record, ['nodes', 'items', 'things']) : [];
@@ -88,8 +97,22 @@ function alarmThingLabel(alarm: Record<string, unknown>): string {
   return asString(alarm.thingDisplayName) || asString(alarm.thingName) || asString(alarm.deviceName) || asString(alarm.thingId);
 }
 
+const ALARM_STATUS_LABEL: Record<string, string> = {
+  active: '活跃',
+  acknowledged: '已确认',
+  resolved: '已恢复',
+  closed: '已关闭',
+};
+
+function shortTime(value: string): string {
+  return value ? value.slice(5, 16).replace('T', ' ') : '';
+}
+
 export const alarmListView: ToolView = {
   key: 'alarm.list',
+  card: 'finding',
+  tone: 'alarm',
+  verb: '检查告警',
   present(input) {
     const record = recordOf(parseJson(input.result));
     if (!record) {
@@ -113,6 +136,25 @@ export const alarmListView: ToolView = {
       ['critical', 'error', 'high'].includes(asString(alarm.alarmLevel || alarm.level || alarm.severity).toLowerCase()),
     ).length;
     const unacknowledged = active.filter((alarm) => alarm.isAcknowledged !== true).length;
+    const args = recordOf(input.args);
+    const params: ToolPresentation['params'] = [];
+    if (args) {
+      const levels = Array.isArray(args.levels) ? args.levels.map(asString).filter(Boolean) : [];
+      if (levels.length > 0) params.push({ label: '级别', value: levels.join('/') });
+      const statuses = Array.isArray(args.statuses) ? args.statuses.map(asString).filter(Boolean) : [];
+      if (statuses.length > 0) {
+        params.push({ label: '状态', value: statuses.map((item) => ALARM_STATUS_LABEL[item] ?? item).join('/') });
+      }
+      const start = asString(args.startTime || args.start_time);
+      const end = asString(args.endTime || args.end_time);
+      if (start || end) {
+        params.push({ label: '时间', value: `${shortTime(start) || '—'}~${shortTime(end) || '现在'}` });
+      }
+      const pageSize = Number(args.pageSize ?? args.page_size);
+      if (Number.isFinite(pageSize) && pageSize > 0) {
+        params.push({ label: '条数', value: String(pageSize) });
+      }
+    }
     const details = active.slice(0, 5).map((alarm, index) => ({
       label: `${alarmLevelLabel(alarm.alarmLevel || alarm.level || alarm.severity)}告警 ${index + 1}`,
       value: [
@@ -129,6 +171,7 @@ export const alarmListView: ToolView = {
       title: '检查当前告警',
       summary: active.length > 0 ? `${active.length} 条待处理 · ${critical} 条严重` : '当前没有待处理告警',
       status: statusOf(input),
+      params,
       metrics: [
         { label: '待处理', value: String(active.length) },
         { label: '严重', value: String(critical) },
@@ -141,6 +184,9 @@ export const alarmListView: ToolView = {
 
 export const eventHistoryView: ToolView = {
   key: 'event.history',
+  card: 'doc',
+  tone: 'read',
+  verb: '回看设备事件',
   present(input) {
     const record = recordOf(parseJson(input.result));
     if (!record) return null;
@@ -148,6 +194,19 @@ export const eventHistoryView: ToolView = {
       .map(recordOf)
       .filter((item): item is Record<string, unknown> => item !== null);
     const total = typeof record.total === 'number' ? record.total : events.length;
+    const args = recordOf(input.args);
+    const params: ToolPresentation['params'] = [];
+    if (args) {
+      const start = asString(args.startTime || args.start_time);
+      const end = asString(args.endTime || args.end_time);
+      if (start || end) {
+        params.push({ label: '时间', value: `${shortTime(start) || '—'}~${shortTime(end) || '现在'}` });
+      }
+      const thingId = asString(args.thingId || args.thing_id || args.deviceId);
+      if (thingId) params.push({ label: '设备', value: thingId });
+      const pageSize = Number(args.pageSize ?? args.page_size ?? args.limit);
+      if (Number.isFinite(pageSize) && pageSize > 0) params.push({ label: '条数', value: String(pageSize) });
+    }
     const details = events.slice(0, 5).map((event, index) => ({
       label: `事件 ${index + 1}`,
       value: [
@@ -163,6 +222,7 @@ export const eventHistoryView: ToolView = {
       title: '回看设备最近的事件',
       summary: `回看 ${total} 条事件`,
       status: statusOf(input),
+      params,
       metrics: [{ label: '事件数', value: String(total) }],
       details,
     };
@@ -171,15 +231,25 @@ export const eventHistoryView: ToolView = {
 
 export const knowledgeView: ToolView = {
   key: 'knowledge.search',
+  card: 'doc',
+  tone: 'skill',
+  verb: '查找知识资料',
   present(input) {
     const record = recordOf(parseJson(input.result));
     const items = record ? arrayFrom(record, ['results', 'items', 'documents', 'docs']).map(recordOf).filter((item): item is Record<string, unknown> => item !== null) : [];
     const total = record && typeof record.total === 'number' ? record.total : items.length;
+    const args = recordOf(input.args);
+    const params: ToolPresentation['params'] = [];
+    if (args) {
+      const query = asString(args.query || args.keyword || args.q || args.documentId || args.document_id);
+      if (query) params.push({ label: input.name === 'read_document' ? '文档' : '关键词', value: clampText(query, 24) });
+    }
     return {
       viewKey: 'knowledge.search',
       title: input.name === 'read_document' ? '查阅运行手册' : '查找知识资料',
       summary: record ? `共 ${total} 条资料` : input.result ? '已读取' : '执行中…',
       status: statusOf(input),
+      params,
       details: items.slice(0, 5).map((item, index) => ({
         label: `资料 ${index + 1}`,
         value: [
@@ -194,6 +264,9 @@ export const knowledgeView: ToolView = {
 export const knowledgeDocumentView: ToolView = {
   ...knowledgeView,
   key: 'knowledge.document',
+  card: 'doc',
+  tone: 'skill',
+  verb: '查阅运行手册',
 };
 
 function skillMetadata(result: string | null | undefined): { title: string; description: string } {
@@ -221,6 +294,9 @@ function skillMetadata(result: string | null | undefined): { title: string; desc
 
 export const skillView: ToolView = {
   key: 'skill.load',
+  card: 'skill',
+  tone: 'skill',
+  verb: '查阅作业规范',
   present(input) {
     const args = recordOf(input.args);
     const name = asString(args?.skill_name) || asString(args?.skillId) || '';
@@ -241,6 +317,9 @@ export const skillView: ToolView = {
 
 export const todoView: ToolView = {
   key: 'todo.write',
+  card: 'plan',
+  tone: 'plan',
+  verb: '更新工作计划',
   present(input) {
     const record = recordOf(parseJson(input.result));
     const args = recordOf(input.args);
@@ -269,6 +348,9 @@ export const todoView: ToolView = {
 
 export const questionView: ToolView = {
   key: 'interaction.ask',
+  card: 'generic',
+  tone: 'ask',
+  verb: '请你决定',
   present(input) {
     const args = recordOf(input.args);
     const questions = Array.isArray(args?.questions) ? args.questions : [];
@@ -291,6 +373,9 @@ export const questionView: ToolView = {
 
 export const subagentView: ToolView = {
   key: 'subagent.spawn',
+  card: 'subagent',
+  tone: 'analysis',
+  verb: '安排专项分析',
   present(input) {
     const args = recordOf(input.args);
     return {
@@ -308,6 +393,9 @@ export const subagentView: ToolView = {
 
 export const watchView: ToolView = {
   key: 'watch.create',
+  card: 'watch',
+  tone: 'plan',
+  verb: '创建监听',
   present(input) {
     return {
       viewKey: 'watch.create',
@@ -324,6 +412,9 @@ export const watchView: ToolView = {
 
 export const compositeView: ToolView = {
   key: 'composite.list',
+  card: 'list',
+  tone: 'read',
+  verb: '组合查询',
   present(input) {
     const record = recordOf(parseJson(input.result));
     const items = record ? arrayFrom(record, ['composites', 'items']) : [];
@@ -333,6 +424,29 @@ export const compositeView: ToolView = {
       summary: input.name === 'run_composite'
         ? input.result ? '已执行' : '执行中…'
         : `共 ${items.length} 条动作链`,
+      status: statusOf(input),
+    };
+  },
+};
+
+export const skillCompleteView: ToolView = {
+  key: 'skill.complete',
+  card: 'generic',
+  tone: 'plan',
+  verb: '结算技能',
+  present(input) {
+    const lines = (input.result ?? '')
+      .split('\n')
+      .map((line) => line.trim())
+      .filter(Boolean);
+    const first = lines[0] ?? '';
+    const failed = input.status === 'failed';
+    return {
+      viewKey: 'skill.complete',
+      title: failed ? '结算技能失败' : '结算技能',
+      summary: failed
+        ? '技能结算失败'
+        : first.replace(/^已结算技能：/, '').slice(0, 80) || '技能已结算',
       status: statusOf(input),
     };
   },

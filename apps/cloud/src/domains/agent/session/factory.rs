@@ -311,6 +311,7 @@ pub(crate) fn build_autonomous_tools(
         pool: pool.clone(),
         workspace_id: workspace_id.to_string(),
         data_server: runtime.data_server.clone(),
+        evidence: runtime.evidence.clone(),
         pending_actions: runtime
             .pending_actions
             .clone()
@@ -459,18 +460,20 @@ mod tests {
             None,
         );
 
-        // E2：模型可见 = 7 设备工具 + 4 非设备工具（固定集合）。
+        // E2：模型可见 = 8 设备工具（新增完整档案）+ 4 非设备工具（固定集合）。
         let mut exposed: Vec<&str> = tools.iter().filter(|t| t.exposed()).map(|t| t.name()).collect();
         exposed.sort_unstable();
         assert_eq!(
             exposed,
             vec![
                 "call_device",
+                "get_device_profile",
                 "get_thing_tree",
                 "list_composites",
                 "list_devices",
                 "query_events",
                 "read_device",
+                "read_device_knowledge",
                 "read_document",
                 "run_composite",
                 "search_knowledge",

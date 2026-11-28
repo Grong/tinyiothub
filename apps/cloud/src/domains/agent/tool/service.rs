@@ -17,7 +17,7 @@ use tinyiothub_skills::trust::{ToolSafety, classify_tool_safety};
 use tinyiothub_storage::cache::ThingCache;
 
 use super::thing::{LiveSummarySource, ManagerSlot, PendingActionStore, ThingToolContext, create_thing_tools};
-use super::{canvas::CanvasTool, get_skill::GetSkillTool};
+use super::{canvas::CanvasTool, complete_skill::CompleteSkillTool, get_skill::GetSkillTool};
 use crate::domains::agent::session::config::service as config_service;
 
 /// chat agent 的内建工具 provider：canvas + get_skill + thing 工具（9）。
@@ -55,8 +55,19 @@ pub fn chat_builtin_tools_provider(
                 session_agent_id.clone(),
                 session.contexts.clone(),
                 session.events.clone(),
+                session.skills.clone(),
             )),
             classify_tool_safety("get_skill"),
+        ));
+        tools.push((
+            Box::new(CompleteSkillTool::new(
+                workspace_id.to_string(),
+                session_agent_id.clone(),
+                session.contexts.clone(),
+                session.events.clone(),
+                session.skills.clone(),
+            )),
+            classify_tool_safety("complete_skill"),
         ));
 
         // Thing Ontology tools (9) — always available, no denylist

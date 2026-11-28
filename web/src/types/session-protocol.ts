@@ -19,6 +19,7 @@ export const SESSION_EVENT_TYPES = [
   'turn/end',
   'todo/write',
   'skill/loaded',
+  'skill/completed',
   'question/asked',
   'question/answered',
   'approval/requested',
@@ -91,6 +92,12 @@ export interface SessionEventDataMap {
   'turn/end': { outcome: string; reason?: string; usage?: TurnUsage };
   'todo/write': { todos: SessionTodo[] };
   'skill/loaded': { skillId: string; name: string; version: string };
+  'skill/completed': {
+    skillId: string;
+    status: 'completed' | 'skipped' | 'blocked';
+    summary: string;
+    nextSkill?: string | null;
+  };
   'question/asked': { questionId: string; questions: SessionQuestion[] };
   'question/answered': {
     questionId: string;

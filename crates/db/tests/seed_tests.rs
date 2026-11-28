@@ -207,29 +207,124 @@ async fn seed_demo_adds_energy_and_safety_tags() {
     assert_eq!(hvac, 2);
 }
 
+async fn demo_counts(pool: &sqlx::SqlitePool) -> (i64, i64, i64, i64, i64, i64, i64) {
+    sqlx::query_as(
+        "SELECT (SELECT COUNT(*) FROM things), (SELECT COUNT(*) FROM thing_properties), \
+                (SELECT COUNT(*) FROM thing_actions), (SELECT COUNT(*) FROM tags), \
+                (SELECT COUNT(*) FROM tag_bindings), (SELECT COUNT(*) FROM watch_rules), \
+                (SELECT COUNT(*) FROM resources WHERE resource_type = 'document')",
+    )
+    .fetch_one(pool)
+    .await
+    .expect("demo counts")
+}
+
 #[tokio::test]
 async fn seed_demo_is_idempotent() {
     let pool = test_helpers::test_pool().await;
     let db = Db::new(pool);
     seed::seed_system(&db).await.unwrap();
     seed::seed_demo(&db).await.unwrap();
+    let first = demo_counts(db.pool()).await;
+    seed::seed_demo(&db).await.unwrap();
+    let second = demo_counts(db.pool()).await;
+    assert_eq!(first, second, "demo seed must be idempotent");
+
+    // The demo now has a hierarchy (spaces/buildings/line) plus devices.
+    assert!(first.0 >= 40, "expected factory hierarchy + devices, got {first:?}");
+    assert!(first.3 >= 30, "expected location + functional tags, got {first:?}");
+    assert!(first.5 >= 4, "expected demo watch rules, got {first:?}");
+    assert!(
+        first.6 >= 60,
+        "expected generated device/space documents, got {first:?}"
+    );
+}
+
+#[tokio::test]
+async fn seed_demo_builds_hierarchy_and_location_tags() {
+    let pool = test_helpers::test_pool().await;
+    let db = Db::new(pool);
+    seed::seed_system(&db).await.unwrap();
+    seed::seed_demo(&db).await.unwrap();
     seed::seed_demo(&db).await.unwrap();
 
-    let things: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM things")
+    let root_type: String = sqlx::query_scalar("SELECT thing_type FROM things WHERE id = 'site-demo-factory'")
         .fetch_one(db.pool())
         .await
         .unwrap();
-    assert_eq!(things, 20);
+    assert_eq!(root_type, "space");
 
-    let props: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM thing_properties")
+    let building_type: String = sqlx::query_scalar("SELECT thing_type FROM things WHERE id = 'bldg-a'")
         .fetch_one(db.pool())
         .await
         .unwrap();
-    assert_eq!(props, 95);
+    assert_eq!(building_type, "building");
 
-    let actions: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM thing_actions")
+    let env_parent: Option<String> = sqlx::query_scalar("SELECT parent_id FROM things WHERE id = 'device-env-01'")
         .fetch_one(db.pool())
         .await
         .unwrap();
-    assert_eq!(actions, 38);
+    assert_eq!(env_parent.as_deref(), Some("space-a-workshop"));
+
+    let cold_parent: Option<String> = sqlx::query_scalar("SELECT parent_id FROM things WHERE id = 'device-cold-01'")
+        .fetch_one(db.pool())
+        .await
+        .unwrap();
+    assert_eq!(cold_parent.as_deref(), Some("space-cold"));
+
+    let shaped: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM things WHERE parent_id IS NOT NULL")
+        .fetch_one(db.pool())
+        .await
+        .unwrap();
+    assert_eq!(shaped, 40, "all non-root demo things must be parented");
+
+    let location_tags: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM tags WHERE id LIKE 'tag-loc-%'")
+        .fetch_one(db.pool())
+        .await
+        .unwrap();
+    assert_eq!(location_tags, 11);
+
+    let cold_tag: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM tag_bindings b JOIN tags t ON t.id = b.tag_id \
+         WHERE b.target_id = 'device-cold-01' AND t.name = '冷库'",
+    )
+    .fetch_one(db.pool())
+    .await
+    .unwrap();
+    assert_eq!(cold_tag, 1);
+
+    let new_devices: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM things WHERE driver_name = 'simulator' AND id IN ( \
+            'device-env-03', 'device-env-04', 'device-fire-smoke-b', 'device-fire-heat-b', \
+            'device-access-b', 'device-cam-03', 'device-light-warehouse', 'device-light-power', \
+            'device-robot-02', 'device-security-warehouse')",
+    )
+    .fetch_one(db.pool())
+    .await
+    .unwrap();
+    assert_eq!(new_devices, 10);
+}
+
+#[tokio::test]
+async fn seed_demo_generates_markdown_device_and_area_docs() {
+    let pool = test_helpers::test_pool().await;
+    let db = Db::new(pool);
+    seed::seed_system(&db).await.unwrap();
+    seed::seed_demo(&db).await.unwrap();
+
+    let cold_doc: String = sqlx::query_scalar("SELECT content FROM resources WHERE id = 'doc-device-cold-01-manual'")
+        .fetch_one(db.pool())
+        .await
+        .unwrap();
+    assert!(cold_doc.contains("设备档案"));
+    assert!(cold_doc.contains("属性与量程"));
+    assert!(cold_doc.contains("巡检与故障处置"));
+
+    let area_doc: String = sqlx::query_scalar("SELECT content FROM resources WHERE id = 'doc-space-a-workshop-area'")
+        .fetch_one(db.pool())
+        .await
+        .unwrap();
+    assert!(area_doc.contains("区域说明与巡检路线"));
+    assert!(area_doc.contains("下辖设备"));
+    assert!(area_doc.contains("冷链") || area_doc.contains("巡检路线"));
 }

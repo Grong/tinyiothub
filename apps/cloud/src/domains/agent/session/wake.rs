@@ -21,7 +21,7 @@ use tinyiothub_storage::suppression::{
     TURN_STATE_VERSION,
 };
 
-use super::trigger::EventWake;
+use super::trigger::{EventWake, WatchHitNote};
 use crate::domains::agent::pool::AgentPool;
 use crate::domains::agent::prompt::PromptMemorySource;
 use crate::domains::agent::session::chat::service::ensure_agent;
@@ -87,6 +87,20 @@ pub fn build_wake_message(
     }
     message.push_str("按顺序执行；用 todo_write 维护进度，完成后总结结果。");
     Some(message)
+}
+
+/// 把待消费的 watch 命中并入巡检消息（不单开 turn）。
+fn append_watch_hits(message: String, hits: &[WatchHitNote]) -> String {
+    if hits.is_empty() {
+        return message;
+    }
+    let mut out = message;
+    out.push_str("\n\n## 上次巡检以来的设备值守命中\n");
+    for hit in hits {
+        out.push_str(&format!("- {}\n", hit.summary));
+    }
+    out.push_str("\n这些命中已并入本轮处理，不要重新执行整轮巡检。");
+    out
 }
 
 /// `forceFullReason` for an operator/API-triggered reconcile. Ordinary wakes
@@ -1226,6 +1240,17 @@ pub(crate) struct PreparedAttemptRef<'a> {
 pub trait WakeExecutor: Send + Sync {
     async fn execute(&self, schedule: AssistantSchedule, cancel: CancellationToken) -> WakeReport;
 
+    /// 带 watch 上下文执行下一次定时巡检：watch 命中不再单独开 turn，
+    /// 而是随下一个到期的 schedule 一起消费。默认实现忽略上下文（测试桩）。
+    async fn execute_with_watch_hits(
+        &self,
+        schedule: AssistantSchedule,
+        cancel: CancellationToken,
+        _watch_hits: Vec<WatchHitNote>,
+    ) -> WakeReport {
+        self.execute(schedule, cancel).await
+    }
+
     /// 事件 wake 入口。默认跳过——既有实现者无需改动即可继续编译。
     async fn execute_event(&self, _wake: EventWake, _cancel: CancellationToken) -> WakeReport {
         WakeReport {
@@ -1392,7 +1417,18 @@ impl WakeRunner {
     }
 
     pub async fn run(&self, schedule: &AssistantSchedule, cancel: CancellationToken) -> WakeReport {
-        self.run_scheduled(schedule, cancel, None).await
+        self.run_scheduled(schedule, cancel, None, &[]).await
+    }
+
+    /// 定时巡检 + 自上次巡检以来未消费的 watch 命中：命中并入同一轮消息，
+    /// 不单独开 turn。
+    pub async fn run_with_watch_hits(
+        &self,
+        schedule: &AssistantSchedule,
+        cancel: CancellationToken,
+        watch_hits: &[WatchHitNote],
+    ) -> WakeReport {
+        self.run_scheduled(schedule, cancel, None, watch_hits).await
     }
 
     /// Forced full Turn for an operator/API reconcile.
@@ -1401,7 +1437,7 @@ impl WakeRunner {
     /// the same full-Turn function; only `forceFullReason` differs, so the
     /// history/model/tool path is never duplicated.
     pub async fn run_reconcile(&self, schedule: &AssistantSchedule, cancel: CancellationToken) -> WakeReport {
-        self.run_scheduled(schedule, cancel, Some(FORCE_FULL_REASON_RECONCILE))
+        self.run_scheduled(schedule, cancel, Some(FORCE_FULL_REASON_RECONCILE), &[])
             .await
     }
 
@@ -1410,6 +1446,7 @@ impl WakeRunner {
         schedule: &AssistantSchedule,
         cancel: CancellationToken,
         force_full_reason: Option<&str>,
+        watch_hits: &[WatchHitNote],
     ) -> WakeReport {
         if !schedule.enabled {
             return WakeReport {
@@ -1431,6 +1468,7 @@ impl WakeRunner {
                 outcome: WakeOutcome::Skipped,
             };
         };
+        let message = append_watch_hits(message, watch_hits);
         // One Session Events read per wake: the same capture supplies the
         // preflight user cursor and the prompt's semantic events.
         let session_key = format!("agent:{}:{}/main", schedule.workspace_id, schedule.assistant_id);
@@ -2400,6 +2438,15 @@ impl WakeExecutor for WakeRunner {
         self.run(&schedule, cancel).await
     }
 
+    async fn execute_with_watch_hits(
+        &self,
+        schedule: AssistantSchedule,
+        cancel: CancellationToken,
+        watch_hits: Vec<WatchHitNote>,
+    ) -> WakeReport {
+        self.run_with_watch_hits(&schedule, cancel, &watch_hits).await
+    }
+
     async fn execute_event(&self, wake: EventWake, cancel: CancellationToken) -> WakeReport {
         self.run_event(&wake, cancel).await
     }
@@ -2474,6 +2521,22 @@ fn outcome_with_todos(outcome: TurnOutcome, todos: &[Todo]) -> WakeOutcome {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn watch_hits_are_appended_to_scheduled_message() {
+        let out = append_watch_hits(
+            "本轮默认职责".to_string(),
+            &[WatchHitNote {
+                rule_id: "watch-cold".into(),
+                summary: "Watch 命中 watch-cold：value=8.4 health=ok zone=冷库".into(),
+            }],
+        );
+        assert!(out.starts_with("本轮默认职责"));
+        assert!(out.contains("上次巡检以来的设备值守命中"));
+        assert!(out.contains("watch-cold"));
+        assert!(out.contains("不要重新执行整轮巡检"));
+        assert_eq!(append_watch_hits("原消息".to_string(), &[]), "原消息");
+    }
     use crate::domains::agent::prompt::PromptMemorySource;
     use crate::domains::agent::session::context::TurnContextRegistry;
     use crate::domains::agent::session::events::SessionEventSink;

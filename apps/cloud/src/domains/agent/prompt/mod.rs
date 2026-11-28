@@ -7,7 +7,6 @@
 pub mod assistant;
 pub mod constitution;
 pub mod exec;
-pub mod heartbeat;
 pub mod investigation;
 pub mod paths;
 pub mod runtime;

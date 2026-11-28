@@ -30,9 +30,9 @@ impl Tool for SearchKnowledgeTool {
     }
 
     fn description(&self) -> &str {
-        "搜索物的知识文档（文档/手册/说明书等），使用 LIKE 模糊匹配名称和标签。\
-         返回文档元数据（不含正文），获取正文请用 read_document 工具。\
-         当你需要查找设备相关的文档和知识时使用此工具。"
+        "搜索物的知识文档（文档/手册/说明书等），使用 LIKE 模糊匹配名称、标签和正文摘录。\
+         返回文档元数据与正文摘录（不含全文），获取全文请用 read_document 工具。\
+         当需要查找设备相关的文档和知识时使用此工具；已知设备时优先用 get_device_profile 一次取回档案。"
     }
 
     fn parameters_schema(&self) -> Value {
@@ -97,10 +97,12 @@ impl Tool for SearchKnowledgeTool {
                 let mut v = serde_json::to_value(&r).unwrap_or_default();
                 if let Some(obj) = v.as_object_mut() {
                     obj.insert("resource_type".to_string(), json!(r.doc_type));
-                    obj.insert(
-                        "url".to_string(),
-                        json!(crate::domains::thing::handler::resources::resource_file_url(&r.id)),
-                    );
+                    if !r.file_path.is_empty() {
+                        obj.insert(
+                            "url".to_string(),
+                            json!(crate::domains::thing::handler::resources::resource_file_url(&r.id)),
+                        );
+                    }
                 }
                 v
             })
@@ -149,5 +151,40 @@ mod tests {
         let row = &output["results"][0];
         assert_eq!(row["resource_type"], "scene3d");
         assert_eq!(row["url"], "/api/v1/resources/res-3d-1/file");
+    }
+
+    #[tokio::test]
+    async fn search_knowledge_matches_document_content() {
+        let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
+        tinyiothub_storage::test_helpers::run_all_migrations(&pool)
+            .await
+            .unwrap();
+        crate::test_utils::seed_test_workspace(&pool, "tenant-1", "ws-a").await;
+
+        sqlx::query(
+            "INSERT INTO resources (id, workspace_id, resource_type, name, file_path, content, tags, created_at, updated_at) \
+             VALUES ('doc-cold', 'ws-a', 'document', '冷链手册', '', \
+                     '# 冷链超温处置\n\n先检查门磁是否闭合，再看压缩机运行状态。', '[]', \
+                     '2026-01-01', '2026-01-01')",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let tool = SearchKnowledgeTool {
+            pool,
+            workspace_id: "ws-a".to_string(),
+        };
+        let result = tool.execute(json!({"q": "门磁"})).await.unwrap();
+        assert!(result.success, "tool failed: {:?}", result.error);
+        let output: Value = serde_json::from_str(&result.output).unwrap();
+        assert_eq!(output["total"], 1);
+        assert!(
+            output["results"][0]["content_snippet"]
+                .as_str()
+                .unwrap()
+                .contains("门磁")
+        );
+        assert_eq!(output["results"][0]["resource_type"], "document");
     }
 }

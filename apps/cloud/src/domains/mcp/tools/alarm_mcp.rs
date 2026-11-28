@@ -76,7 +76,10 @@ impl ToolHandler for AlarmListHandler {
     }
 
     fn description(&self) -> &str {
-        "List alarms with optional filters (workspace, device, level, status, time range)."
+        "List alarms with optional filters (workspace, device, level, status, time range). \
+         One call returns the page (`data`), `pagination.total_count`, and `summary` — \
+         alarm counts by level over the same device/time filters. Use `summary` for \
+         distributions; do not issue one call per level or pageSize=1 probes to count."
     }
 
     fn input_schema(&self) -> InputSchema {
@@ -209,11 +212,13 @@ impl ToolHandler for AlarmListHandler {
             .await
             .map_err(|e| ToolError::Internal(format!("Failed to query alarms: {}", e)))?;
 
-        let total = state.alarm_service.count_alarms(criteria).await.unwrap_or(0) as u32;
+        let total = state.alarm_service.count_alarms(criteria.clone()).await.unwrap_or(0) as u32;
 
         let total_pages = ((total as f64) / (page_size as f64)).ceil() as u32;
 
         let alarms: Vec<crate::domains::alarm::dto::AlarmDto> = result.into_iter().map(|a| a.into()).collect();
+
+        let summary = level_summary(&state.alarm_service, &criteria).await;
 
         Ok(serde_json::json!({
             "data": alarms,
@@ -222,9 +227,51 @@ impl ToolHandler for AlarmListHandler {
                 "page_size": page_size,
                 "total_pages": total_pages,
                 "total_count": total
-            }
+            },
+            "summary": summary
         }))
     }
+}
+
+/// 等级分布：沿用本次查询的设备/时间过滤，但忽略调用方传的 levels/statuses 与分页。
+/// 一次调用即可回答"各等级有多少条"，避免模型按等级拆成多次查询。
+async fn level_summary(
+    alarm_service: &crate::domains::alarm::service::AlarmService,
+    criteria: &AlarmQueryCriteria,
+) -> Value {
+    let base = AlarmQueryCriteria {
+        workspace_id: criteria.workspace_id.clone(),
+        thing_ids: criteria.thing_ids.clone(),
+        property_ids: criteria.property_ids.clone(),
+        alarm_levels: None,
+        alarm_types: criteria.alarm_types.clone(),
+        statuses: None,
+        time_range: criteria.time_range.clone(),
+        sort_by: None,
+        sort_order: None,
+        limit: None,
+        offset: None,
+    };
+    let mut by_level = serde_json::Map::new();
+    let mut total = 0u64;
+    for level in [
+        AlarmLevel::Critical,
+        AlarmLevel::Error,
+        AlarmLevel::Warning,
+        AlarmLevel::Info,
+    ] {
+        let scoped = AlarmQueryCriteria {
+            alarm_levels: Some(vec![level]),
+            ..base.clone()
+        };
+        let count = alarm_service.count_alarms(scoped).await.unwrap_or(0);
+        total = total.saturating_add(count);
+        by_level.insert(level.as_str().to_string(), serde_json::json!(count));
+    }
+    serde_json::json!({
+        "total": total,
+        "by_level": by_level,
+    })
 }
 
 /// Acknowledge alarm tool handler
@@ -497,5 +544,84 @@ impl ToolHandler for AlarmRuleAddHandler {
             .map_err(|e| ToolError::Internal(format!("Failed to create alarm rule: {}", e)))?;
 
         Ok(serde_json::to_value(created_rule).unwrap())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::domains::alarm::service::AlarmService;
+    use tinyiothub_storage::alarm::{Alarm, AlarmType};
+
+    fn alarm(level: AlarmLevel, status: AlarmStatus) -> Alarm {
+        let mut alarm = Alarm::new(
+            "thing-1".to_string(),
+            None,
+            None,
+            AlarmType::DeviceOffline,
+            level,
+            format!("{level:?} alarm"),
+            None,
+            None,
+            None,
+        );
+        alarm.status = status;
+        alarm
+    }
+
+    async fn service() -> (Arc<tinyiothub_storage::Db>, Arc<AlarmService>) {
+        let (pool, db) = tinyiothub_storage::test_helpers::fixture_pool_with_db().await;
+        tinyiothub_storage::seed::seed_system(&db).await.unwrap();
+        sqlx::query(
+            "INSERT INTO things (id, name, workspace_id, created_at, updated_at) \
+             VALUES ('thing-1','thing-1','ws-default-001','2026-01-01','2026-01-01')",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        for item in [
+            alarm(AlarmLevel::Critical, AlarmStatus::Active),
+            alarm(AlarmLevel::Critical, AlarmStatus::Resolved),
+            alarm(AlarmLevel::Warning, AlarmStatus::Active),
+        ] {
+            db.insert_alarm(&item).await.unwrap();
+        }
+        let db = Arc::new(db);
+        (db.clone(), Arc::new(AlarmService::new(db)))
+    }
+
+    #[tokio::test]
+    async fn level_summary_counts_every_level() {
+        let (_db, service) = service().await;
+        let criteria = AlarmQueryCriteria {
+            statuses: Some(vec![AlarmStatus::Active, AlarmStatus::Acknowledged]),
+            limit: Some(20),
+            ..Default::default()
+        };
+
+        let summary = level_summary(&service, &criteria).await;
+
+        assert_eq!(summary["total"], 3, "summary ignores the caller's status filter");
+        assert_eq!(summary["by_level"]["critical"], 2);
+        assert_eq!(summary["by_level"]["warning"], 1);
+        assert_eq!(summary["by_level"]["error"], 0);
+        assert_eq!(summary["by_level"]["info"], 0);
+    }
+
+    #[tokio::test]
+    async fn level_summary_ignores_caller_level_filter() {
+        let (_db, service) = service().await;
+        let criteria = AlarmQueryCriteria {
+            alarm_levels: Some(vec![AlarmLevel::Critical]),
+            ..Default::default()
+        };
+
+        let summary = level_summary(&service, &criteria).await;
+
+        assert_eq!(
+            summary["total"], 3,
+            "a level-filtered query still needs the full distribution"
+        );
+        assert_eq!(summary["by_level"]["warning"], 1);
     }
 }

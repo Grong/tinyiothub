@@ -53,6 +53,9 @@ function propertyValue(property: Record<string, unknown>): string {
 
 export const deviceReadView: ToolView = {
   key: 'device.read',
+  card: 'device',
+  tone: 'read',
+  verb: '查看设备状态',
   present(input) {
     const failed = input.status === 'failed';
     const record = recordOf(parseJson(input.result)) ?? recordOf(input.result);
@@ -124,6 +127,9 @@ export const deviceReadView: ToolView = {
 
 export const deviceProfileView: ToolView = {
   key: 'device.profile',
+  card: 'doc',
+  tone: 'read',
+  verb: '查看设备档案',
   present(input) {
     const base = deviceReadView.present(input);
     if (!base) return null;
@@ -163,6 +169,9 @@ export const deviceProfileView: ToolView = {
 
 export const deviceListView: ToolView = {
   key: 'device.list',
+  card: 'list',
+  tone: 'read',
+  verb: '梳理设备清单',
   present(input) {
     const facts = (() => {
       try {
@@ -210,6 +219,9 @@ export const deviceListView: ToolView = {
 
 export const propertyReadView: ToolView = {
   key: 'property.read',
+  card: 'device',
+  tone: 'read',
+  verb: '读取运行参数',
   present(input) {
     if (input.status === 'failed') {
       return {
@@ -257,6 +269,9 @@ export const propertyReadView: ToolView = {
 
 export const deviceWriteView: ToolView = {
   key: 'device.write',
+  card: 'action',
+  tone: 'write',
+  verb: '调整设备设置',
   present(input) {
     const failed = input.status === 'failed';
     const args = recordOf(input.args) ?? {};
@@ -289,6 +304,9 @@ export const deviceWriteView: ToolView = {
 
 export const deviceActionView: ToolView = {
   key: 'device.action',
+  card: 'action',
+  tone: 'write',
+  verb: '执行设备操作',
   present(input) {
     const failed = input.status === 'failed';
     const args = (input.args && typeof input.args === 'object' ? input.args : {}) as Record<string, unknown>;
@@ -316,6 +334,9 @@ export const deviceActionView: ToolView = {
 
 export const deviceKnowledgeView: ToolView = {
   key: 'device.knowledge',
+  card: 'doc',
+  tone: 'skill',
+  verb: '查阅设备知识',
   present(input) {
     if (input.status === 'failed') {
       return {

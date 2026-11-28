@@ -1,15 +1,18 @@
 ---
 name: troubleshooting
 title: 故障诊断
-description: 诊断设备异常，结合事件、告警和知识库定位原因并给出修复建议。
-version: "1"
+description: 已确认存在异常时的根因诊断流程：收集证据、推断原因、给出分级修复建议。不负责发现异常，也不直接执行写操作。
+version: "2"
 trigger: /troubleshooting
 inject: index
+builtin: "3"
 ---
 
 # 故障诊断 (Troubleshooting)
 
 诊断 IoT 设备故障，分析根本原因并提供修复建议。
+
+本技能是根因诊断的唯一入口：`inspection` 负责发现异常，`alarm-management` 负责告警查询与确认，需要定位原因时进入本技能。
 
 ## 工具组合使用
 
@@ -21,7 +24,7 @@ inject: index
 收到异常信号（告警、用户反馈、巡检发现）
   │
   ├─ 1. 收集信息
-  │   告警查询工具   → 有没有相关告警（如已提供）？
+  │   告警查询工具   → 一次查询拿当页明细 + summary.by_level（如已提供），不要按等级重复查
   │   read_device     → 设备状态、属性和区域（确认异常是否持续）
   │   query_events    → 最近事件和变化时间点
   │
@@ -58,3 +61,6 @@ inject: index
 - 如果信息不足，坦率说明"需要更多信息"并列出需要什么
 - 修复建议由低风险到高风险排列，高风险操作必须用户确认
 - 利用 `search_knowledge` 搜索项目文档，可能有设备手册或历史处理记录
+- 本技能只输出诊断与建议；需要真正改配置或下发命令时，按 `device-management` 技能走审批流程
+- 告警查询工具属于平台扩展平面，仅在当前工具列表提供时可用；未提供时用 `query_events` 与 `read_device` 取证，并说明无法核对告警
+

@@ -195,7 +195,9 @@ pub fn build_skill_index_prompt(skills: &[LoadedSkill]) -> String {
         out.push_str("\n\n");
     }
     if !index.is_empty() {
-        out.push_str("以下技能可用,使用 `get_skill` 工具按名称加载完整内容:\n\n");
+        out.push_str(
+            "以下技能可用。按 TURN_BRIEF 顺序一次只加载一个；结算后 `complete_skill` 会直接返回下一个技能的正文:\n\n",
+        );
         for entry in &index {
             out.push_str(entry);
             out.push('\n');

@@ -42,7 +42,7 @@ impl ThingApprovalLabels {
         let title = action
             .as_ref()
             .and_then(|item| item.get("displayName").and_then(Value::as_str))
-            .unwrap_or_else(|| match tool {
+            .unwrap_or(match tool {
                 "set_device" | "write_properties" => "调整设备属性",
                 _ => "执行设备操作",
             })

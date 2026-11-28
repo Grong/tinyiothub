@@ -6,6 +6,8 @@ import { skillDisplay } from './skill-copy.js';
 import type { ContentPart } from './timeline-model.js';
 import type { TodoItem } from '../../api/assistant.js';
 import { presentTool } from '../tool-views/registry.js';
+import { getWorkspaceId } from '../../api/client.js';
+import '../story/evidence-image.js';
 
 const TOOL_META: Record<string, { icon: string; verb: string }> = {
   get_thing: { icon: '◎', verb: '查看设备' },
@@ -371,12 +373,38 @@ function renderTool(part: ToolPart): TemplateResult {
   >
     <summary class="activity__summary">
       <span class="activity__icon" aria-hidden="true">${icon}</span>
+      ${
+        presentation.images?.length
+          ? html`<evidence-image
+              class="activity__thumb"
+              .evidenceId=${presentation.images[0].evidenceId}
+              .workspaceId=${getWorkspaceId() ?? ''}
+              .alt=${presentation.images[0].alt}
+            ></evidence-image>`
+          : nothing
+      }
       <span class="activity__label">${label}</span>
       <span class="activity__meta ${stateClass}"
         >${failed ? '失败' : part.result ? '完成' : '执行中'}</span
       >
     </summary>
     <div class="activity__detail process-detail">
+      ${
+        presentation.images?.length
+          ? html`<div class="activity__images">
+              ${presentation.images.slice(0, 3).map(
+                (image) => html`<figure class="activity__image">
+                  <evidence-image
+                    .evidenceId=${image.evidenceId}
+                    .workspaceId=${getWorkspaceId() ?? ''}
+                    .alt=${image.alt}
+                  ></evidence-image>
+                  ${image.caption ? html`<figcaption>${image.caption}</figcaption>` : nothing}
+                </figure>`,
+              )}
+            </div>`
+          : nothing
+      }
       ${
         presentation.metrics?.length
           ? html`<dl class="activity__metrics">

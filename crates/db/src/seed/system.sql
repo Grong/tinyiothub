@@ -202,6 +202,18 @@ SELECT
     300, 3, 1, NULL, datetime('now'), datetime('now')
 WHERE NOT EXISTS (SELECT 1 FROM cron_jobs WHERE id = 'sys-event-retention');
 
+-- ── hub_ledger retention cron job (E3 retired: telemetry audit tail) ───────
+INSERT INTO cron_jobs (
+    id, workspace_id, name, description, job_type, cron_expression, config,
+    timeout_seconds, max_retries, is_enabled, created_by, created_at, updated_at
+)
+SELECT
+    'sys-hub-ledger-retention', 'system', 'Hub 账本保留清理',
+    'Delete hub_ledger telemetry older than retention_days (E3 state_change writes are retired).',
+    'hub_ledger_retention', '0 47 3 * * *', '{"retention_days": 30}',
+    300, 3, 1, NULL, datetime('now'), datetime('now')
+WHERE NOT EXISTS (SELECT 1 FROM cron_jobs WHERE id = 'sys-hub-ledger-retention');
+
 -- ── approval timeout sweep (T6, AI 处置流) ──────────────────────────────────
 INSERT INTO cron_jobs (
     id, workspace_id, name, description, job_type, cron_expression, config,

@@ -82,6 +82,30 @@ describe('tool views', () => {
     expect(view.summary).toBe('管理定时任务和自动化规则。');
   });
 
+  it('exposes evidence-backed snapshot images on the tool presentation', () => {
+    const view = presentTool({
+      name: 'call_device',
+      viewKey: 'device.action',
+      args: { thingId: 'device-cam-01', action: 'snapshot' },
+      result: JSON.stringify({
+        thingId: 'device-cam-01',
+        actionName: 'snapshot',
+        status: 'executed',
+        snapshot: { source: 'snapshot', evidence: { evidenceId: 'ev-snap' } },
+      }),
+      evidence: [{ evidenceId: 'ev-snap', mime: 'image/jpeg', sourceSeq: 1 }],
+      status: 'ok',
+    });
+    expect(view.images).toEqual([
+      {
+        evidenceId: 'ev-snap',
+        alt: '抓拍画面',
+        caption: '抓拍画面',
+      },
+    ]);
+    expect(view.details).toBeDefined();
+  });
+
   it('renders a device list with totals', () => {
     const view = presentTool({
       name: 'list_things',

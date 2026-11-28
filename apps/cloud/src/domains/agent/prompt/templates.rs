@@ -9,6 +9,52 @@
 pub const ASSISTANT_MD: &str = include_str!("../../../../templates/agent/ASSISTANT.md");
 /// VISUALIZATION.md — 可视化技能模板
 pub const VISUALIZATION_SKILL_MD: &str = include_str!("../../../../templates/skills/visualization.md");
+/// INSPECTION.md — 巡检技能模板
+pub const INSPECTION_SKILL_MD: &str = include_str!("../../../../templates/skills/inspection.md");
+/// VIDEO_INSPECTION.md — 视频巡检技能模板
+pub const VIDEO_INSPECTION_SKILL_MD: &str = include_str!("../../../../templates/skills/video-inspection.md");
+
+/// 产品技能模板（文件名 stem, 正文）。`apps/cloud/templates/skills/` 是唯一真源，
+/// 启动时同步到全局技能目录；技能正文里的工具名必须属于
+/// `tools::catalog::TOOL_CATALOG` 的规范名或 `PLATFORM_PLANE_TOOLS`。
+pub const SKILL_TEMPLATES: &[(&str, &str)] = &[
+    (
+        "alarm-management",
+        include_str!("../../../../templates/skills/alarm-management.md"),
+    ),
+    (
+        "device-management",
+        include_str!("../../../../templates/skills/device-management.md"),
+    ),
+    (
+        "driver-management",
+        include_str!("../../../../templates/skills/driver-management.md"),
+    ),
+    (
+        "energy-saving",
+        include_str!("../../../../templates/skills/energy-saving.md"),
+    ),
+    ("inspection", INSPECTION_SKILL_MD),
+    (
+        "job-management",
+        include_str!("../../../../templates/skills/job-management.md"),
+    ),
+    (
+        "troubleshooting",
+        include_str!("../../../../templates/skills/troubleshooting.md"),
+    ),
+    ("video-inspection", VIDEO_INSPECTION_SKILL_MD),
+    ("visualization", VISUALIZATION_SKILL_MD),
+    ("workspace", include_str!("../../../../templates/skills/workspace.md")),
+];
+
+/// 已下线的内置技能：启动时改名成 `.retired` 归档，避免旧副本继续出现在技能索引里。
+pub const RETIRED_SKILLS: &[&str] = &["heartbeat-monitor", "platform-overview"];
+
+/// 内置技能修订号，写在 frontmatter `builtin:` 上。
+/// 启动时若工作区副本的修订号更小，用模板覆盖；用户自建技能（非内置文件名）永不触碰。
+pub const BUILTIN_SKILL_REV: u32 = 3;
+
 /// IDENTITY.md — 身份层模板
 pub const IDENTITY_MD: &str = include_str!("../../../../templates/agent/IDENTITY.md");
 /// SOUL.md — 行为原则模板

@@ -30,7 +30,8 @@ vi.mock('../../api/brain-events.js', () => ({
 }));
 
 import './story.js';
-import { pickDefaultSession, type StoryView } from './story.js';
+import { pickDefaultSession } from '../story/story-session.js';
+import type { StoryView } from './story.js';
 import type { SessionEvent, SessionSummary } from '../../api/assistant.js';
 
 const session: SessionSummary = {

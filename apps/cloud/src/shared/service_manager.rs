@@ -628,12 +628,23 @@ impl ServiceManager {
             // manager 内 PipelineDeps 同一实例（克隆共享 DashMap）。
             app_state.set_active_runs(thing_agent_manager.active_run_registry());
 
-            // 启动补种：legacy heartbeat tasks 已退役（唤醒步骤由 inspection
-            // 技能承接）；只为已有工作区补齐缺失的 inspection 技能。
+            // 内置技能播种：模板是唯一真源。全局目录先同步一次（模板更新随部署生效），
+            // 再按内置修订号刷新各工作区副本；用户自建技能不受影响。
+            match crate::domains::agent::session::ensure_global_skills() {
+                Ok(changed) if changed > 0 => tracing::info!(changed, "global builtin skills synced from templates"),
+                Ok(_) => {}
+                Err(error) => tracing::warn!(%error, "sync global builtin skills failed"),
+            }
             for ws_id in &ws_ids {
                 if let Err(error) = crate::domains::agent::session::ensure_inspection_skill(&app_state.db, ws_id).await
                 {
                     tracing::warn!(%ws_id, %error, "seed inspection skill failed");
+                }
+                if let Err(error) = crate::domains::agent::session::ensure_video_inspection_skill(ws_id).await {
+                    tracing::warn!(%ws_id, %error, "seed video inspection skill failed");
+                }
+                if let Err(error) = crate::domains::agent::session::ensure_builtin_skills(ws_id) {
+                    tracing::warn!(%ws_id, %error, "refresh builtin skills failed");
                 }
             }
 
@@ -735,10 +746,8 @@ impl ServiceManager {
 
             // Also store in AppState for potential access by other subsystems
             app_state.orchestrator = self.orchestrator.clone();
-            // T13 bootstrap 装配：统一循环管理器 + last_ticks 共享表注入
-            // （T15 起 handler 的唯一读源）。
+            // T13 bootstrap 装配：统一循环管理器注入。
             app_state.thing_agents = Some(thing_agent_manager.clone());
-            app_state.heartbeat_last_ticks = Some(thing_agent_manager.heartbeat_last_ticks());
         }
 
         // 5. Start SSE token cleanup to prevent expired tokens from accumulating in memory.
