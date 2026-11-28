@@ -12,8 +12,10 @@
 //!   event performance thresholds, social provider row, event-retention
 //!   cron job.
 //! - [`seed_demo`] — demo scenario, gated by `[seed] demo_data` (default
-//!   true): 20 demo things + per-thing properties/actions, tags + bindings,
-//!   alarm rules + sample alarms, sample jobs, example notification channels.
+//!   true): a hierarchical demonstration factory (spaces/buildings/line +
+//!   devices with parent links), location + functional tags, per-thing
+//!   properties/actions, alarm rules + sample alarms, watch rules, sample
+//!   jobs, example notification channels.
 //!
 //! Both tiers are idempotent (`INSERT OR IGNORE` / `WHERE NOT EXISTS` guards)
 //! and safe to re-run on every startup.
@@ -55,6 +57,8 @@
 
 use crate::database::Db;
 
+mod demo_knowledge;
+
 const SYSTEM_SQL: &str = include_str!("seed/system.sql");
 const DEMO_SQL: &str = include_str!("seed/demo.sql");
 
@@ -77,12 +81,14 @@ pub async fn seed_system(db: &Db) -> Result<(), sqlx::Error> {
 /// to have run first (demo rows reference the default tenant/workspace/admin).
 pub async fn seed_demo(db: &Db) -> Result<(), sqlx::Error> {
     sqlx::raw_sql(DEMO_SQL).execute(db.pool()).await?;
-    let (things, properties, actions): (i64, i64, i64) = sqlx::query_as(
+    demo_knowledge::seed(db).await?;
+    let (things, properties, actions, documents): (i64, i64, i64, i64) = sqlx::query_as(
         "SELECT (SELECT COUNT(*) FROM things), (SELECT COUNT(*) FROM thing_properties), \
-         (SELECT COUNT(*) FROM thing_actions)",
+         (SELECT COUNT(*) FROM thing_actions), \
+         (SELECT COUNT(*) FROM resources WHERE resource_type = 'document')",
     )
     .fetch_one(db.pool())
     .await?;
-    tracing::info!(things, properties, actions, "seed_demo applied");
+    tracing::info!(things, properties, actions, documents, "seed_demo applied");
     Ok(())
 }

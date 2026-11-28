@@ -270,7 +270,7 @@ mod tests {
         let types: Vec<&str> = events.iter().map(|event| event.event_type.as_str()).collect();
         assert_eq!(
             types,
-            vec!["turn.started", "step.text", "message.created", "turn.completed"]
+            vec!["turn/start", "step/start", "assistant/message", "step/end", "turn/end"]
         );
         assert!(
             events
@@ -278,6 +278,10 @@ mod tests {
                 .all(|event| event.session_id == "agent:ws-test:agent_main/s1"),
             "subagent events are attributed to the parent session"
         );
-        assert_eq!(events[3].payload_json["outcome"], "completed");
+        let completed = events
+            .iter()
+            .find(|event| event.event_type == "turn/end")
+            .expect("turn completed");
+        assert_eq!(completed.payload_json["outcome"], "completed");
     }
 }

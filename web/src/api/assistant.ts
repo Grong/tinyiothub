@@ -4,6 +4,7 @@
 //! - 事件/待答/答题/HUD/Schedule 是裸 JSON，直接用 fetch + buildUrl。
 //! - SessionKey 必须 encodeURIComponent（包含 ':' 与 '/'）。
 
+import type { LiveFrame } from '../types/session-protocol.js';
 import { ApiClient, ApiError, buildUrl, getAuthToken } from './client.js';
 
 export interface SessionEvent {
@@ -38,7 +39,7 @@ export type TodoStatus = 'pending' | 'in_progress' | 'completed';
 export interface TodoItem {
   content: string;
   status: TodoStatus;
-  activeForm: string;
+  activeForm?: string;
 }
 
 export interface QuestionOption {
@@ -133,6 +134,27 @@ export async function deleteChatSession(sessionKey: string): Promise<void> {
   await ApiClient.delete(sessionPath(sessionKey));
 }
 
+export interface WorkspacePermissionPolicy {
+  permissionMode: 'read_only' | 'ask' | 'full_access' | string;
+  allowedActions: string[];
+  deniedActions: string[];
+  maxActionsPerRun: number;
+  maxActionsPerHour: number;
+}
+
+export async function getWorkspacePermissionPolicy(workspaceId: string): Promise<WorkspacePermissionPolicy | null> {
+  const response = await ApiClient.get<WorkspacePermissionPolicy>(`/workspaces/${workspaceId}/agent/policy`);
+  return response.result ?? null;
+}
+
+export async function updateWorkspacePermissionPolicy(
+  workspaceId: string,
+  policy: WorkspacePermissionPolicy,
+): Promise<WorkspacePermissionPolicy | null> {
+  const response = await ApiClient.put<WorkspacePermissionPolicy>(`/workspaces/${workspaceId}/agent/policy`, policy);
+  return response.result ?? null;
+}
+
 export async function updateSessionPermission(
   sessionKey: string,
   mode: 'read_only' | 'ask' | 'full_access',
@@ -167,13 +189,31 @@ export async function fetchSessionEvents(
   return rawJson<SessionEventPage>(response, '加载会话事件失败');
 }
 
-export async function fetchSessionTodos(sessionKey: string): Promise<TodoItem[]> {
-  const response = await fetch(buildUrl(sessionPath(sessionKey, '/todos')), {
+export interface SessionProjectionAgendaItem {
+  key: string;
+  label: string;
+  status: string;
+}
+
+export interface SessionProjectionView {
+  turn: {
+    turnId: string | null;
+    phase: string;
+    agenda: SessionProjectionAgendaItem[];
+    todos?: TodoItem[];
+    lastSeq: number;
+  };
+  highWatermark: number;
+}
+
+export async function fetchSessionProjection(sessionKey: string): Promise<SessionProjectionView> {
+  const response = await fetch(buildUrl(sessionPath(sessionKey, '/projection')), {
     headers: authHeaders(),
     credentials: 'include',
   });
-  return rawJson<TodoItem[]>(response, '加载任务清单失败');
+  return rawJson<SessionProjectionView>(response, '加载会话状态失败');
 }
+
 
 export async function answerQuestion(
   sessionKey: string,
@@ -257,6 +297,7 @@ export function connectSessionEvents(opts: {
   sessionKey: string;
   after: number;
   onEvent: (event: SessionEvent) => void;
+  onLive?: (frame: LiveFrame) => void;
   onError?: (error: Error) => void;
   signal?: AbortSignal;
 }): () => void {
@@ -307,6 +348,12 @@ export function connectSessionEvents(opts: {
                     const event = JSON.parse(data) as SessionEvent;
                     cursor = Math.max(cursor, event.seq);
                     opts.onEvent(event);
+                  } catch (error) {
+                    opts.onError?.(error as Error);
+                  }
+                } else if (eventType === 'live') {
+                  try {
+                    opts.onLive?.(JSON.parse(data) as LiveFrame);
                   } catch (error) {
                     opts.onError?.(error as Error);
                   }

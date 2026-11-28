@@ -125,6 +125,7 @@ pub fn descriptor_for(tool: &dyn Tool, safety: ToolSafety) -> ToolDescriptor {
     }
     presentation.danger = danger;
     presentation.enabled = !danger;
+    presentation.view_key = Some(catalog::tool_view_key(tool.name()).to_string());
     descriptor.presentation = presentation;
     descriptor
 }

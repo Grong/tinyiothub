@@ -23,7 +23,6 @@ pub mod harness;
 pub mod memory;
 pub mod port;
 pub mod provider;
-pub mod runtime;
 pub mod session;
 
 pub use error::AgentError;

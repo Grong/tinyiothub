@@ -1100,6 +1100,8 @@ pub struct ThingKnowledgeDocRow {
     pub doc_type: String,
     pub file_path: String,
     pub tags: String,
+    /// First 200 chars of the indexed Markdown/text body (never the full doc).
+    pub content_snippet: Option<String>,
     pub created_at: String,
     pub updated_at: String,
 }
@@ -1118,7 +1120,8 @@ pub(crate) async fn search_thing_knowledge_docs(
 
     // Build dynamic query with QueryBuilder
     let mut builder = sqlx::QueryBuilder::new(
-        "SELECT id, name, resource_type AS type, file_path, tags, created_at, updated_at \
+        "SELECT id, name, resource_type AS type, file_path, tags, \
+                substr(content, 1, 200) AS content_snippet, created_at, updated_at \
          FROM resources WHERE workspace_id = ",
     );
     builder.push_bind(workspace_id);
@@ -1132,6 +1135,8 @@ pub(crate) async fn search_thing_knowledge_docs(
     builder.push(" AND (name LIKE ");
     builder.push_bind(&like_pattern);
     builder.push(" OR tags LIKE ");
+    builder.push_bind(&like_pattern);
+    builder.push(" OR content LIKE ");
     builder.push_bind(&like_pattern);
     builder.push(")");
 

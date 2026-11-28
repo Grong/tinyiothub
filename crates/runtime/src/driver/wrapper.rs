@@ -125,6 +125,20 @@ impl DriverWrapper {
         self.convert_result(result, elapsed)
     }
 
+    pub fn execute_command_with_result(
+        &mut self,
+        cmd: &ThingCommand,
+        cancel: &crate::driver::CancelToken,
+    ) -> DriverExecutionResult<tinyiothub_core::driver::CommandExecution> {
+        let start_time = Instant::now();
+        let result = self
+            .retry_manager
+            .execute_once(|| self.inner_driver.execute_command_with_result(cmd, cancel));
+        let elapsed = start_time.elapsed();
+        self.update_status(&result, elapsed);
+        self.convert_result(result, elapsed)
+    }
+
     fn update_status(&mut self, result: &RetryResult<impl Sized>, elapsed: Duration) {
         match result {
             RetryResult::Success(_) => {

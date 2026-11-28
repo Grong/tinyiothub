@@ -15,12 +15,14 @@ use tinyiothub_skills::loader::parse_skill;
 use crate::domains::agent::prompt::paths;
 use crate::domains::agent::session::context::TurnContextRegistry;
 use crate::domains::agent::session::events::{SessionEventSink, session_event};
+use crate::domains::agent::session::skill_sequencer::SkillSequencer;
 
 pub struct GetSkillTool {
     workspace_id: String,
     agent_id: Option<String>,
     contexts: Arc<TurnContextRegistry>,
     events: Option<Arc<dyn SessionEventSink>>,
+    skills: Arc<SkillSequencer>,
 }
 
 impl GetSkillTool {
@@ -29,13 +31,20 @@ impl GetSkillTool {
         agent_id: Option<String>,
         contexts: Arc<TurnContextRegistry>,
         events: Arc<dyn SessionEventSink>,
+        skills: Arc<SkillSequencer>,
     ) -> Self {
         Self {
             workspace_id,
             agent_id,
             contexts,
             events: Some(events),
+            skills,
         }
+    }
+
+    fn session_key(&self) -> Option<String> {
+        let agent_id = self.agent_id.as_ref()?;
+        self.contexts.get(agent_id).map(|context| context.session_key)
     }
 
     fn skill_dirs(&self) -> [std::path::PathBuf; 2] {
@@ -46,10 +55,7 @@ impl GetSkillTool {
     }
 
     fn read_skill(&self, skill_name: &str) -> Option<String> {
-        self.skill_dirs()
-            .into_iter()
-            .map(|dir| dir.join(format!("{skill_name}.md")))
-            .find_map(|path| std::fs::read_to_string(path).ok())
+        read_skill_content(&self.workspace_id, skill_name)
     }
 
     async fn emit_loaded(&self, skill_name: &str, content: &str) -> anyhow::Result<()> {
@@ -65,10 +71,12 @@ impl GetSkillTool {
         events
             .emit(session_event(
                 &context,
-                "skill.loaded",
+                "skill/loaded",
                 serde_json::json!({
                     "skillId": skill.name,
                     "name": skill.name,
+                    "title": skill.title,
+                    "description": skill.description,
                     "version": skill.version
                 }),
             ))
@@ -84,6 +92,7 @@ impl Default for GetSkillTool {
             agent_id: None,
             contexts: Arc::new(TurnContextRegistry::default()),
             events: None,
+            skills: Arc::new(SkillSequencer::new()),
         }
     }
 }
@@ -104,11 +113,11 @@ impl Tool for GetSkillTool {
     }
 
     fn description(&self) -> &str {
-        "Load a skill's full instructions on demand. \
-         When a skill matches the current task, calling this is a BLOCKING REQUIREMENT — \
-         you MUST invoke it BEFORE taking any other action. \
-         The system prompt carries a skill index (name + one-line description); \
-         call this with a skill name to get the complete step-by-step workflow."
+        "Load a skill's full instructions on demand. When a skill matches the current task, \
+         calling this is a BLOCKING REQUIREMENT — you MUST invoke it BEFORE taking any other action. \
+         Only ONE skill may be active at a time: execute the loaded skill to completion, then call \
+         `complete_skill` to settle it. Loading another skill before settling the current one is \
+         rejected, and the next skill's instructions are delivered by `complete_skill` automatically."
     }
 
     fn parameters_schema(&self) -> serde_json::Value {
@@ -162,10 +171,36 @@ impl Tool for GetSkillTool {
             });
         }
 
+        let session_key = self.session_key();
+        // 已经是当前技能时只是“重读正文”，不要再发一条 skill/loaded，
+        // 否则自动接续 + 显式 get_skill 会让时间线上出现两条同名技能行。
+        let reload = session_key
+            .as_ref()
+            .and_then(|session| self.skills.active(session))
+            .is_some_and(|active| active.key == skill_name);
+        if let Some(session) = &session_key
+            && let Err(active) = self.skills.request(session, skill_name, "")
+        {
+            return Ok(ToolResult {
+                success: false,
+                output: String::new(),
+                error: Some(format!(
+                    "技能 '{}' 尚未结算，不能同时加载 '{}'。先完成当前技能并调用 complete_skill（它会自动把下一个技能的正文交给你）。",
+                    active.key, skill_name
+                )),
+                attachments: vec![],
+            });
+        }
+
         let content = self.read_skill(skill_name).or_else(|| {
             (skill_name == "visualization")
                 .then(|| crate::domains::agent::prompt::templates::VISUALIZATION_SKILL_MD.to_string())
         });
+        if content.as_deref().is_none_or(|text| text.trim().is_empty())
+            && let Some(session) = &session_key
+        {
+            self.skills.cancel(session, skill_name);
+        }
         match content {
             Some(content) if content.trim().is_empty() => Ok(ToolResult {
                 success: false,
@@ -174,7 +209,9 @@ impl Tool for GetSkillTool {
                 attachments: vec![],
             }),
             Some(content) => {
-                self.emit_loaded(skill_name, &content).await?;
+                if !reload {
+                    self.emit_loaded(skill_name, &content).await?;
+                }
                 Ok(ToolResult {
                     success: true,
                     output: content,
@@ -194,6 +231,18 @@ impl Tool for GetSkillTool {
             }),
         }
     }
+}
+
+/// 按 workspace → global 的顺序读取技能正文；`visualization` 有内置兜底。
+pub(crate) fn read_skill_content(workspace_id: &str, skill_name: &str) -> Option<String> {
+    let dirs = [paths::workspace_skills_dir(workspace_id), paths::global_skills_dir()];
+    dirs.into_iter()
+        .map(|dir| dir.join(format!("{skill_name}.md")))
+        .find_map(|path| std::fs::read_to_string(path).ok())
+        .or_else(|| {
+            (skill_name == "visualization")
+                .then(|| crate::domains::agent::prompt::templates::VISUALIZATION_SKILL_MD.to_string())
+        })
 }
 
 /// List workspace and global skill file stems, comma-separated.
@@ -240,6 +289,7 @@ mod tests {
             Some("agent_main".to_string()),
             contexts.clone(),
             sink.clone(),
+            std::sync::Arc::new(crate::domains::agent::session::skill_sequencer::SkillSequencer::new()),
         );
         let context = crate::domains::agent::session::context::TurnContext::new(
             "ws-default-001".into(),
@@ -259,9 +309,83 @@ mod tests {
         assert!(result.output.contains("节能分析"));
         let events = sink.events.lock().await;
         assert_eq!(events.len(), 1);
-        assert_eq!(events[0].event_type, "skill.loaded");
+        assert_eq!(events[0].event_type, "skill/loaded");
         assert_eq!(events[0].payload_json["name"], "energy-saving");
         assert_eq!(events[0].payload_json["version"], "2");
+    }
+
+    #[tokio::test]
+    async fn second_skill_is_rejected_until_the_first_is_settled() {
+        let contexts = std::sync::Arc::new(crate::domains::agent::session::context::TurnContextRegistry::default());
+        let sink = std::sync::Arc::new(crate::domains::agent::session::events::test_support::RecordingSink::default());
+        let sequencer = std::sync::Arc::new(crate::domains::agent::session::skill_sequencer::SkillSequencer::new());
+        let tool = GetSkillTool::new(
+            "ws-default-001".to_string(),
+            Some("agent_main".to_string()),
+            contexts.clone(),
+            sink.clone(),
+            sequencer.clone(),
+        );
+        let context = crate::domains::agent::session::context::TurnContext::new(
+            "ws-default-001".into(),
+            "agent_main".into(),
+            "agent:ws-default-001:agent_main/s1".into(),
+            "run1".into(),
+            0,
+        );
+        let _guard = contexts.set(context);
+        sequencer.begin(
+            "agent:ws-default-001:agent_main/s1",
+            vec![
+                crate::domains::agent::session::skill_sequencer::SkillEntry::new("energy-saving", "节能分析"),
+                crate::domains::agent::session::skill_sequencer::SkillEntry::new("inspection", "巡检"),
+            ],
+        );
+
+        let first = tool
+            .execute(serde_json::json!({"skill_name":"energy-saving"}))
+            .await
+            .unwrap();
+        assert!(first.success, "{:?}", first.error);
+
+        let second = tool
+            .execute(serde_json::json!({"skill_name":"inspection"}))
+            .await
+            .unwrap();
+        assert!(!second.success);
+        assert!(second.error.unwrap_or_default().contains("尚未结算"));
+    }
+
+    #[tokio::test]
+    async fn reloading_the_same_skill_does_not_emit_twice() {
+        let contexts = std::sync::Arc::new(crate::domains::agent::session::context::TurnContextRegistry::default());
+        let sink = std::sync::Arc::new(crate::domains::agent::session::events::test_support::RecordingSink::default());
+        let sequencer = std::sync::Arc::new(crate::domains::agent::session::skill_sequencer::SkillSequencer::new());
+        let tool = GetSkillTool::new(
+            "ws-default-001".to_string(),
+            Some("agent_main".to_string()),
+            contexts.clone(),
+            sink.clone(),
+            sequencer,
+        );
+        let context = crate::domains::agent::session::context::TurnContext::new(
+            "ws-default-001".into(),
+            "agent_main".into(),
+            "agent:ws-default-001:agent_main/s1".into(),
+            "run1".into(),
+            0,
+        );
+        let _guard = contexts.set(context);
+
+        tool.execute(serde_json::json!({"skill_name":"energy-saving"}))
+            .await
+            .unwrap();
+        tool.execute(serde_json::json!({"skill_name":"energy-saving"}))
+            .await
+            .unwrap();
+
+        let events = sink.events.lock().await;
+        assert_eq!(events.len(), 1, "同一技能重复加载只应记录一次");
     }
 
     #[tokio::test]
@@ -273,6 +397,7 @@ mod tests {
             Some("agent_main".to_string()),
             contexts.clone(),
             sink.clone(),
+            std::sync::Arc::new(crate::domains::agent::session::skill_sequencer::SkillSequencer::new()),
         );
         let context = crate::domains::agent::session::context::TurnContext::new(
             "ws-default-001".into(),

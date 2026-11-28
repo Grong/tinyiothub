@@ -226,6 +226,12 @@ impl LiveState {
             if cached.workspace_id.as_deref() != Some(workspace_id) {
                 continue;
             }
+            // LiveState seeds every cached thing (including spaces/buildings).
+            // The E2 snapshot is a device snapshot; hierarchy nodes have no
+            // driver and must not appear as devices.
+            if cached.driver_name.is_none() {
+                continue;
+            }
             let zone = if use_hierarchy {
                 self.hierarchy_zone(id)
             } else {
@@ -385,6 +391,7 @@ mod tests {
         Thing {
             id: id.into(),
             name: id.into(),
+            driver_name: Some("test".into()),
             status: ThingStatus::Online,
             parent_id: parent.map(str::to_string),
             properties: Some(vec![ThingProperty {

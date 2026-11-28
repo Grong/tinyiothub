@@ -613,12 +613,14 @@ pub(crate) async fn find_workspace_resource(
     Ok(row.map(Into::into))
 }
 
+#[allow(clippy::too_many_arguments)] // resource writes carry the full inline/file shape
 pub(crate) async fn create_workspace_resource(
     pool: &SqlitePool,
     workspace_id: &str,
     resource_type: ResourceType,
     name: &str,
     description: Option<&str>,
+    content: Option<&str>,
     file_path: &str,
     tags: &[String],
     metadata: Option<&str>,
@@ -629,8 +631,8 @@ pub(crate) async fn create_workspace_resource(
 
     sqlx::query(
         r#"
-        INSERT INTO resources (id, workspace_id, resource_type, name, description, file_path, tags, metadata, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO resources (id, workspace_id, resource_type, name, description, content, file_path, tags, metadata, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         "#,
     )
     .bind(&id)
@@ -638,6 +640,7 @@ pub(crate) async fn create_workspace_resource(
     .bind(resource_type.as_str())
     .bind(name)
     .bind(description)
+    .bind(content)
     .bind(file_path)
     .bind(&tags_json)
     .bind(metadata)
@@ -652,7 +655,7 @@ pub(crate) async fn create_workspace_resource(
         resource_type,
         name: name.to_string(),
         description: description.map(String::from),
-        content: None,
+        content: content.map(String::from),
         file_path: file_path.to_string(),
         file_size: None,
         tags: tags.to_vec(),
@@ -662,12 +665,14 @@ pub(crate) async fn create_workspace_resource(
     })
 }
 
+#[allow(clippy::too_many_arguments)] // partial update mirrors the resource columns
 pub(crate) async fn update_workspace_resource(
     pool: &SqlitePool,
     workspace_id: &str,
     resource_id: &str,
     name: Option<&str>,
     description: Option<&str>,
+    content: Option<&str>,
     tags: Option<&[String]>,
     metadata: Option<&str>,
 ) -> Result<Option<WorkspaceResource>> {
@@ -688,6 +693,14 @@ pub(crate) async fn update_workspace_resource(
             builder.push(", ");
         }
         builder.push("description = ").push_bind(d);
+        has_updates = true;
+    }
+
+    if let Some(c) = content {
+        if has_updates {
+            builder.push(", ");
+        }
+        builder.push("content = ").push_bind(c);
         has_updates = true;
     }
 
@@ -998,12 +1011,14 @@ impl Db {
     }
 
     /// 创建工作空间资源。
+    #[allow(clippy::too_many_arguments)]
     pub async fn create_workspace_resource(
         &self,
         workspace_id: &str,
         resource_type: ResourceType,
         name: &str,
         description: Option<&str>,
+        content: Option<&str>,
         file_path: &str,
         tags: &[String],
         metadata: Option<&str>,
@@ -1014,6 +1029,7 @@ impl Db {
             resource_type,
             name,
             description,
+            content,
             file_path,
             tags,
             metadata,
@@ -1028,6 +1044,7 @@ impl Db {
         resource_id: &str,
         name: Option<&str>,
         description: Option<&str>,
+        content: Option<&str>,
         tags: Option<&[String]>,
         metadata: Option<&str>,
     ) -> Result<Option<WorkspaceResource>> {
@@ -1037,6 +1054,7 @@ impl Db {
             resource_id,
             name,
             description,
+            content,
             tags,
             metadata,
         )

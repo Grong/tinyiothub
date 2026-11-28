@@ -3,7 +3,7 @@
 //! 每 30 秒：确保所有 workspace 有 Schedule 行 → 扫描到期且启用的行 →
 //! 每个 workspace 至多一个在途 wake → 交给 `WakeExecutor` 并推进 `next_wake_at`。
 
-use std::collections::VecDeque;
+use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -36,6 +36,16 @@ const DUE_BATCH_LIMIT: i64 = 100;
 /// 每 workspace + trigger 的窗口内最多派发次数（3/min 去重）。
 const EVENT_RATE_LIMIT: usize = 3;
 const EVENT_RATE_WINDOW: Duration = Duration::from_secs(60);
+
+/// Watch 命中记录：随下一次定时巡检并入同一轮，而不是即时唤醒。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WatchHitNote {
+    pub rule_id: String,
+    pub summary: String,
+}
+
+/// 每工作区最多保留的未消费 watch 命中数（超出丢最旧）。
+const WATCH_HITS_CAPACITY: usize = 20;
 
 /// 告警等外部事件触发的一次 wake 请求。
 #[derive(Debug, Clone)]
@@ -76,6 +86,26 @@ pub struct TriggerRouter {
     rate: DashMap<String, RateWindow>,
     clock: RouterClock,
     preflight_gate: Arc<PreflightGate>,
+    foreground_check: Option<Arc<dyn Fn(&str) -> bool + Send + Sync>>,
+    pending_events: Arc<ParkingMutex<HashMap<String, Vec<EventWake>>>>,
+    /// 未消费的 watch 命中（随下一次定时巡检并入同一轮）。
+    watch_hits: Arc<DashMap<String, Vec<WatchHitNote>>>,
+}
+
+fn merge_event_wakes(batch: Vec<EventWake>) -> EventWake {
+    let mut merged = batch[0].clone();
+    merged.source_id = batch
+        .iter()
+        .map(|wake| wake.source_id.as_str())
+        .collect::<Vec<_>>()
+        .join(",");
+    merged.summary = batch
+        .iter()
+        .map(|wake| wake.summary.as_str())
+        .collect::<Vec<_>>()
+        .join("；");
+    merged.dedup_key = None;
+    merged
 }
 
 /// RAII guard for the per-workspace in-flight marker.
@@ -113,7 +143,18 @@ impl TriggerRouter {
             rate: DashMap::new(),
             clock: Arc::new(Utc::now),
             preflight_gate: crate::domains::agent::session::suppression::preflight::global_preflight_gate(),
+            foreground_check: None,
+            pending_events: Arc::new(ParkingMutex::new(HashMap::new())),
+            watch_hits: Arc::new(DashMap::new()),
         }
+    }
+
+    /// Scheduled wakes are lower priority than an active user or event Turn.
+    /// The check reads shared session activity; a deferred schedule stays due
+    /// and is retried on the next tick instead of starting a parallel Turn.
+    pub fn with_foreground_check(mut self, check: Arc<dyn Fn(&str) -> bool + Send + Sync>) -> Self {
+        self.foreground_check = Some(check);
+        self
     }
 
     /// Inject the completion-time clock (tests).
@@ -138,12 +179,44 @@ impl TriggerRouter {
         (!self.preflight_gate.has_capacity()).then_some(PREFLIGHT_BACKPRESSURE_RETRY_AFTER_MS)
     }
 
-    /// 提交一次事件 wake。同 workspace 在途时拒绝；同一
+    /// 记录 watch 命中（同 rule 覆盖，容量上限丢最旧）。
+    fn record_watch_hit(&self, wake: &EventWake) {
+        let mut hits = self.watch_hits.entry(wake.workspace_id.clone()).or_default();
+        let note = WatchHitNote {
+            rule_id: wake.source_id.clone(),
+            summary: wake.summary.clone(),
+        };
+        if let Some(existing) = hits.iter_mut().find(|hit| hit.rule_id == note.rule_id) {
+            *existing = note;
+        } else {
+            if hits.len() >= WATCH_HITS_CAPACITY {
+                hits.remove(0);
+            }
+            hits.push(note);
+        }
+        tracing::debug!(
+            workspace_id = %wake.workspace_id,
+            rule_id = %wake.source_id,
+            "watch hit recorded; folded into next scheduled inspection"
+        );
+    }
+
+    fn take_watch_hits(&self, workspace_id: &str) -> Vec<WatchHitNote> {
+        self.watch_hits
+            .remove(workspace_id)
+            .map(|(_, hits)| hits)
+            .unwrap_or_default()
+    }
+
+    /// 提交一次事件 wake。watch 命中只记账（随下一次定时巡检消费）；
+    /// 其余同 workspace 在途时拒绝；同一
     /// `{workspace}:{trigger}:{dedup_key}`（无 dedup 时退化为
     /// `{workspace}:{trigger}`）60 秒窗口内超过 3 次时拒绝。
     pub fn submit_event(&self, wake: EventWake) -> bool {
-        if self.in_flight.contains(&wake.workspace_id) {
-            return false;
+        // watch 命中不唤醒独立 turn：只记账，随下一次定时巡检消费。
+        if wake.trigger == "watch" {
+            self.record_watch_hit(&wake);
+            return true;
         }
         let key = wake.rate_key();
         let now = Instant::now();
@@ -164,7 +237,39 @@ impl TriggerRouter {
             }
             window.hits.push_back(now);
         }
+        if self.in_flight.contains(&wake.workspace_id) {
+            self.pending_events
+                .lock()
+                .entry(wake.workspace_id.clone())
+                .or_default()
+                .push(wake);
+            return true;
+        }
         self.event_tx.try_send(wake).is_ok()
+    }
+
+    fn flush_pending_events(self: &Arc<Self>, workspace_id: String) {
+        let batch = self.pending_events.lock().remove(&workspace_id);
+        let Some(batch) = batch.filter(|batch| !batch.is_empty()) else {
+            return;
+        };
+        if !self.in_flight.insert(workspace_id.clone()) {
+            let mut pending = self.pending_events.lock();
+            pending.entry(workspace_id).or_default().splice(0..0, batch);
+            return;
+        }
+        let guard = InFlightGuard {
+            set: Arc::clone(&self.in_flight),
+            key: workspace_id.clone(),
+        };
+        let merged = merge_event_wakes(batch);
+        let router = Arc::clone(self);
+        tokio::spawn(async move {
+            let dispatch = Arc::clone(&router);
+            dispatch.dispatch_event(merged).await;
+            drop(guard);
+            router.flush_pending_events(workspace_id);
+        });
     }
 
     /// 扫描并派发到期的 wake；返回已派发任务的句柄（生产方忽略，测试可 await）。
@@ -201,6 +306,17 @@ impl TriggerRouter {
             if !schedule.enabled {
                 continue;
             }
+            if self
+                .foreground_check
+                .as_ref()
+                .is_some_and(|check| check(&schedule.workspace_id))
+            {
+                tracing::debug!(
+                    workspace_id = %schedule.workspace_id,
+                    "scheduled wake deferred: foreground work is active"
+                );
+                continue;
+            }
             // Coalescing arbiter: every due request for the same
             // `(workspaceId, plannedWakeAt)` maps to one workspace slot, so a
             // duplicate burst is dropped (including after a restart) instead
@@ -214,10 +330,14 @@ impl TriggerRouter {
                 set: Arc::clone(&self.in_flight),
                 key: schedule.workspace_id.clone(),
             };
+            let workspace_id = schedule.workspace_id.clone();
+            let watch_hits = self.take_watch_hits(&workspace_id);
             let router = Arc::clone(self);
             handles.push(tokio::spawn(async move {
-                let _guard = guard;
-                router.dispatch(schedule).await;
+                let dispatch = Arc::clone(&router);
+                dispatch.dispatch(schedule, watch_hits).await;
+                drop(guard);
+                router.flush_pending_events(workspace_id);
             }));
         }
         handles
@@ -229,8 +349,25 @@ impl TriggerRouter {
     /// jitter to zero, so their scheduling stays the previous behavior apart
     /// from moving the base from tick time to completion time (long Turns no
     /// longer race their own next slot).
-    async fn dispatch(self: Arc<Self>, schedule: AssistantSchedule) {
-        let report = self.executor.execute(schedule.clone(), self.shutdown.clone()).await;
+    async fn dispatch(self: Arc<Self>, schedule: AssistantSchedule, watch_hits: Vec<WatchHitNote>) {
+        let hits_for_requeue = watch_hits.clone();
+        let report = self
+            .executor
+            .execute_with_watch_hits(schedule.clone(), self.shutdown.clone(), watch_hits)
+            .await;
+        // 跳过的巡检没有消费 watch 上下文：放回队列，留给下一轮。
+        if report.outcome == crate::domains::agent::session::wake::WakeOutcome::Skipped && !hits_for_requeue.is_empty()
+        {
+            let mut entry = self.watch_hits.entry(schedule.workspace_id.clone()).or_default();
+            for hit in hits_for_requeue {
+                if !entry.iter().any(|existing| existing.rule_id == hit.rule_id) {
+                    if entry.len() >= WATCH_HITS_CAPACITY {
+                        entry.remove(0);
+                    }
+                    entry.push(hit);
+                }
+            }
+        }
         let completed_at = (self.clock)();
         let mode = match self.db.get_suppression_config(&schedule.workspace_id).await {
             Ok(Some(config)) => config.mode,
@@ -364,21 +501,24 @@ impl TriggerRouter {
                             let Some(wake) = wake else { return };
                             let workspace_id = wake.workspace_id.clone();
                             if !router.in_flight.insert(workspace_id.clone()) {
-                                tracing::warn!(
-                                    workspace_id = %workspace_id,
-                                    source_id = %wake.source_id,
-                                    "event wake dropped: workspace wake in flight"
-                                );
+                                router
+                                    .pending_events
+                                    .lock()
+                                    .entry(workspace_id)
+                                    .or_default()
+                                    .push(wake);
                                 continue;
                             }
                             let guard = InFlightGuard {
                                 set: Arc::clone(&router.in_flight),
-                                key: workspace_id,
+                                key: workspace_id.clone(),
                             };
                             let router = Arc::clone(&router);
                             tokio::spawn(async move {
-                                let _guard = guard;
-                                router.dispatch_event(wake).await;
+                                let dispatch = Arc::clone(&router);
+                                dispatch.dispatch_event(wake).await;
+                                drop(guard);
+                                router.flush_pending_events(workspace_id);
                             });
                         }
                     }
@@ -692,7 +832,8 @@ pub(crate) fn event_wake_from_ai(ai: &AiEvent) -> Option<EventWake> {
     })
 }
 
-/// Watch 命中 → event wake。Task 所有的 watch 由 Task wake router 消费，此处跳过。
+/// Watch 命中 → 记录（随下一次定时巡检消费，不单独开 turn）。
+/// Task 所有的 watch 由 Task wake router 消费，此处跳过。
 pub(crate) fn watch_wake(
     workspace_id: &str,
     rule_id: &str,
@@ -770,6 +911,7 @@ mod tests {
         calls: AtomicUsize,
         workspaces: Mutex<Vec<String>>,
         events: Mutex<Vec<EventWake>>,
+        scheduled_hits: Mutex<Vec<WatchHitNote>>,
         recoveries: AtomicUsize,
         recovered_workspaces: Mutex<Vec<String>>,
     }
@@ -783,6 +925,16 @@ mod tests {
                 session_key: "s".into(),
                 outcome: crate::domains::agent::session::wake::WakeOutcome::Completed,
             }
+        }
+
+        async fn execute_with_watch_hits(
+            &self,
+            schedule: AssistantSchedule,
+            cancel: CancellationToken,
+            watch_hits: Vec<WatchHitNote>,
+        ) -> WakeReport {
+            *self.scheduled_hits.lock().await = watch_hits;
+            self.execute(schedule, cancel).await
         }
 
         async fn execute_event(&self, wake: EventWake, _cancel: CancellationToken) -> WakeReport {
@@ -914,7 +1066,7 @@ mod tests {
 
         let executor = Arc::new(RecordingExecutor::default());
         let router = Arc::new(TriggerRouter::new(db.clone(), executor));
-        router.dispatch(schedule).await;
+        router.dispatch(schedule, Vec::new()).await;
 
         let state = db
             .load_suppression_state("ws-barrier", "s")
@@ -1108,6 +1260,34 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn tick_defers_scheduled_wake_while_foreground_is_active() {
+        let db = Arc::new(test_db().await);
+        let now = ts(1_800_000_000);
+        db.ensure_assistant_schedule("ws-1", "__assistant__ws-1", now)
+            .await
+            .unwrap();
+        let executor = Arc::new(RecordingExecutor::default());
+        let active = Arc::new(std::sync::atomic::AtomicBool::new(true));
+        let active_for_check = active.clone();
+        let router = Arc::new(
+            TriggerRouter::new(db.clone(), executor.clone())
+                .with_clock(move || now)
+                .with_foreground_check(Arc::new(move |_| active_for_check.load(Ordering::SeqCst))),
+        );
+
+        assert!(router.tick(now).await.is_empty());
+        assert_eq!(executor.calls.load(Ordering::SeqCst), 0);
+
+        active.store(false, Ordering::SeqCst);
+        let handles = router.tick(now).await;
+        assert_eq!(handles.len(), 1);
+        for handle in handles {
+            handle.await.unwrap();
+        }
+        assert_eq!(executor.calls.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
     async fn tick_dispatches_due_and_advances() {
         let db = Arc::new(test_db().await);
         let now = ts(1_800_000_000);
@@ -1130,6 +1310,48 @@ mod tests {
         let not_due_yet = row.next_wake_at.unwrap() - chrono::Duration::seconds(1);
         let handles = router.tick(not_due_yet).await;
         assert!(handles.is_empty(), "not due yet");
+    }
+
+    #[tokio::test]
+    async fn tick_folds_pending_watch_hits_into_scheduled_wake() {
+        let db = Arc::new(test_db().await);
+        let now = ts(1_800_000_000);
+        db.ensure_assistant_schedule("ws-1", "__assistant__ws-1", now)
+            .await
+            .unwrap();
+        let executor = Arc::new(RecordingExecutor::default());
+        let router = Arc::new(TriggerRouter::new(db.clone(), executor.clone()).with_clock(move || now));
+
+        // 同 rule 多次命中覆盖，不同 rule 各自保留；全程不派发 event turn。
+        assert!(
+            router.submit_event(watch_wake("ws-1", "watch-cold", None, &serde_json::json!(8.2), "ok", "冷库").unwrap())
+        );
+        assert!(
+            router.submit_event(watch_wake("ws-1", "watch-cold", None, &serde_json::json!(8.4), "ok", "冷库").unwrap())
+        );
+        assert!(
+            router.submit_event(
+                watch_wake("ws-1", "watch-humidity", None, &serde_json::json!(87.7), "ok", "仓库").unwrap()
+            )
+        );
+        assert!(executor.events.lock().await.is_empty(), "watch 不得派发 event turn");
+
+        let handles = router.tick(now).await;
+        assert_eq!(handles.len(), 1);
+        for handle in handles {
+            handle.await.unwrap();
+        }
+        let hits = executor.scheduled_hits.lock().await.clone();
+        assert_eq!(hits.len(), 2, "同 rule 覆盖、不同 rule 各一条: {hits:?}");
+        assert_eq!(hits[0].rule_id, "watch-cold");
+        assert!(hits[0].summary.contains("8.4"), "保留最新命中: {hits:?}");
+
+        // 命中只消费一次：下一轮巡检不再携带。
+        let handles = router.tick(now + chrono::Duration::seconds(301)).await;
+        for handle in handles {
+            handle.await.unwrap();
+        }
+        assert!(executor.scheduled_hits.lock().await.is_empty(), "命中只消费一次");
     }
 
     #[tokio::test]
@@ -1372,19 +1594,20 @@ mod tests {
         assert_eq!(
             types,
             vec![
-                "trigger.received",
-                "wake.dispatched",
-                "session.started",
-                "turn.started",
-                "step.text",
-                "message.created",
-                "turn.completed",
-                "session.ended",
+                "trigger/received",
+                "wake/dispatched",
+                "session/start",
+                "turn/start",
+                "step/start",
+                "assistant/message",
+                "step/end",
+                "turn/end",
+                "session/end",
             ]
         );
         let session_key = events[2].payload_json["sessionId"]
             .as_str()
-            .expect("session.started must carry sessionId")
+            .expect("session/start must carry sessionId")
             .to_string();
         assert_eq!(events[2].payload_json["kind"], "scheduled");
         assert_eq!(events.last().unwrap().payload_json["outcome"], "completed");
@@ -1403,7 +1626,7 @@ mod tests {
         let router = TriggerRouter::new(db, Arc::new(RecordingExecutor::default()));
         let wake = |rule: &str| EventWake {
             workspace_id: "ws-1".into(),
-            trigger: "watch".into(),
+            trigger: "alarm".into(),
             source_id: rule.into(),
             summary: "hit".into(),
             dedup_key: Some(format!("watch:{rule}")),
@@ -1425,7 +1648,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn event_wake_dedupes_while_in_flight_then_dispatches() {
+    async fn event_wake_queues_and_merges_while_in_flight() {
         let db = Arc::new(test_db().await);
         let now = ts(1_800_000_000);
         db.ensure_assistant_schedule("ws-1", "__assistant__ws-1", now)
@@ -1473,17 +1696,27 @@ mod tests {
             dedup_key: None,
         }));
         executor.started.notified().await;
-        assert!(!router.submit_event(EventWake {
+        assert!(router.submit_event(EventWake {
             workspace_id: "ws-1".into(),
             trigger: "alarm".into(),
             source_id: "alarm-2".into(),
             summary: "another".into(),
             dedup_key: None,
         }));
+        assert!(router.submit_event(EventWake {
+            workspace_id: "ws-1".into(),
+            trigger: "alarm".into(),
+            source_id: "alarm-3".into(),
+            summary: "third".into(),
+            dedup_key: None,
+        }));
         assert_eq!(executor.calls.load(Ordering::SeqCst), 0);
         executor.release.notify_one();
         tokio::time::sleep(std::time::Duration::from_millis(50)).await;
         assert_eq!(executor.calls.load(Ordering::SeqCst), 1);
+        executor.release.notify_one();
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        assert_eq!(executor.calls.load(Ordering::SeqCst), 2);
     }
 
     #[tokio::test]
@@ -1659,7 +1892,7 @@ mod tests {
         assert_eq!(
             events
                 .iter()
-                .filter(|event| { event.event_type == "turn.completed" && event.payload_json["outcome"] == "skipped" })
+                .filter(|event| { event.event_type == "turn/end" && event.payload_json["outcome"] == "skipped" })
                 .count(),
             1
         );

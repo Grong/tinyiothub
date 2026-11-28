@@ -6,16 +6,17 @@ use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 
 use futures::StreamExt;
-use rig_agent::agent::hook::ToolCall as ToolCallEvent;
+use rig_agent::agent::hook::{ToolCall as ToolCallEvent, ToolResultEvent};
 use rig_agent::agent::{
     Agent, AgentBuilder, AgentHook, CompletionCallAction, CompletionCallEvent, HookContext, InvalidToolCallAction,
-    InvalidToolCallContext, MultiTurnStreamItem, RequestPatch, ToolCallAction,
+    InvalidToolCallContext, MultiTurnStreamItem, RequestPatch, ToolCallAction, ToolResultAction,
 };
 use rig_agent::completion::{Document, Prompt};
 use rig_agent::streaming::StreamingPrompt;
 use rig_core::streaming::{StreamedAssistantContent, StreamedUserContent};
 use sha2::Digest;
 
+use crate::harness::{GuardDecision, ToolGuard};
 use crate::port::events::TurnEvent;
 use crate::port::runtime::{AgentLoop, AgentLoopConfig, AgentLoopHandle, SteeringBuffer};
 
@@ -25,6 +26,26 @@ use super::tools::to_dynamic_tool;
 
 /// 固定会话 id：现状 zeroclaw 各 turn 独立、无显式会话（Global Constraints #6）。
 const CONVERSATION_ID: &str = "default";
+const MAX_SEEDED_HISTORY_MESSAGES: usize = 120;
+
+fn compact_seeded_messages(
+    mut messages: Vec<crate::port::provider::ChatMessage>,
+) -> Vec<crate::port::provider::ChatMessage> {
+    if messages.len() <= MAX_SEEDED_HISTORY_MESSAGES {
+        return messages;
+    }
+    let dropped = messages.len() - MAX_SEEDED_HISTORY_MESSAGES;
+    let mut kept = messages.split_off(dropped);
+    kept.insert(
+        0,
+        crate::port::provider::ChatMessage {
+            role: "user".into(),
+            content: format!("[earlier conversation compacted: {dropped} messages omitted]"),
+            attachments: Vec::new(),
+        },
+    );
+    kept
+}
 
 /// port AgentLoop 的 rig 引擎实现。
 ///
@@ -54,6 +75,8 @@ pub struct RigAgentLoop {
     /// Provider tool-call id of the call about to execute. Filled by the
     /// pre-execution hook and read by tools that freeze a durable identity.
     tool_call_ids: Option<crate::port::tool::ToolCallIdSlot>,
+    checkpoint_before_tool: bool,
+    max_tool_calls: usize,
     retry_events: super::provider::RetryEvents,
 }
 
@@ -65,6 +88,8 @@ impl RigAgentLoop {
             seeded: tokio::sync::Mutex::new(Vec::new()),
             redactions: std::collections::HashMap::new(),
             tool_call_ids: None,
+            checkpoint_before_tool: false,
+            max_tool_calls: 512,
             retry_events: super::provider::RetryEvents::default(),
         }
     }
@@ -76,6 +101,16 @@ impl RigAgentLoop {
 
     fn with_retry_events(mut self, retry_events: super::provider::RetryEvents) -> Self {
         self.retry_events = retry_events;
+        self
+    }
+
+    pub fn with_checkpoints(mut self, enabled: bool) -> Self {
+        self.checkpoint_before_tool = enabled;
+        self
+    }
+
+    pub fn with_tool_budget(mut self, max_tool_calls: usize) -> Self {
+        self.max_tool_calls = max_tool_calls.max(1);
         self
     }
 
@@ -227,6 +262,93 @@ impl AgentHook for BudgetHook {
     }
 }
 
+/// Waits for the runner to persist `tool/checkpoint` before a tool body runs.
+struct ToolCheckpointHook {
+    events: mpsc::Sender<TurnEvent>,
+}
+
+impl AgentHook for ToolCheckpointHook {
+    async fn on_tool_call(&self, _ctx: &HookContext, event: ToolCallEvent<'_>) -> ToolCallAction {
+        let id = event.tool_call_id.unwrap_or(event.internal_call_id).to_string();
+        let ack = crate::port::events::ToolCheckpointAck::new();
+        if self
+            .events
+            .send(TurnEvent::ToolCheckpoint {
+                id,
+                name: event.tool_name.to_string(),
+                ack: ack.clone(),
+            })
+            .await
+            .is_err()
+        {
+            return ToolCallAction::Stop("tool checkpoint channel closed".into());
+        }
+        match tokio::time::timeout(std::time::Duration::from_secs(5), ack.wait()).await {
+            Ok(true) => ToolCallAction::Run,
+            Ok(false) => ToolCallAction::Stop("tool checkpoint was not persisted".into()),
+            Err(_) => ToolCallAction::Stop("tool checkpoint timed out".into()),
+        }
+    }
+}
+
+/// Enforces the harness tool-call budget and semantic repeat guard before
+/// every dispatch. It is intentionally a hook, not a tool wrapper: tool
+/// behavior, approval, and Effect handling stay with the tool layer.
+struct ToolGuardHook {
+    guard: Arc<std::sync::Mutex<ToolGuard>>,
+}
+
+impl AgentHook for ToolGuardHook {
+    async fn on_tool_call(&self, _ctx: &HookContext, event: ToolCallEvent<'_>) -> ToolCallAction {
+        let decision = self
+            .guard
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .before(event.tool_name, event.args);
+        match decision {
+            GuardDecision::Run => ToolCallAction::Run,
+            GuardDecision::Skip(message) => ToolCallAction::Skip(message),
+            GuardDecision::Stop(message) => ToolCallAction::Stop(message),
+        }
+    }
+
+    async fn on_tool_result(&self, _ctx: &HookContext, event: ToolResultEvent<'_>) -> ToolResultAction {
+        let Some(message) = failed_result_message(&event) else {
+            return ToolResultAction::Keep;
+        };
+        let decision =
+            self.guard
+                .lock()
+                .unwrap_or_else(|error| error.into_inner())
+                .after(event.tool_name, event.args, &message);
+        match decision {
+            Some(GuardDecision::Stop(reason)) => ToolResultAction::Stop(reason),
+            _ => ToolResultAction::Keep,
+        }
+    }
+}
+
+/// The port returns ordinary `Ok(ToolResult { success: false })` values for
+/// most device errors, so inspect both the rig error channel and the rendered
+/// JSON result. Successful outputs are never classified as failures.
+fn failed_result_message(event: &ToolResultEvent<'_>) -> Option<String> {
+    if let Some(error) = event.raw_result.error() {
+        return Some(error.message().to_string());
+    }
+    let text = event
+        .raw_result
+        .output()
+        .as_content()
+        .iter()
+        .filter_map(|block| match block {
+            rig_core::message::ToolResultContent::Text(text) => Some(text.text.clone()),
+            _ => None,
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    (text.contains("\"success\":false") || text.contains("\"error\":")).then_some(text)
+}
+
 /// rig 默认把模型调用未暴露的工具当致命错误（`PromptError::UnknownToolCall`）
 /// 终结整轮。模型在长工具链里偶尔会臆造旧工具名或新名字——一次臆造就让
 /// 整个 Run 失败、Task 变 Failed（2026-11-02 实测：`read_property`）。
@@ -312,6 +434,17 @@ impl AgentLoop for RigAgentLoop {
                 tool_call_ids: self.tool_call_ids.clone(),
             })
             .add_hook(InvalidToolCallRecovery);
+        if self.checkpoint_before_tool {
+            request = request.add_hook(ToolCheckpointHook {
+                events: event_tx.clone(),
+            });
+        }
+        let mut request = request.add_hook(ToolGuardHook {
+            guard: Arc::new(std::sync::Mutex::new(ToolGuard::new(crate::harness::ToolGuardPolicy {
+                max_tool_calls: self.max_tool_calls,
+                ..Default::default()
+            }))),
+        });
         // conversation_memory=false：历史由 cloud DB 每轮 seed，经 .history() 传入。
         let seeded = self.seeded_history().await;
         if !seeded.is_empty() {
@@ -442,7 +575,8 @@ impl AgentLoop for RigAgentLoop {
     }
 
     async fn seed_history(&self, messages: &[crate::port::provider::ChatMessage]) -> anyhow::Result<()> {
-        let rig_messages = port_messages_to_rig(messages)?;
+        let compacted = compact_seeded_messages(messages.to_vec());
+        let rig_messages = port_messages_to_rig(&compacted)?;
         if let Some(memory) = &self.memory {
             rig_core::memory::ConversationMemory::append(memory.as_ref(), CONVERSATION_ID, rig_messages)
                 .await
@@ -536,6 +670,8 @@ pub fn rig_loop_factory(cfg: AgentLoopConfig) -> anyhow::Result<AgentLoopHandle>
         RigAgentLoop::new(agent, memory)
             .with_redactions(redactions)
             .with_tool_call_ids(cfg.tool_call_ids)
+            .with_checkpoints(cfg.checkpoint_before_tool)
+            .with_tool_budget(cfg.max_tool_calls)
             .with_retry_events(retry_events),
     ));
     Ok(handle)
@@ -544,6 +680,22 @@ pub fn rig_loop_factory(cfg: AgentLoopConfig) -> anyhow::Result<AgentLoopHandle>
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn seeded_history_is_compacted_with_a_marker() {
+        let messages = (0..MAX_SEEDED_HISTORY_MESSAGES + 5)
+            .map(|index| crate::port::provider::ChatMessage {
+                role: "user".into(),
+                content: format!("m{index}"),
+                attachments: Vec::new(),
+            })
+            .collect::<Vec<_>>();
+        let compacted = compact_seeded_messages(messages);
+        assert_eq!(compacted.len(), MAX_SEEDED_HISTORY_MESSAGES + 1);
+        assert!(compacted[0].content.contains("5 messages omitted"));
+        assert_eq!(compacted[1].content, "m5");
+        assert_eq!(compacted.last().unwrap().content, "m124");
+    }
 
     #[test]
     fn run_budget_charges_distinct_evidence_once_across_completions() {

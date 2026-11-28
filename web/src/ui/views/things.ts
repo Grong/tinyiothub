@@ -3,20 +3,8 @@ import { customElement, state } from "lit/decorators.js";
 import { SignalWatcher } from "@lit-labs/signals";
 import { thingApi } from "../../api/things.js";
 import { getWorkspaceId } from "../../api/client.js";
-import { ledgerApi, type LedgerDeviceState } from "../../api/ledger.js";
 import "./confirm-modal.js";
-import "./flow.js";
-import "./world.js";
-import "./live-devices.js";
 import "./template-library.js";
-import "./workbench.css";
-import {
-  backToNow,
-  isHistorical,
-  parseWorkbenchUrl,
-  toWorkbenchUrl,
-  type WorkbenchState,
-} from "./workbench-state.js";
 import {
   renderDeviceDetail as renderDeviceDetailFn,
   renderDetailProperties as renderDetailPropertiesFn,
@@ -218,19 +206,7 @@ export class DevicesView extends SignalWatcher(LitElement) {
   @state() loading = true;
 
   @state() error = "";
-  /** E3 工作台状态（tab/历史锚点），由 URL 驱动。 */
-  @state() private wb: WorkbenchState = parseWorkbenchUrl(
-    typeof window !== 'undefined' ? window.location.search : '',
-  );
   @state() private showTemplates = false;
-  /** 设备 tab 视图：传统列表/网格/树 或 E3 实时健康卡。 */
-  @state() private deviceView: 'list' | 'health' = 'list';
-  /** 历史模式下设备 tab 的只读快照（账本重建）。 */
-  @state() private historicDevices: LedgerDeviceState[] = [];
-  @state() private historicLoading = false;
-  @state() private historicError = '';
-  private historicSeq = 0;
-  private _boundPopState?: () => void;
 
   @state() devices: Thing[] = [];
 
@@ -561,11 +537,6 @@ export class DevicesView extends SignalWatcher(LitElement) {
       }
     };
     document.addEventListener("thing-updated", this._boundHandleDeviceUpdated);
-    this._boundPopState = () => {
-      this.wb = parseWorkbenchUrl(window.location.search);
-      this.syncHistoricDevices();
-    };
-    window.addEventListener("popstate", this._boundPopState);
     const path = window.location.pathname;
     if (path.startsWith("/things/")) {
       const id = path.split("/")[2];
@@ -578,7 +549,6 @@ export class DevicesView extends SignalWatcher(LitElement) {
     this.loadDevices();
     this.loadDriverNames();
     this.loadAllTags();
-    this.syncHistoricDevices();
   }
 
 
@@ -588,7 +558,6 @@ export class DevicesView extends SignalWatcher(LitElement) {
     // 不断开 SSE — 缓存层管理连接生命周期
     document.removeEventListener("click", this._boundCloseTagEditor);
     document.removeEventListener("thing-updated", this._boundHandleDeviceUpdated);
-    if (this._boundPopState) window.removeEventListener("popstate", this._boundPopState);
   }
 
 
@@ -694,8 +663,9 @@ export class DevicesView extends SignalWatcher(LitElement) {
       if (result && !result.thing) {
         const props = result.properties || [];
         const acts = result.actions || result.commands || [];
-        // Map state (i32) → status string for the view
-        const statusStr = result.state === 1 ? 'online' : result.state === 2 ? 'error' : 'offline';
+        // Prefer the live status from the runtime cache; fall back to the
+        // persisted state integer for old snapshots.
+        const statusStr = result.status || (result.state === 1 ? 'online' : result.state === 2 ? 'error' : 'offline');
         this.selectedDevice = {
           thing: { ...result, status: statusStr },
           overview: {
@@ -1839,40 +1809,9 @@ export class DevicesView extends SignalWatcher(LitElement) {
     }
 
     const ws = getWorkspaceId() ?? '';
-    const historical = isHistorical(this.wb);
     return html`
-      <div class="wb ${historical ? 'wb--history' : ''}">
-        ${this.renderWorkbenchHeader()}
-        ${
-          this.wb.tab === 'devices'
-            ? historical
-              ? this.renderHistoricDevices()
-              : this.deviceView === 'health'
-                ? html`<live-devices
-                    .workspaceId=${ws}
-                    @device-open=${(e: CustomEvent<{ thingId: string }>) => {
-                      void this.loadDeviceDetail(e.detail.thingId);
-                    }}
-                  ></live-devices>`
-                : html`${this.renderUpgradeBanner()}${this.renderDeviceList()}`
-            : nothing
-        }
-        ${
-          this.wb.tab === 'flow'
-            ? html`<flow-timeline
-                .workspaceId=${ws}
-                .at=${this.wb.at}
-                .eventId=${this.wb.event}
-                .historical=${historical}
-              ></flow-timeline>`
-            : nothing
-        }
-        ${
-          this.wb.tab === 'world'
-            ? html`<world-view .workspaceId=${ws}></world-view>`
-            : nothing
-        }
-      </div>
+      ${this.renderUpgradeBanner()}
+      ${this.renderDeviceList()}
       ${
         this.showTemplates
           ? html`<template-library
@@ -1886,146 +1825,6 @@ export class DevicesView extends SignalWatcher(LitElement) {
       ${this.renderConfirmModal()}
     `;
   }
-
-  private setWorkbench(next: WorkbenchState): void {
-    this.wb = next;
-    window.history.pushState({}, '', `/things${toWorkbenchUrl(next)}`);
-    if (next.tab === 'devices' && !this.devices.length && !this.loading) {
-      void this.loadDevices();
-    }
-    this.syncHistoricDevices();
-  }
-
-  /** 历史 + 设备 tab → 载入账本重建的只读快照；否则清空。 */
-  private syncHistoricDevices(): void {
-    if (this.wb.tab === 'devices' && isHistorical(this.wb)) {
-      void this.loadHistoricDevices();
-    } else {
-      this.historicDevices = [];
-      this.historicError = '';
-    }
-  }
-
-  private async loadHistoricDevices(): Promise<void> {
-    const ws = getWorkspaceId();
-    if (!ws) return;
-    const seq = ++this.historicSeq;
-    this.historicLoading = true;
-    this.historicError = '';
-    try {
-      const at = this.wb.at ?? new Date().toISOString();
-      const state = await ledgerApi.stateAt(ws, at);
-      if (seq !== this.historicSeq) return;
-      this.historicDevices = [...state.devices].sort((a, b) => {
-        if (a.online !== b.online) return a.online ? -1 : 1;
-        return a.thingId.localeCompare(b.thingId);
-      });
-    } catch (e) {
-      if (seq !== this.historicSeq) return;
-      this.historicError = e instanceof Error ? e.message : String(e);
-    } finally {
-      if (seq === this.historicSeq) this.historicLoading = false;
-    }
-  }
-
-  private renderHistoricDevices() {
-    if (this.historicLoading) {
-      return html`<div class="wb-history-state">正在从账本重建该时刻设备状态…</div>`;
-    }
-    if (this.historicError) {
-      return html`
-        <div class="wb-history-state wb-history-state--error">
-          历史状态重建失败：${this.historicError}
-          <button class="btn btn--primary btn--sm" @click=${() => this.loadHistoricDevices()}>重试</button>
-        </div>
-      `;
-    }
-    if (!this.historicDevices.length) {
-      return html`
-        <div class="wb-history-state">
-          该时刻没有可重建的设备状态。
-          <div class="wb-history-state__hint">回放精度=状态变更粒度；可尝试调整时间点。</div>
-        </div>
-      `;
-    }
-    return html`
-      <div class="wb-history-note">
-        历史模式：以下为账本重建值，只读。health / zone 不在账本中，标记为不可得。
-      </div>
-      <div class="wb-history-grid">
-        ${this.historicDevices.map(
-          (d) => html`
-            <article class="wb-history-card">
-              <header>
-                <span class="wb-history-card__name">${d.thingId}</span>
-                <span class="wb-history-card__online ${d.online ? 'is-online' : ''}">
-                  ${d.online == null ? '连接未知' : d.online ? '在线' : '离线'}
-                </span>
-              </header>
-              <dl class="wb-history-card__values">
-                ${Object.entries(d.state).map(
-                  ([k, v]) => html`<dt>${k}</dt><dd>${String(v)}</dd>`,
-                )}
-              </dl>
-              <footer>最后变更 ${d.lastChangeAt}</footer>
-            </article>
-          `,
-        )}
-      </div>
-    `;
-  }
-
-  private renderWorkbenchHeader() {
-    const tab = (id: WorkbenchState['tab'], label: string) => html`
-      <button
-        class="wb-tab ${this.wb.tab === id ? 'wb-tab--active' : ''}"
-        role="tab"
-        aria-selected=${this.wb.tab === id ? 'true' : 'false'}
-        @click=${() => this.setWorkbench({ ...this.wb, tab: id })}
-      >
-        ${label}
-      </button>
-    `;
-    return html`
-      <div class="wb-header">
-        <div class="wb-header__title">
-          <h2>设备工作台</h2>
-          ${this.wb.at ? html`<span class="wb-history-chip">历史回放 · ${this.wb.at}</span>` : nothing}
-        </div>
-        <div class="wb-tabs" role="tablist" aria-label="工作台视图">
-          ${tab('devices', '设备')} ${tab('flow', 'Flow')} ${tab('world', 'World')}
-        </div>
-        <div class="wb-header__actions">
-          ${
-            isHistorical(this.wb)
-              ? html`<button
-                  class="btn btn--primary btn--sm"
-                  @click=${() => this.setWorkbench(backToNow(this.wb))}
-                >
-                  回到现在
-                </button>`
-              : html`<span class="wb-live" role="status"><span class="wb-live__dot"></span>实时</span>`
-          }
-          ${
-            this.wb.tab === 'devices' && !isHistorical(this.wb)
-              ? html`<button
-                  class="btn btn--ghost btn--sm"
-                  @click=${() => {
-                    this.deviceView = this.deviceView === 'health' ? 'list' : 'health';
-                  }}
-                >
-                  ${this.deviceView === 'health' ? '列表视图' : '健康卡'}
-                </button>`
-              : nothing
-          }
-          <button class="btn btn--outline btn--sm" @click=${() => { this.showTemplates = true; }}>
-            模板库
-          </button>
-        </div>
-      </div>
-    `;
-  }
-
 
   renderToolbar() {
     return html`
@@ -2073,6 +1872,7 @@ export class DevicesView extends SignalWatcher(LitElement) {
           >🌲</button>
         </div>
         <button class="btn btn--primary" @click=${this.openWizard}>新建物</button>
+        <button class="btn btn--outline" @click=${() => { this.showTemplates = true; }}>模板库</button>
         <button class="btn btn--outline" @click=${() => { this.showPairingDialog = true; }}>${t("gatewayPairing.addGateway")}</button>
       </div>
     `;
@@ -2585,12 +2385,7 @@ export class DevicesView extends SignalWatcher(LitElement) {
     if (!thingId) return;
     this.uploadSaving = true;
     try {
-      const token = localStorage.getItem('auth-token') || sessionStorage.getItem('auth-token') || '';
-      // Create resource via workspace API with content
-      const res = await fetch(`/api/v1/workspaces/${wsId}/resources`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
-        body: JSON.stringify({ name: this.textDocTitle.trim(), resource_type: 'document', content: this.textDocContent, tags: [] }),
-      }).then(r => r.json());
+      const res = await thingApi.createDocument(wsId, this.textDocTitle.trim(), this.textDocContent);
       if (res.result?.id) {
         await thingApi.attachResource(thingId, res.result.id);
       }

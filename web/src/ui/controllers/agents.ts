@@ -3,7 +3,7 @@ import type { AgentsListResult, ToolCatalogGroup } from "../types.js";
 import type { Skill, CreateSkillRequest, UpdateSkillRequest } from "../../api/client.js";
 import { listSkills, createSkill, updateSkill, deleteSkill } from "../../api/client.js";
 
-export type AgentsPanel = "overview" | "tools" | "skills";
+export type AgentsPanel = "overview" | "tools" | "skills" | "permissions";
 
 export type AgentConfig = {
   model?: string;

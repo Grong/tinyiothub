@@ -1,6 +1,18 @@
+---
+name: job-management
+title: 定时任务管理
+description: 定时任务与自动化规则的增删改查（Cron + 设备操作）。不负责巡检计划本身。
+version: "2"
+trigger: /job-management
+inject: index
+builtin: "3"
+---
+
 # 定时任务管理 (Schedule Management)
 
 管理定时任务和自动化规则，让设备操作按计划自动执行。
+
+定时任务工具属于平台扩展平面，仅在当前工具列表提供时可用；未提供时说明无法查看或创建，不要假设工具名。
 
 ## 可用工具
 
@@ -19,5 +31,5 @@
 
 ## 注意事项
 - 创建定时任务需要 Cron 表达式（分 时 日 月 周）
-- 任务执行的操作通过 `send_command` 或 `read_properties` 等工具完成
+- 任务执行的操作通过 `call_device` 或 `read_device` 等工具完成
 - 修改或删除定时任务前确认用户意图

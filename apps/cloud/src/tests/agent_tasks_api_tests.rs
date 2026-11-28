@@ -407,7 +407,7 @@ async fn policy_round_trip_with_updated_by() {
     )
     .await;
     assert_eq!(json["code"], 0);
-    assert_eq!(json["result"]["permissionMode"], "read_only");
+    assert_eq!(json["result"]["permissionMode"], "ask");
 
     // PUT 权限策略
     let (_status, json) = response_parts(
@@ -472,7 +472,7 @@ async fn policy_round_trip_with_updated_by() {
     .await;
     assert_eq!(json["code"], 400, "invalid permissionMode must be 400: {json}");
 
-    // full_access 仅会话级：工作区策略必须拒绝。
+    // full_access 可以在工作区策略中显式启用。
     let (_status, json) = response_parts(
         app.oneshot(auth_request(
             "PUT",
@@ -484,7 +484,8 @@ async fn policy_round_trip_with_updated_by() {
         .unwrap(),
     )
     .await;
-    assert_eq!(json["code"], 400, "workspace full_access must be 400: {json}");
+    assert_eq!(json["code"], 0, "workspace full_access must be accepted: {json}");
+    assert_eq!(json["result"]["permissionMode"], "full_access");
 }
 
 /// One-version compatibility: the old `mode` body key (and its three-state

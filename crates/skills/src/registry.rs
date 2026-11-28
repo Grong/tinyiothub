@@ -237,6 +237,9 @@ pub struct PresentationDescriptor {
     pub enabled: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub icon: Option<String>,
+    /// Stable frontend tool-view key. Tool renames do not change this key.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub view_key: Option<String>,
 }
 
 impl PresentationDescriptor {
@@ -252,6 +255,7 @@ impl PresentationDescriptor {
             danger,
             enabled: !danger,
             icon: None,
+            view_key: None,
         }
     }
 }

@@ -60,7 +60,7 @@ pub fn classify_tool_safety(tool_name: &str) -> ToolSafety {
 
     // known read-only tools that don't follow verb_noun convention
     // canvas: A2UI rendering — pushes UI components, does not modify data
-    if tool_name == "canvas" {
+    if tool_name == "canvas" || tool_name == "complete_skill" {
         return ToolSafety::ReadOnly;
     }
 

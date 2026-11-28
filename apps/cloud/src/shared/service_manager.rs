@@ -282,6 +282,9 @@ impl ServiceManager {
             registry.register(Box::new(tinyiothub_runtime::EventRetentionExecutor::new(Arc::new(
                 crate::shared::runtime_ports::EventRetentionAdapter((*app_state.db).clone()),
             ))));
+            registry.register(Box::new(tinyiothub_runtime::HubLedgerRetentionExecutor::new(Arc::new(
+                crate::shared::runtime_ports::HubLedgerRetentionAdapter((*app_state.db).clone()),
+            ))));
             // T6：审批超时升级（24h 未响应的判断自动转工单）
             registry.register(Box::new(tinyiothub_runtime::ApprovalTimeoutExecutor::new(Arc::new(
                 crate::shared::runtime_ports::ApprovalTimeoutAdapter {
@@ -625,12 +628,23 @@ impl ServiceManager {
             // manager 内 PipelineDeps 同一实例（克隆共享 DashMap）。
             app_state.set_active_runs(thing_agent_manager.active_run_registry());
 
-            // 启动补种：legacy heartbeat tasks 已退役（唤醒步骤由 inspection
-            // 技能承接）；只为已有工作区补齐缺失的 inspection 技能。
+            // 内置技能播种：模板是唯一真源。全局目录先同步一次（模板更新随部署生效），
+            // 再按内置修订号刷新各工作区副本；用户自建技能不受影响。
+            match crate::domains::agent::session::ensure_global_skills() {
+                Ok(changed) if changed > 0 => tracing::info!(changed, "global builtin skills synced from templates"),
+                Ok(_) => {}
+                Err(error) => tracing::warn!(%error, "sync global builtin skills failed"),
+            }
             for ws_id in &ws_ids {
                 if let Err(error) = crate::domains::agent::session::ensure_inspection_skill(&app_state.db, ws_id).await
                 {
                     tracing::warn!(%ws_id, %error, "seed inspection skill failed");
+                }
+                if let Err(error) = crate::domains::agent::session::ensure_video_inspection_skill(ws_id).await {
+                    tracing::warn!(%ws_id, %error, "seed video inspection skill failed");
+                }
+                if let Err(error) = crate::domains::agent::session::ensure_builtin_skills(ws_id) {
+                    tracing::warn!(%ws_id, %error, "refresh builtin skills failed");
                 }
             }
 
@@ -683,11 +697,17 @@ impl ServiceManager {
                     manager: thing_agent_manager.clone(),
                 })),
             );
-            let trigger_router = Arc::new(crate::domains::agent::session::TriggerRouter::new_with_event_bus(
-                app_state.db.clone(),
-                wake_runner,
-                Some(app_state.event_bus.clone()),
-            ));
+            let foreground_contexts = app_state.session_runtime.contexts.clone();
+            let trigger_router = Arc::new(
+                crate::domains::agent::session::TriggerRouter::new_with_event_bus(
+                    app_state.db.clone(),
+                    wake_runner,
+                    Some(app_state.event_bus.clone()),
+                )
+                .with_foreground_check(Arc::new(move |workspace_id| {
+                    foreground_contexts.count_for_workspace(workspace_id) > 0
+                })),
+            );
             thing_agent_manager.set_session_router(trigger_router.clone());
             // Manual suppression API (preflight/wake/reconcile) shares the
             // same TriggerRouter in-flight slot and WakeRunner. Durable
@@ -726,10 +746,8 @@ impl ServiceManager {
 
             // Also store in AppState for potential access by other subsystems
             app_state.orchestrator = self.orchestrator.clone();
-            // T13 bootstrap 装配：统一循环管理器 + last_ticks 共享表注入
-            // （T15 起 handler 的唯一读源）。
+            // T13 bootstrap 装配：统一循环管理器注入。
             app_state.thing_agents = Some(thing_agent_manager.clone());
-            app_state.heartbeat_last_ticks = Some(thing_agent_manager.heartbeat_last_ticks());
         }
 
         // 5. Start SSE token cleanup to prevent expired tokens from accumulating in memory.

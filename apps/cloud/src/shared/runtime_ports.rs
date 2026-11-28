@@ -14,7 +14,8 @@ use tinyiothub_core::models::thing::Thing;
 use tinyiothub_core::models::thing_command::ThingCommand;
 use tinyiothub_core::models::thing_property::ThingProperty;
 use tinyiothub_runtime::ports::{
-    DerivedPropertyQueries, DeviceJobStore, EventRetentionStore, MapStore, ThingCacheSource, ThingCommandQueries,
+    DerivedPropertyQueries, DeviceJobStore, EventRetentionStore, HubLedgerRetentionStore, MapStore, ThingCacheSource,
+    ThingCommandQueries,
 };
 use tinyiothub_storage::Db;
 use tinyiothub_storage::cache::ThingCache;
@@ -444,6 +445,18 @@ impl EventRetentionStore for EventRetentionAdapter {
     async fn delete_occurrence_events_before(&self, cutoff_rfc3339: &str) -> Result<u64, String> {
         self.0
             .delete_occurrence_events_before(cutoff_rfc3339)
+            .await
+            .map_err(|e| e.to_string())
+    }
+}
+
+/// `Db` → `HubLedgerRetentionStore`（E3 退役后的遥测保留清理）。
+pub struct HubLedgerRetentionAdapter(pub Db);
+
+#[async_trait]
+impl HubLedgerRetentionStore for HubLedgerRetentionAdapter {
+    async fn delete_hub_ledger_before(&self, cutoff_rfc3339: &str) -> Result<u64, String> {
+        tinyiothub_storage::watch::delete_ledger_before(self.0.pool(), cutoff_rfc3339)
             .await
             .map_err(|e| e.to_string())
     }

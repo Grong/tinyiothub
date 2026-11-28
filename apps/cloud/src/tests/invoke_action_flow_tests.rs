@@ -296,6 +296,7 @@ async fn seeded_tool(
         pool,
         workspace_id: ws.to_string(),
         data_server: None,
+        evidence: None,
         pending_actions: Arc::new(PendingActionStore::new()),
         arbitration: None,
         arbitration_holder: "test".to_string(),

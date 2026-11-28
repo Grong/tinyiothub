@@ -1,6 +1,6 @@
 //! ApprovalBroker — `ask` 模式下 Write/Destructive 工具的逐次审批。
 //!
-//! 工具注册一个 oneshot，事件 `approval.requested` 把 approvalId 送到前端；
+//! 工具注册一个 oneshot，事件 `approval/requested` 把 approvalId 送到前端；
 //! 回答端点按 session_key 校验后 resolve。超时由调用方（工具）负责。
 
 use std::sync::Arc;

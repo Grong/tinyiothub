@@ -5,7 +5,35 @@ import { buildStory, deviceHealthLabel, deviceTypeLabel, failureCopy } from './s
 import { buildMonthBuckets, buildWeekBuckets, computeAchievements } from './story-achievements.js';
 import type { BrainEvent } from '../../api/brain-events.js';
 
+const TEST_VIEW_KEYS: Record<string, string> = {
+  read_device: 'device.read',
+  get_thing: 'device.read',
+  get_thing_profile: 'device.read',
+  list_devices: 'device.list',
+  list_things: 'device.list',
+  search_things: 'device.list',
+  read_property: 'property.read',
+  read_properties: 'property.read',
+  set_device: 'device.write',
+  write_properties: 'device.write',
+  call_device: 'device.action',
+  invoke_action: 'device.action',
+  send_command: 'device.action',
+  query_events: 'event.history',
+  get_device_history: 'event.history',
+  alarm_list: 'alarm.list',
+  list_alarms: 'alarm.list',
+  todo_write: 'todo.write',
+  update_todo: 'todo.write',
+  ask_user: 'interaction.ask',
+  spawn_subagent: 'subagent.spawn',
+  get_skill: 'skill.load',
+};
+
 function event(seq: number, eventType: string, payloadJson: Record<string, unknown>): SessionEvent {
+  if ((eventType === 'tool/call' || eventType === 'tool/result') && typeof payloadJson.tool === 'string' && !payloadJson.viewKey) {
+    payloadJson = { ...payloadJson, viewKey: TEST_VIEW_KEYS[payloadJson.tool] ?? 'generic' };
+  }
   return {
     seq,
     eventId: `e${seq}`,
@@ -29,15 +57,20 @@ function timelineOf(...events: SessionEvent[]): TimelineModel {
 }
 
 const deviceResult = {
-  v: 1,
-  thingId: 'dev-1',
-  name: '冷却塔 A',
-  thingType: 'device',
-  health: 'bad',
+  thing: {
+    id: 'dev-1',
+    name: 'cooling_tower_a',
+    displayName: '冷却塔 A',
+    thingType: 'device',
+    health: 'bad',
+    online: false,
+  },
+  properties: [
+    { name: 'outlet_temperature', displayName: '出水温度', currentValue: '32.5', unit: '°C' },
+    { name: 'fan_speed', displayName: '风机转速', currentValue: '0', unit: 'rpm' },
+  ],
+  commands: [],
   zone: '3 号楼屋面',
-  online: false,
-  state: { 出水温度: '32.5', 风机转速: '0' },
-  text: '冷却塔 A 位于 3 号楼屋面，健康度 bad，离线',
 };
 
 const evidence = [
@@ -47,25 +80,24 @@ const evidence = [
 describe('buildStory', () => {
   it('translates a device read into a business step, device card and vision card', () => {
     const model = timelineOf(
-      event(1, 'trigger.received', { trigger: 'schedule', sourceId: 'wake-1' }),
-      event(2, 'turn.started', { turnId: 't1' }),
-      event(3, 'tool.called', {
+      event(1, 'trigger/received', { trigger: 'schedule', sourceId: 'wake-1' }),
+      event(2, 'turn/start', { turnId: 't1' }),
+      event(3, 'tool/call', {
         toolCallId: 'c1',
         tool: 'read_device',
         args: { thingId: 'dev-1' },
       }),
-      event(4, 'tool.returned', {
+      event(4, 'tool/result', {
         toolCallId: 'c1',
         tool: 'read_device',
         result: JSON.stringify(deviceResult),
         evidence,
       }),
-      event(5, 'message.created', {
+      event(5, 'assistant/message', {
         messageId: 'm1',
-        role: 'assistant',
         text: '冷却塔 A 离线，已通知值班人员。',
       }),
-      event(6, 'turn.completed', { turnId: 't1', outcome: 'completed', toolCalls: 1 }),
+      event(6, 'turn/end', { turnId: 't1', outcome: 'completed', toolCalls: 1 }),
     );
 
     const story = buildStory(model.blocks, []);
@@ -74,6 +106,13 @@ describe('buildStory', () => {
     expect(story.origin).toBe('schedule');
     expect(story.sections[0].conclusion).toContain('冷却塔 A 离线');
     expect(story.sections[0].steps).toHaveLength(1);
+    expect(story.sections[0].steps[0].metrics).toEqual(
+      expect.arrayContaining([
+        { name: '出水温度', value: '32.5 °C' },
+        { name: '风机转速', value: '0 rpm' },
+      ]),
+    );
+    expect(story.sections[0].steps[0].rawResult).toContain('"id":"dev-1"');
 
     expect(story.devices).toHaveLength(1);
     expect(story.devices[0]).toMatchObject({
@@ -86,14 +125,14 @@ describe('buildStory', () => {
     expect(story.devices[0].metrics).toHaveLength(2);
 
     expect(story.sections[0].steps[0]).toMatchObject({
-      title: '查看「冷却塔 A」的实时状态',
+      title: '读取「冷却塔 A」的实时状态',
       status: 'done',
       tone: 'read',
       deviceId: 'dev-1',
       finding: '设备离线',
     });
     expect(story.sections[0].steps[0].detail).toContain('离线');
-    expect(story.sections[0].steps[0].detail).toContain('2 项运行参数');
+    expect(story.sections[0].steps[0].detail).toContain('2 项属性');
 
     expect(story.vision).toHaveLength(1);
     expect(story.vision[0]).toMatchObject({
@@ -122,13 +161,13 @@ describe('buildStory', () => {
 
   it('summarizes a device inventory without pretending every item was inspected', () => {
     const model = timelineOf(
-      event(1, 'turn.started', { turnId: 't1' }),
-      event(2, 'tool.called', {
+      event(1, 'turn/start', { turnId: 't1' }),
+      event(2, 'tool/call', {
         toolCallId: 'c1',
         tool: 'list_things',
         args: { thingType: 'device' },
       }),
-      event(3, 'tool.returned', {
+      event(3, 'tool/result', {
         toolCallId: 'c1',
         tool: 'list_things',
         result: JSON.stringify({
@@ -151,15 +190,15 @@ describe('buildStory', () => {
     expect(story.stats.actions).toBe(0);
   });
 
-  it('marks failed operations and keeps the business-language error', () => {
+  it('marks failed operations without inventing a business finding', () => {
     const model = timelineOf(
-      event(1, 'turn.started', { turnId: 't1' }),
-      event(2, 'tool.called', {
+      event(1, 'turn/start', { turnId: 't1' }),
+      event(2, 'tool/call', {
         toolCallId: 'c1',
         tool: 'invoke_action',
         args: { thingId: 'dev-2', actionName: 'start' },
       }),
-      event(3, 'tool.returned', {
+      event(3, 'tool/result', {
         toolCallId: 'c1',
         tool: 'invoke_action',
         result: JSON.stringify({ success: false, error: '设备正被占用' }),
@@ -170,21 +209,48 @@ describe('buildStory', () => {
     const step = story.sections[0].steps[0];
 
     expect(step.status).toBe('failed');
-    expect(step.finding).toBe('操作未成功');
+    expect(step.finding).toBeUndefined();
     expect(step.detail).toContain('设备正被占用');
     expect(step.tone).toBe('write');
-    expect(story.stats.findings).toBe(1);
+    expect(story.stats.findings).toBe(0);
+  });
+
+  it('uses real alarm data for findings and ignores failed tool attempts', () => {
+    const model = timelineOf(
+      event(1, 'turn/start', { turnId: 't-alarm' }),
+      event(2, 'tool/call', { toolCallId: 'c1', tool: 'alarm_list', args: {} }),
+      event(3, 'tool/result', {
+        toolCallId: 'c1',
+        tool: 'alarm_list',
+        result: JSON.stringify({
+          data: [
+            { id: 'alarm-005', alarmLevel: 'critical', message: 'A栋车间烟雾浓度异常' },
+            { id: 'alarm-003', alarmLevel: 'warning', message: '冷链温度异常' },
+          ],
+          pagination: { total_count: 2 },
+        }),
+      }),
+      event(4, 'tool/call', { toolCallId: 'c2', tool: 'alarm_acknowledge', args: { id: 'alarm-005' } }),
+      event(5, 'tool/result', {
+        toolCallId: 'c2',
+        tool: 'alarm_acknowledge',
+        result: JSON.stringify({ success: false, error: '报警未找到: alarm-005' }),
+      }),
+    );
+    const story = buildStory(model.blocks, []);
+    expect(story.findings.map((finding) => finding.label)).toEqual(['发现 2 条告警']);
+    expect(story.devices.map((device) => device.id)).not.toContain('alarm-005');
   });
 
   it('surfaces per-frame detection findings as business issues', () => {
     const model = timelineOf(
-      event(1, 'turn.started', { turnId: 't1' }),
-      event(2, 'tool.called', {
+      event(1, 'turn/start', { turnId: 't1' }),
+      event(2, 'tool/call', {
         toolCallId: 'c1',
         tool: 'read_device',
         args: { thingId: 'cam-1', sources: ['cam-1'] },
       }),
-      event(3, 'tool.returned', {
+      event(3, 'tool/result', {
         toolCallId: 'c1',
         tool: 'read_device',
         result: JSON.stringify({
@@ -212,23 +278,23 @@ describe('buildStory', () => {
 
   it('deduplicates repeated findings for the same device', () => {
     const model = timelineOf(
-      event(1, 'turn.started', { turnId: 't1' }),
-      event(2, 'tool.called', {
+      event(1, 'turn/start', { turnId: 't1' }),
+      event(2, 'tool/call', {
         toolCallId: 'c1',
         tool: 'read_device',
         args: { thingId: 'dev-1' },
       }),
-      event(3, 'tool.returned', {
+      event(3, 'tool/result', {
         toolCallId: 'c1',
         tool: 'read_device',
         result: JSON.stringify(deviceResult),
       }),
-      event(4, 'tool.called', {
+      event(4, 'tool/call', {
         toolCallId: 'c2',
         tool: 'read_device',
         args: { thingId: 'dev-1' },
       }),
-      event(5, 'tool.returned', {
+      event(5, 'tool/result', {
         toolCallId: 'c2',
         tool: 'read_device',
         result: JSON.stringify(deviceResult),
@@ -242,28 +308,28 @@ describe('buildStory', () => {
 
   it('keeps the right rail scoped to the latest round', () => {
     const firstRound = [
-      event(1, 'turn.started', { turnId: 't1' }),
-      event(2, 'tool.called', {
+      event(1, 'turn/start', { turnId: 't1' }),
+      event(2, 'tool/call', {
         toolCallId: 'c1',
         tool: 'read_device',
         args: { thingId: 'dev-1' },
       }),
-      event(3, 'tool.returned', {
+      event(3, 'tool/result', {
         toolCallId: 'c1',
         tool: 'read_device',
         result: JSON.stringify(deviceResult),
         evidence,
       }),
-      event(4, 'turn.completed', { turnId: 't1', outcome: 'completed' }),
+      event(4, 'turn/end', { turnId: 't1', outcome: 'completed' }),
     ];
     const secondRound = [
-      event(5, 'turn.started', { turnId: 't2' }),
-      event(6, 'tool.called', {
+      event(5, 'turn/start', { turnId: 't2' }),
+      event(6, 'tool/call', {
         toolCallId: 'c2',
         tool: 'read_device',
         args: { thingId: 'dev-2' },
       }),
-      event(7, 'tool.returned', {
+      event(7, 'tool/result', {
         toolCallId: 'c2',
         tool: 'read_device',
         result: JSON.stringify({
@@ -284,7 +350,7 @@ describe('buildStory', () => {
           },
         ],
       }),
-      event(8, 'turn.completed', { turnId: 't2', outcome: 'completed' }),
+      event(8, 'turn/end', { turnId: 't2', outcome: 'completed' }),
     ];
 
     const story = buildStory(timelineOf(...firstRound, ...secondRound).blocks, []);
@@ -304,9 +370,9 @@ describe('buildStory', () => {
 
   it('does not invent zero counts when a tool result is truncated', () => {
     const model = timelineOf(
-      event(1, 'turn.started', { turnId: 't1' }),
-      event(2, 'tool.called', { toolCallId: 'c1', tool: 'list_things', args: {} }),
-      event(3, 'tool.returned', {
+      event(1, 'turn/start', { turnId: 't1' }),
+      event(2, 'tool/call', { toolCallId: 'c1', tool: 'list_things', args: {} }),
+      event(3, 'tool/result', {
         toolCallId: 'c1',
         tool: 'list_things',
         result: '{"items":[{"id":"d1","name":"送风机',
@@ -319,9 +385,16 @@ describe('buildStory', () => {
 
   it('keeps the latest plan and the reasoning used to reach it', () => {
     const model = timelineOf(
-      event(1, 'turn.started', { turnId: 't1' }),
-      event(2, 'step.thinking', { turnId: 't1', thinking: '先看离线设备，再看告警。' }),
-      event(3, 'todo.updated', {
+      event(1, 'turn/start', { turnId: 't1' }),
+      event(2, 'assistant/message', {
+        turnId: 't1',
+        stepId: 't1:s1',
+        messageId: 'm1',
+        text: '',
+        reasoning: '先看离线设备，再看告警。',
+        stream: [{ kind: 'reasoning', atMs: 1, text: '先看离线设备，再看告警。' }],
+      }),
+      event(3, 'todo/write', {
         todos: [
           { content: '检查离线设备', status: 'completed', activeForm: '检查离线设备' },
           { content: '确认告警', status: 'in_progress', activeForm: '确认告警' },
@@ -337,15 +410,38 @@ describe('buildStory', () => {
     expect(story.plans).toHaveLength(2);
     expect(story.sections[0].reasoning).toContain('先看离线设备');
     expect(story.sections[0].steps).toContainEqual(
-      expect.objectContaining({ title: 'AI 在思考', tone: 'think', status: 'running' }),
+      expect.objectContaining({ title: 'AI 在思考', tone: 'think', status: 'done' }),
     );
+  });
+
+  it('keeps an unanswered question visible after the turn ends', () => {
+    const model = timelineOf(
+      event(1, 'turn/start', { turnId: 't-q' }),
+      event(2, 'question/asked', {
+        questionId: 'q-closed',
+        questions: [
+          {
+            header: '重连授权',
+            question: '是否继续重连？',
+            multiSelect: false,
+            options: [],
+          },
+        ],
+      }),
+      event(3, 'turn/end', { turnId: 't-q', outcome: 'cancelled' }),
+    );
+    const story = buildStory(model.blocks, []);
+    const latest = story.sections[story.sections.length - 1];
+    const waiting = latest?.steps.find((step) => step.title.includes('重连授权'));
+    expect(waiting?.title).toContain('确认未完成');
+    expect(waiting?.status).toBe('failed');
   });
 
   it('surfaces a pending question as a waiting step', () => {
     const model = timelineOf(
-      event(1, 'turn.started', { turnId: 't-wait' }),
-      event(2, 'step.text', { turnId: 't-wait', text: '诊断完成，需要确认操作范围。' }),
-      event(3, 'question.asked', {
+      event(1, 'turn/start', { turnId: 't-wait' }),
+      event(2, 'assistant/message', { turnId: 't-wait', messageId: 'm-wait', text: '诊断完成，需要确认操作范围。' }),
+      event(3, 'question/asked', {
         questionId: 'q-1',
         questions: [
           {
@@ -381,35 +477,63 @@ describe('buildStory', () => {
     expect(waiting?.detail).toContain('离线传感器重连');
   });
 
+  it('uses only the latest assistant settlement as the turn conclusion', () => {
+    const model = timelineOf(
+      event(1, 'turn/start', { turnId: 't-final' }),
+      event(2, 'assistant/message', {
+        turnId: 't-final',
+        stepId: 't-final:s1',
+        messageId: 'm-step-1',
+        text: '中间过程：我先继续读取下一台设备。',
+      }),
+      event(3, 'tool/call', { toolCallId: 'c1', tool: 'read_device', args: { thingId: 'dev-1' } }),
+      event(4, 'tool/result', { toolCallId: 'c1', tool: 'read_device', result: JSON.stringify(deviceResult) }),
+      event(5, 'assistant/message', {
+        turnId: 't-final',
+        stepId: 't-final:s2',
+        messageId: 'm-step-2',
+        text: '最终结论：本轮巡检完成。',
+      }),
+      event(6, 'turn/end', { turnId: 't-final', outcome: 'completed' }),
+    );
+    const story = buildStory(model.blocks, []);
+    expect(story.sections[0].conclusion).toBe('最终结论：本轮巡检完成。');
+    expect(story.sections[0].conclusion).not.toContain('中间过程');
+  });
+
   it('turns a failed turn into business copy and one retry summary', () => {
     const quota =
       'CompletionError: ProviderError: LLM streaming request failed: HTTP 429: rate_limit_error: 已达到 Token Plan 用量上限';
     const model = timelineOf(
-      event(1, 'turn.started', { turnId: 't-fail' }),
-      event(2, 'turn.retry', {
+      event(1, 'turn/start', { turnId: 't-fail' }),
+      event(2, 'assistant/attempt', {
         turnId: 't-fail',
+        stepId: 't-fail:s1',
+        attemptId: 'a1',
         attempt: 1,
-        maxRetries: 3,
-        delayMs: 1000,
+        maxAttempts: 4,
+        retryDelayMs: 1000,
         error: quota,
       }),
-      event(3, 'turn.retry', {
+      event(3, 'assistant/attempt', {
         turnId: 't-fail',
+        stepId: 't-fail:s1',
+        attemptId: 'a2',
         attempt: 2,
-        maxRetries: 3,
-        delayMs: 2000,
+        maxAttempts: 4,
+        retryDelayMs: 2000,
         error: quota,
       }),
-      event(4, 'turn.completed', {
+      event(4, 'turn/end', {
         turnId: 't-fail',
         outcome: 'failed',
         error: quota,
         modelCalls: 0,
         toolCalls: 0,
       }),
-      event(5, 'session.ended', { outcome: 'failed' }),
-      event(6, 'turn.started', { turnId: 't-next' }),
-      event(7, 'turn.completed', { turnId: 't-next', outcome: 'completed' }),
+      event(5, 'session/end', { outcome: 'failed' }),
+      event(6, 'turn/start', { turnId: 't-next' }),
+      event(7, 'turn/end', { turnId: 't-next', outcome: 'completed' }),
     );
 
     const story = buildStory(model.blocks, []);
@@ -497,13 +621,13 @@ describe('achievements', () => {
   it('separates this shift, today and the week without inventing savings', () => {
     const story = buildStory(
       timelineOf(
-        event(1, 'turn.started', { turnId: 't1' }),
-        event(2, 'tool.called', {
+        event(1, 'turn/start', { turnId: 't1' }),
+        event(2, 'tool/call', {
           toolCallId: 'c1',
           tool: 'read_device',
           args: { thingId: 'dev-1' },
         }),
-        event(3, 'tool.returned', {
+        event(3, 'tool/result', {
           toolCallId: 'c1',
           tool: 'read_device',
           result: JSON.stringify(deviceResult),

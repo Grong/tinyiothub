@@ -6,11 +6,13 @@ import { createAgentsState, loadAgents, loadAgentConfig, loadToolsCatalog, toggl
 import { renderWorkspaceTab } from "./agents-workspace-tab.js";
 import { renderToolsTab } from "./agents-tools-tab.js";
 import { renderSkillsTab } from "./agents-skills-tab.js";
+import { renderPermissionsTab } from "./agents-permissions-tab.js";
 
 const panelLabels: Record<AgentsPanel, string> = {
   overview: "工作区设定",
   tools: "工具权限",
   skills: "技能",
+  permissions: "权限与巡检",
 };
 
 @customElement("view-agents")
@@ -76,7 +78,7 @@ export class ViewAgents extends LitElement {
       return html`<div class="agents-layout"><div class="agent-panel-error">${this.state.agentsError}</div></div>`;
     }
 
-    const allPanels: AgentsPanel[] = ["overview", "tools", "skills"];
+    const allPanels: AgentsPanel[] = ["overview", "tools", "skills", "permissions"];
 
     // Tools tab search — local state to avoid re-render on other panels
     const searchFilter = (this as any)._searchFilter || "";
@@ -126,6 +128,13 @@ export class ViewAgents extends LitElement {
             this._patchState.bind(this),
             () => { if (this.state.selectedAgentId) loadSkills(this.state).then(() => this.requestUpdate()); }
           ) : nothing}
+          ${this.state.activePanel === "permissions" && this.state.selectedAgentId
+            ? renderPermissionsTab(
+                agents.find((item) => item.id === this.state.selectedAgentId)?.workspaceId ||
+                  this.state.selectedAgentId,
+                this.requestUpdate.bind(this),
+              )
+            : nothing}
         </div>
       </div>
     `;

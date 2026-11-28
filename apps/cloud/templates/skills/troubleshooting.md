@@ -1,6 +1,18 @@
+---
+name: troubleshooting
+title: 故障诊断
+description: 已确认存在异常时的根因诊断流程：收集证据、推断原因、给出分级修复建议。不负责发现异常，也不直接执行写操作。
+version: "2"
+trigger: /troubleshooting
+inject: index
+builtin: "3"
+---
+
 # 故障诊断 (Troubleshooting)
 
 诊断 IoT 设备故障，分析根本原因并提供修复建议。
+
+本技能是根因诊断的唯一入口：`inspection` 负责发现异常，`alarm-management` 负责告警查询与确认，需要定位原因时进入本技能。
 
 ## 工具组合使用
 
@@ -12,12 +24,12 @@
 收到异常信号（告警、用户反馈、巡检发现）
   │
   ├─ 1. 收集信息
-  │   alarm_list     → 有没有相关告警？
-  │   get_thing     → 设备基本信息、属性列表
-  │   read_properties → 当前属性值，确认异常
+  │   告警查询工具   → 一次查询拿当页明细 + summary.by_level（如已提供），不要按等级重复查
+  │   read_device     → 设备状态、属性和区域（确认异常是否持续）
+  │   query_events    → 最近事件和变化时间点
   │
   ├─ 2. 上下文分析
-  │   search_things → 同类型的其他设备是否正常？
+  │   list_devices → 同类型的其他设备是否正常？
   │   search_knowledge → 设备手册、历史维护记录怎么说？
   │
   ├─ 3. 根因推断
@@ -25,9 +37,9 @@
   │   常见根因：网络中断、硬件故障、配置错误、阈值触发
   │
   └─ 4. 修复建议（按风险排序）
-      低风险：read_properties 确认状态、acknowledge 告警
-      中风险：write_properties 调整配置、create_schedule 增加监控
-      高风险：send_command 重启/切换 → 必须用户确认！
+      低风险：read_device 确认状态；如提供告警确认工具，再确认告警
+      中风险：set_device 调整配置，或创建监控任务
+      高风险：call_device 重启/切换 → 必须用户确认！
 ```
 
 ### 离线设备诊断示例
@@ -35,10 +47,10 @@
 ```
 用户："设备 A 离线了，帮我看看"
 
-1. get_thing(设备A)        → 确认设备存在，了解设备信息
-2. alarm_list(设备A)        → 查看相关告警
-3. search_things(同类型)    → 同类型的其他设备在线吗？
-4. read_properties(设备A)   → 尝试读取（确认是否真的离线）
+1. read_device(设备A)        → 确认设备存在，了解设备信息
+2. 告警查询工具(设备A)      → 查看相关告警（如已提供）
+3. list_devices(同类型)     → 同类型的其他设备在线吗？
+4. read_device(设备A)       → 尝试读取（确认是否真的离线）
 5. 结论："设备 A 最后在线时间为 XX:XX，同类型设备均正常。
    可能原因：设备断电、网络故障、配置变更。
    建议：① 检查设备电源 ② ping 设备 IP ③ 检查最近配置变更"
@@ -49,3 +61,6 @@
 - 如果信息不足，坦率说明"需要更多信息"并列出需要什么
 - 修复建议由低风险到高风险排列，高风险操作必须用户确认
 - 利用 `search_knowledge` 搜索项目文档，可能有设备手册或历史处理记录
+- 本技能只输出诊断与建议；需要真正改配置或下发命令时，按 `device-management` 技能走审批流程
+- 告警查询工具属于平台扩展平面，仅在当前工具列表提供时可用；未提供时用 `query_events` 与 `read_device` 取证，并说明无法核对告警
+

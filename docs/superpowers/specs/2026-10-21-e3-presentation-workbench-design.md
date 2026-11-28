@@ -1,5 +1,10 @@
 # E3 呈现层子 spec（Devices 工作台三 tab + Flow 时间机器 + 模板库）
 
+> **Status: RETIRED (2026-11-26).** The E3 workbench (Flow / World / health
+> cards, `/live/stream`, `/ledger`) was removed. `hub_ledger` no longer feeds the
+> UI and `state_change` writes are retired. This document is retained as a
+> historical design record.
+
 - 日期：2026-10-21
 - 分支：ai-consolidation
 - 上位文档：`docs/superpowers/specs/2026-10-20-hub-runtime-architecture-design.md` §6 E3（X6 Flow 时间机器 / X7 规则模板库）

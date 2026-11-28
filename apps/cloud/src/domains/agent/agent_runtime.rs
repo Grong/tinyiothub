@@ -24,7 +24,6 @@ use tinyiothub_runtime::EventBus;
 
 use super::event::bus::DropNotifier;
 use super::events::{AgentEvent, AgentEventBus, AgentEventKind};
-use super::heartbeat::types::HeartbeatConfig;
 use super::orchestrator::Orchestrator;
 use super::orchestrator::callbacks::HeartbeatBridge;
 use super::snapshot::{RestoreSnapshot, WorkspaceHeartbeatState};
@@ -86,12 +85,6 @@ impl AgentRuntime {
             heartbeat_deps
                 .trust_configs
                 .insert(state.workspace_id.clone(), state.trust_config.clone());
-            heartbeat_deps
-                .intervals
-                .insert(state.workspace_id.clone(), state.interval_minutes);
-            // 终审 I-1：enabled 开关随快照预热进统一循环共享表——禁用工作区
-            // 重启后 trigger 仍不 tick。
-            heartbeat_deps.enabled.insert(state.workspace_id.clone(), state.enabled);
         }
         let thing_agents = Arc::new(ThingAgentManager::new(
             deps.agent_provider,
@@ -148,21 +141,13 @@ impl AgentRuntime {
         }
     }
 
-    /// heartbeat 段导出：tasks/trust/intervals/enabled 四表 key 的并集，
-    /// 缺省字段回退 default（interval 缺省=HeartbeatConfig::default，
-    /// enabled 缺省=true——与 trigger 判定集同口径）。
+    /// heartbeat 段导出：tasks/trust 两表 key 的并集。
     fn heartbeat_snapshot_states(&self) -> Vec<WorkspaceHeartbeatState> {
         let mut ws_ids: std::collections::HashSet<String> = std::collections::HashSet::new();
         for r in self.heartbeat_deps.tasks.iter() {
             ws_ids.insert(r.key().clone());
         }
         for r in self.heartbeat_deps.trust_configs.iter() {
-            ws_ids.insert(r.key().clone());
-        }
-        for r in self.heartbeat_deps.intervals.iter() {
-            ws_ids.insert(r.key().clone());
-        }
-        for r in self.heartbeat_deps.enabled.iter() {
             ws_ids.insert(r.key().clone());
         }
         ws_ids
@@ -175,13 +160,6 @@ impl AgentRuntime {
                     .get(&ws)
                     .map(|r| r.value().clone())
                     .unwrap_or_default(),
-                interval_minutes: self
-                    .heartbeat_deps
-                    .intervals
-                    .get(&ws)
-                    .map(|r| *r.value())
-                    .unwrap_or(HeartbeatConfig::default().interval_minutes),
-                enabled: self.heartbeat_deps.enabled.get(&ws).map(|r| *r.value()).unwrap_or(true),
                 workspace_id: ws,
             })
             .collect()
@@ -197,16 +175,6 @@ impl AgentRuntime {
             workspace_id: workspace_id.to_string(),
             config: Box::new(config),
         });
-    }
-
-    /// 心跳间隔变更命令：更新共享表并唤醒 trigger 立即重读（统一循环
-    /// trigger 每轮读 intervals 表，notify 闭合生效延迟）。入站校验与
-    /// DB 写（含 enabled 归并）由 cloud 侧 handler 先做。
-    pub fn update_heartbeat_interval(&self, workspace_id: &str, interval_minutes: u32) {
-        self.heartbeat_deps
-            .intervals
-            .insert(workspace_id.to_string(), interval_minutes);
-        self.thing_agents.heartbeat_reload_notify(workspace_id).notify_one();
     }
 
     /// 心跳任务全量替换命令：更新共享表 + 唤醒 trigger 立即重读 + 发射
@@ -233,15 +201,13 @@ impl AgentRuntime {
             .unwrap_or_default()
     }
 
-    /// 工作区删除清理命令：清心跳共享表（tasks/trust/intervals/enabled/
-    /// last_ticks）并解除 governor 暂停态，防止已删工作区在内存与
+    /// 工作区删除清理命令：清心跳共享表（tasks/trust/last_ticks）并解除
+    /// governor 暂停态，防止已删工作区在内存与
     /// dump_state 快照中残留（Task 5 fix round 1 语义）。loop 停止由
     /// orchestrator 的 WorkspaceDeleted 臂承担。
     pub fn remove_workspace(&self, workspace_id: &str) {
         self.heartbeat_deps.tasks.remove(workspace_id);
         self.heartbeat_deps.trust_configs.remove(workspace_id);
-        self.heartbeat_deps.intervals.remove(workspace_id);
-        self.heartbeat_deps.enabled.remove(workspace_id);
         self.heartbeat_deps.last_ticks.remove(workspace_id);
         self.heartbeat_deps.governor.resume(workspace_id);
     }
@@ -334,8 +300,6 @@ mod tests {
                 workspace_id: "ws1".into(),
                 tasks: vec![task_fixture()],
                 trust_config: TrustConfig::default(),
-                interval_minutes: 30,
-                enabled: true,
             }],
             recent_runs: vec![],
             problem_meta: vec![],
@@ -360,7 +324,6 @@ mod tests {
         let dumped = rt.dump_state();
         assert_eq!(dumped.heartbeat.len(), 1);
         assert_eq!(dumped.heartbeat[0].workspace_id, "ws1");
-        assert_eq!(dumped.heartbeat[0].interval_minutes, 30);
         assert_eq!(dumped.heartbeat[0].tasks.len(), 1);
     }
 
@@ -375,9 +338,6 @@ mod tests {
         rt.update_trust_config("ws1", config);
         assert_eq!(rt.dump_state().heartbeat[0].trust_config.max_auto_actions_per_tick, 3);
 
-        rt.update_heartbeat_interval("ws1", 45);
-        assert_eq!(rt.dump_state().heartbeat[0].interval_minutes, 45);
-
         rt.reload_heartbeat_tasks("ws1", vec![]);
         assert!(rt.heartbeat_tasks("ws1").is_empty());
     }
@@ -387,23 +347,6 @@ mod tests {
         let rt = AgentRuntime::restore(snapshot_with_ws1(), RuntimeDeps::test_stub());
         assert_eq!(rt.heartbeat_tasks("ws1").len(), 1);
         assert!(rt.heartbeat_tasks("unknown").is_empty());
-    }
-
-    /// 终审 I-1：restore 预热把快照 enabled 写入统一循环共享表——禁用工作区
-    /// 重启后 trigger 仍不 tick（此前 enabled 只在旧 runner 生效，重启后统一
-    /// 循环无视持久化的开关）。缺省语义（快照 true）预热后读出口为 true。
-    #[tokio::test]
-    async fn restore_prewarms_heartbeat_enabled_into_unified_loop() {
-        let mut snap = snapshot_with_ws1();
-        snap.heartbeat[0].enabled = false;
-        let rt = AgentRuntime::restore(snap, RuntimeDeps::test_stub());
-        assert!(
-            !rt.thing_agents().heartbeat_enabled("ws1"),
-            "快照 enabled=false 必须预热进统一循环共享表"
-        );
-
-        let rt = AgentRuntime::restore(snapshot_with_ws1(), RuntimeDeps::test_stub());
-        assert!(rt.thing_agents().heartbeat_enabled("ws1"));
     }
 
     #[tokio::test]
@@ -514,12 +457,12 @@ mod tests {
     }
 
     // Value card
-    // - 覆盖路径：remove_workspace 清五张心跳共享表（tasks/trust/intervals/
-    //   enabled/last_ticks）+ governor.resume + dump_state 不残留。
+    // - 覆盖路径：remove_workspace 清三张心跳共享表（tasks/trust/last_ticks）
+    //   + governor.resume + dump_state 不残留。
     // - 真实回归场景：T15 把清表从旧 runner 迁到门面时漏清某张表——工作区
     //   删除后重建，残留的 enabled=false / 旧任务表 / 旧 last_tick 直接生效，
     //   dump_state 对账还把幽灵工作区写回 DB。
-    // - 失败信号：任一表未清即断言失败；enabled 读出口回缺省 true 证明表已清。
+    // - 失败信号：任一表未清即断言失败。
     // - 覆盖理由：orchestrator 生命周期测试只断言 manager.start/stop，门面
     //   清表命令无任何直接断言。
     #[tokio::test]
@@ -538,15 +481,6 @@ mod tests {
             rt.thing_agents().heartbeat_trust_config("ws1").is_none(),
             "trust 表须清"
         );
-        assert_eq!(
-            rt.thing_agents().heartbeat_interval_minutes("ws1"),
-            None,
-            "intervals 表须清"
-        );
-        assert!(
-            rt.thing_agents().heartbeat_enabled("ws1"),
-            "enabled 表清后读出口回缺省 true"
-        );
         assert!(
             !rt.thing_agents().heartbeat_last_ticks().contains_key("ws1"),
             "last_ticks 表须清"
@@ -555,25 +489,18 @@ mod tests {
     }
 
     // Value card
-    // - 覆盖路径：update_heartbeat_interval / reload_heartbeat_tasks 命令在
-    //   更新共享表后调用 heartbeat_reload_notify().notify_one()（行为保持
-    //   清单第 3 行：配置/任务变更立即 tick，不等下个周期间隔）。
-    // - 真实回归场景：有人删掉 notify_one 调用——间隔热改与任务变更退化为
-    //   「下一个周期才生效」，最长延迟一个 interval（默认 15min），trigger
-    //   侧 reload_notify_forces_immediate_tick 测试依旧绿（它直接 notify）。
+    // - 覆盖路径：reload_heartbeat_tasks 命令在更新共享表后调用
+    //   heartbeat_reload_notify().notify_one()（任务变更立即 tick，不等下个
+    //   周期间隔）。
+    // - 真实回归场景：有人删掉 notify_one 调用——任务变更退化为「下一个周期
+    //   才生效」，最长延迟一个 interval。
     // - 失败信号：notified() 超时即 notify 断链。
     // - 覆盖理由：既有 commands_update_facade_state 只断言表值，不覆盖
     //   notify 副作用。
     #[tokio::test]
-    async fn interval_and_task_commands_notify_unified_trigger() {
+    async fn task_commands_notify_unified_trigger() {
         let rt = AgentRuntime::restore(snapshot_with_ws1(), RuntimeDeps::test_stub());
         let notify = rt.thing_agents().heartbeat_reload_notify("ws1");
-
-        let waited = notify.notified();
-        rt.update_heartbeat_interval("ws1", 45);
-        tokio::time::timeout(std::time::Duration::from_millis(100), waited)
-            .await
-            .expect("interval 命令必须 notify 统一 trigger");
 
         let waited = notify.notified();
         rt.reload_heartbeat_tasks("ws1", vec![]);

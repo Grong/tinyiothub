@@ -1,6 +1,18 @@
+---
+name: driver-management
+title: 驱动管理
+description: 查看系统可用驱动并测试驱动连通性。不负责设备注册与删除。
+version: "2"
+trigger: /driver-management
+inject: index
+builtin: "3"
+---
+
 # 驱动管理 (Driver Management)
 
 管理 IoT 设备的接入驱动，支持查看、测试驱动。
+
+驱动工具属于平台扩展平面，仅在当前工具列表提供时可用；未提供时说明无法查看或测试，不要假设工具名。
 
 ## 可用工具
 

@@ -3,19 +3,14 @@
 // Provides agent management endpoints:
 // - /agents - list agents
 // - /agents/{id}/config - agent configuration
-// - /workspaces/{id}/heartbeat/* — heartbeat configuration (in workspace handler)
 // - /agents/{id}/files/* - workspace files
 
 pub mod agent_tasks;
-pub mod execution_record;
 pub mod files;
 pub mod hub_stream;
-pub mod ledger;
-pub mod live_stream;
 pub mod skills;
 pub mod types;
 pub mod watch;
-pub mod workspace_heartbeat;
 
 #[cfg(test)]
 mod tests;

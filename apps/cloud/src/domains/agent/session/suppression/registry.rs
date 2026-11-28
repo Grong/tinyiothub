@@ -396,7 +396,7 @@ const EVENT_PAGE_SIZE: i64 = 200;
 /// user-message cursor (control input only) and external semantic events.
 ///
 /// The cursor predicate is exactly the one Task 2 uses for the skip re-check:
-/// `execution_mode = 'production' AND type = 'message.created' AND
+/// `execution_mode = 'production' AND type = 'user/message' AND
 /// payload_json->>'$.role' = 'user'`, scoped to the session. No raw SQL is
 /// added here; the existing `session_event_page` delegate already applies the
 /// execution-mode/session filter.
@@ -431,8 +431,7 @@ pub(crate) async fn load_session_events(
     let control_cursor = events
         .iter()
         .filter(|event| {
-            event.event_type == "message.created"
-                && event.payload_json.get("role").and_then(Value::as_str) == Some("user")
+            event.event_type == "user/message" && event.payload_json.get("role").and_then(Value::as_str) == Some("user")
         })
         .map(|event| event.seq)
         .max()
@@ -453,11 +452,11 @@ pub(crate) async fn load_session_events(
 }
 
 /// Harness lifecycle, agent activity, assistant output and events owned by
-/// other Source adapters never become semantic work items. Event names are
-/// dot-separated lowercase; the cursor-owned user messages are excluded here
-/// and participate only through `control_cursor`.
+/// other Source adapters never become semantic work items. The v2 vocabulary
+/// uses slash names; the cursor-owned user messages are excluded here and
+/// participate only through `control_cursor`.
 fn is_external_semantic_event(event: &HarnessEvent) -> bool {
-    if !event.event_type.contains('.') {
+    if !event.event_type.contains('.') && !event.event_type.contains('/') {
         return false;
     }
     if event.event_type == "turn.state" {
@@ -465,23 +464,39 @@ fn is_external_semantic_event(event: &HarnessEvent) -> bool {
     }
     const EXCLUDED_PREFIXES: &[&str] = &[
         "turn.",
+        "turn/",
         "step.",
+        "step/",
         "tool.",
+        "tool/",
         "session.",
+        "session/",
         "wake.",
+        "wake/",
         "trigger.",
+        "trigger/",
         "message.",
+        "message/",
+        "user.",
+        "user/",
         // question/approval/todo/task events are semantic work here: the
         // integrated registry has no other Source that owns their current
         // payloads. Excluding them would hide answers and open work until the
         // next timed reconciliation.
         "run.",
+        "run/",
         "assistant.",
+        "assistant/",
         "harness.",
+        "harness/",
         "capability.",
+        "capability/",
         "decision.",
+        "decision/",
         "subagent.",
+        "subagent/",
         "skill.",
+        "skill/",
     ];
     !EXCLUDED_PREFIXES
         .iter()
@@ -1584,20 +1599,20 @@ mod registry {
             let context = TurnContext::new(WS.into(), ASSISTANT.into(), session_key.clone(), "run".into(), 0);
             for (event_type, payload) in [
                 (
-                    "message.created",
+                    "user/message",
                     json!({"messageId": "user-1", "role": "user", "text": "cursor-owned user text"}),
                 ),
                 (
-                    "message.created",
+                    "assistant/message",
                     json!({"messageId": "assistant-1", "role": "assistant", "text": "assistant output"}),
                 ),
-                ("turn.started", json!({"turnId": "turn-1"})),
+                ("turn/start", json!({"turnId": "turn-1"})),
                 ("step.text", json!({"turnId": "turn-1", "text": "streamed step"})),
                 (
-                    "tool.called",
+                    "tool/call",
                     json!({"turnId": "turn-1", "tool": "read_device", "args": {}}),
                 ),
-                ("turn.completed", json!({"turnId": "turn-1", "outcome": "completed"})),
+                ("turn/end", json!({"turnId": "turn-1", "outcome": "completed"})),
                 (
                     "thing.event",
                     json!({"marker": "session-event-marker", "thingId": "device-1", "temperature": 21.5}),
@@ -2006,21 +2021,21 @@ mod registry {
             0,
         );
         for (event_type, payload) in [
-            ("turn.started", json!({"turnId": "turn-2"})),
+            ("turn/start", json!({"turnId": "turn-2"})),
             (
-                "message.created",
+                "assistant/message",
                 json!({"messageId": "assistant-2", "role": "assistant", "text": "another report"}),
             ),
             ("assistant.suppression.alert", json!({"code": "source_unavailable"})),
             (
-                "subagent.started",
+                "subagent/started",
                 json!({"subagentId": "sub-2", "task": "inspect pump"}),
             ),
             (
-                "subagent.completed",
+                "subagent/completed",
                 json!({"subagentId": "sub-2", "summary": "model-written subagent summary"}),
             ),
-            ("skill.loaded", json!({"name": "inspection", "body": "skill body"})),
+            ("skill/loaded", json!({"name": "inspection", "body": "skill body"})),
         ] {
             fixture
                 .db
@@ -2051,9 +2066,9 @@ mod registry {
         );
         let mut previous = source.capture(&context()).await.unwrap();
         for (event_type, marker) in [
-            ("question.answered", "answer-marker"),
-            ("approval.resolved", "approval-marker"),
-            ("todo.updated", "todo-marker"),
+            ("question/answered", "answer-marker"),
+            ("approval/resolved", "approval-marker"),
+            ("todo/write", "todo-marker"),
             ("task.created", "task-marker"),
         ] {
             fixture

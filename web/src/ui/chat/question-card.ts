@@ -14,6 +14,8 @@ export class QuestionCard extends LitElement {
       margin: 0 auto 14px;
     }
     .card {
+      max-height: min(40vh, 340px);
+      overflow-y: auto;
       padding: 13px 14px;
       border: 1px solid var(--border);
       border-radius: var(--radius-md);

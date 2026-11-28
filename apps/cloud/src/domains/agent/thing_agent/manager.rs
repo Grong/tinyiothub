@@ -79,10 +79,6 @@ pub struct TaskRuntimeDeps {
 pub struct HeartbeatDeps {
     /// 每工作区巡检任务表。
     pub tasks: Arc<DashMap<String, Vec<HeartbeatTask>>>,
-    /// 每工作区间隔（分钟）覆盖表——update_config 写穿。
-    pub intervals: Arc<DashMap<String, u32>>,
-    /// 每工作区心跳开关表（终审 I-1）。
-    pub enabled: Arc<DashMap<String, bool>>,
     /// 每工作区信任配置表（handler 写穿 / dump_state 导出）。
     pub trust_configs: Arc<DashMap<String, TrustConfig>>,
     /// 连败治理（T4）。
@@ -118,8 +114,6 @@ pub struct ThingAgentManager {
     heartbeat: HeartbeatDeps,
     /// T13：每工作区心跳热更新信号（handler 写穿后 notify；暂无消费者）。
     heartbeat_reload_notifies: DashMap<String, Arc<tokio::sync::Notify>>,
-    /// E1 同键限速共享表（handler 写穿/读面兼容）。
-    rate_limits: Arc<DashMap<String, u32>>,
     /// E1 watch 值守构建依赖（Task 8）：bootstrap 注入（`set_watch_deps`）；
     /// None = watch 未接线（测试/边缘形态），loop 不含 engine/forwarder。
     watch_deps: std::sync::Mutex<Option<WatchDeps>>,
@@ -154,7 +148,6 @@ impl ThingAgentManager {
             workspaces: DashMap::new(),
             heartbeat,
             heartbeat_reload_notifies: DashMap::new(),
-            rate_limits: Arc::new(DashMap::new()),
             watch_deps: std::sync::Mutex::new(None),
             watch_cmds,
             session_router: parking_lot::Mutex::new(None),
@@ -380,16 +373,12 @@ impl ThingAgentManager {
         self.heartbeat_reload_notifies.remove(workspace_id);
         // 心跳共享表随工作区清(RT-6)：workspace churn 下表无限增长。
         self.heartbeat.tasks.remove(workspace_id);
-        self.heartbeat.intervals.remove(workspace_id);
-        self.heartbeat.enabled.remove(workspace_id);
         self.heartbeat.last_ticks.remove(workspace_id);
         self.heartbeat.governor.record_success(workspace_id);
         self.deps.agent_provider.invalidate(workspace_id);
         // E1 watch：命令通道条目随 loop 退役——engine 任务已被 abort，
         // 残留 sender 只会让 handler 写穿投进死通道。
         self.watch_cmds.remove(workspace_id);
-        // M-4：同键限速表随 loop 退役（RT-6 同款）。
-        self.rate_limits.remove(workspace_id);
         tracing::info!(workspace_id, "workspace watch stopped");
     }
 
@@ -435,18 +424,6 @@ impl ThingAgentManager {
         self.heartbeat.tasks.insert(workspace_id.to_string(), tasks);
     }
 
-    /// handler 写穿：每工作区间隔（分钟）覆盖。
-    pub fn set_heartbeat_interval_minutes(&self, workspace_id: &str, interval_minutes: u32) {
-        self.heartbeat
-            .intervals
-            .insert(workspace_id.to_string(), interval_minutes);
-    }
-
-    /// handler 写穿（终审 I-1）：心跳开关。
-    pub fn set_heartbeat_enabled(&self, workspace_id: &str, enabled: bool) {
-        self.heartbeat.enabled.insert(workspace_id.to_string(), enabled);
-    }
-
     /// handler 写穿：信任配置。
     pub fn set_trust_config(&self, workspace_id: &str, config: TrustConfig) {
         self.heartbeat.trust_configs.insert(workspace_id.to_string(), config);
@@ -461,36 +438,9 @@ impl ThingAgentManager {
             .unwrap_or_default()
     }
 
-    /// 读出口：每工作区间隔（分钟）覆盖值。
-    pub fn heartbeat_interval_minutes(&self, workspace_id: &str) -> Option<u32> {
-        self.heartbeat.intervals.get(workspace_id).map(|r| *r)
-    }
-
-    /// 读出口（终审 I-1）：心跳开关——缺省（表无条目）= true。
-    pub fn heartbeat_enabled(&self, workspace_id: &str) -> bool {
-        self.heartbeat.enabled.get(workspace_id).map(|r| *r).unwrap_or(true)
-    }
-
     /// 读出口：信任配置快照。
     pub fn heartbeat_trust_config(&self, workspace_id: &str) -> Option<TrustConfig> {
         self.heartbeat.trust_configs.get(workspace_id).map(|r| r.clone())
-    }
-
-    // ── E1 同键限速（D3/D4）：共享表（handler 写穿/读面兼容）───────────
-
-    /// 同键限速共享表句柄。
-    pub fn wake_rate_limits(&self) -> Arc<DashMap<String, u32>> {
-        Arc::clone(&self.rate_limits)
-    }
-
-    /// handler 写穿（D11-⑤ 同款）：每工作区同键限速（N/分钟）。
-    pub fn set_wake_rate_limit_per_min(&self, workspace_id: &str, per_min: u32) {
-        self.rate_limits.insert(workspace_id.to_string(), per_min);
-    }
-
-    /// 读出口（启动接线断言/调试）：每工作区同键限速覆盖值。
-    pub fn wake_rate_limit_per_min(&self, workspace_id: &str) -> Option<u32> {
-        self.rate_limits.get(workspace_id).map(|r| *r)
     }
 
     // ── E1 watch 值守（Task 8）：构建依赖注入 + API 写穿命令通道 ──────────
@@ -659,6 +609,8 @@ pub(crate) mod tests {
                 conversation_memory: true,
                 available_capabilities: vec![],
                 tool_call_ids: None,
+                checkpoint_before_tool: true,
+                max_tool_calls: 512,
             };
             let handle = tinyiothub_agent::adapters::rig::loop_::rig_loop_factory(cfg).expect("build stub loop");
             Self {
@@ -805,10 +757,6 @@ pub(crate) mod tests {
         );
         assert_eq!(parts.manager.heartbeat_tasks(WS).len(), 1);
         assert_eq!(parts.heartbeat.tasks.get(WS).map(|t| t.len()), Some(1));
-
-        parts.manager.set_heartbeat_interval_minutes(WS, 45);
-        assert_eq!(parts.manager.heartbeat_interval_minutes(WS), Some(45));
-        assert_eq!(parts.heartbeat.intervals.get(WS).map(|v| *v), Some(45));
 
         parts.manager.set_trust_config(
             WS,
@@ -1292,7 +1240,7 @@ pub(crate) mod tests {
     }
 
     #[tokio::test]
-    async fn watch_hit_feeds_session_router_end_to_end() {
+    async fn watch_hit_records_ledger_without_waking_session() {
         let parts = stub_manager().await;
         let ledger = Arc::new(RecordingLedger::default());
         let deps = watch_deps(vec![watch_rule("r1", "t1")], ledger.clone());
@@ -1312,18 +1260,15 @@ pub(crate) mod tests {
         settle().await;
         assert!(executor.wakes().is_empty(), "under-threshold value must not wake");
 
-        // 越限：命中 → EventWake(watch) 进 TriggerRouter → executor 收到。
+        // 越限：命中只记账（随下一次定时巡检消费），不单独开 turn。
         publish_property_change(&bus, "t1", "31").await;
-        wait_until(|| executor.wakes().len() == 1, "watch session wake").await;
-        let wake = executor.wakes().remove(0);
-        assert_eq!(wake.workspace_id, WS);
-        assert_eq!(wake.trigger, "watch");
-        assert_eq!(wake.dedup_key.as_deref(), Some("watch:r1"));
         wait_until(
             || ledger.entries.lock().unwrap().iter().any(|e| e.1 == "watch_hit"),
             "ledger watch_hit",
         )
         .await;
+        settle().await;
+        assert!(executor.wakes().is_empty(), "watch 命中不得单独开 turn");
     }
 
     /// API 写穿（D11-⑤ 内存步）：Upsert 命令进 engine → 事件命中；Remove
@@ -1332,7 +1277,7 @@ pub(crate) mod tests {
     async fn watch_command_upsert_then_remove_controls_engine() {
         let parts = stub_manager().await;
         let ledger = Arc::new(RecordingLedger::default());
-        let deps = watch_deps(vec![], ledger); // 空规则起步——不经重织
+        let deps = watch_deps(vec![], ledger.clone()); // 空规则起步——不经重织
         let bus = deps.events.clone();
         parts.manager.set_watch_deps(deps);
         let (router, executor) = recording_router().await;
@@ -1346,15 +1291,30 @@ pub(crate) mod tests {
             .expect("upsert sent");
         settle().await; // 命令先于事件进 engine（单循环串行消费）
         publish_property_change(&bus, "t1", "31").await;
-        wait_until(|| executor.wakes().len() == 1, "upserted rule hits").await;
-        assert_eq!(executor.wakes()[0].dedup_key.as_deref(), Some("watch:r2"));
+        wait_until(
+            || ledger.entries.lock().unwrap().iter().any(|e| e.1 == "watch_hit"),
+            "upserted rule hits",
+        )
+        .await;
+        settle().await;
+        assert!(executor.wakes().is_empty(), "watch 命中不得单独开 turn");
+        let watch_hit_count = || {
+            ledger
+                .entries
+                .lock()
+                .unwrap()
+                .iter()
+                .filter(|e| e.1 == "watch_hit")
+                .count()
+        };
+        assert_eq!(watch_hit_count(), 1);
 
         // one-shot 命中后已自动移除；显式 Remove 幂等不炸，再越限不命中。
         sink.send(WatchCommand::Remove("r2".into())).await.expect("remove sent");
         settle().await;
         publish_property_change(&bus, "t1", "32").await;
         settle().await;
-        assert_eq!(executor.wakes().len(), 1, "移除后不得再命中");
+        assert_eq!(watch_hit_count(), 1, "移除后不得再命中");
 
         parts.manager.stop_workspace_watch(WS).await;
         assert!(parts.manager.watch_command_sink(WS).is_none(), "stop 丢弃命令通道");
@@ -1372,7 +1332,7 @@ pub(crate) mod tests {
         parts.manager.start_workspace_watch(WS);
         let sink = parts.manager.watch_command_sink(WS).expect("command sink");
 
-        // 无实时态（未见过该物事件）→ None。
+        // 启动即以 cache 播种：未见过属性事件也有 health/online，values 为空。
         let (tx, rx) = tokio::sync::oneshot::channel();
         sink.send(WatchCommand::Summary {
             thing_id: "t1".into(),
@@ -1380,7 +1340,9 @@ pub(crate) mod tests {
         })
         .await
         .expect("summary query sent");
-        assert!(rx.await.expect("reply").is_none());
+        let seeded = rx.await.expect("reply").expect("cache seed summary");
+        assert!(seeded.online);
+        assert!(seeded.values.is_empty());
 
         // 属性事件进场 → LiveState 有该物 → Some 且值一致。
         publish_property_change(&bus, "t1", "31").await;

@@ -13,6 +13,7 @@ use tinyiothub_storage::{Db, DbError};
 use uuid::Uuid;
 
 use super::context::TurnContext;
+use crate::domains::agent::runtime::session_live::{SessionLiveFrame, SessionLiveHub};
 use crate::domains::agent::runtime::session_stream::SessionStreamHub;
 
 pub const SESSION_EVENT_SCHEMA_V: i64 = 1;
@@ -26,16 +27,21 @@ pub trait SessionEventSink: Send + Sync {
     async fn notify(&self, _workspace_id: &str, _session_id: &str) -> Result<(), DbError> {
         Ok(())
     }
+
+    /// Process-local presentation delta. This is never persisted and may be
+    /// lost on disconnect; durable settlements are written with `emit`.
+    async fn live(&self, _session_id: &str, _frame: SessionLiveFrame) {}
 }
 
 pub struct DbSessionEventSink {
     db: Arc<Db>,
     hub: Arc<SessionStreamHub>,
+    live: Arc<SessionLiveHub>,
 }
 
 impl DbSessionEventSink {
-    pub fn new(db: Arc<Db>, hub: Arc<SessionStreamHub>) -> Self {
-        Self { db, hub }
+    pub fn new(db: Arc<Db>, hub: Arc<SessionStreamHub>, live: Arc<SessionLiveHub>) -> Self {
+        Self { db, hub, live }
     }
 }
 
@@ -51,11 +57,19 @@ impl SessionEventSink for DbSessionEventSink {
         self.hub.notify(workspace_id);
         Ok(())
     }
+
+    async fn live(&self, session_id: &str, frame: SessionLiveFrame) {
+        self.live.publish(session_id, frame);
+    }
 }
 
 /// 构造一条 Session 事件。`event_id` 每次新生成；同一 payload 的 digest 稳定，
 /// 因此重放/重试不会产生冲突（DB 以 event_id 幂等）。
 pub fn session_event(ctx: &TurnContext, event_type: &str, payload: serde_json::Value) -> HarnessEventInput {
+    let mut payload = payload;
+    if payload.get("turnId").is_none() {
+        payload["turnId"] = serde_json::json!(ctx.turn_id);
+    }
     HarnessEventInput {
         event_id: Uuid::new_v4().to_string(),
         workspace_id: ctx.workspace_id.clone(),
@@ -78,7 +92,7 @@ fn payload_digest(payload: &serde_json::Value) -> String {
     hash.iter().map(|byte| format!("{byte:02x}")).collect()
 }
 
-/// spec §5.4.3：`session.started { session_id, kind }` 的统一构造。
+/// spec §5.4.3：`session/start { session_id, kind }` 的统一构造。
 pub fn session_started_payload(session_id: &str, kind: &str) -> serde_json::Value {
     serde_json::json!({ "sessionId": session_id, "kind": kind })
 }
@@ -138,11 +152,11 @@ mod tests {
     #[test]
     fn event_carries_turn_identity_and_schema() {
         let context = ctx();
-        let input = session_event(&context, "todo.updated", json!({"todos": []}));
+        let input = session_event(&context, "todo/write", json!({"todos": []}));
         assert_eq!(input.workspace_id, "ws");
         assert_eq!(input.session_id, "agent:ws:agent_main/s1");
         assert_eq!(input.run_id, Some("run1".to_string()));
-        assert_eq!(input.event_type, "todo.updated");
+        assert_eq!(input.event_type, "todo/write");
         assert_eq!(input.schema_v, 1);
         assert_eq!(input.execution_mode, ExecutionMode::Production);
         assert_eq!(input.task_id, None);
@@ -154,8 +168,8 @@ mod tests {
     #[test]
     fn same_payload_has_stable_digest_but_new_event_id() {
         let context = ctx();
-        let a = session_event(&context, "todo.updated", json!({"todos": []}));
-        let b = session_event(&context, "todo.updated", json!({"todos": []}));
+        let a = session_event(&context, "todo/write", json!({"todos": []}));
+        let b = session_event(&context, "todo/write", json!({"todos": []}));
         assert_eq!(a.payload_digest, b.payload_digest);
         assert_ne!(a.event_id, b.event_id);
     }
@@ -164,12 +178,12 @@ mod tests {
     async fn recording_sink_captures_events() {
         let sink = test_support::RecordingSink::default();
         let context = ctx();
-        sink.emit(session_event(&context, "turn.started", json!({})))
+        sink.emit(session_event(&context, "turn/start", json!({})))
             .await
             .unwrap();
         let events = sink.events.lock().await;
         assert_eq!(events.len(), 1);
-        assert_eq!(events[0].event_type, "turn.started");
+        assert_eq!(events[0].event_type, "turn/start");
     }
 
     #[test]

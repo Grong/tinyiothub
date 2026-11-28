@@ -129,39 +129,19 @@ impl WatchEngine {
         true
     }
 
-    /// 属性变更事件：先落 state_change 账（I-2 / spec §4.2 全量落账，新旧值
-    /// 取自变更前后摘要），再更新 LiveState 并求值该物的 属性字段/__health/
+    /// 属性变更事件：更新 LiveState 并求值该物的 属性字段/__health/
     /// __availability（cache 真相刷新可能同时改变 health/online 派生）。
-    /// `workspace_id` 仅作调用侧对账与落账（规则自带 workspace_id 为命中落账真相）。
-    pub async fn on_property_change(&mut self, workspace_id: &str, thing_id: &str, property: &str, value: &str) {
-        let old = self
-            .live
-            .summary(thing_id)
-            .await
-            .and_then(|s| s.values.get(property).cloned());
-        self.append_ledger(
-            workspace_id,
-            "state_change",
-            Some(thing_id),
-            json!({ "v": 1, "field": property, "old": old, "new": value }),
-        )
-        .await;
+    ///
+    /// E3 退役后不再为每次属性变化落 `state_change` 账；`hub_ledger` 只保留
+    /// watch_hit/timeout/expired、取消终态与媒体证据等审计遥测。
+    pub async fn on_property_change(&mut self, _workspace_id: &str, thing_id: &str, property: &str, value: &str) {
         self.live.apply_property_change(thing_id, property, value);
         self.evaluate_thing(thing_id, &[property, "__health", "__availability"])
             .await;
     }
 
-    /// 可用性事件：落 state_change 账（field=__availability）后更新 LiveState
-    /// 并求值该物的 __availability/__health。
-    pub async fn on_availability(&mut self, workspace_id: &str, thing_id: &str, online: bool) {
-        let old = self.live.summary(thing_id).await.map(|s| s.online);
-        self.append_ledger(
-            workspace_id,
-            "state_change",
-            Some(thing_id),
-            json!({ "v": 1, "field": "__availability", "old": old, "new": online }),
-        )
-        .await;
+    /// 可用性事件：更新 LiveState 并求值该物的 __availability/__health。
+    pub async fn on_availability(&mut self, _workspace_id: &str, thing_id: &str, online: bool) {
         self.live.set_availability(thing_id, online);
         self.evaluate_thing(thing_id, &["__availability", "__health"]).await;
     }
@@ -700,7 +680,7 @@ mod tests {
         (cache, engine, rx, ledger, store)
     }
 
-    /// 命中发表：hit_tx 收到 WatchHit，账本落 state_change + watch_hit（v=1, matched:true）。
+    /// 命中发表：hit_tx 收到 WatchHit，账本落 watch_hit（v=1, matched:true）。
     #[tokio::test]
     async fn hit_sends_channel_and_logs_ledger() {
         let (_cache, mut engine, mut rx, ledger, _store) = setup(vec![thing("t1")]);
@@ -712,13 +692,12 @@ mod tests {
         assert_eq!(hit.current_value, json!(31.5));
         assert_eq!(hit.summary.values.get("温度").map(String::as_str), Some("31.5"));
         let entries = ledger.entries.lock().unwrap();
-        assert_eq!(entries.len(), 2);
-        assert_eq!(entries[0].1, "state_change"); // I-2：先落状态变更
-        assert_eq!(entries[1].0, "w1");
-        assert_eq!(entries[1].1, "watch_hit");
-        assert_eq!(entries[1].2.as_deref(), Some("t1"));
-        assert_eq!(entries[1].3["v"], json!(1));
-        assert_eq!(entries[1].3["matched"], json!(true));
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].0, "w1");
+        assert_eq!(entries[0].1, "watch_hit");
+        assert_eq!(entries[0].2.as_deref(), Some("t1"));
+        assert_eq!(entries[0].3["v"], json!(1));
+        assert_eq!(entries[0].3["matched"], json!(true));
     }
 
     /// only-new-data：注册时已成立 → 先不成立再成立才命中。
@@ -828,7 +807,7 @@ mod tests {
         engine.on_property_change("w1", "t1", "温度", "20").await; // 不成立 → rearm
         engine.on_property_change("w1", "t1", "温度", "32").await; // 1s 内再成立 → 合并
         assert!(rx.try_recv().is_err());
-        // 合并窗内不落第二笔 watch_hit（state_change 行不在此断言范围）
+        // 合并窗内不落第二笔 watch_hit
         assert_eq!(
             ledger
                 .entries
@@ -907,27 +886,19 @@ mod tests {
         assert_eq!(rx.try_recv().unwrap().rule_id, "r1");
     }
 
-    /// I-2 / spec §4.2：属性状态变更全量落账（kind=state_change，v=1，带字段
-    /// 与新旧值），温度 25→31 的演变可回放。
+    /// E3 退役：属性变化只更新 LiveState/求值，不再写 state_change 账。
     #[tokio::test]
-    async fn property_change_appends_state_change_ledger_rows() {
+    async fn property_changes_do_not_write_ledger_rows() {
         let (_cache, mut engine, _rx, ledger, _store) = setup(vec![thing("t1")]);
         engine.on_property_change("w1", "t1", "温度", "25").await;
         engine.on_property_change("w1", "t1", "温度", "31").await;
-        let entries = ledger.entries.lock().unwrap();
-        assert_eq!(entries.len(), 2);
-        assert!(entries.iter().all(|e| e.1 == "state_change"));
-        assert!(entries.iter().all(|e| e.0 == "w1" && e.2.as_deref() == Some("t1")));
-        assert_eq!(entries[0].3["v"], json!(1));
-        assert_eq!(entries[0].3["field"], json!("温度"));
-        assert_eq!(entries[0].3["old"], json!(null));
-        assert_eq!(entries[0].3["new"], json!("25"));
-        assert_eq!(entries[1].3["old"], json!("25"));
-        assert_eq!(entries[1].3["new"], json!("31"));
+        assert!(
+            ledger.entries.lock().unwrap().is_empty(),
+            "state_change rows must be retired from hub_ledger"
+        );
     }
 
     /// 边界：账本写失败重试 3 次 → warn + 计数，命中投递不中断。
-    /// （I-2 后一次命中路径写两笔：state_change + watch_hit，各重试 3 次。）
     #[tokio::test]
     async fn ledger_write_failure_retries_and_does_not_interrupt() {
         let cache = Arc::new(StubCache::with_things(vec![thing("t1")]));
@@ -939,8 +910,8 @@ mod tests {
         engine.upsert_rule(rule("r1", gt30("t1"), false)).await.unwrap();
         engine.on_property_change("w1", "t1", "温度", "31").await;
         assert!(rx.try_recv().is_ok()); // 值守链路不因账本故障中断
-        assert_eq!(ledger.attempts.load(Ordering::Relaxed), 2 * LEDGER_MAX_ATTEMPTS);
-        assert_eq!(engine.ledger_write_failures(), 2);
+        assert_eq!(ledger.attempts.load(Ordering::Relaxed), LEDGER_MAX_ATTEMPTS);
+        assert_eq!(engine.ledger_write_failures(), 1);
     }
 
     /// 边界：invalidate_thing 使该物活跃 watch 全失效 + 逐条落 watch_expired +

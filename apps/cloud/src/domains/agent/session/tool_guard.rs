@@ -11,6 +11,7 @@ use tinyiothub_agent::port::tool::{Tool, ToolResult};
 use tinyiothub_skills::trust::ToolSafety;
 use tokio::time::timeout;
 
+use crate::domains::agent::session::approval_labels::ThingApprovalLabels;
 use crate::domains::agent::session::approvals::{ApprovalBroker, ApprovalDecision};
 use crate::domains::agent::session::context::TurnContextRegistry;
 use crate::domains::agent::session::events::{SessionEventSink, session_event};
@@ -26,6 +27,7 @@ pub struct PermissionGuardTool {
     events: Arc<dyn SessionEventSink>,
     safety: ToolSafety,
     timeout: Duration,
+    labels: Option<Arc<ThingApprovalLabels>>,
 }
 
 impl PermissionGuardTool {
@@ -46,7 +48,13 @@ impl PermissionGuardTool {
             events,
             safety,
             timeout,
+            labels: None,
         }
+    }
+
+    pub fn with_labels(mut self, labels: Option<Arc<ThingApprovalLabels>>) -> Self {
+        self.labels = labels;
+        self
     }
 
     fn denied(message: impl Into<String>) -> anyhow::Result<ToolResult> {
@@ -56,6 +64,87 @@ impl PermissionGuardTool {
             error: Some(message.into()),
             attachments: vec![],
         })
+    }
+}
+
+fn approval_action(args: &serde_json::Value) -> Option<&str> {
+    args.get("action")
+        .or_else(|| args.get("actionName"))
+        .and_then(serde_json::Value::as_str)
+}
+
+fn approval_action_label(action: &str) -> &str {
+    match action {
+        "turn_on" => "开启",
+        "turn_off" => "关闭",
+        "reboot" => "重启",
+        "reconnect" => "重连",
+        "lock" => "上锁",
+        "unlock" => "解锁",
+        "set_brightness" => "调整亮度",
+        "open" => "打开",
+        "close" => "关闭",
+        other => other,
+    }
+}
+
+fn approval_params(args: &serde_json::Value) -> Option<String> {
+    let params = args.get("params")?.as_object()?;
+    let mut clean = params.clone();
+    clean.remove("confirmationToken");
+    clean.remove("confirmation_token");
+    if clean.is_empty() {
+        return None;
+    }
+    serde_json::to_string(&clean).ok()
+}
+
+fn approval_title(tool: &str, args: &serde_json::Value) -> String {
+    match tool {
+        "call_device" | "invoke_action" | "send_command" => {
+            let Some(action) = approval_action(args) else {
+                return "执行设备操作".to_string();
+            };
+            approval_action_label(action).to_string()
+        }
+        "set_device" | "write_properties" => "调整设备属性".to_string(),
+        _ => crate::domains::agent::tools::catalog::tool_label(tool).to_string(),
+    }
+}
+
+fn approval_description(tool: &str, args: &serde_json::Value) -> String {
+    let thing = args.get("thingId").and_then(serde_json::Value::as_str);
+    match tool {
+        "call_device" | "invoke_action" | "send_command" => {
+            let Some(action) = approval_action(args) else {
+                return thing
+                    .map(|thing| format!("设备：{thing}\n动作：未提供"))
+                    .unwrap_or_else(|| "动作：未提供".to_string());
+            };
+            let mut lines = Vec::new();
+            if let Some(thing) = thing {
+                lines.push(format!("设备：{thing}"));
+            }
+            lines.push(format!("动作：{}（{action}）", approval_action_label(action)));
+            if let Some(params) = approval_params(args) {
+                lines.push(format!("参数：{params}"));
+            }
+            lines.join("\n")
+        }
+        "set_device" | "write_properties" => match thing {
+            Some(thing) => format!("设备：{thing}\n内容：调整属性值"),
+            None => "调整设备属性值".to_string(),
+        },
+        _ => {
+            let mut clean = args.clone();
+            if let Some(object) = clean.as_object_mut() {
+                object.remove("confirmationToken");
+                object.remove("confirmation_token");
+            }
+            let text = serde_json::to_string(&clean).unwrap_or_default();
+            let text = text.chars().take(500).collect::<String>();
+            format!("{}\n{}", crate::domains::agent::tools::catalog::tool_label(tool), text)
+        }
     }
 }
 
@@ -91,6 +180,18 @@ impl Tool for PermissionGuardTool {
             PermissionMode::Ask => {
                 let summary = serde_json::to_string(&args).unwrap_or_default();
                 let summary = summary.chars().take(200).collect::<String>();
+                let resolved = match self.labels.as_ref() {
+                    Some(labels) => labels.resolve(&context.workspace_id, self.inner.name(), &args).await,
+                    None => None,
+                };
+                let title = resolved
+                    .as_ref()
+                    .map(|label| label.title.clone())
+                    .unwrap_or_else(|| approval_title(self.inner.name(), &args));
+                let description = resolved
+                    .as_ref()
+                    .map(|label| label.description.clone())
+                    .unwrap_or_else(|| approval_description(self.inner.name(), &args));
                 let (approval_id, receiver) =
                     self.approvals
                         .register(&context.session_key, self.inner.name(), &summary);
@@ -98,10 +199,12 @@ impl Tool for PermissionGuardTool {
                     .events
                     .emit(session_event(
                         &context,
-                        "approval.requested",
+                        "approval/requested",
                         json!({
                             "approvalId": approval_id,
                             "action": self.inner.name(),
+                            "title": title,
+                            "description": description,
                             "summary": summary
                         }),
                     ))
@@ -126,7 +229,7 @@ impl Tool for PermissionGuardTool {
                     .events
                     .emit(session_event(
                         &context,
-                        "approval.resolved",
+                        "approval/resolved",
                         json!({ "approvalId": approval_id, "resolution": resolution }),
                     ))
                     .await;
@@ -291,7 +394,7 @@ mod tests {
         assert_eq!(calls.load(Ordering::SeqCst), 1);
         let events = sink.events.lock().await;
         let types: Vec<&str> = events.iter().map(|event| event.event_type.as_str()).collect();
-        assert_eq!(types, vec!["approval.requested", "approval.resolved"]);
+        assert_eq!(types, vec!["approval/requested", "approval/resolved"]);
         assert_eq!(events[1].payload_json["resolution"], "approved");
     }
 
@@ -324,7 +427,7 @@ mod tests {
         assert_eq!(calls.load(Ordering::SeqCst), 0);
         let events = sink.events.lock().await;
         let types: Vec<&str> = events.iter().map(|event| event.event_type.as_str()).collect();
-        assert_eq!(types, vec!["approval.requested", "approval.resolved"]);
+        assert_eq!(types, vec!["approval/requested", "approval/resolved"]);
         assert_eq!(events[1].payload_json["resolution"], "denied");
     }
 
@@ -347,8 +450,8 @@ mod tests {
         assert!(!result.success);
         assert_eq!(calls.load(Ordering::SeqCst), 0);
         let events = sink.events.lock().await;
-        let last = events.last().expect("approval.resolved emitted");
-        assert_eq!(last.event_type, "approval.resolved");
+        let last = events.last().expect("approval/resolved emitted");
+        assert_eq!(last.event_type, "approval/resolved");
         assert_eq!(last.payload_json["resolution"], "denied");
     }
 

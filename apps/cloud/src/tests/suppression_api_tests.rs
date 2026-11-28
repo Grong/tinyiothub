@@ -326,7 +326,7 @@ async fn public_report_excludes_internal_refs_and_work_keys() {
         WS,
         "event-skip",
         &key,
-        "turn.completed",
+        "turn/end",
         json!({"turnId": "turn:skip-1", "outcome": "skipped", "toolCalls": 0}),
     )
     .await;
@@ -381,7 +381,7 @@ async fn report_turn_query_reports_terminal_counts_without_fabrication() {
         WS,
         "event-skip",
         &key,
-        "turn.completed",
+        "turn/end",
         json!({"turnId": "turn:skip-1", "outcome": "skipped", "toolCalls": 0}),
     )
     .await;
@@ -390,7 +390,7 @@ async fn report_turn_query_reports_terminal_counts_without_fabrication() {
         WS,
         "event-started",
         &key,
-        "turn.started",
+        "turn/start",
         json!({"turnId": "turn:running-1"}),
     )
     .await;
@@ -893,7 +893,7 @@ async fn raw_turn_state_is_filtered_from_public_session_events_and_hud() {
         WS,
         "event-visible",
         &key,
-        "message.created",
+        "user/message",
         json!({"messageId": "m1", "turnId": "turn:visible", "role": "assistant", "text": "hello"}),
     )
     .await;
@@ -907,7 +907,7 @@ async fn raw_turn_state_is_filtered_from_public_session_events_and_hud() {
         !serialized.contains("turn.state"),
         "public Session Events leaked turn.state: {serialized}"
     );
-    assert!(serialized.contains("message.created"));
+    assert!(serialized.contains("user/message"));
 
     let hud = send(
         &app,
@@ -997,6 +997,7 @@ impl SuppressionOps for FalseSkipOps {
         let sink = crate::domains::agent::session::events::DbSessionEventSink::new(
             self.db.clone(),
             Arc::new(crate::domains::agent::runtime::session_stream::SessionStreamHub::default()),
+            Arc::new(crate::domains::agent::runtime::session_live::SessionLiveHub::default()),
         );
         crate::domains::agent::session::wake::emit_confirmed_false_skip(
             &self.db,

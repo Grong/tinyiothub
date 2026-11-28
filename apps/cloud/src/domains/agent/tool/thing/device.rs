@@ -22,6 +22,8 @@ use tinyiothub_runtime::event_bus::EventBus;
 use super::profile::health_str;
 use super::{LiveSummarySource, resource_specs, tool_err, tool_ok};
 use crate::domains::thing::service::ThingService;
+use crate::domains::thing::types::{ThingCommandResponse, ThingDetail, ThingPropertyResponse};
+use tinyiothub_core::driver::CommandExecution;
 
 /// 隐藏别名：注册可解析（存量提案/批准通道），但不进模型工具列表与目录。
 pub(super) struct HiddenTool(pub(super) Box<dyn Tool>);
@@ -368,6 +370,7 @@ impl Tool for ReadDeviceTool {
     fn description(&self) -> &str {
         "读取单个设备的实时摘要：state（属性值）+ health（ok/attention/bad/unknown）\
          + zone（空间归属）+ online，并附一句给模型的 text。\
+         需要属性定义和动作时用 get_device_profile；需要知识文档正文时用 read_device_knowledge。\
          properties 可选——只回指定属性；缺省回全部已上报值。\
          sources 可选——按 Source ID 读取 detections 或一张图片。"
     }
@@ -459,33 +462,47 @@ impl Tool for ReadDeviceTool {
             Some(s) => (health_str(s.health), s.zone.clone(), s.online),
             None => ("unknown", String::new(), false),
         };
-        let display = thing.display_name.as_deref().unwrap_or(&thing.name);
-        let zone_text = if zone.is_empty() {
-            "未归属区域".to_string()
-        } else {
-            zone.clone()
-        };
-        let text = format!(
-            "{display}（{}）位于 {zone_text}，健康度 {health}，{}",
-            thing.thing_type,
-            if online { "在线" } else { "离线" }
-        );
-
-        let mut payload = json!({
-            "v": 1,
-            "thingId": input.thing_id,
-            "name": display,
-            "thingType": thing.thing_type,
-            "health": health,
-            "zone": zone,
-            "online": online,
-            "position": thing.address,
-            "state": state,
-            "text": text,
-        });
-        if let Some(knowledge_docs) = &thing.knowledge_docs {
-            payload["knowledgeDocs"] = json!(knowledge_docs);
+        let commands: Vec<ThingCommandResponse> = self
+            .thing_service
+            .load_command_models(&input.thing_id)
+            .await
+            .into_iter()
+            .map(ThingCommandResponse::from)
+            .collect();
+        let mut properties: Vec<ThingPropertyResponse> = self
+            .thing_service
+            .load_property_models(&input.thing_id)
+            .await
+            .into_iter()
+            .map(ThingPropertyResponse::from)
+            .collect();
+        for property in &mut properties {
+            property.current_value = state
+                .get(&property.name)
+                .or_else(|| {
+                    property
+                        .display_name
+                        .as_deref()
+                        .and_then(|display_name| state.get(display_name))
+                })
+                .and_then(Value::as_str)
+                .map(str::to_string);
         }
+        if let Some(wanted) = &input.properties {
+            properties.retain(|property| wanted.iter().any(|name| name == &property.name));
+        }
+        let mut thing = thing;
+        thing.knowledge_docs = None;
+        thing.health = Some(health.to_string());
+        thing.online = Some(online);
+        let mut payload = serde_json::to_value(ThingDetail {
+            thing,
+            properties,
+            commands,
+            zone: (!zone.is_empty()).then_some(zone),
+            sources: None,
+        })
+        .map_err(|error| anyhow::anyhow!("设备结果序列化失败: {error}"))?;
         let mut attachments = Vec::new();
         if let Some(requested) = input.sources.as_deref().filter(|sources| !sources.is_empty()) {
             match self.read_model_sources(&input.thing_id, requested).await {
@@ -499,15 +516,100 @@ impl Tool for ReadDeviceTool {
                 Err(error) => return tool_err(error),
             }
         }
+        let state_payload = serde_json::to_value(&state).unwrap_or_default();
         self.record_read(
             &input.thing_id,
-            payload["state"].clone(),
+            state_payload,
             input.sources.clone().unwrap_or_default(),
         )
         .await;
         let mut result = tool_ok(payload)?;
         result.attachments = attachments;
         Ok(result)
+    }
+}
+
+// ============================================================================
+// read_device_knowledge：按需读取指定设备的知识文档
+// ============================================================================
+
+pub(super) struct ReadDeviceKnowledgeTool {
+    pub(super) thing_service: Arc<ThingService>,
+    pub(super) workspace_id: String,
+}
+
+#[async_trait]
+impl Tool for ReadDeviceKnowledgeTool {
+    fn name(&self) -> &str {
+        "read_device_knowledge"
+    }
+
+    fn description(&self) -> &str {
+        "按需读取指定设备关联的知识文档。read_device 只返回实时状态和属性值，不返回文档正文；\
+         需要设备手册、巡检规范或历史处置说明时，才调用本工具。"
+    }
+
+    fn parameters_schema(&self) -> Value {
+        json!({
+            "type": "object",
+            "properties": {
+                "thingId": { "type": "string", "description": "物 ID（必需）" },
+                "docId": { "type": "string", "description": "可选：只读取指定文档 ID" }
+            },
+            "required": ["thingId"]
+        })
+    }
+
+    async fn execute(&self, args: Value) -> anyhow::Result<ToolResult> {
+        let thing_id = args
+            .get("thingId")
+            .or_else(|| args.get("thing_id"))
+            .and_then(Value::as_str)
+            .ok_or_else(|| anyhow::anyhow!("缺少必需参数: thingId"))?;
+        let doc_id = args.get("docId").and_then(Value::as_str);
+        let thing = match self.thing_service.get_thing(thing_id, &self.workspace_id).await {
+            Ok(thing) => thing,
+            Err(error) => return tool_err(error.to_string()),
+        };
+        let mut docs = thing.knowledge_docs.unwrap_or_default();
+        if let Some(doc_id) = doc_id {
+            docs.retain(|doc| doc.get("id").and_then(Value::as_str) == Some(doc_id));
+        }
+        // Keep the result valid JSON for the event/SSE budget; full bodies stay
+        // available through read_document.
+        let mut budget = 10_000usize;
+        for doc in &mut docs {
+            let Some(obj) = doc.as_object_mut() else { continue };
+            let Some(content) = obj.get("content").and_then(Value::as_str).map(str::to_string) else {
+                obj.insert("contentAvailable".to_string(), json!(false));
+                continue;
+            };
+            let chars: Vec<char> = content.chars().collect();
+            let allowed = chars.len().min(4_000).min(budget);
+            if allowed < chars.len() {
+                let mut truncated: String = chars[..allowed].iter().collect();
+                truncated.push_str("\n\n…[内容已截断，完整正文用 read_document]");
+                obj.insert("content".to_string(), json!(truncated));
+                obj.insert("contentTruncated".to_string(), json!(true));
+            }
+            obj.insert("contentLength".to_string(), json!(chars.len()));
+            budget = budget.saturating_sub(allowed);
+        }
+        tool_ok(json!({
+            "thingId": thing_id,
+            "name": thing.display_name.unwrap_or(thing.name),
+            "knowledgeDocs": docs,
+        }))
+    }
+}
+
+impl Attributable for ReadDeviceKnowledgeTool {
+    fn role(&self) -> Role {
+        Role::Tool(ToolKind::Search)
+    }
+
+    fn alias(&self) -> &str {
+        self.name()
     }
 }
 
@@ -630,7 +732,6 @@ impl Tool for SetDeviceTool {
             Ok(p) => p,
             Err(e) => return tool_err(format!("属性查询失败: {e}")),
         };
-        let mut updated = Vec::new();
         for (name, value) in &input.properties {
             let Some(prop) = props.iter().find(|p| &p.name == name) else {
                 return tool_err(format!("属性不存在: {name}"));
@@ -659,21 +760,34 @@ impl Tool for SetDeviceTool {
                     content: format!("Current value: {text}"),
                     format: TextFormat::Plain,
                 }],
-            );
+            )
+            .with_metadata(
+                "property_name".to_string(),
+                serde_json::Value::String(prop.name.clone()),
+            )
+            .with_metadata(
+                "property_display_name".to_string(),
+                serde_json::Value::String(prop.display_name.clone().unwrap_or_else(|| prop.name.clone())),
+            )
+            .with_metadata("value".to_string(), serde_json::Value::String(text.clone()));
             let event = Event::new_property_change_event(input.thing_id.clone(), prop.id.clone(), source, content)
                 .map_err(|e| anyhow::anyhow!("事件构造失败: {e}"))?;
             if let Err(e) = event_bus.publish(event).await {
                 return tool_err(format!("属性写入失败: {e}"));
             }
-            updated.push(name.clone());
         }
 
-        tool_ok(json!({
-            "v": 1,
-            "thingId": input.thing_id,
-            "status": "ok",
-            "updated": updated,
-        }))
+        let mut thing = thing;
+        thing.knowledge_docs = None;
+        tool_ok(serde_json::to_value(json!({
+            "thing": thing,
+            "execution": CommandExecution {
+                success: true,
+                cancelled: false,
+                error: None,
+                result: None,
+            },
+        }))?)
     }
 }
 
@@ -1011,7 +1125,8 @@ mod tests {
         let ok = tool.execute(args).await.expect("execute");
         assert!(ok.success, "资源空闲必须放行: {:?}", ok.error);
         let payload: Value = serde_json::from_str(&ok.output).unwrap();
-        assert_eq!(payload["updated"], json!(["level", "mode"]));
+        assert_eq!(payload["execution"]["success"], true);
+        assert!(payload.get("updated").is_none());
     }
 
     /// 未知资源 id fail-closed：写入被拒绝且不发布任何属性事件。
@@ -1075,6 +1190,7 @@ mod tests {
             pool,
             workspace_id: "ws-set".into(),
             data_server: None,
+            evidence: None,
             pending_actions: Arc::new(super::super::pending_action::PendingActionStore::new()),
             arbitration: Some(registry),
             arbitration_holder: "chat:ws-set".into(),
@@ -1449,6 +1565,7 @@ mod tests {
 
         let result = tool.execute(json!({"thingId":"dev-1"})).await.expect("execute");
         assert!(result.success, "{:?}", result.error);
+        assert!(result.output.contains("\"commands\""));
         let events = db
             .runtime_events_after("ws-set", None, Some("task-read"), 10)
             .await

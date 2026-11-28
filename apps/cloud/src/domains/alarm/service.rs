@@ -350,17 +350,30 @@ impl AlarmService {
         }
     }
 
-    pub async fn create_alarm(&self, alarm: Alarm) -> AlarmResult<Alarm> {
+    pub async fn create_alarm(&self, mut alarm: Alarm) -> AlarmResult<Alarm> {
+        if alarm.workspace_id.is_none() {
+            alarm.workspace_id = self.resolve_workspace(&alarm).await;
+        }
         self.db.insert_alarm(&alarm).await?;
         self.enter_disposition(&alarm).await;
         Ok(alarm)
     }
 
     pub async fn get_alarm_by_id(&self, id: &str, workspace_id: Option<&str>) -> AlarmResult<Option<Alarm>> {
-        self.db
-            .find_alarm_by_id(id, workspace_id)
-            .await
-            .map_err(AlarmError::from)
+        let direct = self.db.find_alarm_by_id(id, workspace_id).await?;
+        if direct.is_some() || workspace_id.is_none() {
+            return Ok(direct);
+        }
+        // Legacy rows created before workspace_id was persisted: resolve the
+        // workspace from the owning thing, then enforce the same scope.
+        let Some(alarm) = self.db.find_alarm_by_id(id, None).await? else {
+            return Ok(None);
+        };
+        if self.resolve_workspace(&alarm).await.as_deref() == workspace_id {
+            Ok(Some(alarm))
+        } else {
+            Ok(None)
+        }
     }
 
     pub async fn acknowledge_alarm(

@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 const hoisted = vi.hoisted(() => ({
   fetchSessionEvents: vi.fn(),
   connectSessionEvents: vi.fn((_opts: { sessionKey: string; after: number }) => () => {}),
-  fetchSessionTodos: vi.fn(),
+  fetchSessionProjection: vi.fn(),
   listChatSessions: vi.fn().mockResolvedValue([]),
   updateSessionPermission: vi.fn(),
   fetchAssistantHud: vi.fn(),
@@ -32,7 +32,7 @@ const turnStarted = {
   executionMode: 'production',
   runId: 'r',
   taskId: null,
-  eventType: 'turn.started',
+  eventType: 'turn/start',
   occurredAt: '',
   causeId: null,
   schemaV: 1,
@@ -48,7 +48,10 @@ describe('view-chat codex layout', () => {
     hoisted.listChatSessions.mockResolvedValue([]);
     hoisted.connectSessionEvents.mockReturnValue(() => {});
     hoisted.getWorkspaceId.mockReturnValue('ws-1');
-    hoisted.fetchSessionTodos.mockResolvedValue([]);
+    hoisted.fetchSessionProjection.mockResolvedValue({
+      turn: { turnId: 't1', phase: 'executing', agenda: [], todos: [], lastSeq: 1 },
+      highWatermark: 1,
+    });
   });
 
   beforeEach(() => {
@@ -56,7 +59,10 @@ describe('view-chat codex layout', () => {
     hoisted.listChatSessions.mockResolvedValue([]);
     hoisted.connectSessionEvents.mockReturnValue(() => {});
     hoisted.getWorkspaceId.mockReturnValue('ws-1');
-    hoisted.fetchSessionTodos.mockResolvedValue([]);
+    hoisted.fetchSessionProjection.mockResolvedValue({
+      turn: { turnId: 't1', phase: 'executing', agenda: [], todos: [], lastSeq: 1 },
+      highWatermark: 1,
+    });
     hoisted.loadChatHistory.mockResolvedValue(undefined);
     hoisted.fetchAssistantHud.mockResolvedValue({
       assistant: { status: 'idle', lastOutcome: null },
@@ -80,17 +86,20 @@ describe('view-chat codex layout', () => {
           executionMode: 'production',
           runId: 'r',
           taskId: null,
-          eventType: 'message.created',
+          eventType: 'user/message',
           occurredAt: '',
           causeId: null,
           schemaV: 1,
           payloadDigest: 'd',
-          payloadJson: { messageId: 'm1', role: 'user', text: '看看 3 号楼' },
+          payloadJson: { messageId: 'm1', text: '看看 3 号楼' },
         },
       ],
       highWatermark: 2,
     });
-    hoisted.fetchSessionTodos.mockResolvedValue([]);
+    hoisted.fetchSessionProjection.mockResolvedValue({
+      turn: { turnId: 't1', phase: 'executing', agenda: [], todos: [], lastSeq: 1 },
+      highWatermark: 1,
+    });
     const el = document.createElement('view-chat') as ChatView;
     document.body.appendChild(el);
     await el.updateComplete;
@@ -156,7 +165,7 @@ describe('view-chat codex layout', () => {
           ...turnStarted,
           seq: 2,
           eventId: 'question-1',
-          eventType: 'question.asked',
+          eventType: 'question/asked',
           payloadJson: { questionId: 'q1', questions: [] },
         },
       ],
@@ -206,6 +215,7 @@ describe('view-chat codex layout', () => {
     const el = document.createElement('view-chat') as ChatView;
     document.body.appendChild(el);
     await el.updateComplete;
+    await vi.waitFor(() => expect((el as any).loading).toBe(false));
     await vi.waitFor(() => expect((el as any).chatState?.onA2ui).toBeTruthy());
 
     (el as any).chatState.onA2ui(

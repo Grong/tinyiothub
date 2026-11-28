@@ -207,13 +207,13 @@ fn event(event_id: &str, event_type: &str, payload: Value) -> HarnessEventInput 
 
 fn skip_events() -> Vec<HarnessEventInput> {
     vec![
-        event("skip:turn.started", "turn.started", json!({"turnKind": "scheduled"})),
+        event("skip:turn/start", "turn/start", json!({"turnKind": "scheduled"})),
         event(
-            "skip:turn.completed",
-            "turn.completed",
+            "skip:turn/end",
+            "turn/end",
             json!({"outcome": "skipped", "reason": "no_material_change"}),
         ),
-        event("skip:session.ended", "session.ended", json!({"outcome": "skipped"})),
+        event("skip:session/end", "session/end", json!({"outcome": "skipped"})),
     ]
 }
 
@@ -597,7 +597,7 @@ async fn commit_skip_rejects_changed_cursor() {
         &mut tx,
         &event(
             "user:message",
-            "message.created",
+            "user/message",
             json!({"messageId": "m-1", "role": "user", "text": "new input"}),
         ),
     )
@@ -690,7 +690,7 @@ async fn cursor_rejected_skip_can_be_settled_and_followed_by_a_successful_full_a
         &mut tx,
         &event(
             "user:message",
-            "message.created",
+            "user/message",
             json!({"messageId": "m-1", "role": "user", "text": "new input"}),
         ),
     )
@@ -833,20 +833,20 @@ fn event_for_run(event_id: &str, event_type: &str, payload: Value, run_id: &str)
 fn skip_events_for_turn(turn_id: &str) -> Vec<HarnessEventInput> {
     vec![
         event_for_run(
-            "skip:turn.started",
-            "turn.started",
+            "skip:turn/start",
+            "turn/start",
             json!({"turnKind": "scheduled"}),
             turn_id,
         ),
         event_for_run(
-            "skip:turn.completed",
-            "turn.completed",
+            "skip:turn/end",
+            "turn/end",
             json!({"outcome": "skipped", "reason": "no_material_change"}),
             turn_id,
         ),
         event_for_run(
-            "skip:session.ended",
-            "session.ended",
+            "skip:session/end",
+            "session/end",
             json!({"outcome": "skipped"}),
             turn_id,
         ),
@@ -873,7 +873,7 @@ async fn load_committed_skip_returns_only_the_matching_attempt() {
     assert_eq!(loaded.attempt_id, attempt.attempt_id);
     assert_eq!(loaded.attempt_no, attempt.attempt_no);
     assert_eq!(loaded.events.len(), events.len());
-    assert_eq!(loaded.events.last().unwrap().event_type, "session.ended");
+    assert_eq!(loaded.events.last().unwrap().event_type, "session/end");
     assert_eq!(
         loaded.events[0].run_id.as_deref(),
         Some("legacy-run-id"),
@@ -890,7 +890,7 @@ async fn load_committed_skip_returns_only_the_matching_attempt() {
         "only the latest committed attempt may be replayed"
     );
     sqlx::query("DELETE FROM session_events WHERE event_id = ?")
-        .bind("skip:session.ended")
+        .bind("skip:session/end")
         .execute(&fixture.workspace)
         .await
         .expect("remove one lifecycle event");
@@ -910,8 +910,8 @@ async fn load_committed_skip_returns_only_the_matching_attempt() {
 async fn duplicate_deterministic_event_ids_dedupe_in_one_transaction() {
     let fixture = SuppressionFixture::create().await;
     let duplicated = event_for_run(
-        "skip:session.ended",
-        "session.ended",
+        "skip:session/end",
+        "session/end",
         json!({"outcome": "skipped"}),
         "turn-1",
     );

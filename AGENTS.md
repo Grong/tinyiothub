@@ -51,6 +51,7 @@ These are constraints, not suggestions. A change that violates one is wrong even
 3. **Scenario lives in `SKILL.md`** — a new scenario (e.g. 空压机巡检) adds a skill plus a prompt section, not a Rust branch. If a change makes the loop scenario-aware, it is wrong.
 4. **Safety does not move** — policy / trust / approval / Effect / Decision / unknown reconciliation stay in the tool layer. No permission mode (`read_only` / `ask` / `full_access`) bypasses interlocks or e-stop.
 5. **Two ledgers, one timeline** — `session_events` is the only UI timeline; `hub_ledger` `runtime.v1` is the safety/audit ledger and must never feed the UI.
+6. **Tool presentation is canonical** — every model-visible tool has one canonical name and one `viewKey`; UI renders tools by `viewKey`, never by switching on raw tool result JSON.
 
 Where the primitives live:
 
@@ -63,6 +64,17 @@ Where the primitives live:
 | Global HUD projection | `session/hud.rs` |
 | Port / adapters / memory | `crates/agent/src/{port,adapters,memory}` |
 | Design spec | `docs/superpowers/specs/2026-11-07-assistant-harness-design.md` |
+| Tool catalog / aliases / viewKey | `apps/cloud/src/domains/agent/tools/catalog.rs` |
+| ToolView registry | `web/src/ui/tool-views/` |
+
+### Tool Catalog & Presentation
+
+- The canonical tool table lives in `apps/cloud/src/domains/agent/tools/catalog.rs`. Model-visible names are frozen; old names are hidden aliases for approval replay only. Do not expose an alias to the model.
+- Every canonical/alias entry has a stable `viewKey` (for example `read_device` → `device.read`). `PresentationDescriptor` carries the same key in the tool catalog.
+- `tool/call` and `tool/result` carry `viewKey`. Historical rows without it are projected at read time in `session/handler.rs`; do not mutate stored payloads or their digests for presentation.
+- Frontend tool presentation belongs in `web/src/ui/tool-views/`, keyed by `viewKey`. Story/chat must call `presentTool()`; do not add per-tool `switch`/`detailOf` parsing in `story-model.ts` or `timeline-render.ts`. Unknown tools use the generic view.
+- Tool-owned presentation may include `summary`, `metrics`, `details`, and evidence/source facts. Concrete fields (device state, alarm severity, action target, etc.) belong in the tool view, not in business pages.
+- Prompts and skill templates under `apps/cloud/templates/skills/` must use canonical model-visible names (`list_devices`, `read_device`, `set_device`, `call_device`, …), never hidden aliases.
 
 ### The Relay Paradigm (2026-08 范式统一，buzz-relay 模型)
 
@@ -160,6 +172,7 @@ crates/                      # Capability libs — isolated, never orchestrate
 drivers/                     # Dynamic driver stubs (NOT workspace members; cdylib)
 web/                          # Lit 3 + Vite frontend
   src/ui/                    # Web Components (pages + components)
+  src/ui/tool-views/         # viewKey → tool presentation (device, alarm, events, …)
   src/api/                   # API client layer
   src/stores/                # nanostore state management
   src/i18n/                  # Internationalization
@@ -216,8 +229,9 @@ does not create a Prepared Effect. Confirmed actions do traverse
 state machine" as the target, not as a current invariant.
 
 `hub_ledger` (`runtime.v1`) remains telemetry: watch-rule, media-evidence and
-device-read facts only. No Task/Run/Job lifecycle may be written there — those
-are workspace Harness events. `scripts/guards/legacy-writers.sh` enforces the
+command-cancellation facts only. E3's property-change `state_change` rows were
+retired with the Flow/World workbench. No Task/Run/Job lifecycle may be written
+there — those are workspace Harness events. `scripts/guards/legacy-writers.sh` enforces the
 boundary with a production-scope scan. A lexical scanner masks strings, raw
 strings, char literals and comments, then skips every `#[cfg(test)]` item or
 statement for its own scope: block items through their balanced braces,
@@ -347,6 +361,7 @@ Branch/commit/PR rules:
 - **Shadow DOM**: Use `:host` selector; global CSS does not penetrate Shadow DOM
 - **Type definitions**: `web/src/types/` is single source of truth
 - **Event listeners**: Use arrow function properties, never `.bind(this)`
+- **Tool presentation**: render tool calls through `web/src/ui/tool-views/` and the event `viewKey`; never parse a tool result ad hoc in a view component
 
 ## Async & Data Access (Rust)
 

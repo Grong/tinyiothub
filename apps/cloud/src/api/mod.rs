@@ -102,19 +102,7 @@ pub fn create_router(app_state: &AppState) -> Router<AppState> {
         )
         .nest(
             "/workspaces",
-            crate::domains::agent::session::handlers::workspace_heartbeat::create_router(),
-        )
-        .nest(
-            "/workspaces",
             crate::domains::agent::session::handlers::watch::create_router(),
-        )
-        .nest(
-            "/workspaces",
-            crate::domains::agent::session::handlers::ledger::create_router(),
-        )
-        .nest(
-            "/workspaces",
-            crate::domains::agent::session::handlers::live_stream::create_router(),
         )
         .nest(
             "/workspaces",

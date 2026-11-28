@@ -677,6 +677,10 @@ impl DataServer {
         )
         .with_metadata(
             "property_name".to_string(),
+            serde_json::Value::String(property.name.clone()),
+        )
+        .with_metadata(
+            "property_display_name".to_string(),
             serde_json::Value::String(property.display_name.clone().unwrap_or_else(|| property.name.clone())),
         )
         .with_metadata("value".to_string(), serde_json::Value::String(new_value.to_string()));
@@ -886,6 +890,7 @@ impl DataServer {
                 success: true,
                 error: None,
                 cancelled: false,
+                result: None,
             });
         };
         let (done_tx, done_rx) = tokio::sync::oneshot::channel();
@@ -908,6 +913,9 @@ impl DataServer {
             worker.stop();
         }
         self.workers.invalidate(thing_id);
+        // The simulator keeps per-workspace state outside the worker; drop it
+        // with the worker so coupling aggregates do not retain a deleted thing.
+        crate::driver::drivers::simulated::world::unregister(thing_id);
     }
 
     pub fn remove_things(&self, thing_ids: &[String]) {
@@ -1004,6 +1012,11 @@ impl EventHandler for DataServer {
                     if let Some(device) = device {
                         // 插入/更新缓存（单一写入者）
                         self.device_cache.insert(device.clone());
+                        if device.driver_name.as_deref() == Some("simulator") {
+                            // Refresh the shared plant snapshot (role/props/options)
+                            // even when a worker already exists.
+                            crate::driver::drivers::simulated::world::register(&device);
+                        }
                         // 创建 worker 并加入采集循环
                         if let Some(driver_name) = &device.driver_name
                             && !self.workers.contains_key(thing_id)
@@ -1161,6 +1174,22 @@ mod tests {
             s.contains("\"old_value\":\"100\""),
             "metadata.old_value 必须是旧值: {s}"
         );
+    }
+
+    #[test]
+    fn property_change_metadata_uses_canonical_name_and_keeps_display_name() {
+        let mut thing = make_thing_with_prop("temperature", Some("20"));
+        thing.properties.as_mut().unwrap()[0].display_name = Some("温度".into());
+        let values = vec![ResultValue::new(
+            "temperature".into(),
+            "float".into(),
+            Some("21".to_string()),
+        )];
+        let events = DataServer::collect_property_change_events(&mut thing, &values);
+        let json = serde_json::to_value(&events[0]).unwrap();
+        let metadata = &json["content"]["metadata"];
+        assert_eq!(metadata["property_name"], "temperature");
+        assert_eq!(metadata["property_display_name"], "温度");
     }
 
     #[test]

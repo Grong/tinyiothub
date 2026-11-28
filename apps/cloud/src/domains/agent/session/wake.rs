@@ -21,7 +21,7 @@ use tinyiothub_storage::suppression::{
     TURN_STATE_VERSION,
 };
 
-use super::trigger::EventWake;
+use super::trigger::{EventWake, WatchHitNote};
 use crate::domains::agent::pool::AgentPool;
 use crate::domains::agent::prompt::PromptMemorySource;
 use crate::domains::agent::session::chat::service::ensure_agent;
@@ -87,6 +87,20 @@ pub fn build_wake_message(
     }
     message.push_str("按顺序执行；用 todo_write 维护进度，完成后总结结果。");
     Some(message)
+}
+
+/// 把待消费的 watch 命中并入巡检消息（不单开 turn）。
+fn append_watch_hits(message: String, hits: &[WatchHitNote]) -> String {
+    if hits.is_empty() {
+        return message;
+    }
+    let mut out = message;
+    out.push_str("\n\n## 上次巡检以来的设备值守命中\n");
+    for hit in hits {
+        out.push_str(&format!("- {}\n", hit.summary));
+    }
+    out.push_str("\n这些命中已并入本轮处理，不要重新执行整轮巡检。");
+    out
 }
 
 /// `forceFullReason` for an operator/API-triggered reconcile. Ordinary wakes
@@ -356,6 +370,25 @@ impl WakeRunner {
         prior.saturating_add(1)
     }
 
+    /// Recurring inspections otherwise re-report the same unresolved state.
+    /// Add the last conclusion plus delta rules to the turn input; the event
+    /// log remains the source and no new memory store is introduced.
+    async fn with_previous_conclusion(&self, workspace_id: &str, assistant_id: &str, turn_input: String) -> String {
+        let session_key = format!("agent:{workspace_id}:{assistant_id}/main");
+        let Ok(Some(previous)) = self.db.latest_assistant_message(workspace_id, &session_key).await else {
+            return turn_input;
+        };
+        let previous = previous.chars().take(4000).collect::<String>();
+        format!(
+            "{turn_input}\n\n## 上一轮结论（同一巡检会话）\n{previous}\n\n\
+             ## 连续巡检规则\n\
+             - 先对比上一轮结论与当前证据；优先报告新增、变化、已解决和仍待处理的项。\n\
+             - 未变化的设备/告警不要逐条重复，用一行汇总即可。\n\
+             - 仍未解决的项保留，并写明首次发现或持续时长（有证据时）；没有证据不要标记为已解决。\n\
+             - 不要因为上一轮提过就当作当前已验证；以本轮工具读数为准。"
+        )
+    }
+
     /// The one full-input prompt builder used by scheduled wake, reconcile and
     /// event wake. The caller passes the single Session Events capture so the
     /// user cursor and the semantic events come from the same read.
@@ -366,7 +399,14 @@ impl WakeRunner {
         turn_input: String,
         semantic_events: &[SemanticSessionEvent],
         observation: Option<&SuppressionObservation>,
+        continuation: bool,
     ) -> anyhow::Result<crate::domains::agent::prompt::assistant::PromptPackage> {
+        let turn_input = if continuation {
+            self.with_previous_conclusion(workspace_id, assistant_id, turn_input)
+                .await
+        } else {
+            turn_input
+        };
         if let Some(captured) = observation.and_then(|observation| observation.captured.as_ref())
             && !captured.resolved.is_empty()
         {
@@ -978,6 +1018,7 @@ impl WakeRunner {
                     message,
                     &semantic_events,
                     Some(&observation),
+                    true,
                 )
                 .await
             {
@@ -1199,6 +1240,17 @@ pub(crate) struct PreparedAttemptRef<'a> {
 pub trait WakeExecutor: Send + Sync {
     async fn execute(&self, schedule: AssistantSchedule, cancel: CancellationToken) -> WakeReport;
 
+    /// 带 watch 上下文执行下一次定时巡检：watch 命中不再单独开 turn，
+    /// 而是随下一个到期的 schedule 一起消费。默认实现忽略上下文（测试桩）。
+    async fn execute_with_watch_hits(
+        &self,
+        schedule: AssistantSchedule,
+        cancel: CancellationToken,
+        _watch_hits: Vec<WatchHitNote>,
+    ) -> WakeReport {
+        self.execute(schedule, cancel).await
+    }
+
     /// 事件 wake 入口。默认跳过——既有实现者无需改动即可继续编译。
     async fn execute_event(&self, _wake: EventWake, _cancel: CancellationToken) -> WakeReport {
         WakeReport {
@@ -1285,8 +1337,8 @@ fn default_memory_source(db: &Arc<Db>) -> Arc<dyn PromptMemorySource> {
 
 /// 一次 wake session 的来源（scheduled / event 共用同一套生命周期写入）。
 ///
-/// `source_id` 为 `None` 时，`trigger.received.sourceId` 回落到本轮的
-/// `wake.dispatched.wakeEventId`（scheduled 路径的相关性保持）。
+/// `source_id` 为 `None` 时，`trigger/received.sourceId` 回落到本轮的
+/// `wake/dispatched.wakeEventId`（scheduled 路径的相关性保持）。
 struct SessionOrigin<'a> {
     workspace_id: &'a str,
     assistant_id: &'a str,
@@ -1365,7 +1417,18 @@ impl WakeRunner {
     }
 
     pub async fn run(&self, schedule: &AssistantSchedule, cancel: CancellationToken) -> WakeReport {
-        self.run_scheduled(schedule, cancel, None).await
+        self.run_scheduled(schedule, cancel, None, &[]).await
+    }
+
+    /// 定时巡检 + 自上次巡检以来未消费的 watch 命中：命中并入同一轮消息，
+    /// 不单独开 turn。
+    pub async fn run_with_watch_hits(
+        &self,
+        schedule: &AssistantSchedule,
+        cancel: CancellationToken,
+        watch_hits: &[WatchHitNote],
+    ) -> WakeReport {
+        self.run_scheduled(schedule, cancel, None, watch_hits).await
     }
 
     /// Forced full Turn for an operator/API reconcile.
@@ -1374,7 +1437,7 @@ impl WakeRunner {
     /// the same full-Turn function; only `forceFullReason` differs, so the
     /// history/model/tool path is never duplicated.
     pub async fn run_reconcile(&self, schedule: &AssistantSchedule, cancel: CancellationToken) -> WakeReport {
-        self.run_scheduled(schedule, cancel, Some(FORCE_FULL_REASON_RECONCILE))
+        self.run_scheduled(schedule, cancel, Some(FORCE_FULL_REASON_RECONCILE), &[])
             .await
     }
 
@@ -1383,6 +1446,7 @@ impl WakeRunner {
         schedule: &AssistantSchedule,
         cancel: CancellationToken,
         force_full_reason: Option<&str>,
+        watch_hits: &[WatchHitNote],
     ) -> WakeReport {
         if !schedule.enabled {
             return WakeReport {
@@ -1404,6 +1468,7 @@ impl WakeRunner {
                 outcome: WakeOutcome::Skipped,
             };
         };
+        let message = append_watch_hits(message, watch_hits);
         // One Session Events read per wake: the same capture supplies the
         // preflight user cursor and the prompt's semantic events.
         let session_key = format!("agent:{}:{}/main", schedule.workspace_id, schedule.assistant_id);
@@ -1467,6 +1532,7 @@ impl WakeRunner {
                 message,
                 &semantic_events,
                 observation.as_ref(),
+                true,
             )
             .await
         {
@@ -1609,9 +1675,12 @@ impl WakeRunner {
         }
         let permission_mode = schedule.permission_mode;
         let message = match wake.trigger.as_str() {
-            "watch" => format!("收到设备值守命中：{}\n请评估影响；涉及写设备必须走审批。", wake.summary),
+            "watch" => format!(
+                "收到设备值守命中：{}\n请只针对本次命中做判断，不要重新执行整轮巡检，也不要重复读取未变化的设备；涉及写设备必须走审批。",
+                wake.summary
+            ),
             "thing_event" => format!(
-                "收到设备事件：{}\n请判断是否需要处理；涉及写设备必须走审批。",
+                "收到设备事件：{}\n请只针对本次事件做判断，不要重新执行整轮巡检；涉及写设备必须走审批。",
                 wake.summary
             ),
             _ => format!(
@@ -1634,7 +1703,14 @@ impl WakeRunner {
             }
         };
         let prompt = match self
-            .wake_prompt(&wake.workspace_id, &assistant_id, message, &semantic_events, None)
+            .wake_prompt(
+                &wake.workspace_id,
+                &assistant_id,
+                message,
+                &semantic_events,
+                None,
+                false,
+            )
             .await
         {
             Ok(prompt) => prompt,
@@ -1721,11 +1797,10 @@ impl WakeRunner {
             };
             after = last.seq;
             for event in page.events {
-                if event.event_type != "message.created" {
-                    continue;
-                }
-                let Some(role) = event.payload_json["role"].as_str() else {
-                    continue;
+                let role = match event.event_type.as_str() {
+                    "assistant/message" => "assistant",
+                    "user/message" => "user",
+                    _ => continue,
                 };
                 if role != "user" && role != "assistant" {
                     continue;
@@ -1733,6 +1808,9 @@ impl WakeRunner {
                 let Some(text) = event.payload_json["text"].as_str() else {
                     continue;
                 };
+                if text.is_empty() {
+                    continue;
+                }
                 messages.push(tinyiothub_agent::port::provider::ChatMessage {
                     role: role.to_string(),
                     content: text.to_string(),
@@ -1872,7 +1950,7 @@ impl WakeRunner {
             .as_ref()
             .map(|attempt| attempt.wake_event_id.clone())
             .unwrap_or_else(|| Uuid::new_v4().to_string());
-        // scheduled 无显式 source：与本轮 wake.dispatched.wakeEventId 保持同一
+        // scheduled 无显式 source：与本轮 wake/dispatched.wakeEventId 保持同一
         // 身份；event 使用告警 id。
         let trigger_source_id = origin.source_id.unwrap_or_else(|| wake_event_id.clone());
         let mut events_healthy = true;
@@ -1880,7 +1958,7 @@ impl WakeRunner {
             .emit_lifecycle(
                 &context,
                 attempt.as_ref(),
-                "trigger.received",
+                "trigger/received",
                 json!({ "trigger": origin.trigger, "sourceId": trigger_source_id }),
             )
             .await;
@@ -1890,13 +1968,13 @@ impl WakeRunner {
             dispatched["supersedes"] = json!(link.supersedes);
         }
         events_healthy &= self
-            .emit_lifecycle(&context, attempt.as_ref(), "wake.dispatched", dispatched)
+            .emit_lifecycle(&context, attempt.as_ref(), "wake/dispatched", dispatched)
             .await;
         events_healthy &= self
             .emit_lifecycle(
                 &context,
                 attempt.as_ref(),
-                "session.started",
+                "session/start",
                 session_started_payload(&session_key, origin.kind),
             )
             .await;
@@ -1942,7 +2020,7 @@ impl WakeRunner {
         };
         // Missing lifecycle/terminal events are failed evidence, never a
         // successful Turn. This decides the reported outcome *and* the
-        // `session.ended` payload, so a persisted event never disagrees with
+        // `session/end` payload, so a persisted event never disagrees with
         // the report.
         if (!events_healthy || !turn_health.is_healthy()) && matches!(outcome, WakeOutcome::Completed) {
             outcome = WakeOutcome::Failed {
@@ -1953,7 +2031,7 @@ impl WakeRunner {
             .emit_lifecycle(
                 &context,
                 attempt.as_ref(),
-                "session.ended",
+                "session/end",
                 json!({ "sessionId": &session_key, "outcome": outcome.as_str() }),
             )
             .await;
@@ -2360,6 +2438,15 @@ impl WakeExecutor for WakeRunner {
         self.run(&schedule, cancel).await
     }
 
+    async fn execute_with_watch_hits(
+        &self,
+        schedule: AssistantSchedule,
+        cancel: CancellationToken,
+        watch_hits: Vec<WatchHitNote>,
+    ) -> WakeReport {
+        self.run_with_watch_hits(&schedule, cancel, &watch_hits).await
+    }
+
     async fn execute_event(&self, wake: EventWake, cancel: CancellationToken) -> WakeReport {
         self.run_event(&wake, cancel).await
     }
@@ -2434,6 +2521,22 @@ fn outcome_with_todos(outcome: TurnOutcome, todos: &[Todo]) -> WakeOutcome {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn watch_hits_are_appended_to_scheduled_message() {
+        let out = append_watch_hits(
+            "本轮默认职责".to_string(),
+            &[WatchHitNote {
+                rule_id: "watch-cold".into(),
+                summary: "Watch 命中 watch-cold：value=8.4 health=ok zone=冷库".into(),
+            }],
+        );
+        assert!(out.starts_with("本轮默认职责"));
+        assert!(out.contains("上次巡检以来的设备值守命中"));
+        assert!(out.contains("watch-cold"));
+        assert!(out.contains("不要重新执行整轮巡检"));
+        assert_eq!(append_watch_hits("原消息".to_string(), &[]), "原消息");
+    }
     use crate::domains::agent::prompt::PromptMemorySource;
     use crate::domains::agent::session::context::TurnContextRegistry;
     use crate::domains::agent::session::events::SessionEventSink;
@@ -2681,7 +2784,7 @@ mod tests {
             wake.db
                 .append_session_event(&session_event(
                     &context,
-                    "message.created",
+                    "user/message",
                     json!({ "messageId": uuid::Uuid::new_v4().to_string(), "role": "user", "text": text }),
                 ))
                 .await
@@ -2723,7 +2826,7 @@ mod tests {
         });
 
         let package = wake
-            .wake_prompt("ws", "assistant", "turn".into(), &[], None)
+            .wake_prompt("ws", "assistant", "turn".into(), &[], None, true)
             .await
             .unwrap();
         assert!(package.system_prompt.contains("configured-workspace-marker"));
@@ -2779,7 +2882,14 @@ mod tests {
             .await
             .unwrap();
         let package = wake
-            .wake_prompt("ws", &assistant_agent_id("ws"), "turn".into(), &capture.events, None)
+            .wake_prompt(
+                "ws",
+                &assistant_agent_id("ws"),
+                "turn".into(),
+                &capture.events,
+                None,
+                true,
+            )
             .await
             .unwrap();
         assert_eq!(package.system_prompt.matches("short-term-wake-marker").count(), 1);
@@ -2815,20 +2925,21 @@ mod tests {
         assert_eq!(
             types,
             vec![
-                "trigger.received",
-                "wake.dispatched",
-                "session.started",
-                "turn.started",
-                "step.text",
-                "message.created",
-                "turn.completed",
-                "session.ended",
+                "trigger/received",
+                "wake/dispatched",
+                "session/start",
+                "turn/start",
+                "step/start",
+                "assistant/message",
+                "step/end",
+                "turn/end",
+                "session/end",
             ]
         );
         assert_eq!(events[2].payload_json["kind"], "scheduled");
         assert_eq!(
             events[0].payload_json["sourceId"], events[1].payload_json["wakeEventId"],
-            "scheduled trigger.received.sourceId must correlate with wake.dispatched.wakeEventId"
+            "scheduled trigger/received.sourceId must correlate with wake/dispatched.wakeEventId"
         );
         assert_eq!(events.last().unwrap().payload_json["outcome"], "completed");
         let session = wake.db.get_session(&report.session_key).await.unwrap().unwrap();
@@ -3062,7 +3173,7 @@ mod tests {
                 .lock()
                 .await
                 .iter()
-                .any(|event| event.event_type == "turn.started");
+                .any(|event| event.event_type == "turn/start");
             if started {
                 break;
             }
@@ -3083,13 +3194,13 @@ mod tests {
         let events = sink.events.lock().await;
         assert_eq!(
             events.last().unwrap().event_type,
-            "session.ended",
-            "cancelled wake must still emit session.ended"
+            "session/end",
+            "cancelled wake must still emit session/end"
         );
         assert_eq!(events.last().unwrap().payload_json["outcome"], "cancelled");
         let terminal = events
             .iter()
-            .find(|event| event.event_type == "turn.completed")
+            .find(|event| event.event_type == "turn/end")
             .expect("cancelled wake must finish its turn");
         assert_eq!(terminal.payload_json["outcome"], "cancelled");
         assert_eq!(terminal.payload_json["source"], "schedule");
@@ -3134,14 +3245,15 @@ mod tests {
         assert_eq!(
             types,
             vec![
-                "trigger.received",
-                "wake.dispatched",
-                "session.started",
-                "turn.started",
-                "step.text",
-                "message.created",
-                "turn.completed",
-                "session.ended"
+                "trigger/received",
+                "wake/dispatched",
+                "session/start",
+                "turn/start",
+                "step/start",
+                "assistant/message",
+                "step/end",
+                "turn/end",
+                "session/end"
             ]
         );
         assert_eq!(events[2].payload_json["kind"], "event");
@@ -3507,7 +3619,7 @@ mod tests {
             self.session_events()
                 .await
                 .iter()
-                .filter(|event| event.event_type == "turn.completed" && event.payload_json["outcome"] == "skipped")
+                .filter(|event| event.event_type == "turn/end" && event.payload_json["outcome"] == "skipped")
                 .count()
         }
 
@@ -3647,7 +3759,7 @@ mod tests {
         let events = fixture.sink.events.lock().await;
         let terminal = events
             .iter()
-            .find(|event| event.event_type == "turn.completed")
+            .find(|event| event.event_type == "turn/end")
             .expect("failed terminal");
         assert_eq!(terminal.payload_json["error"]["code"], "context_budget_unavailable");
         assert!(terminal.payload_json["errorMessage"].as_str().is_some());
@@ -3724,7 +3836,7 @@ mod tests {
                 .lock()
                 .await
                 .iter()
-                .any(|event| event.event_type == "turn.started");
+                .any(|event| event.event_type == "turn/start");
             if started {
                 break;
             }
@@ -3765,7 +3877,7 @@ mod tests {
 
     #[tokio::test]
     async fn missing_terminal_session_event_prevents_baseline_installation() {
-        for failed_event in ["turn.completed", "session.ended"] {
+        for failed_event in ["turn/end", "session/end"] {
             let fixture = lifecycle_fixture(SuppressionMode::Enforce, Some(failed_event), true).await;
             let report = fixture.run().await;
             assert!(
@@ -3931,8 +4043,8 @@ mod tests {
         let started = events
             .iter()
             .rev()
-            .find(|event| event.event_type == "turn.started")
-            .expect("turn.started");
+            .find(|event| event.event_type == "turn/start")
+            .expect("turn/start");
         assert_eq!(
             started.payload_json["previousAttemptId"],
             serde_json::json!(skip_attempt_id)
@@ -3942,8 +4054,8 @@ mod tests {
         let dispatched = events
             .iter()
             .rev()
-            .find(|event| event.event_type == "wake.dispatched")
-            .expect("wake.dispatched");
+            .find(|event| event.event_type == "wake/dispatched")
+            .expect("wake/dispatched");
         assert_eq!(
             dispatched.payload_json["previousAttemptId"],
             serde_json::json!(skip_attempt_id)
@@ -3985,9 +4097,9 @@ mod tests {
         // events go directly to the workspace DB).
         let events = fixture.sink.events.lock().await;
         assert!(
-            events.iter().any(|event| {
-                event.event_type == "turn.completed" && event.run_id.as_deref() == Some(turn_id.as_str())
-            }),
+            events
+                .iter()
+                .any(|event| { event.event_type == "turn/end" && event.run_id.as_deref() == Some(turn_id.as_str()) }),
             "the executed Turn must carry the preallocated turnId {turn_id}"
         );
         let state = fixture.state().await;
@@ -4192,6 +4304,7 @@ mod tests {
         let sink = Arc::new(crate::domains::agent::session::events::DbSessionEventSink::new(
             db.clone(),
             Arc::new(crate::domains::agent::runtime::session_stream::SessionStreamHub::default()),
+            Arc::new(crate::domains::agent::runtime::session_live::SessionLiveHub::default()),
         ));
         let runner = Arc::new(SessionRunner::new(
             sink.clone(),

@@ -5,6 +5,8 @@
 // 已迁入 tinyiothub_storage::thing（Task 12），此处 re-export 保持既有路径。
 
 use serde::{Deserialize, Serialize};
+use tinyiothub_core::models::thing_command::ThingCommand;
+use tinyiothub_core::models::thing_property::ThingProperty;
 
 pub use tinyiothub_storage::thing::{
     BreadcrumbNode, DocRow, EventRow, ListThingsParams, TagInfo, ThingResource, ThingRow, ThingTreeNode,
@@ -119,6 +121,14 @@ pub struct ThingResponse {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub template_id: Option<String>,
     pub state: i32,
+    /// Live status from the runtime cache (online/offline/error); absent on
+    /// write responses that have no live projection yet.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub status: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub online: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub health: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub driver_name: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -148,6 +158,116 @@ pub struct ListThingsResult {
     pub offset: u32,
     /// Count of resources not yet attached to any thing.
     pub unassigned_resource_count: u64,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ThingPropertyResponse {
+    pub id: String,
+    pub thing_id: String,
+    pub name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub display_name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub data_type: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub unit: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub min_value: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max_value: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub default_value: Option<String>,
+    pub is_read_only: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub expression: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub refs: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub current_value: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub alarm_status: Option<i32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub created_at: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub updated_at: Option<String>,
+}
+
+impl From<ThingProperty> for ThingPropertyResponse {
+    fn from(property: ThingProperty) -> Self {
+        Self {
+            id: property.id,
+            thing_id: property.thing_id,
+            name: property.name,
+            display_name: property.display_name,
+            description: property.description,
+            data_type: property.data_type,
+            unit: property.unit,
+            min_value: property.min_value,
+            max_value: property.max_value,
+            default_value: property.default_value,
+            is_read_only: property.is_read_only != 0,
+            source: property.source,
+            expression: property.expression,
+            refs: property.refs,
+            current_value: property.current_value,
+            alarm_status: property.alarm_status,
+            created_at: property.created_at,
+            updated_at: property.updated_at,
+        }
+    }
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ThingCommandResponse {
+    pub id: String,
+    pub thing_id: String,
+    pub name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub display_name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub parameters: Option<String>,
+    pub created_at: String,
+}
+
+impl From<ThingCommand> for ThingCommandResponse {
+    fn from(command: ThingCommand) -> Self {
+        Self {
+            id: command.id,
+            thing_id: command.thing_id,
+            name: command.name,
+            display_name: command.display_name,
+            description: command.description,
+            parameters: command.parameters,
+            created_at: command.created_at,
+        }
+    }
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ThingProperties {
+    pub thing: ThingResponse,
+    pub properties: Vec<ThingPropertyResponse>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ThingDetail {
+    pub thing: ThingResponse,
+    pub properties: Vec<ThingPropertyResponse>,
+    pub commands: Vec<ThingCommandResponse>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub zone: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sources: Option<Vec<serde_json::Value>>,
 }
 
 #[derive(Debug, Serialize)]

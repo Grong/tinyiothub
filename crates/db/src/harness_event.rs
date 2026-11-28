@@ -39,10 +39,9 @@ const RECENT_SESSION_EVENTS_SQL: &str = "SELECT seq, event_id, session_id, execu
      FROM session_events WHERE execution_mode = ? \
      ORDER BY occurred_at DESC, ('session:' || event_id) DESC LIMIT ?";
 
-const SESSION_TURN_SEQS_SQL: &str = "SELECT run_id, MIN(seq) AS turn_seq FROM session_events \
-     WHERE execution_mode = ? AND session_id = ? AND type = 'turn.started' \
-       AND run_id IS NOT NULL AND (? IS NULL OR seq < ?) \
-     GROUP BY run_id ORDER BY turn_seq DESC LIMIT ?";
+const SESSION_TURN_SEQS_SQL: &str = "SELECT turn_id, started_seq FROM session_turns \
+     WHERE execution_mode = ? AND session_id = ? AND (? IS NULL OR started_seq < ?) \
+     ORDER BY started_seq DESC LIMIT ?";
 
 const MODE_EVENT_PAGE_SQL: &str = "SELECT seq, event_id, session_id, execution_mode, run_id, task_id, type, occurred_at, cause_id, schema_v, payload_digest, payload_json FROM session_events
     WHERE execution_mode = ? AND seq > ? ORDER BY seq ASC LIMIT ?";
@@ -72,7 +71,7 @@ pub struct TurnEventPage {
 }
 
 #[derive(sqlx::FromRow)]
-struct SessionEventRow {
+pub(crate) struct SessionEventRow {
     seq: i64,
     event_id: String,
     session_id: String,
@@ -89,7 +88,7 @@ struct SessionEventRow {
 }
 
 impl SessionEventRow {
-    fn into_event(self, workspace_id: &str) -> Result<HarnessEvent> {
+    pub(crate) fn into_event(self, workspace_id: &str) -> Result<HarnessEvent> {
         validate_schema(self.schema_v)?;
         let execution_mode = ExecutionMode::from_db(&self.execution_mode).ok_or_else(|| DbError::Validation {
             message: format!("unknown execution mode: {}", self.execution_mode),
@@ -252,9 +251,29 @@ pub async fn append_session_event_tx(
 
     validate_schema(input.schema_v)?;
     validate_payload(&input.event_type, &input.payload_json)?;
+    let turn_id = input
+        .payload_json
+        .get("turnId")
+        .and_then(Value::as_str)
+        .map(str::to_owned)
+        .or_else(|| {
+            (input.event_type == "turn/start")
+                .then(|| input.run_id.clone())
+                .flatten()
+        });
+    let step_id = input
+        .payload_json
+        .get("stepId")
+        .and_then(Value::as_str)
+        .map(str::to_owned);
+    let attempt_id = input
+        .payload_json
+        .get("attemptId")
+        .and_then(Value::as_str)
+        .map(str::to_owned);
     let inserted = sqlx::query(
-        "INSERT INTO session_events (event_id, session_id, execution_mode, run_id, task_id, type, occurred_at, cause_id, schema_v, payload_digest, payload_json)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        "INSERT INTO session_events (event_id, session_id, execution_mode, run_id, task_id, type, occurred_at, cause_id, schema_v, payload_digest, payload_json, turn_id, step_id, attempt_id)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT(event_id) DO NOTHING",
     )
     .bind(&input.event_id)
@@ -268,10 +287,63 @@ pub async fn append_session_event_tx(
     .bind(input.schema_v)
     .bind(&input.payload_digest)
     .bind(serde_json::to_string(&input.payload_json)?)
+    .bind(&turn_id)
+    .bind(&step_id)
+    .bind(&attempt_id)
     .execute(&mut **tx)
     .await?;
 
     if inserted.rows_affected() == 1 {
+        if let Some(turn_id) = turn_id.as_deref() {
+            match input.event_type.as_str() {
+                "turn/start" => {
+                    sqlx::query(
+                        "INSERT INTO session_turns
+                            (turn_id, session_id, execution_mode, started_seq, status, started_at)
+                         VALUES (?, ?, ?, ?, 'running', ?)
+                         ON CONFLICT(execution_mode, session_id, turn_id) DO UPDATE SET
+                            started_seq = excluded.started_seq,
+                            status = 'running',
+                            ended_seq = NULL,
+                            ended_at = NULL,
+                            error = NULL",
+                    )
+                    .bind(turn_id)
+                    .bind(&input.session_id)
+                    .bind(input.execution_mode.as_str())
+                    .bind(inserted.last_insert_rowid())
+                    .bind(input.occurred_at.to_rfc3339())
+                    .execute(&mut **tx)
+                    .await?;
+                }
+                "turn/end" => {
+                    let status = input
+                        .payload_json
+                        .get("outcome")
+                        .and_then(Value::as_str)
+                        .unwrap_or("completed");
+                    let error = input
+                        .payload_json
+                        .get("errorMessage")
+                        .or_else(|| input.payload_json.get("error"))
+                        .and_then(Value::as_str);
+                    sqlx::query(
+                        "UPDATE session_turns SET status = ?, ended_seq = ?, ended_at = ?, error = ?
+                         WHERE execution_mode = ? AND session_id = ? AND turn_id = ?",
+                    )
+                    .bind(status)
+                    .bind(inserted.last_insert_rowid())
+                    .bind(input.occurred_at.to_rfc3339())
+                    .bind(error)
+                    .bind(input.execution_mode.as_str())
+                    .bind(&input.session_id)
+                    .bind(turn_id)
+                    .execute(&mut **tx)
+                    .await?;
+                }
+                _ => {}
+            }
+        }
         return Ok(HarnessEvent {
             seq: inserted.last_insert_rowid(),
             event_id: input.event_id.clone(),
@@ -480,6 +552,30 @@ impl Db {
         rows.into_iter().map(|row| row.into_event(workspace_id)).collect()
     }
 
+    /// Latest assistant conclusion in one session, used as cross-turn context
+    /// for recurring scheduled work.
+    pub async fn latest_assistant_message(&self, workspace_id: &str, session_id: &str) -> Result<Option<String>> {
+        let pool = self.workspace_pool(workspace_id).await?;
+        let row = sqlx::query_scalar::<_, String>(
+            "SELECT payload_json FROM session_events
+             WHERE execution_mode = 'production' AND session_id = ? AND type = 'assistant/message'
+             ORDER BY seq DESC LIMIT 1",
+        )
+        .bind(session_id)
+        .fetch_optional(&pool)
+        .await?;
+        let Some(payload) = row else {
+            return Ok(None);
+        };
+        let value: Value = serde_json::from_str(&payload)?;
+        Ok(value
+            .get("text")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|text| !text.is_empty())
+            .map(str::to_string))
+    }
+
     /// 最近事件（跨会话，Production），按发生时间倒序。
     /// 只用于 HUD/概览；会话回放仍走 `session_event_page`。
     pub async fn recent_session_events(&self, workspace_id: &str, limit: i64) -> Result<Vec<HarnessEvent>> {
@@ -565,9 +661,42 @@ impl Db {
                 .fetch_all(&mut *tx)
                 .await?
         };
-        let high_watermark = sqlx::query_scalar::<_, i64>("SELECT COALESCE(MAX(seq), 0) FROM session_events")
+        let high_watermark = if let Some(session_id) = &filter.session_id {
+            sqlx::query_scalar::<_, i64>(
+                "SELECT COALESCE(MAX(seq), 0) FROM session_events \
+                 WHERE execution_mode = ? AND session_id = ?",
+            )
+            .bind(filter.execution_mode.as_str())
+            .bind(session_id)
             .fetch_one(&mut *tx)
-            .await?;
+            .await?
+        } else if let Some(run_id) = &filter.run_id {
+            sqlx::query_scalar::<_, i64>(
+                "SELECT COALESCE(MAX(seq), 0) FROM session_events \
+                 WHERE execution_mode = ? AND run_id = ?",
+            )
+            .bind(filter.execution_mode.as_str())
+            .bind(run_id)
+            .fetch_one(&mut *tx)
+            .await?
+        } else if let Some(task_id) = &filter.task_id {
+            sqlx::query_scalar::<_, i64>(
+                "SELECT COALESCE(MAX(seq), 0) FROM session_events \
+                 WHERE execution_mode = ? AND task_id = ?",
+            )
+            .bind(filter.execution_mode.as_str())
+            .bind(task_id)
+            .fetch_one(&mut *tx)
+            .await?
+        } else {
+            sqlx::query_scalar::<_, i64>(
+                "SELECT COALESCE(MAX(seq), 0) FROM session_events \
+                 WHERE execution_mode = ?",
+            )
+            .bind(filter.execution_mode.as_str())
+            .fetch_one(&mut *tx)
+            .await?
+        };
         let events = rows
             .into_iter()
             .map(|row| row.into_event(workspace_id))
@@ -577,7 +706,7 @@ impl Db {
     }
 
     /// Return complete turns, newest page first, without truncating long turns.
-    /// `before` is the oldest loaded `turn.started` sequence.
+    /// `before` is the oldest loaded `turn/start` sequence.
     pub async fn session_turn_page(
         &self,
         workspace_id: &str,
@@ -602,12 +731,17 @@ impl Db {
             .fetch_all(&mut *tx)
             .await?;
 
+        // `turn/start` carries the turn id as `run_id`, while the events
+        // inside the turn carry the agent-loop run id. Selecting inner rows by
+        // `turn/start.run_id` therefore drops tools, text, and questions.
+        // Use the sequence window, and add the selected turn ids only to keep
+        // trigger/session rows that precede the first turn start.
         let oldest_turn_seq = selected.last().map(|(_, seq)| *seq);
         let next_before = if let Some(oldest_turn_seq) = oldest_turn_seq {
             sqlx::query_scalar::<_, i64>(
-                "SELECT seq FROM session_events
-                 WHERE execution_mode = ? AND session_id = ? AND type = 'turn.started' AND seq < ?
-                 ORDER BY seq DESC LIMIT 1",
+                "SELECT 1 FROM session_turns
+                 WHERE execution_mode = ? AND session_id = ? AND started_seq < ?
+                 LIMIT 1",
             )
             .bind(filter.execution_mode.as_str())
             .bind(session_id)
@@ -629,17 +763,27 @@ impl Db {
                 .push_bind(filter.execution_mode.as_str())
                 .push(" AND session_id = ")
                 .push_bind(session_id)
-                .push(" AND run_id IN (");
-            let mut run_ids = query.separated(", ");
-            for (run_id, _) in &selected {
-                run_ids.push_bind(run_id);
+                .push(" AND (turn_id IN (");
+            let mut turn_ids = query.separated(", ");
+            for (turn_id, _) in &selected {
+                turn_ids.push_bind(turn_id);
             }
-            run_ids.push_unseparated(") ORDER BY seq ASC");
+            turn_ids.push_unseparated(") OR run_id IN (");
+            let mut turn_run_ids = query.separated(", ");
+            for (turn_id, _) in &selected {
+                turn_run_ids.push_bind(turn_id);
+            }
+            turn_run_ids.push_unseparated(")) ORDER BY seq ASC");
             query.build_query_as::<SessionEventRow>().fetch_all(&mut *tx).await?
         };
-        let high_watermark = sqlx::query_scalar::<_, i64>("SELECT COALESCE(MAX(seq), 0) FROM session_events")
-            .fetch_one(&mut *tx)
-            .await?;
+        let high_watermark = sqlx::query_scalar::<_, i64>(
+            "SELECT COALESCE(MAX(seq), 0) FROM session_events \
+             WHERE execution_mode = ? AND session_id = ?",
+        )
+        .bind(filter.execution_mode.as_str())
+        .bind(session_id)
+        .fetch_one(&mut *tx)
+        .await?;
         let events = rows
             .into_iter()
             .map(|row| row.into_event(workspace_id))
@@ -803,7 +947,7 @@ mod tests {
             .await
             .expect("production page");
         assert_eq!(page.events, vec![production.clone()]);
-        assert_eq!(page.high_watermark, latest.seq);
+        assert_eq!(page.high_watermark, production.seq);
 
         let empty = fixture
             .db
@@ -811,7 +955,23 @@ mod tests {
             .await
             .expect("filtered gap is an empty page, not a lost frame");
         assert!(empty.events.is_empty());
-        assert_eq!(empty.high_watermark, latest.seq);
+        assert_eq!(empty.high_watermark, production.seq);
+
+        let other_page = fixture
+            .db
+            .session_event_page(
+                "ws-events",
+                &EventFilter {
+                    session_id: Some("session-2".to_string()),
+                    ..filter(ExecutionMode::Production)
+                },
+                0,
+                10,
+            )
+            .await
+            .expect("other session page");
+        assert_eq!(other_page.events, vec![latest.clone()]);
+        assert_eq!(other_page.high_watermark, latest.seq);
 
         let simulation = fixture
             .db
@@ -959,6 +1119,9 @@ mod tests {
                 "schema_v",
                 "payload_digest",
                 "payload_json",
+                "turn_id",
+                "step_id",
+                "attempt_id",
             ]
         );
 
@@ -1030,7 +1193,7 @@ mod tests {
         assert!(
             turn_plan
                 .iter()
-                .any(|detail| detail.contains("idx_session_events_mode_session_turn")),
+                .any(|detail| detail.contains("idx_session_turns_mode_session_started")),
             "expected turn page index in {turn_plan:?}"
         );
 
@@ -1089,13 +1252,57 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn session_turn_pages_include_events_with_a_different_run_id() {
+        let fixture = HarnessEventFixture::new().await;
+
+        let mut trigger = input("trigger", ExecutionMode::Production);
+        trigger.run_id = Some("turn-1".to_string());
+        trigger.event_type = "trigger/received".to_string();
+        trigger.payload_json = json!({"trigger": "schedule"});
+        fixture.db.append_session_event(&trigger).await.expect("trigger");
+
+        let mut started = input("turn-started", ExecutionMode::Production);
+        started.run_id = Some("turn-1".to_string());
+        started.event_type = "turn/start".to_string();
+        started.payload_json = json!({"turnId": "turn-1"});
+        fixture.db.append_session_event(&started).await.expect("turn start");
+
+        // The agent loop uses its own run id for inner events.
+        let mut text = input("text", ExecutionMode::Production);
+        text.run_id = Some("agent-run-1".to_string());
+        text.event_type = "step.text".to_string();
+        text.payload_json = json!({"turnId": "turn-1", "text": "hello"});
+        fixture.db.append_session_event(&text).await.expect("step text");
+
+        let mut question = input("question", ExecutionMode::Production);
+        question.run_id = Some("agent-run-1".to_string());
+        question.event_type = "question/asked".to_string();
+        question.payload_json = json!({"turnId": "turn-1", "questionId": "q-1", "questions": []});
+        fixture.db.append_session_event(&question).await.expect("question");
+
+        let page = fixture
+            .db
+            .session_turn_page("ws-events", &filter(ExecutionMode::Production), None, 1)
+            .await
+            .expect("turn page");
+        let types: Vec<&str> = page.events.iter().map(|event| event.event_type.as_str()).collect();
+        assert_eq!(
+            types,
+            vec!["trigger/received", "turn/start", "step.text", "question/asked"]
+        );
+        assert_eq!(page.high_watermark, 4);
+
+        fixture.close().await;
+    }
+
+    #[tokio::test]
     async fn session_turn_pages_return_complete_latest_turns_and_resume_older() {
         let fixture = HarnessEventFixture::new().await;
         for turn in 1..=7 {
             let run_id = format!("run-{turn}");
             let mut started = input(&format!("turn-{turn}-started"), ExecutionMode::Production);
             started.run_id = Some(run_id.clone());
-            started.event_type = "turn.started".to_string();
+            started.event_type = "turn/start".to_string();
             started.payload_json = json!({"turnId": format!("turn-{turn}")});
             fixture
                 .db
@@ -1177,7 +1384,7 @@ mod tests {
                     execution_mode: ExecutionMode::Production,
                     run_id: None,
                     task_id: None,
-                    event_type: "message.created".to_string(),
+                    event_type: "user/message".to_string(),
                     occurred_at,
                     cause_id: None,
                     schema_v: 1,

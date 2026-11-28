@@ -891,11 +891,11 @@ impl Db {
         }
 
         // User input that arrived after the preflight snapshot belongs to the
-        // next Turn. Only `message.created(role=user)` controls the cursor.
+        // next Turn. Only `user/message` controls the cursor.
         let current_cursor: i64 = sqlx::query_scalar(
             "SELECT COALESCE(MAX(seq), 0) FROM session_events \
              WHERE execution_mode = 'production' AND session_id = ? \
-               AND type = 'message.created' \
+               AND type = 'user/message' \
                AND json_extract(payload_json, '$.role') = 'user'",
         )
         .bind(&attempt.session_id)
@@ -1022,7 +1022,7 @@ impl Db {
         }
         let skipped_terminal = events
             .iter()
-            .find(|event| event.event_type == "turn.completed")
+            .find(|event| event.event_type == "turn/end")
             .is_some_and(|event| event.payload_json.get("outcome").and_then(Value::as_str) == Some("skipped"));
         if !skipped_terminal {
             return Ok(None);
@@ -1041,7 +1041,7 @@ impl Db {
     /// A committed skip owns its pending sync barriers forever. Later full
     /// attempts may overwrite `latest_outcome`/`latest_attempt_id` without
     /// clearing those flags, so recovery must identify the skip from its
-    /// immutable `turn.completed(outcome=skipped)` event.
+    /// immutable `turn/end(outcome=skipped)` event.
     pub async fn latest_committed_skip_terminal(
         &self,
         workspace_id: &str,
@@ -1050,7 +1050,7 @@ impl Db {
         let pool = self.workspace_pool(workspace_id).await?;
         let row = sqlx::query(
             "SELECT payload_json, occurred_at FROM session_events \
-             WHERE execution_mode = 'production' AND session_id = ? AND type = 'turn.completed' \
+             WHERE execution_mode = 'production' AND session_id = ? AND type = 'turn/end' \
                AND json_extract(payload_json, '$.outcome') = 'skipped' \
              ORDER BY seq DESC LIMIT 1",
         )
@@ -1379,7 +1379,7 @@ impl Db {
         let pool = self.workspace_pool(workspace_id).await?;
         let rows = sqlx::query(
             "SELECT occurred_at, payload_json FROM session_events \
-             WHERE execution_mode = 'production' AND session_id = ? AND type = 'turn.completed' \
+             WHERE execution_mode = 'production' AND session_id = ? AND type = 'turn/end' \
              ORDER BY seq DESC LIMIT ?",
         )
         .bind(session_id)
@@ -1435,8 +1435,8 @@ impl Db {
         for row in &rows {
             let event_type: String = row.try_get("type")?;
             match event_type.as_str() {
-                "turn.started" => started = true,
-                "turn.completed" => {
+                "turn/start" => started = true,
+                "turn/end" => {
                     let payload_json: String = row.try_get("payload_json")?;
                     let payload: Value = serde_json::from_str(&payload_json)?;
                     let outcome = payload
@@ -2082,7 +2082,7 @@ mod tests {
             execution_mode: ExecutionMode::Production,
             run_id: Some("turn-off-race".to_string()),
             task_id: None,
-            event_type: "turn.completed".to_string(),
+            event_type: "turn/end".to_string(),
             occurred_at: Utc::now(),
             cause_id: None,
             schema_v: 1,
@@ -2190,7 +2190,7 @@ mod tests {
             execution_mode: ExecutionMode::Production,
             run_id: Some("turn-commit-write-race".to_string()),
             task_id: None,
-            event_type: "turn.completed".to_string(),
+            event_type: "turn/end".to_string(),
             occurred_at: Utc::now(),
             cause_id: None,
             schema_v: 1,

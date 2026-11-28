@@ -164,6 +164,8 @@ FROM (VALUES
 ('cmd-cam01-snapshot',   'device-cam-01',  'snapshot',       '拍照',         '抓拍一张高清照片',                  '{}'),
 ('cmd-cam01-reboot',     'device-cam-01',  'reboot',         '重启摄像头',   '远程重启摄像头',                    '{}'),
 ('cmd-cam01-ptz',        'device-cam-01',  'ptz_control',    '云台控制',     '控制云台转动方向',                  '{"direction": "left", "speed": 5}'),
+('cmd-cam02-snapshot',   'device-cam-02',  'snapshot',       '拍照',         '抓拍一张高清照片',                  '{}'),
+('cmd-cam02-reboot',     'device-cam-02',  'reboot',         '重启摄像头',   '远程重启摄像头',                    '{}'),
 -- 机器人
 ('cmd-robot-move',       'device-robot-01','move_to',        '移动到位置',   '移动到指定坐标',                    '{"x": 0, "y": 0, "z": 100}'),
 ('cmd-robot-stop',       'device-robot-01','emergency_stop', '紧急停止',     '立即停止所有运动',                  '{}'),
@@ -312,3 +314,243 @@ INSERT OR IGNORE INTO notification_channels (id, name, channel_type, config, des
     ('channel-webhook-default', '钉钉 webhook', 'webhook',
      '{"url": "", "method": "POST", "headers": {"Content-Type": "application/json"}}',
      '系统默认钉钉 webhook 渠道');
+
+-- Demo devices are seeded without per-device declarations; allow the demo
+-- workspace to invoke their actions (migration-window mode).
+UPDATE workspaces SET declaration_enforcement = 0 WHERE id = 'ws-default-001';
+
+-- ── hierarchical demo factory (spaces, locations, 30 devices, watch rules) ─────
+-- Retrofit of the original flat 20-device demo: existing IDs stay stable,
+-- spaces are inserted first, then devices are re-parented. Every statement is
+-- idempotent so the demo seed can be re-applied on startup.
+
+-- 空间/楼栋/产线（父节点先插入，保证 FK 立即校验通过）
+INSERT OR IGNORE INTO things (id, name, display_name, thing_type, category, address, description, state, tenant_id, workspace_id, parent_id) VALUES ('site-demo-factory', 'demo_factory', '示范工厂', 'space', '园区', '示范工厂园区', '演示用工厂园区根节点', 1, 'tenant-default-001', 'ws-default-001', NULL);
+INSERT OR IGNORE INTO things (id, name, display_name, thing_type, category, address, description, state, tenant_id, workspace_id, parent_id) VALUES ('bldg-a', 'building_a', 'A栋生产楼', 'building', '楼栋', '示范工厂 A栋', '生产车间与配电设施', 1, 'tenant-default-001', 'ws-default-001', 'site-demo-factory');
+INSERT OR IGNORE INTO things (id, name, display_name, thing_type, category, address, description, state, tenant_id, workspace_id, parent_id) VALUES ('space-a-workshop', 'a_workshop', 'A栋车间', 'space', '车间', 'A栋 1F 东侧', '装配与生产作业区', 1, 'tenant-default-001', 'ws-default-001', 'bldg-a');
+INSERT OR IGNORE INTO things (id, name, display_name, thing_type, category, address, description, state, tenant_id, workspace_id, parent_id) VALUES ('space-a-power', 'a_power_room', 'A栋配电间', 'space', '配电间', 'A栋 1F 西侧', '总配电与分支回路', 1, 'tenant-default-001', 'ws-default-001', 'bldg-a');
+INSERT OR IGNORE INTO things (id, name, display_name, thing_type, category, address, description, state, tenant_id, workspace_id, parent_id) VALUES ('space-a-corridor', 'a_corridor', 'A栋走廊', 'space', '走廊', 'A栋 1F 公共走廊', '公共通行区域', 1, 'tenant-default-001', 'ws-default-001', 'bldg-a');
+INSERT OR IGNORE INTO things (id, name, display_name, thing_type, category, address, description, state, tenant_id, workspace_id, parent_id) VALUES ('line-assembly', 'assembly_line', '3号装配线', 'line', '装配线', 'A栋车间 3号线', '机器人装配工位', 1, 'tenant-default-001', 'ws-default-001', 'space-a-workshop');
+INSERT OR IGNORE INTO things (id, name, display_name, thing_type, category, address, description, state, tenant_id, workspace_id, parent_id) VALUES ('bldg-b', 'building_b', 'B栋仓库', 'building', '楼栋', '示范工厂 B栋', '仓储与包装区域', 1, 'tenant-default-001', 'ws-default-001', 'site-demo-factory');
+INSERT OR IGNORE INTO things (id, name, display_name, thing_type, category, address, description, state, tenant_id, workspace_id, parent_id) VALUES ('space-b-warehouse', 'b_warehouse', 'B栋仓库区', 'space', '仓库', 'B栋 1F', '原料与成品仓储', 1, 'tenant-default-001', 'ws-default-001', 'bldg-b');
+INSERT OR IGNORE INTO things (id, name, display_name, thing_type, category, address, description, state, tenant_id, workspace_id, parent_id) VALUES ('space-cold', 'cold_storage', '冷库', 'space', '冷库', '示范工厂 冷库区', '冷链存储区域', 1, 'tenant-default-001', 'ws-default-001', 'site-demo-factory');
+INSERT OR IGNORE INTO things (id, name, display_name, thing_type, category, address, description, state, tenant_id, workspace_id, parent_id) VALUES ('space-outdoor', 'site_outdoor', '厂区室外', 'space', '室外', '示范工厂 室外区域', '道路、入口与室外设施', 1, 'tenant-default-001', 'ws-default-001', 'site-demo-factory');
+INSERT OR IGNORE INTO things (id, name, display_name, thing_type, category, address, description, state, tenant_id, workspace_id, parent_id) VALUES ('space-water-pump', 'water_pump_room', '水泵房', 'space', '水泵房', '示范工厂 水泵房', '总进水与管网监测', 1, 'tenant-default-001', 'ws-default-001', 'site-demo-factory');
+
+-- 旧设备挂到空间/产线；parent_id 已被人工调整时不覆盖
+UPDATE things SET parent_id = 'space-a-workshop' WHERE id = 'device-env-01' AND workspace_id = 'ws-default-001' AND parent_id IS NULL;
+UPDATE things SET parent_id = 'space-b-warehouse' WHERE id = 'device-env-02' AND workspace_id = 'ws-default-001' AND parent_id IS NULL;
+UPDATE things SET parent_id = 'space-cold' WHERE id = 'device-cold-01' AND workspace_id = 'ws-default-001' AND parent_id IS NULL;
+UPDATE things SET parent_id = 'space-outdoor' WHERE id = 'device-cam-01' AND workspace_id = 'ws-default-001' AND parent_id IS NULL;
+UPDATE things SET parent_id = 'space-a-workshop' WHERE id = 'device-cam-02' AND workspace_id = 'ws-default-001' AND parent_id IS NULL;
+UPDATE things SET parent_id = 'line-assembly' WHERE id = 'device-robot-01' AND workspace_id = 'ws-default-001' AND parent_id IS NULL;
+UPDATE things SET parent_id = 'space-a-power' WHERE id = 'device-gw-01' AND workspace_id = 'ws-default-001' AND parent_id IS NULL;
+UPDATE things SET parent_id = 'space-a-power' WHERE id = 'device-power-01' AND workspace_id = 'ws-default-001' AND parent_id IS NULL;
+UPDATE things SET parent_id = 'space-water-pump' WHERE id = 'device-water-main' AND workspace_id = 'ws-default-001' AND parent_id IS NULL;
+UPDATE things SET parent_id = 'space-a-workshop' WHERE id = 'device-water-zone-a' AND workspace_id = 'ws-default-001' AND parent_id IS NULL;
+UPDATE things SET parent_id = 'space-a-power' WHERE id = 'device-power-lighting' AND workspace_id = 'ws-default-001' AND parent_id IS NULL;
+UPDATE things SET parent_id = 'space-a-power' WHERE id = 'device-power-hvac' AND workspace_id = 'ws-default-001' AND parent_id IS NULL;
+UPDATE things SET parent_id = 'space-a-workshop' WHERE id = 'device-light-workshop' AND workspace_id = 'ws-default-001' AND parent_id IS NULL;
+UPDATE things SET parent_id = 'space-a-corridor' WHERE id = 'device-light-corridor' AND workspace_id = 'ws-default-001' AND parent_id IS NULL;
+UPDATE things SET parent_id = 'space-outdoor' WHERE id = 'device-light-outdoor' AND workspace_id = 'ws-default-001' AND parent_id IS NULL;
+UPDATE things SET parent_id = 'space-a-workshop' WHERE id = 'device-fire-smoke-a' AND workspace_id = 'ws-default-001' AND parent_id IS NULL;
+UPDATE things SET parent_id = 'space-a-power' WHERE id = 'device-fire-heat-a' AND workspace_id = 'ws-default-001' AND parent_id IS NULL;
+UPDATE things SET parent_id = 'space-outdoor' WHERE id = 'device-security-entrance' AND workspace_id = 'ws-default-001' AND parent_id IS NULL;
+UPDATE things SET parent_id = 'bldg-a' WHERE id = 'device-access-entrance' AND workspace_id = 'ws-default-001' AND parent_id IS NULL;
+UPDATE things SET parent_id = 'space-a-workshop' WHERE id = 'device-access-workshop' AND workspace_id = 'ws-default-001' AND parent_id IS NULL;
+
+-- 新增设备（复用 simulator 的既有角色，不新增驱动类型）
+INSERT OR IGNORE INTO things (id, name, display_name, thing_type, category, address, description, driver_name, protocol_type, state, tenant_id, workspace_id, driver_options, parent_id) VALUES ('device-env-03', 'env_sensor_power_room', '配电间环境传感器', 'device', '环境传感器', 'A栋 1F 配电间', '配电间温湿度与电池监测', 'simulator', 'Modbus RTU', 1, 'tenant-default-001', 'ws-default-001', '{"interval":"2000","mode":"sine","zone":"workshop"}', 'space-a-power');
+INSERT OR IGNORE INTO things (id, name, display_name, thing_type, category, address, description, driver_name, protocol_type, state, tenant_id, workspace_id, driver_options, parent_id) VALUES ('device-env-04', 'env_sensor_outdoor', '室外环境传感器', 'device', '环境传感器', '厂区室外 东侧', '室外温湿度监测', 'simulator', 'LoRaWAN', 1, 'tenant-default-001', 'ws-default-001', '{"interval":"3000","mode":"sine"}', 'space-outdoor');
+INSERT OR IGNORE INTO things (id, name, display_name, thing_type, category, address, description, driver_name, protocol_type, state, tenant_id, workspace_id, driver_options, parent_id) VALUES ('device-fire-smoke-b', 'smoke_detector_warehouse', 'B栋仓库烟雾探测器', 'device', '消防探测器', 'B栋 1F 仓库', '仓库烟雾浓度监测', 'simulator', 'LoRaWAN', 1, 'tenant-default-001', 'ws-default-001', '{"interval":"2000","mode":"random"}', 'space-b-warehouse');
+INSERT OR IGNORE INTO things (id, name, display_name, thing_type, category, address, description, driver_name, protocol_type, state, tenant_id, workspace_id, driver_options, parent_id) VALUES ('device-fire-heat-b', 'heat_detector_warehouse', 'B栋仓库感温探测器', 'device', '消防探测器', 'B栋 1F 仓库', '仓库感温火警监测', 'simulator', 'LoRaWAN', 1, 'tenant-default-001', 'ws-default-001', '{"interval":"2000","mode":"sine"}', 'space-b-warehouse');
+INSERT OR IGNORE INTO things (id, name, display_name, thing_type, category, address, description, driver_name, protocol_type, state, tenant_id, workspace_id, driver_options, parent_id) VALUES ('device-access-b', 'access_warehouse', 'B栋仓库门禁', 'device', '门禁控制器', 'B栋 1F 仓库入口', '仓库出入控制与防拆监测', 'simulator', 'MQTT', 1, 'tenant-default-001', 'ws-default-001', '{"interval":"1000","mode":"random"}', 'bldg-b');
+INSERT OR IGNORE INTO things (id, name, display_name, thing_type, category, address, description, driver_name, protocol_type, state, tenant_id, workspace_id, driver_options, parent_id) VALUES ('device-cam-03', 'camera_warehouse', 'B栋仓库摄像头', 'device', '网络摄像头', 'B栋 1F 仓库', '仓库出入口视频监控', 'simulator', 'ONVIF', 1, 'tenant-default-001', 'ws-default-001', '{"interval":"1000"}', 'space-b-warehouse');
+INSERT OR IGNORE INTO things (id, name, display_name, thing_type, category, address, description, driver_name, protocol_type, state, tenant_id, workspace_id, driver_options, parent_id) VALUES ('device-light-warehouse', 'lighting_warehouse', 'B栋仓库照明', 'device', '照明控制器', 'B栋 1F 仓库', '仓库照明回路与占用联动', 'simulator', 'MQTT', 1, 'tenant-default-001', 'ws-default-001', '{"interval":"1000","mode":"random"}', 'space-b-warehouse');
+INSERT OR IGNORE INTO things (id, name, display_name, thing_type, category, address, description, driver_name, protocol_type, state, tenant_id, workspace_id, driver_options, parent_id) VALUES ('device-light-power', 'lighting_power_room', 'A栋配电间照明', 'device', '照明控制器', 'A栋 1F 配电间', '配电间照明回路', 'simulator', 'MQTT', 1, 'tenant-default-001', 'ws-default-001', '{"interval":"1000","mode":"sine"}', 'space-a-power');
+INSERT OR IGNORE INTO things (id, name, display_name, thing_type, category, address, description, driver_name, protocol_type, state, tenant_id, workspace_id, driver_options, parent_id) VALUES ('device-robot-02', 'robot_arm_packaging', 'B栋包装机器人', 'device', '协作机器人', 'B栋 1F 包装工位', '成品包装与码垛作业', 'simulator', 'TCP/IP', 1, 'tenant-default-001', 'ws-default-001', '{"interval":"500","mode":"sine"}', 'space-b-warehouse');
+INSERT OR IGNORE INTO things (id, name, display_name, thing_type, category, address, description, driver_name, protocol_type, state, tenant_id, workspace_id, driver_options, parent_id) VALUES ('device-security-warehouse', 'security_warehouse', 'B栋仓库安防主机', 'device', '安防主机', 'B栋 1F 仓库', '仓库布防与入侵报警监测', 'simulator', 'MQTT', 1, 'tenant-default-001', 'ws-default-001', '{"interval":"1000","mode":"random"}', 'space-b-warehouse');
+
+-- 新增设备属性（所有传感器/执行状态只读，实际写入走设备动作）
+INSERT OR IGNORE INTO thing_properties
+    (id, thing_id, name, display_name, description, data_type, unit, min_value, max_value, is_read_only)
+SELECT column1, column2, column3, column4, column5, column6, column7, column8, column9, column10
+FROM (VALUES
+('prop-env03-temperature', 'device-env-03', 'temperature', '温度', '配电间环境温度', 'number', '°C', -20, 60, 1),
+('prop-env03-humidity', 'device-env-03', 'humidity', '湿度', '配电间相对湿度', 'number', '%', 0, 100, 1),
+('prop-env03-battery', 'device-env-03', 'battery', '电池电量', '传感器电池剩余电量', 'number', '%', 0, 100, 1),
+('prop-env04-temperature', 'device-env-04', 'temperature', '温度', '室外环境温度', 'number', '°C', -20, 60, 1),
+('prop-env04-humidity', 'device-env-04', 'humidity', '湿度', '室外相对湿度', 'number', '%', 0, 100, 1),
+('prop-env04-battery', 'device-env-04', 'battery', '电池电量', '传感器电池剩余电量', 'number', '%', 0, 100, 1),
+('prop-smokeb-smoke_density', 'device-fire-smoke-b', 'smoke_density', '烟雾浓度', '仓库烟雾浓度', 'number', '%/m', 0, 20, 1),
+('prop-smokeb-alarm', 'device-fire-smoke-b', 'alarm', '火警状态', '是否存在烟雾火警', 'boolean', '', NULL, NULL, 1),
+('prop-smokeb-battery', 'device-fire-smoke-b', 'battery', '电池电量', '探测器电池剩余电量', 'number', '%', 0, 100, 1),
+('prop-smokeb-fault', 'device-fire-smoke-b', 'fault', '故障状态', '探测器是否故障', 'boolean', '', NULL, NULL, 1),
+('prop-heatb-temperature', 'device-fire-heat-b', 'temperature', '温度', '仓库环境温度', 'number', '°C', -20, 150, 1),
+('prop-heatb-alarm', 'device-fire-heat-b', 'alarm', '火警状态', '是否存在感温火警', 'boolean', '', NULL, NULL, 1),
+('prop-heatb-battery', 'device-fire-heat-b', 'battery', '电池电量', '探测器电池剩余电量', 'number', '%', 0, 100, 1),
+('prop-heatb-fault', 'device-fire-heat-b', 'fault', '故障状态', '探测器是否故障', 'boolean', '', NULL, NULL, 1),
+('prop-accessb-door_open', 'device-access-b', 'door_open', '门状态', '仓库门是否打开', 'boolean', '', NULL, NULL, 1),
+('prop-accessb-locked', 'device-access-b', 'locked', '锁状态', '仓库门是否上锁', 'boolean', '', NULL, NULL, 1),
+('prop-accessb-access_count_today', 'device-access-b', 'access_count_today', '今日通行次数', '仓库当日通行次数', 'number', '次', 0, NULL, 1),
+('prop-accessb-tamper_alarm', 'device-access-b', 'tamper_alarm', '防拆报警', '仓库门禁是否存在防拆报警', 'boolean', '', NULL, NULL, 1),
+('prop-accessb-last_access_result', 'device-access-b', 'last_access_result', '最近验证结果', '最近一次通行验证结果', 'string', '', NULL, NULL, 1),
+('prop-cam03-power_status', 'device-cam-03', 'power_status', '电源状态', '摄像头供电状态', 'boolean', '', NULL, NULL, 1),
+('prop-cam03-resolution', 'device-cam-03', 'resolution', '分辨率', '当前视频分辨率', 'string', '', NULL, NULL, 1),
+('prop-cam03-motion_detected', 'device-cam-03', 'motion_detected', '移动侦测', '是否检测到移动物体', 'boolean', '', NULL, NULL, 1),
+('prop-cam03-storage_used', 'device-cam-03', 'storage_used', '存储使用率', 'NVR 存储使用百分比', 'number', '%', 0, 100, 1),
+('prop-lightwh-switch_on', 'device-light-warehouse', 'switch_on', '照明开关', '仓库照明是否开启', 'boolean', '', NULL, NULL, 1),
+('prop-lightwh-brightness', 'device-light-warehouse', 'brightness', '亮度', '仓库照明亮度', 'number', '%', 0, 100, 1),
+('prop-lightwh-power', 'device-light-warehouse', 'power', '当前功率', '仓库照明实时功率', 'number', 'W', 0, NULL, 1),
+('prop-lightwh-energy_today', 'device-light-warehouse', 'energy_today', '今日用电量', '仓库照明当日能耗', 'number', 'kWh', 0, NULL, 1),
+('prop-lightwh-presence', 'device-light-warehouse', 'presence', '人员在岗', '仓库是否检测到人员', 'boolean', '', NULL, NULL, 1),
+('prop-lightpower-switch_on', 'device-light-power', 'switch_on', '照明开关', '配电间照明是否开启', 'boolean', '', NULL, NULL, 1),
+('prop-lightpower-brightness', 'device-light-power', 'brightness', '亮度', '配电间照明亮度', 'number', '%', 0, 100, 1),
+('prop-lightpower-power', 'device-light-power', 'power', '当前功率', '配电间照明实时功率', 'number', 'W', 0, NULL, 1),
+('prop-lightpower-energy_today', 'device-light-power', 'energy_today', '今日用电量', '配电间照明当日能耗', 'number', 'kWh', 0, NULL, 1),
+('prop-lightpower-presence', 'device-light-power', 'presence', '人员在岗', '配电间是否检测到人员', 'boolean', '', NULL, NULL, 1),
+('prop-robot02-pos_x', 'device-robot-02', 'pos_x', 'X轴位置', '机器人末端X坐标', 'number', 'mm', -500, 500, 1),
+('prop-robot02-pos_y', 'device-robot-02', 'pos_y', 'Y轴位置', '机器人末端Y坐标', 'number', 'mm', -500, 500, 1),
+('prop-robot02-pos_z', 'device-robot-02', 'pos_z', 'Z轴位置', '机器人末端Z坐标', 'number', 'mm', 0, 800, 1),
+('prop-robot02-torque', 'device-robot-02', 'torque', '关节扭矩', '当前关节平均扭矩', 'number', 'Nm', 0, 150, 1),
+('prop-robot02-speed', 'device-robot-02', 'speed', '运行速度', '当前运行速度百分比', 'number', '%', 0, 100, 1),
+('prop-robot02-run_status', 'device-robot-02', 'run_status', '运行状态', '机器人运行状态', 'string', '', NULL, NULL, 1),
+('prop-secwh-armed', 'device-security-warehouse', 'armed', '布防状态', '仓库是否处于布防状态', 'boolean', '', NULL, NULL, 1),
+('prop-secwh-alarm', 'device-security-warehouse', 'alarm', '入侵报警', '是否检测到入侵报警', 'boolean', '', NULL, NULL, 1),
+('prop-secwh-zone_open', 'device-security-warehouse', 'zone_open', '防区开路', '仓库防区是否开路', 'boolean', '', NULL, NULL, 1),
+('prop-secwh-battery', 'device-security-warehouse', 'battery', '备用电池', '安防主机备用电池电量', 'number', '%', 0, 100, 1),
+('prop-secwh-signal_strength', 'device-security-warehouse', 'signal_strength', '信号强度', '无线防区信号质量', 'number', '%', 0, 100, 1)
+)
+WHERE EXISTS (SELECT 1 FROM things d WHERE d.id = column2);
+
+-- 新增设备动作（与 demo 既有动作命名一致，供 UI/Agent 调用）
+INSERT OR IGNORE INTO thing_actions (id, thing_id, name, display_name, description, parameters)
+SELECT column1, column2, column3, column4, column5, column6
+FROM (VALUES
+('cmd-env03-restart', 'device-env-03', 'restart', '重启设备', '远程重启传感器', '{}'),
+('cmd-env03-calibrate', 'device-env-03', 'calibrate', '校准传感器', '执行温湿度校准', '{}'),
+('cmd-env04-restart', 'device-env-04', 'restart', '重启设备', '远程重启传感器', '{}'),
+('cmd-env04-calibrate', 'device-env-04', 'calibrate', '校准传感器', '执行温湿度校准', '{}'),
+('cmd-smokeb-self_test', 'device-fire-smoke-b', 'self_test', '设备自检', '执行烟雾探测器自检', '{}'),
+('cmd-smokeb-silence_alarm', 'device-fire-smoke-b', 'silence_alarm', '消音', '消除本地报警音', '{}'),
+('cmd-heatb-self_test', 'device-fire-heat-b', 'self_test', '设备自检', '执行感温探测器自检', '{}'),
+('cmd-heatb-silence_alarm', 'device-fire-heat-b', 'silence_alarm', '消音', '消除本地报警音', '{}'),
+('cmd-accessb-lock', 'device-access-b', 'lock', '上锁', '锁定仓库门禁', '{}'),
+('cmd-accessb-unlock', 'device-access-b', 'unlock', '开锁', '开启仓库门禁', '{}'),
+('cmd-cam03-snapshot', 'device-cam-03', 'snapshot', '拍照', '抓拍一张高清照片', '{}'),
+('cmd-cam03-reboot', 'device-cam-03', 'reboot', '重启摄像头', '远程重启摄像头', '{}'),
+('cmd-lightwh-turn_on', 'device-light-warehouse', 'turn_on', '开启照明', '开启仓库照明', '{}'),
+('cmd-lightwh-turn_off', 'device-light-warehouse', 'turn_off', '关闭照明', '关闭仓库照明', '{}'),
+('cmd-lightwh-set_brightness', 'device-light-warehouse', 'set_brightness', '设置亮度', '调整仓库照明亮度', '{"brightness":80}'),
+('cmd-lightpower-turn_on', 'device-light-power', 'turn_on', '开启照明', '开启配电间照明', '{}'),
+('cmd-lightpower-turn_off', 'device-light-power', 'turn_off', '关闭照明', '关闭配电间照明', '{}'),
+('cmd-lightpower-set_brightness', 'device-light-power', 'set_brightness', '设置亮度', '调整配电间照明亮度', '{"brightness":80}'),
+('cmd-robot02-move_to', 'device-robot-02', 'move_to', '移动到位置', '移动到指定坐标', '{"x":0,"y":0,"z":100}'),
+('cmd-robot02-emergency_stop', 'device-robot-02', 'emergency_stop', '紧急停止', '立即停止所有运动', '{}'),
+('cmd-robot02-go_home', 'device-robot-02', 'go_home', '回零', '回到机械零点位置', '{}'),
+('cmd-robot02-set_speed', 'device-robot-02', 'set_speed', '设置速度', '设置运行速度百分比', '{"speed":50}'),
+('cmd-secwh-arm', 'device-security-warehouse', 'arm', '布防', '开启仓库布防', '{}'),
+('cmd-secwh-disarm', 'device-security-warehouse', 'disarm', '撤防', '关闭仓库撤防', '{}')
+)
+WHERE EXISTS (SELECT 1 FROM things d WHERE d.id = column2);
+
+-- 位置标签（与既有功能标签并存；标签无 kind 字段，用名称做位置维度）
+INSERT OR IGNORE INTO tags (id, type, name, description, color, tenant_id, created_by) VALUES
+('tag-loc-factory', 'thing', '示范工厂', '工厂园区根位置', '#2F5597', 'tenant-default-001', 'admin-user-001'),
+('tag-loc-a-building', 'thing', 'A栋', 'A栋生产楼', '#4472C4', 'tenant-default-001', 'admin-user-001'),
+('tag-loc-a-workshop', 'thing', 'A栋车间', 'A栋生产车间', '#5B9BD5', 'tenant-default-001', 'admin-user-001'),
+('tag-loc-a-power', 'thing', 'A栋配电间', 'A栋配电间', '#ED7D31', 'tenant-default-001', 'admin-user-001'),
+('tag-loc-a-corridor', 'thing', 'A栋走廊', 'A栋公共走廊', '#A5A5A5', 'tenant-default-001', 'admin-user-001'),
+('tag-loc-b-building', 'thing', 'B栋', 'B栋仓库楼', '#70AD47', 'tenant-default-001', 'admin-user-001'),
+('tag-loc-b-warehouse', 'thing', 'B栋仓库区', 'B栋仓库区域', '#548235', 'tenant-default-001', 'admin-user-001'),
+('tag-loc-cold', 'thing', '冷库', '冷链存储区域', '#2E75B6', 'tenant-default-001', 'admin-user-001'),
+('tag-loc-outdoor', 'thing', '厂区室外', '厂区室外区域', '#7F7F7F', 'tenant-default-001', 'admin-user-001'),
+('tag-loc-water-pump', 'thing', '水泵房', '总进水与水泵房', '#1F9BD1', 'tenant-default-001', 'admin-user-001'),
+('tag-loc-assembly-line', 'thing', '3号装配线', 'A栋车间装配线', '#BF9000', 'tenant-default-001', 'admin-user-001');
+
+-- 位置绑定：空间挂自身位置，设备挂具体位置并统一挂根位置
+INSERT OR IGNORE INTO tag_bindings (id, tag_id, target_id, target_type, tenant_id, created_by) VALUES
+('tb-loc-space-site-demo-factory', 'tag-loc-factory', 'site-demo-factory', 'thing', 'tenant-default-001', 'admin-user-001'),
+('tb-loc-space-bldg-a', 'tag-loc-a-building', 'bldg-a', 'thing', 'tenant-default-001', 'admin-user-001'),
+('tb-loc-space-space-a-workshop', 'tag-loc-a-workshop', 'space-a-workshop', 'thing', 'tenant-default-001', 'admin-user-001'),
+('tb-loc-space-space-a-power', 'tag-loc-a-power', 'space-a-power', 'thing', 'tenant-default-001', 'admin-user-001'),
+('tb-loc-space-space-a-corridor', 'tag-loc-a-corridor', 'space-a-corridor', 'thing', 'tenant-default-001', 'admin-user-001'),
+('tb-loc-space-line-assembly', 'tag-loc-assembly-line', 'line-assembly', 'thing', 'tenant-default-001', 'admin-user-001'),
+('tb-loc-space-bldg-b', 'tag-loc-b-building', 'bldg-b', 'thing', 'tenant-default-001', 'admin-user-001'),
+('tb-loc-space-space-b-warehouse', 'tag-loc-b-warehouse', 'space-b-warehouse', 'thing', 'tenant-default-001', 'admin-user-001'),
+('tb-loc-space-space-cold', 'tag-loc-cold', 'space-cold', 'thing', 'tenant-default-001', 'admin-user-001'),
+('tb-loc-space-space-outdoor', 'tag-loc-outdoor', 'space-outdoor', 'thing', 'tenant-default-001', 'admin-user-001'),
+('tb-loc-space-space-water-pump', 'tag-loc-water-pump', 'space-water-pump', 'thing', 'tenant-default-001', 'admin-user-001'),
+('tb-loc-dev-device-env-01', 'tag-loc-factory', 'device-env-01', 'thing', 'tenant-default-001', 'admin-user-001'),
+('tb-loc-dev-device-env-01-a-workshop', 'tag-loc-a-workshop', 'device-env-01', 'thing', 'tenant-default-001', 'admin-user-001'),
+('tb-loc-dev-device-env-02', 'tag-loc-factory', 'device-env-02', 'thing', 'tenant-default-001', 'admin-user-001'),
+('tb-loc-dev-device-env-02-b-warehouse', 'tag-loc-b-warehouse', 'device-env-02', 'thing', 'tenant-default-001', 'admin-user-001'),
+('tb-loc-dev-device-env-03', 'tag-loc-factory', 'device-env-03', 'thing', 'tenant-default-001', 'admin-user-001'),
+('tb-loc-dev-device-env-03-a-power', 'tag-loc-a-power', 'device-env-03', 'thing', 'tenant-default-001', 'admin-user-001'),
+('tb-loc-dev-device-env-04', 'tag-loc-factory', 'device-env-04', 'thing', 'tenant-default-001', 'admin-user-001'),
+('tb-loc-dev-device-env-04-outdoor', 'tag-loc-outdoor', 'device-env-04', 'thing', 'tenant-default-001', 'admin-user-001'),
+('tb-loc-dev-device-cold-01', 'tag-loc-factory', 'device-cold-01', 'thing', 'tenant-default-001', 'admin-user-001'),
+('tb-loc-dev-device-cold-01-cold', 'tag-loc-cold', 'device-cold-01', 'thing', 'tenant-default-001', 'admin-user-001'),
+('tb-loc-dev-device-cam-01', 'tag-loc-factory', 'device-cam-01', 'thing', 'tenant-default-001', 'admin-user-001'),
+('tb-loc-dev-device-cam-01-outdoor', 'tag-loc-outdoor', 'device-cam-01', 'thing', 'tenant-default-001', 'admin-user-001'),
+('tb-loc-dev-device-cam-02', 'tag-loc-factory', 'device-cam-02', 'thing', 'tenant-default-001', 'admin-user-001'),
+('tb-loc-dev-device-cam-02-a-workshop', 'tag-loc-a-workshop', 'device-cam-02', 'thing', 'tenant-default-001', 'admin-user-001'),
+('tb-loc-dev-device-cam-03', 'tag-loc-factory', 'device-cam-03', 'thing', 'tenant-default-001', 'admin-user-001'),
+('tb-loc-dev-device-cam-03-b-warehouse', 'tag-loc-b-warehouse', 'device-cam-03', 'thing', 'tenant-default-001', 'admin-user-001'),
+('tb-loc-dev-device-robot-01', 'tag-loc-factory', 'device-robot-01', 'thing', 'tenant-default-001', 'admin-user-001'),
+('tb-loc-dev-device-robot-01-assembly-line', 'tag-loc-assembly-line', 'device-robot-01', 'thing', 'tenant-default-001', 'admin-user-001'),
+('tb-loc-dev-device-robot-02', 'tag-loc-factory', 'device-robot-02', 'thing', 'tenant-default-001', 'admin-user-001'),
+('tb-loc-dev-device-robot-02-b-warehouse', 'tag-loc-b-warehouse', 'device-robot-02', 'thing', 'tenant-default-001', 'admin-user-001'),
+('tb-loc-dev-device-gw-01', 'tag-loc-factory', 'device-gw-01', 'thing', 'tenant-default-001', 'admin-user-001'),
+('tb-loc-dev-device-gw-01-a-power', 'tag-loc-a-power', 'device-gw-01', 'thing', 'tenant-default-001', 'admin-user-001'),
+('tb-loc-dev-device-power-01', 'tag-loc-factory', 'device-power-01', 'thing', 'tenant-default-001', 'admin-user-001'),
+('tb-loc-dev-device-power-01-a-power', 'tag-loc-a-power', 'device-power-01', 'thing', 'tenant-default-001', 'admin-user-001'),
+('tb-loc-dev-device-power-lighting', 'tag-loc-factory', 'device-power-lighting', 'thing', 'tenant-default-001', 'admin-user-001'),
+('tb-loc-dev-device-power-lighting-a-power', 'tag-loc-a-power', 'device-power-lighting', 'thing', 'tenant-default-001', 'admin-user-001'),
+('tb-loc-dev-device-power-hvac', 'tag-loc-factory', 'device-power-hvac', 'thing', 'tenant-default-001', 'admin-user-001'),
+('tb-loc-dev-device-power-hvac-a-power', 'tag-loc-a-power', 'device-power-hvac', 'thing', 'tenant-default-001', 'admin-user-001'),
+('tb-loc-dev-device-water-main', 'tag-loc-factory', 'device-water-main', 'thing', 'tenant-default-001', 'admin-user-001'),
+('tb-loc-dev-device-water-main-water-pump', 'tag-loc-water-pump', 'device-water-main', 'thing', 'tenant-default-001', 'admin-user-001'),
+('tb-loc-dev-device-water-zone-a', 'tag-loc-factory', 'device-water-zone-a', 'thing', 'tenant-default-001', 'admin-user-001'),
+('tb-loc-dev-device-water-zone-a-a-workshop', 'tag-loc-a-workshop', 'device-water-zone-a', 'thing', 'tenant-default-001', 'admin-user-001'),
+('tb-loc-dev-device-light-workshop', 'tag-loc-factory', 'device-light-workshop', 'thing', 'tenant-default-001', 'admin-user-001'),
+('tb-loc-dev-device-light-workshop-a-workshop', 'tag-loc-a-workshop', 'device-light-workshop', 'thing', 'tenant-default-001', 'admin-user-001'),
+('tb-loc-dev-device-light-corridor', 'tag-loc-factory', 'device-light-corridor', 'thing', 'tenant-default-001', 'admin-user-001'),
+('tb-loc-dev-device-light-corridor-a-corridor', 'tag-loc-a-corridor', 'device-light-corridor', 'thing', 'tenant-default-001', 'admin-user-001'),
+('tb-loc-dev-device-light-outdoor', 'tag-loc-factory', 'device-light-outdoor', 'thing', 'tenant-default-001', 'admin-user-001'),
+('tb-loc-dev-device-light-outdoor-outdoor', 'tag-loc-outdoor', 'device-light-outdoor', 'thing', 'tenant-default-001', 'admin-user-001'),
+('tb-loc-dev-device-light-warehouse', 'tag-loc-factory', 'device-light-warehouse', 'thing', 'tenant-default-001', 'admin-user-001'),
+('tb-loc-dev-device-light-warehouse-b-warehouse', 'tag-loc-b-warehouse', 'device-light-warehouse', 'thing', 'tenant-default-001', 'admin-user-001'),
+('tb-loc-dev-device-light-power', 'tag-loc-factory', 'device-light-power', 'thing', 'tenant-default-001', 'admin-user-001'),
+('tb-loc-dev-device-light-power-a-power', 'tag-loc-a-power', 'device-light-power', 'thing', 'tenant-default-001', 'admin-user-001'),
+('tb-loc-dev-device-fire-smoke-a', 'tag-loc-factory', 'device-fire-smoke-a', 'thing', 'tenant-default-001', 'admin-user-001'),
+('tb-loc-dev-device-fire-smoke-a-a-workshop', 'tag-loc-a-workshop', 'device-fire-smoke-a', 'thing', 'tenant-default-001', 'admin-user-001'),
+('tb-loc-dev-device-fire-heat-a', 'tag-loc-factory', 'device-fire-heat-a', 'thing', 'tenant-default-001', 'admin-user-001'),
+('tb-loc-dev-device-fire-heat-a-a-power', 'tag-loc-a-power', 'device-fire-heat-a', 'thing', 'tenant-default-001', 'admin-user-001'),
+('tb-loc-dev-device-fire-smoke-b', 'tag-loc-factory', 'device-fire-smoke-b', 'thing', 'tenant-default-001', 'admin-user-001'),
+('tb-loc-dev-device-fire-smoke-b-b-warehouse', 'tag-loc-b-warehouse', 'device-fire-smoke-b', 'thing', 'tenant-default-001', 'admin-user-001'),
+('tb-loc-dev-device-fire-heat-b', 'tag-loc-factory', 'device-fire-heat-b', 'thing', 'tenant-default-001', 'admin-user-001'),
+('tb-loc-dev-device-fire-heat-b-b-warehouse', 'tag-loc-b-warehouse', 'device-fire-heat-b', 'thing', 'tenant-default-001', 'admin-user-001'),
+('tb-loc-dev-device-security-entrance', 'tag-loc-factory', 'device-security-entrance', 'thing', 'tenant-default-001', 'admin-user-001'),
+('tb-loc-dev-device-security-entrance-outdoor', 'tag-loc-outdoor', 'device-security-entrance', 'thing', 'tenant-default-001', 'admin-user-001'),
+('tb-loc-dev-device-security-warehouse', 'tag-loc-factory', 'device-security-warehouse', 'thing', 'tenant-default-001', 'admin-user-001'),
+('tb-loc-dev-device-security-warehouse-b-warehouse', 'tag-loc-b-warehouse', 'device-security-warehouse', 'thing', 'tenant-default-001', 'admin-user-001'),
+('tb-loc-dev-device-access-entrance', 'tag-loc-factory', 'device-access-entrance', 'thing', 'tenant-default-001', 'admin-user-001'),
+('tb-loc-dev-device-access-entrance-a-building', 'tag-loc-a-building', 'device-access-entrance', 'thing', 'tenant-default-001', 'admin-user-001'),
+('tb-loc-dev-device-access-workshop', 'tag-loc-factory', 'device-access-workshop', 'thing', 'tenant-default-001', 'admin-user-001'),
+('tb-loc-dev-device-access-workshop-a-workshop', 'tag-loc-a-workshop', 'device-access-workshop', 'thing', 'tenant-default-001', 'admin-user-001'),
+('tb-loc-dev-device-access-b', 'tag-loc-factory', 'device-access-b', 'thing', 'tenant-default-001', 'admin-user-001'),
+('tb-loc-dev-device-access-b-b-warehouse', 'tag-loc-b-warehouse', 'device-access-b', 'thing', 'tenant-default-001', 'admin-user-001');
+
+-- 新设备告警规则（workspace 显式归属，避免仅靠 NULL 兼容）
+INSERT OR IGNORE INTO thing_alarm_rules (id, thing_id, property_id, rule_name, rule_type, condition_config, alarm_level, workspace_id, created_by) VALUES ('alarm-rule-012', 'device-env-03', 'prop-env03-temperature', '配电间高温告警', 'threshold', '{"operator": "gt", "value": 60}', 'critical', 'ws-default-001', 'admin-user-001');
+INSERT OR IGNORE INTO thing_alarm_rules (id, thing_id, property_id, rule_name, rule_type, condition_config, alarm_level, workspace_id, created_by) VALUES ('alarm-rule-013', 'device-env-04', 'prop-env04-temperature', '室外高温告警', 'threshold', '{"operator": "gt", "value": 42}', 'warning', 'ws-default-001', 'admin-user-001');
+INSERT OR IGNORE INTO thing_alarm_rules (id, thing_id, property_id, rule_name, rule_type, condition_config, alarm_level, workspace_id, created_by) VALUES ('alarm-rule-014', 'device-fire-smoke-b', 'prop-smokeb-smoke_density', '仓库烟雾火警', 'threshold', '{"operator": "gt", "value": 5}', 'critical', 'ws-default-001', 'admin-user-001');
+INSERT OR IGNORE INTO thing_alarm_rules (id, thing_id, property_id, rule_name, rule_type, condition_config, alarm_level, workspace_id, created_by) VALUES ('alarm-rule-015', 'device-fire-heat-b', 'prop-heatb-temperature', '仓库感温火警', 'threshold', '{"operator": "gt", "value": 70}', 'critical', 'ws-default-001', 'admin-user-001');
+INSERT OR IGNORE INTO thing_alarm_rules (id, thing_id, property_id, rule_name, rule_type, condition_config, alarm_level, workspace_id, created_by) VALUES ('alarm-rule-016', 'device-light-warehouse', 'prop-lightwh-power', '仓库照明功率过高', 'threshold', '{"operator": "gt", "value": 1500}', 'warning', 'ws-default-001', 'admin-user-001');
+
+-- 值守规则：冷库超温、烟雾、分区水压、仓库湿度（演示剧本会命中）
+INSERT OR IGNORE INTO watch_rules (id, workspace_id, kind, condition, persistent, timeout_secs, created_at, owner_task_id) VALUES ('watch-factory-cold', 'ws-default-001', 'property', '{"type":"property","thing_id":"device-cold-01","property":"temperature","op":"gt","value":8.0}', 1, 3600, datetime('now'), NULL);
+INSERT OR IGNORE INTO watch_rules (id, workspace_id, kind, condition, persistent, timeout_secs, created_at, owner_task_id) VALUES ('watch-factory-smoke', 'ws-default-001', 'property', '{"type":"property","thing_id":"device-fire-smoke-a","property":"smoke_density","op":"gt","value":5.0}', 1, 3600, datetime('now'), NULL);
+INSERT OR IGNORE INTO watch_rules (id, workspace_id, kind, condition, persistent, timeout_secs, created_at, owner_task_id) VALUES ('watch-factory-water-a', 'ws-default-001', 'property', '{"type":"property","thing_id":"device-water-zone-a","property":"pressure","op":"lt","value":0.15}', 1, 3600, datetime('now'), NULL);
+INSERT OR IGNORE INTO watch_rules (id, workspace_id, kind, condition, persistent, timeout_secs, created_at, owner_task_id) VALUES ('watch-factory-humidity', 'ws-default-001', 'property', '{"type":"property","thing_id":"device-env-02","property":"humidity","op":"gt","value":85.0}', 1, 3600, datetime('now'), NULL);

@@ -139,6 +139,13 @@ impl SessionStreamHub {
         self.notifier(workspace_id).notify_waiters();
     }
 
+    /// Subscribe a session-event tail to committed-write hints for one
+    /// workspace. The returned notifier has no payload; callers still read the
+    /// database and keep a bounded fallback interval for cross-process writers.
+    pub fn subscribe(&self, workspace_id: &str) -> Arc<Notify> {
+        self.notifier(workspace_id)
+    }
+
     pub fn metrics(&self) -> HarnessStreamMetrics {
         HarnessStreamMetrics {
             active_connections: self.connections.iter().map(|entry| *entry.value() as u64).sum(),
@@ -508,6 +515,7 @@ pub async fn stream_task(
 #[cfg(test)]
 mod tests {
     use std::sync::Arc;
+    use std::time::Duration;
 
     use chrono::Utc;
     use serde_json::json;
@@ -551,6 +559,17 @@ mod tests {
         .await
         .expect("append")
         .seq
+    }
+
+    #[tokio::test]
+    async fn subscribe_returns_a_notifier_that_committed_writes_can_wake() {
+        let hub = Arc::new(SessionStreamHub::default());
+        let notifier = hub.subscribe("ws-subscribe");
+        let waiter = notifier.notified();
+        hub.notify("ws-subscribe");
+        tokio::time::timeout(Duration::from_secs(1), waiter)
+            .await
+            .expect("committed-write hint must wake the tail");
     }
 
     #[tokio::test]

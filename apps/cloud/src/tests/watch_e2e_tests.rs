@@ -160,10 +160,6 @@ impl RecordingExecutor {
     fn len(&self) -> usize {
         self.wakes.lock().unwrap().len()
     }
-
-    fn snapshot(&self) -> Vec<EventWake> {
-        self.wakes.lock().unwrap().clone()
-    }
 }
 
 #[async_trait::async_trait]
@@ -342,15 +338,17 @@ async fn ledger_hit_count(pool: &sqlx::SqlitePool) -> i64 {
         .expect("count ledger hits")
 }
 
-/// spec §6 秒级唤醒断言：deadline 内轮询到目标 event wake 计数，返回实际
-/// 耗时（调用方在上报越限值后立即调用——计时起点即上报时刻）。
-async fn wait_wakes(wakes: &RecordingExecutor, want: usize, deadline: Duration) -> Duration {
+/// 记账断言：deadline 内轮询到目标 watch_hit 账本行数，返回实际耗时。
+async fn wait_ledger_hits(pool: &sqlx::SqlitePool, want: i64, deadline: Duration) -> Duration {
     let t0 = Instant::now();
     loop {
-        if wakes.len() == want {
+        if ledger_hit_count(pool).await == want {
             return t0.elapsed();
         }
-        assert!(t0.elapsed() < deadline, "超时等待 watch wake 数={want}（{deadline:?}）");
+        assert!(
+            t0.elapsed() < deadline,
+            "超时等待 watch_hit 账本行数={want}（{deadline:?}）"
+        );
         tokio::time::sleep(Duration::from_millis(20)).await;
     }
 }
@@ -379,14 +377,16 @@ fn auth_request(method: &str, uri: &str, token: &str, body: Option<Value>) -> Re
 // Value card
 // - 覆盖路径：真实 API 注册 watch（温度>30，persistent）→ 命令通道写穿 →
 //   共享管线读数越限 → WatchEngine 命中 → hub_ledger 落 watch_hit →
-//   session forwarder → TriggerRouter → WakeExecutor 收到 EventWake(watch)；
-//   重启重建装配 → watch 网从 watch_rules 重织 → 再越限再命中（值守无人工
-//   介入继续，账本可回放全程）。
+//   session forwarder → TriggerRouter 记账（不再单独开 turn，随下一次定时
+//   巡检消费）；重启重建装配 → watch 网从 watch_rules 重织 → 再越限再记账
+//   （值守无人工介入继续，账本可回放全程）。
 // - 真实回归场景：接线漏一环（写穿未进 engine / 事件未分发 / 转发未注册 /
-//   重织未跑）——值守规则静默不命中，用户以为有值守实际没有。
-// - 失败信号：2s 内无 watch wake、账本缺 watch_hit、重启后不再命中即断口。
+//   重织未跑）——值守规则静默不命中，用户以为有值守实际没有；或 watch 重新
+//   变成每命中开一轮 turn，巡检被事件唤醒淹没。
+// - 失败信号：2s 内账本无 watch_hit、出现单独的 watch turn、重启后不再
+//   命中即断口。
 #[tokio::test]
-async fn watch_hit_wakes_session_within_2s_and_restart_reweaves() {
+async fn watch_hit_records_ledger_and_restart_reweaves() {
     let (pool, _dir) = e2e_pool().await;
     let mut app_state = test_app_state_on_pool(pool.clone()).await;
     seed_scene(&pool, &app_state).await;
@@ -424,16 +424,12 @@ async fn watch_hit_wakes_session_within_2s_and_restart_reweaves() {
     wait_live_temp(&manager, "25").await;
     assert_eq!(stack.wakes.len(), 0, "未越限不得产生 watch wake");
 
-    // 越限：上报时刻起计时，2s 内 EventWake 到达 Session executor。
+    // 越限：只记账（随下一次定时巡检消费），不单独开 turn。
     ingest_temp(&cache_src, &app_state, "31").await;
-    let elapsed = wait_wakes(&stack.wakes, 1, Duration::from_secs(2)).await;
-    assert!(elapsed < Duration::from_secs(2), "秒级唤醒: {elapsed:?}");
-    let wake = stack.wakes.snapshot().remove(0);
-    assert_eq!(wake.workspace_id, WS);
-    assert_eq!(wake.trigger, "watch");
-    assert_eq!(wake.dedup_key.as_deref(), Some(format!("watch:{rule_id}").as_str()));
+    let elapsed = wait_ledger_hits(&pool, 1, Duration::from_secs(2)).await;
+    assert!(elapsed < Duration::from_secs(2), "秒级记账: {elapsed:?}");
+    assert_eq!(stack.wakes.len(), 0, "watch 命中不得单独开 turn");
 
-    // 账本可回放：watch_hit 落行（rule_id 对得上）。
     assert_eq!(ledger_hit_count(&pool).await, 1, "账本落 watch_hit 一行");
     let (payload,): (String,) = sqlx::query_as(
         "SELECT payload FROM hub_ledger WHERE workspace_id = ? AND kind = 'watch_hit' ORDER BY rowid DESC LIMIT 1",
@@ -478,10 +474,10 @@ async fn watch_hit_wakes_session_within_2s_and_restart_reweaves() {
     ingest_temp(&cache_src, &app_state, "25").await;
     wait_live_temp(&manager2, "25").await;
 
-    // 再越限：重织的 watch 网 2s 内再次唤醒（值守无人工介入继续）。
+    // 再越限：重织的 watch 网 2s 内再次记账（仍不单独开 turn）。
     ingest_temp(&cache_src, &app_state, "32").await;
-    wait_wakes(&stack2.wakes, 1, Duration::from_secs(2)).await;
-    assert_eq!(stack2.wakes.snapshot()[0].trigger, "watch");
+    wait_ledger_hits(&pool, 2, Duration::from_secs(2)).await;
+    assert_eq!(stack2.wakes.len(), 0, "重启后 watch 命中仍不单独开 turn");
     assert_eq!(ledger_hit_count(&pool).await, 2, "账本可回放全程：两次命中各一行");
 
     stack2.retire().await;

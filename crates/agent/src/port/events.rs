@@ -7,6 +7,39 @@ pub struct RetryNotice {
     pub error: String,
 }
 
+/// Acknowledgement for a durable tool-dispatch checkpoint.
+#[derive(Debug, Clone)]
+pub struct ToolCheckpointAck {
+    done: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    notify: std::sync::Arc<tokio::sync::Notify>,
+}
+
+impl ToolCheckpointAck {
+    pub fn new() -> Self {
+        Self {
+            done: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            notify: std::sync::Arc::new(tokio::sync::Notify::new()),
+        }
+    }
+    pub fn complete(&self, persisted: bool) {
+        self.done.store(persisted, std::sync::atomic::Ordering::Release);
+        self.notify.notify_waiters();
+    }
+    pub async fn wait(&self) -> bool {
+        let notified = self.notify.notified();
+        if self.done.load(std::sync::atomic::Ordering::Acquire) {
+            return true;
+        }
+        notified.await;
+        self.done.load(std::sync::atomic::Ordering::Acquire)
+    }
+}
+impl Default for ToolCheckpointAck {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// Streaming events emitted during an agent turn.
 ///
 /// Consumers that pattern-match on [`TurnEvent::ToolCall`] or
@@ -26,6 +59,11 @@ pub enum TurnEvent {
         args: serde_json::Value,
     },
     /// A tool has returned a result.
+    ToolCheckpoint {
+        id: String,
+        name: String,
+        ack: ToolCheckpointAck,
+    },
     ToolResult {
         /// Stable correlation ID shared with the originating [`TurnEvent::ToolCall`].
         id: String,

@@ -42,7 +42,7 @@ impl InjectMode {
 pub struct LoadedSkill {
     /// File stem / `name:` frontmatter — the id used by `get_skill`.
     pub name: String,
-    /// Display title (first `# ` heading, falling back to `name`).
+    /// Display title (`title:` frontmatter, then first `# ` heading, then `name`).
     pub title: String,
     /// One-line description for the index.
     pub description: String,
@@ -136,10 +136,12 @@ pub fn parse_skill(file_stem: &str, content: &str) -> Option<LoadedSkill> {
 
     let trigger = fm_str("trigger").map(|t| if t.starts_with('/') { t } else { format!("/{}", t) });
 
-    let title = body
-        .lines()
-        .find(|l| l.starts_with("# "))
-        .map(|l| l.trim_start_matches("# ").trim().to_string())
+    let title = fm_str("title")
+        .or_else(|| {
+            body.lines()
+                .find(|line| line.starts_with("# "))
+                .map(|line| line.trim_start_matches("# ").trim().to_string())
+        })
         .unwrap_or_else(|| name.clone());
 
     let description = fm_str("description").unwrap_or_else(|| {
@@ -193,7 +195,9 @@ pub fn build_skill_index_prompt(skills: &[LoadedSkill]) -> String {
         out.push_str("\n\n");
     }
     if !index.is_empty() {
-        out.push_str("以下技能可用,使用 `get_skill` 工具按名称加载完整内容:\n\n");
+        out.push_str(
+            "以下技能可用。按 TURN_BRIEF 顺序一次只加载一个；结算后 `complete_skill` 会直接返回下一个技能的正文:\n\n",
+        );
         for entry in &index {
             out.push_str(entry);
             out.push('\n');
@@ -275,6 +279,14 @@ mod tests {
         assert_eq!(s.trigger.as_deref(), Some("/workspace"));
         assert_eq!(s.title, "workspace Title");
         assert_eq!(s.description, "desc for workspace");
+    }
+
+    #[test]
+    fn frontmatter_title_overrides_heading() {
+        let content =
+            "---\nname: job-management\ntitle: 定时任务管理\ndescription: 管理任务\n---\n\n# Raw Heading\n\nbody";
+        let s = parse_skill("job-management", content).unwrap();
+        assert_eq!(s.title, "定时任务管理");
     }
 
     #[test]

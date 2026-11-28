@@ -204,6 +204,62 @@ fn harness_migrator() -> Migrator {
             include_str!("../migrations/20261119000003_harness_events_turn_index_shape.sql").into_sql_str(),
             false,
         ),
+        Migration::new(
+            20261120000001,
+            "harness_session_identity".into(),
+            MigrationType::Simple,
+            include_str!("../migrations/20261120000001_harness_session_identity.sql").into_sql_str(),
+            false,
+        ),
+        Migration::new(
+            20261120000002,
+            "harness_event_names_v2".into(),
+            MigrationType::Simple,
+            include_str!("../migrations/20261120000002_harness_event_names_v2.sql").into_sql_str(),
+            false,
+        ),
+        Migration::new(
+            20261120000003,
+            "harness_session_turns".into(),
+            MigrationType::Simple,
+            include_str!("../migrations/20261120000003_harness_session_turns.sql").into_sql_str(),
+            false,
+        ),
+        Migration::new(
+            20261120000004,
+            "harness_chunk_cleanup".into(),
+            MigrationType::Simple,
+            include_str!("../migrations/20261120000004_harness_chunk_cleanup.sql").into_sql_str(),
+            false,
+        ),
+        Migration::new(
+            20261120000005,
+            "harness_event_vocab_final".into(),
+            MigrationType::Simple,
+            include_str!("../migrations/20261120000005_harness_event_vocab_final.sql").into_sql_str(),
+            false,
+        ),
+        Migration::new(
+            20261120000006,
+            "harness_subagent_vocab".into(),
+            MigrationType::Simple,
+            include_str!("../migrations/20261120000006_harness_subagent_vocab.sql").into_sql_str(),
+            false,
+        ),
+        Migration::new(
+            20261121000001,
+            "session_projection_snapshots".into(),
+            MigrationType::Simple,
+            include_str!("../migrations/20261121000001_session_projection_snapshots.sql").into_sql_str(),
+            false,
+        ),
+        Migration::new(
+            20261121000002,
+            "session_projection_version".into(),
+            MigrationType::Simple,
+            include_str!("../migrations/20261121000002_session_projection_version.sql").into_sql_str(),
+            false,
+        ),
     ]);
     // Rollback/mixed-version workers must open workspaces that already contain
     // additive migrations unknown to their older binary, matching the platform

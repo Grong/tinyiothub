@@ -185,6 +185,7 @@ fn turn_event_to_chat_event(evt: &TurnEvent, run_id: &str, session_key: &str) ->
             delay_ms: notice.delay_ms,
             error: notice.error.clone(),
         },
+        TurnEvent::ToolCheckpoint { .. } => ChatEvent::Noop,
         TurnEvent::Usage { .. } => {
             // Usage events are informational only; filter these out downstream
             ChatEvent::Delta {
@@ -210,7 +211,9 @@ impl crate::domains::agent::session::TurnObserver for ChatEventObserver {
             return;
         }
         let chat = turn_event_to_chat_event(event, &self.run_id, &self.session_key);
-        let _ = self.tx.send(chat).await;
+        if !matches!(chat, ChatEvent::Noop) {
+            let _ = self.tx.send(chat).await;
+        }
     }
 }
 
@@ -249,13 +252,12 @@ pub async fn send_message(
                 } else {
                     hit.cleaned_message
                 };
-                let version = skills
-                    .iter()
-                    .find(|skill| skill.name == hit.name)
-                    .map(|skill| skill.version.clone())
-                    .unwrap_or_default();
+                let skill = skills.iter().find(|skill| skill.name == hit.name);
+                let version = skill.map(|skill| skill.version.clone()).unwrap_or_default();
+                let title = skill.map(|skill| skill.title.clone()).unwrap_or_default();
+                let description = skill.map(|skill| skill.description.clone()).unwrap_or_default();
                 let turn = tinyiothub_skills::wrap_injected_skill(&hit.name, &hit.body, &user_text);
-                (turn, user_text, Some((hit.name, version)))
+                (turn, user_text, Some((hit.name, version, title, description)))
             }
             None => (message.to_string(), message.to_string(), None),
         }
@@ -372,18 +374,18 @@ pub async fn send_message(
                 .events
                 .emit(crate::domains::agent::session::session_event(
                     &context,
-                    "session.started",
+                    "session/start",
                     crate::domains::agent::session::session_started_payload(&session_key, "chat"),
                 ))
                 .await
         {
-            tracing::warn!(%error, %session_key, "Failed to persist session.started event");
+            tracing::warn!(%error, %session_key, "Failed to persist session/start event");
         }
         if let Err(error) = session_runtime
             .events
             .emit(crate::domains::agent::session::session_event(
                 &context,
-                "message.created",
+                "user/message",
                 serde_json::json!({
                     "messageId": uuid::Uuid::new_v4().to_string(),
                     "role": "user",
@@ -394,21 +396,23 @@ pub async fn send_message(
         {
             tracing::warn!(%error, %session_key, "Failed to persist user session event");
         }
-        if let Some((skill_name, skill_version)) = trigger_skill
+        if let Some((skill_name, skill_version, skill_title, skill_description)) = trigger_skill
             && let Err(error) = session_runtime
                 .events
                 .emit(crate::domains::agent::session::session_event(
                     &context,
-                    "skill.loaded",
+                    "skill/loaded",
                     serde_json::json!({
                         "skillId": skill_name,
                         "name": skill_name,
+                        "title": skill_title,
+                        "description": skill_description,
                         "version": skill_version
                     }),
                 ))
                 .await
         {
-            tracing::warn!(%error, %session_key, "Failed to persist skill.loaded event");
+            tracing::warn!(%error, %session_key, "Failed to persist skill/loaded event");
         }
 
         let observer: Arc<dyn crate::domains::agent::session::TurnObserver> = Arc::new(ChatEventObserver {

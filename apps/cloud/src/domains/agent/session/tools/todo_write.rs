@@ -45,7 +45,7 @@ impl TodoWriteTool {
         }
         let todos = self.store.replace(&context.session_key, list.todos.clone());
         self.events
-            .emit(session_event(&context, "todo.updated", json!({ "todos": &todos })))
+            .emit(session_event(&context, "todo/write", json!({ "todos": &todos })))
             .await?;
         Ok(ToolResult {
             success: true,
@@ -82,7 +82,7 @@ impl Tool for TodoWriteTool {
     }
 
     fn description(&self) -> &str {
-        "Create or replace the session todo list. For multi-step work, call it before starting and after every step: mark finished items completed and the next item in_progress. Keep at most one item in_progress; mark every item completed before the final response."
+        "Create or replace the session todo list. For a turn with multiple skills, you may start with one item per skill as a placeholder. Do not guess steps before loading a skill: after loading a skill, replace its placeholder with one item per concrete step from its instructions and keep the other skill items unchanged. Track one active skill at a time. Mark finished items completed and the next item in_progress; keep at most one item in_progress. Do not write a final conclusion while any item is pending or in_progress: finish it, or replace the list without obsolete items first. If an item is genuinely blocked, keep its real status and state the blocker explicitly; never mark it completed."
     }
 
     fn parameters_schema(&self) -> serde_json::Value {
@@ -100,7 +100,7 @@ impl Tool for TodoWriteTool {
                             "status": {"type": "string", "enum": ["pending", "in_progress", "completed"]},
                             "activeForm": {"type": "string"}
                         },
-                        "required": ["content", "status", "activeForm"]
+                        "required": ["content", "status"]
                     }
                 }
             },
@@ -118,6 +118,7 @@ mod tests {
     use super::*;
     use crate::domains::agent::session::context::TurnContext;
     use crate::domains::agent::session::events::test_support::RecordingSink;
+    use crate::domains::agent::session::types::{Todo, TodoStatus};
     use serde_json::json;
     use std::sync::Arc;
 
@@ -130,9 +131,9 @@ mod tests {
             Arc::new(RecordingSink::default()),
         );
 
-        assert!(tool.description().contains("after every step"));
+        assert!(tool.description().contains("one item per concrete step"));
         assert!(tool.description().contains("at most one item in_progress"));
-        assert!(tool.description().contains("before the final response"));
+        assert!(tool.description().contains("Do not write a final conclusion"));
     }
 
     #[tokio::test]
@@ -164,7 +165,7 @@ mod tests {
         assert!(result.success);
         assert_eq!(store.get("agent:ws:agent_main/s1").len(), 1);
         let events = sink.events.lock().await;
-        assert_eq!(events.last().unwrap().event_type, "todo.updated");
+        assert_eq!(events.last().unwrap().event_type, "todo/write");
         assert_eq!(
             events.last().unwrap().payload_json["todos"][0]["content"],
             "检查离线事件"
@@ -198,6 +199,59 @@ mod tests {
 
         assert!(!result.success);
         assert!(store.get("agent:ws:agent_main/s1").is_empty());
+    }
+
+    #[tokio::test]
+    async fn todo_write_accepts_batch_completion_like_a_whole_list_snapshot() {
+        let contexts = Arc::new(TurnContextRegistry::default());
+        let store = Arc::new(TodoStore::default());
+        let sink = Arc::new(RecordingSink::default());
+        let tool = TodoWriteTool::new("agent_main".to_string(), contexts.clone(), store.clone(), sink);
+        let ctx = TurnContext::new(
+            "ws".into(),
+            "agent_main".into(),
+            "agent:ws:agent_main/s1".into(),
+            "run1".into(),
+            0,
+        );
+        let _guard = contexts.set(ctx);
+        store.replace(
+            "agent:ws:agent_main/s1",
+            vec![
+                Todo {
+                    content: "a".into(),
+                    status: TodoStatus::Completed,
+                    active_form: String::new(),
+                },
+                Todo {
+                    content: "b".into(),
+                    status: TodoStatus::InProgress,
+                    active_form: String::new(),
+                },
+                Todo {
+                    content: "c".into(),
+                    status: TodoStatus::Pending,
+                    active_form: String::new(),
+                },
+            ],
+        );
+
+        let result = tool
+            .execute(json!({"todos": [
+                {"content": "a", "status": "completed"},
+                {"content": "b", "status": "completed"},
+                {"content": "c", "status": "completed"}
+            ]}))
+            .await
+            .unwrap();
+
+        assert!(result.success);
+        assert!(
+            store
+                .get("agent:ws:agent_main/s1")
+                .iter()
+                .all(|todo| todo.status == TodoStatus::Completed)
+        );
     }
 
     #[tokio::test]

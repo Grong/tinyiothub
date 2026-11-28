@@ -343,6 +343,16 @@ pub async fn append_ledger(
     Ok(())
 }
 
+/// Retention delete for `hub_ledger` telemetry. The ledger keeps only
+/// watch/cancel/media facts now; old rows are not needed for replay.
+pub async fn delete_ledger_before(pool: &SqlitePool, cutoff_rfc3339: &str) -> Result<u64, sqlx::Error> {
+    let result = sqlx::query("DELETE FROM hub_ledger WHERE ts < ?")
+        .bind(cutoff_rfc3339)
+        .execute(pool)
+        .await?;
+    Ok(result.rows_affected())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -795,5 +805,24 @@ mod tests {
         assert_eq!(t1.len(), 2, "每字段一条：温度+湿度");
         let temp = t1.iter().find(|r| r.payload.contains("温度")).expect("温度");
         assert!(temp.payload.contains("\"new\":\"22\""), "必须取截止前最新值");
+    }
+    #[tokio::test]
+    async fn delete_ledger_before_removes_only_older_rows() {
+        let pool = test_pool().await;
+        append_ledger(&pool, "ws1", "2026-01-01T00:00:00Z", "watch_hit", Some("t1"), "{}")
+            .await
+            .unwrap();
+        append_ledger(&pool, "ws1", "2026-06-01T00:00:00Z", "call_cancelled", Some("t1"), "{}")
+            .await
+            .unwrap();
+
+        let deleted = delete_ledger_before(&pool, "2026-03-01T00:00:00Z").await.unwrap();
+        assert_eq!(deleted, 1);
+
+        let remaining: Vec<String> = sqlx::query_scalar("SELECT kind FROM hub_ledger ORDER BY id")
+            .fetch_all(&pool)
+            .await
+            .unwrap();
+        assert_eq!(remaining, vec!["call_cancelled".to_string()]);
     }
 }

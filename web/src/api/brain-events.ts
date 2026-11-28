@@ -5,12 +5,11 @@
  * apiGet/apiPost 返回 ApiResponse<T>，在此解包 `.result`。
  * 列表行无 evidence——证据懒加载，展开才调 detail(id)。
  *
- * 变更操作路由（P0 不改端点）：alarm 源走 /judgments（反馈/拒绝；批准执行已
- * 退役 410），patrol 源走 /workspaces/{id}/heartbeat/approvals——approve 仅
- * patrol，reject 两源都在此按 ev.source 分支。
+ * 变更操作路由：alarm 源走 /judgments（反馈/拒绝；批准执行已退役 410）。
+ * patrol 提案审批已随 AI 工作台下线删除，巡检 run 不再产提案。
  */
 
-import { apiGet, apiPost, getWorkspaceId } from './client.js';
+import { apiGet } from './client.js';
 import { judgmentApi } from './judgments.js';
 import type { TraceEntry } from './agent-runs.js';
 
@@ -88,17 +87,6 @@ export function brainEventTargetId(ev: BrainEvent): string {
   return idx >= 0 ? ev.id.slice(idx + 1) : ev.id;
 }
 
-/** patrol 源提案审批走 heartbeat 域（工作区路径参数来自会话上下文）。
- *  X2：reject 带必填原因（落 content.dismiss_reason）。 */
-async function postPatrolApproval(proposalId: string, action: 'approve' | 'reject', reason?: string): Promise<void> {
-  const ws = getWorkspaceId();
-  if (!ws) throw new Error('缺少工作区上下文');
-  await apiPost(
-    `/workspaces/${encodeURIComponent(ws)}/heartbeat/approvals/${encodeURIComponent(proposalId)}/${action}`,
-    action === 'reject' ? { reason: reason ?? '' } : {},
-  );
-}
-
 export const brainEventApi = {
   async list(tab: BrainEventTab = 'needs_you', before?: string, limit = 20): Promise<BrainEvent[]> {
     const params: Record<string, string> = { tab, limit: String(limit) };
@@ -116,23 +104,9 @@ export const brainEventApi = {
     return unwrap(await apiGet<BrainEventDetail>(`/brain-events/${encodeURIComponent(id)}`));
   },
 
-  /** 批准：仅 patrol 源提案可用（/heartbeat/approvals/{pid}/approve）。
-   *  alarm 判断执行已退役（/judgments/{id}/approve → 410），处置在 Assistant 会话完成。 */
-  async approve(ev: BrainEvent): Promise<void> {
-    if (ev.source === 'patrol') {
-      await postPatrolApproval(brainEventTargetId(ev), 'approve');
-      return;
-    }
-    throw new Error('判断执行已退役，请在 Assistant 会话中确认设备写操作');
-  },
-
-  /** 拒绝：alarm 源 → /judgments/{id}/reject（必填原因，X5：落 dismissed 不开工单）；
-   *  patrol 源 → /heartbeat/approvals/{pid}/reject（X2：必填原因，落 content.dismiss_reason）。 */
+  /** 拒绝：alarm 源 → /judgments/{id}/reject（必填原因，X5：落 dismissed 不开工单）。
+   *  patrol 提案审批已随 AI 工作台下线删除。 */
   async reject(ev: BrainEvent, reason?: string): Promise<void> {
-    if (ev.source === 'patrol') {
-      await postPatrolApproval(brainEventTargetId(ev), 'reject', reason);
-      return;
-    }
     await judgmentApi.reject(brainEventTargetId(ev), reason ?? '');
   },
 };

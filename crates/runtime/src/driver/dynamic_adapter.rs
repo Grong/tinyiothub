@@ -9,7 +9,7 @@ use libloading::Library;
 use tinyiothub_core::driver::CancelToken;
 use tinyiothub_core::driver::declaration::DeviceDeclaration;
 use tinyiothub_core::driver::dynamic::{CancelHandle, DriverDone, DriverVTableV2};
-use tinyiothub_core::driver::{ResultValue, ThingDriver};
+use tinyiothub_core::driver::{CommandExecution, ResultValue, ThingDriver};
 use tinyiothub_core::error::Error;
 use tinyiothub_core::media::SourceItem;
 use tinyiothub_core::models::thing::Thing;
@@ -451,6 +451,36 @@ impl ThingDriver for DynamicThingDriver {
 
         serde_json::from_str(&result_json)
             .map_err(|e| Error::DriverError(format!("execute_command JSON parse error: {e}")))
+    }
+
+    fn execute_command_with_result(
+        &mut self,
+        cmd: &ThingCommand,
+        cancel: &CancelToken,
+    ) -> Result<CommandExecution, Error> {
+        if cancel.is_cancelled() {
+            return Err(Error::Cancelled);
+        }
+        let config_c = self.config_json()?;
+        let cmd_json =
+            serde_json::to_string(cmd).map_err(|e| Error::DriverError(format!("command serialize error: {e}")))?;
+        let cmd_c =
+            std::ffi::CString::new(cmd_json).map_err(|e| Error::DriverError(format!("invalid command JSON: {e}")))?;
+        let result_json = self.call(
+            |handle, done, user_data| {
+                (self.vtable.execute_async)(self.ctx, config_c.as_ptr(), cmd_c.as_ptr(), handle, done, user_data)
+            },
+            cancel,
+        )?;
+        let value: serde_json::Value = serde_json::from_str(&result_json)
+            .map_err(|e| Error::DriverError(format!("execute_command JSON parse error: {e}")))?;
+        let success = value.as_bool().unwrap_or(true);
+        Ok(CommandExecution {
+            success,
+            cancelled: false,
+            error: None,
+            result: Some(value),
+        })
     }
 
     fn set_demand(&mut self, sources: &[String]) {

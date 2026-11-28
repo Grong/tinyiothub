@@ -47,17 +47,3 @@ impl HeartbeatSignal {
         }
     }
 }
-#[derive(Debug, Clone)]
-pub struct HeartbeatConfig {
-    pub enabled: bool,
-    pub interval_minutes: u32,
-}
-
-impl Default for HeartbeatConfig {
-    fn default() -> Self {
-        Self {
-            enabled: true,
-            interval_minutes: 15,
-        }
-    }
-}

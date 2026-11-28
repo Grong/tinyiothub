@@ -4,10 +4,13 @@ import { getWorkspaceId } from '../../api/client.js';
 import {
   connectSessionEvents,
   fetchSessionEvents,
-  fetchSessionTodos,
+  fetchSessionProjection,
   listChatSessions,
   updateSessionPermission,
+  getWorkspacePermissionPolicy,
+  updateWorkspacePermissionPolicy,
   type HudSnapshot,
+  type WorkspacePermissionPolicy,
   type SessionSummary,
 } from '../../api/assistant.js';
 import {
@@ -18,6 +21,7 @@ import {
   type ChatState,
 } from '../controllers/chat.js';
 import { resolveSessionKey } from '../shared/session-key.js';
+import '../chat/task-plan-panel.js';
 import {
   TimelineModel,
   timelineFromHistory,
@@ -65,6 +69,7 @@ export class ChatView extends LitElement {
   @state() private loading = true;
   @state() private error = '';
   @state() private permissionMode: PermissionMode = 'ask';
+  private workspacePolicy: WorkspacePermissionPolicy | null = null;
   @state() private drawerOpen = false;
   @state() private activeSessions = 0;
   @state() private activeSessionList: SessionSummary[] = [];
@@ -77,7 +82,7 @@ export class ChatView extends LitElement {
     this.handleA2uiAction(functionId, data),
   );
   private a2uiHydrated = false;
-  private stickToBottom = true;
+  @state() private stickToBottom = true;
   private threadObserver: ResizeObserver | null = null;
   private historyBefore: number | null = null;
   private historyHasMore = false;
@@ -176,6 +181,11 @@ export class ChatView extends LitElement {
           this.timeline.ingestEvent(event);
           this.requestUpdate();
         },
+        onLive: (frame) => {
+          if (this.sessionKey !== sessionKey) return;
+          this.timeline.applyLive(frame);
+          this.requestUpdate();
+        },
         onError: (error) => {
           if (this.sessionKey !== sessionKey) return;
           this.error = error.message;
@@ -189,16 +199,17 @@ export class ChatView extends LitElement {
     const key = sessionKey;
     const chatState = this.chatState;
     try {
-      const page = await fetchSessionEvents(key, 0, 200, { turns: 5 });
+      const [page, projection] = await Promise.all([
+        fetchSessionEvents(key, 0, 200, { turns: 5 }),
+        fetchSessionProjection(key).catch(() => null),
+      ]);
       if (key !== this.sessionKey) return;
       this.timeline.ingest(page);
+      if (projection?.turn?.todos) this.timeline.todos = projection.turn.todos;
       if (initializeHistory) {
         this.historyBefore = page.nextBefore ?? null;
         this.historyHasMore = page.hasMore ?? false;
       }
-      const todos = await fetchSessionTodos(key);
-      if (key !== this.sessionKey) return;
-      if (todos.length > 0 && this.timeline.todos.length === 0) this.timeline.todos = todos;
       if (chatState && !this.a2uiHydrated) {
         await loadChatHistory(chatState);
         if (key !== this.sessionKey) return;
@@ -330,8 +341,25 @@ export class ChatView extends LitElement {
       if (mode === 'read_only' || mode === 'ask' || mode === 'full_access') {
         this.permissionMode = mode;
       }
+      await this.syncWorkspacePolicy(current.sessionKey);
     } catch {
       // 读取失败保持当前值；发送/审批仍受后端会话模式约束。
+    }
+  }
+
+  private async syncWorkspacePolicy(sessionKey: string): Promise<void> {
+    const policy = await getWorkspacePermissionPolicy(this.workspaceId).catch(() => null);
+    if (!policy) return;
+    this.workspacePolicy = policy;
+    const mode = policy.permissionMode;
+    if (mode !== 'read_only' && mode !== 'ask' && mode !== 'full_access') return;
+    if (mode === this.permissionMode) return;
+    const previous = this.permissionMode;
+    this.permissionMode = mode;
+    try {
+      await updateSessionPermission(sessionKey, mode);
+    } catch {
+      this.permissionMode = previous;
     }
   }
 
@@ -341,6 +369,18 @@ export class ChatView extends LitElement {
     const previous = this.permissionMode;
     this.permissionMode = mode;
     try {
+      try {
+        const policy = this.workspacePolicy ?? (await getWorkspacePermissionPolicy(this.workspaceId));
+        if (policy) {
+          this.workspacePolicy = await updateWorkspacePermissionPolicy(this.workspaceId, {
+            ...policy,
+            permissionMode: mode,
+          }) ?? { ...policy, permissionMode: mode };
+        }
+      } catch {
+        // Non-admin chat may not be allowed to edit workspace policy; the
+        // session override still works and the global tab remains admin-only.
+      }
       await updateSessionPermission(key, mode);
       if (this.sessionKey !== key) return;
       this.refreshDrawer();
@@ -433,9 +473,21 @@ export class ChatView extends LitElement {
     `;
   }
 
+  private turnRunning(): boolean {
+    return (
+      this.sending ||
+      this.timeline.blocks.some((block) => block.kind === 'turn' && block.status === 'running')
+    );
+  }
+
   private renderComposer() {
     const fullAccess = this.permissionMode === 'full_access';
     return html`
+      ${
+        this.stickToBottom && this.timeline.todos.some((todo) => todo.status !== 'completed')
+          ? html`<task-plan-panel .todos=${this.timeline.todos} ?running=${this.turnRunning()}></task-plan-panel>`
+          : nothing
+      }
       <div class="composer-dock">
         <textarea
           class="composer-input chat-input"

@@ -130,7 +130,7 @@ export class StoryAchievements extends LitElement {
           ? html`<div class="ach-needs">
               <span class="ach-needs__dot" aria-hidden="true"></span>
               还有 ${today.needsYou} 件需要你确认
-              <a class="ach-needs__link" href="/dispositions">去处理</a>
+              <a class="ach-needs__link" href="/chat">去处理</a>
             </div>`
           : html`<div class="ach-clear">今天没有需要你介入的例外</div>`
       }

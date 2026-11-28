@@ -154,7 +154,16 @@ impl McpState {
                 content: format!("Current value: {}", value),
                 format: TextFormat::Plain,
             }],
-        );
+        )
+        .with_metadata(
+            "property_name".to_string(),
+            serde_json::Value::String(property.name.clone()),
+        )
+        .with_metadata(
+            "property_display_name".to_string(),
+            serde_json::Value::String(property.display_name.clone().unwrap_or_else(|| property.name.clone())),
+        )
+        .with_metadata("value".to_string(), serde_json::Value::String(value.to_string()));
 
         let event = tinyiothub_core::models::event::Event::new_property_change_event(
             thing_id.to_string(),

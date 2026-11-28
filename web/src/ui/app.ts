@@ -31,7 +31,6 @@ const lazyViews: Record<string, () => Promise<void>> = {
   things: () => import('./views/things.js').then(() => {}),
   alarms: () => import('./views/alarms.js').then(() => {}),
   tickets: () => import('./views/tickets.js').then(() => {}),
-  dispositions: () => import('./views/dispositions.js').then(() => {}),
   events: () => import('./views/events.js').then(() => {}),
   monitoring: () => import('./views/monitoring.js').then(() => {}),
   users: () => import('./views/users.js').then(() => {}),
@@ -46,8 +45,7 @@ const lazyViews: Record<string, () => Promise<void>> = {
   'memory-dashboard': () => import('./views/memory-dashboard.js').then(() => {}),
   workspace: () => import('./views/workspace.js').then(() => {}),
   story: () => import('./views/story.js').then(() => {}),
-  'ai-ops': () => import('./views/ai-ops.js').then(() => {}),
-  'run-detail': () => import('./views/run-detail.js').then(() => {}),
+  'story-map': () => import('./views/story-map.js').then(() => {}),
 };
 
 interface NavItem {
@@ -106,11 +104,6 @@ const NAV_GROUPS: NavGroup[] = [
         icon: 'M9 5H7a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2h-2M9 5a2 2 0 0 0 2 2h2a2 2 0 0 0 2-2M9 5a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2',
       },
       {
-        route: 'dispositions',
-        label: 'AI 工作台',
-        icon: 'M12 2a10 10 0 1 0 10 10A10 10 0 0 0 12 2zm-1 5h2v6h-2zm0 8h2v2h-2z',
-      },
-      {
         route: 'events',
         label: '事件日志',
         icon: 'M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z',
@@ -143,14 +136,14 @@ const NAV_GROUPS: NavGroup[] = [
         icon: 'M1 12s4-8 11-8 11 8 11 8-4 8-11 8S1 12 1 12zm11 3a3 3 0 1 0 0-6 3 3 0 0 0 0 6z',
       },
       {
+        route: 'story-map',
+        label: 'AI 流水',
+        icon: 'M4 6h16M4 12h10M4 18h6',
+      },
+      {
         route: 'chat',
         label: 'AI 助手',
         icon: 'M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z',
-      },
-      {
-        route: 'ai-ops',
-        label: 'AI 运维',
-        icon: 'M12 2a10 10 0 1 0 10 10A10 10 0 0 0 12 2zm0 18a8 8 0 1 1 8-8 8 8 0 0 1-8 8zm1-13v5.59l4.29 4.3-1.42 1.42-5-5V7h2z',
       },
     ],
   },
@@ -186,12 +179,8 @@ export class TinyIoTHubApp extends LitElement {
   @state() userRole = '';
   @state() loadingRoute: string | null = null;
   @state() loadError: string | null = null;
-  /** T13：run 详情页 hash 路由参数（#/ai-ops/runs/{id}；id 容忍冒号如 patrol:p1） */
-  @state() runDetailId = '';
   /** Canonical `#/assistant` hash state (session key + timeline focus). */
   @state() assistantRoute: AssistantHashState | null = null;
-  /** E4：处置中心未读角标（needsYou 计数；「例外响亮」的前提是例外能到人） */
-  @state() dispositionNeedsYou = 0;
 
   private loadSeq = 0;
   private themeMediaQuery: MediaQueryList | null = null;
@@ -221,27 +210,10 @@ export class TinyIoTHubApp extends LitElement {
     requestAnimationFrame(() => {
       document.documentElement.dispatchEvent(new CustomEvent('app-ready'));
     });
-    // E4：处置中心角标轮询（60s；SSE 只覆盖在线用户，轮询保证回来后可见）
-    this.pollDispositionBadge();
-    this.dispositionBadgeTimer = window.setInterval(() => this.pollDispositionBadge(), 60_000);
-  }
-
-  private dispositionBadgeTimer: number | null = null;
-
-  private async pollDispositionBadge() {
-    if (!this.isAuthenticated) return;
-    try {
-      const { judgmentApi } = await import('../api/judgments.js');
-      const summary = await judgmentApi.summary();
-      this.dispositionNeedsYou = summary.needsYou;
-    } catch {
-      // 角标失败静默（下一轮再试；不打扰主流程）
-    }
   }
 
   disconnectedCallback() {
     super.disconnectedCallback();
-    if (this.dispositionBadgeTimer !== null) window.clearInterval(this.dispositionBadgeTimer);
     window.removeEventListener('popstate', this.boundHandleRoute);
     window.removeEventListener('hashchange', this.boundHandleRoute);
     window.removeEventListener('auth-error', this.handleAuthError);
@@ -365,22 +337,24 @@ export class TinyIoTHubApp extends LitElement {
     }
     this.assistantRoute = null;
 
-    // T13：hash 路由 #/ai-ops/runs/{id}（卡片层「查看完整轨迹」链接）。
-    // id 容忍冒号（patrol 提案兜底用 brain event id，如 patrol:p1——T12 评审 M-1）。
-    const runMatch = window.location.hash.match(/^#\/ai-ops\/runs\/(.+)$/);
-    if (runMatch) {
+    // ai-ops / dispositions 页面已下线：旧书签（含 run 详情深链）落 AI 纪实。
+    const legacyAiUi = window.location.hash.match(/^#\/(?:ai-ops|dispositions)(?:\/.*)?$/);
+    if (legacyAiUi) {
       if (!this.isAuthenticated) {
         this.navigate('login');
         return;
       }
-      this.currentRoute = 'run-detail';
-      this.runDetailId = runMatch[1];
-      this.syncSeo();
-      this._ensureViewLoaded('run-detail');
+      this.navigate('story');
       return;
     }
 
     const path = window.location.pathname.slice(1) || '';
+
+    // ai-ops / dispositions 页面已下线：旧路径重定向到 AI 纪实。
+    if (path === 'ai-ops' || path === 'dispositions') {
+      this.navigate('story');
+      return;
+    }
 
     // Redirect old /devices routes to /things
     if (path === 'devices') {
@@ -471,7 +445,6 @@ export class TinyIoTHubApp extends LitElement {
       things: '物列表',
       alarms: '告警中心',
       tickets: '工单',
-      dispositions: 'AI 工作台',
       events: '事件日志',
       monitoring: '系统监控',
       users: '用户管理',
@@ -480,11 +453,11 @@ export class TinyIoTHubApp extends LitElement {
       'driver-health': '驱动健康',
       chat: 'AI 聊天',
       story: 'AI 工作纪实',
+      'story-map': 'AI 工作纪实 · 星云',
       agents: 'Agent 管理',
       cron: '定时任务',
       'memory-dashboard': '记忆面板',
       workspace: '工作空间',
-      'ai-ops': 'AI 运维',
     };
     // Handle /things/:id (detail page)
     if (this.currentRoute.startsWith('things/')) return '物详情';
@@ -498,7 +471,6 @@ export class TinyIoTHubApp extends LitElement {
       things: '浏览和管理物层级结构',
       alarms: '查看和管理物告警',
       tickets: '处理 Agent 升级的人工工单',
-      dispositions: '大脑的完整工作日志——巡检、报警理解、指令执行，你只处理例外',
       events: '查看物事件日志',
       monitoring: '系统资源和性能监控',
       users: '管理系统用户和权限',
@@ -507,11 +479,11 @@ export class TinyIoTHubApp extends LitElement {
       'driver-health': '查看已加载动态驱动的运行状态',
       chat: '与 AI Agent 对话',
       story: '巡检、处置和节能的完整过程——用业务语言看懂 AI 做了什么',
+      'story-map': '大脑、技能流水与卡片——一眼看懂 AI 这一轮做了什么',
       agents: '管理和配置 Agent',
       cron: '管理定时执行的任务和作业',
       'memory-dashboard': '查看和管理 Agent 记忆与反思队列',
       workspace: 'AI 驱动的可视化分析与 3D 场景画布',
-      'ai-ops': 'AI 自主运维 — 审批、历史、信任配置与知识管理',
     };
     if (this.currentRoute.startsWith('things/')) return '查看物属性、事件、动作和知识';
     return subs[this.currentRoute] || '';
@@ -556,8 +528,8 @@ export class TinyIoTHubApp extends LitElement {
         >
           ${this.renderNav()}
         </nav>
-        <div class="content ${this.currentRoute === 'workspace' ? 'content--workspace' : this.currentRoute === 'ai-ops' ? 'content--heartbeat' : this.currentRoute === 'chat' ? 'content--chat' : this.currentRoute === 'story' ? 'content--story' : ''}" role="main" id="main-content">
-          ${this.currentRoute.startsWith('things/') || this.currentRoute === 'chat' || this.currentRoute === 'story' || this.currentRoute === 'workspace' || this.currentRoute === 'ai-ops' || this.currentRoute === 'run-detail'
+        <div class="content ${this.currentRoute === 'workspace' ? 'content--workspace' : this.currentRoute === 'chat' ? 'content--chat' : this.currentRoute === 'story' ? 'content--story' : this.currentRoute === 'story-map' ? 'content--story-map' : ''}" role="main" id="main-content">
+          ${this.currentRoute.startsWith('things/') || this.currentRoute === 'chat' || this.currentRoute === 'story' || this.currentRoute === 'story-map' || this.currentRoute === 'workspace'
             ? nothing
             : html`
                 <section class="content-header">
@@ -682,9 +654,6 @@ export class TinyIoTHubApp extends LitElement {
                       </svg>
                     </span>
                     <span class="nav-item__text">${item.label}</span>
-                    ${item.route === 'dispositions' && this.dispositionNeedsYou > 0
-                      ? html`<span class="nav-item__badge" title="需要你处理的判断">${this.dispositionNeedsYou}</span>`
-                      : ''}
                   </a>
                 `,
               )}
@@ -716,7 +685,6 @@ export class TinyIoTHubApp extends LitElement {
     if (base === 'things') return html`<view-things></view-things>`;
     if (base === 'alarms') return html`<view-alarms></view-alarms>`;
     if (base === 'tickets') return html`<view-tickets></view-tickets>`;
-    if (base === 'dispositions') return html`<view-dispositions></view-dispositions>`;
     if (base === 'events') return html`<view-events></view-events>`;
     if (base === 'monitoring') return html`<view-monitoring></view-monitoring>`;
     if (base === 'users') return html`<view-users></view-users>`;
@@ -726,15 +694,13 @@ export class TinyIoTHubApp extends LitElement {
         .initialSessionKey=${this.assistantRoute?.sessionKey ?? ''}
       ></view-chat>`;
     if (base === 'story') return html`<view-story></view-story>`;
+    if (base === 'story-map') return html`<view-story-map></view-story-map>`;
     if (base === 'agents') return html`<view-agents></view-agents>`;
     if (base === 'cron') return html`<view-cron></view-cron>`;
     if (base === 'marketplace') return html`<view-marketplace></view-marketplace>`;
     if (base === 'driver-health') return html`<view-driver-health></view-driver-health>`;
     if (base === 'memory-dashboard') return html`<view-memory-dashboard></view-memory-dashboard>`;
     if (base === 'workspace') return html`<view-workspace></view-workspace>`;
-    if (base === 'ai-ops') return html`<view-ai-ops></view-ai-ops>`;
-    if (base === 'run-detail')
-      return html`<view-run-detail .runId=${this.runDetailId}></view-run-detail>`;
     return html`<div style="padding: 40px; text-align: center; color: var(--muted);">
       页面不存在
     </div>`;

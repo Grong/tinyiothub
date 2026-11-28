@@ -13,6 +13,7 @@ use sqlx::SqlitePool;
 use tinyiothub_agent::port::attribution::{Attributable, Role, ToolKind};
 use tinyiothub_agent::port::tool::{Tool, ToolResult};
 use tinyiothub_core::device_job::DeviceJobState;
+use tinyiothub_core::media::{DataKind, ImageInput};
 use tinyiothub_runtime::access::resources::ResourceResolver;
 use tinyiothub_skills::trust::ToolSafety;
 
@@ -40,6 +41,8 @@ pub struct InvokeActionTool {
     pub(crate) pool: SqlitePool,
     pub(crate) workspace_id: String,
     pub(crate) data_server: Option<Arc<tinyiothub_runtime::DataServer>>,
+    /// Media evidence sink for camera snapshots; None = no attachment.
+    pub(crate) evidence: Option<Arc<tinyiothub_runtime::media::evidence::EvidenceService>>,
     pub(crate) pending_actions: Arc<PendingActionStore>,
     /// E1 仲裁（Task 9）：每设备互斥锁注册表，跨 chat/自治 run 共享；
     /// None = 不仲裁（既有行为不变）。
@@ -80,6 +83,55 @@ impl InvokeActionTool {
         let run_id = context.run_id.clone();
         let sequence = context.action_counts.get(thing_id).copied().unwrap_or(0);
         Some((task_id, run_id, sequence))
+    }
+
+    /// Camera snapshot: read the simulator source and persist it as evidence,
+    /// so the tool result can carry a model/UI-viewable image attachment.
+    async fn snapshot_attachment(&self, thing_id: &str) -> Option<(Value, tinyiothub_core::media::MediaAttachment)> {
+        let evidence = self.evidence.as_ref()?;
+        let server = self.data_server.as_ref()?;
+        let items = server.read_sources(thing_id, vec!["snapshot".to_string()]).await.ok()?;
+        let item = items
+            .into_iter()
+            .find(|item| item.data_kind == DataKind::Image && item.media.is_some())?;
+        let media = item.media?;
+        let (task_id, run_id) = match &self.run_ctx {
+            Some(slot) => match slot.read().await.clone() {
+                Some(context) => {
+                    let context = context.read().await;
+                    (context.task_id.clone(), Some(context.run_id.clone()))
+                }
+                None => (None, None),
+            },
+            None => (None, None),
+        };
+        let reference = evidence
+            .put_image(ImageInput {
+                workspace_id: self.workspace_id.clone(),
+                task_id,
+                run_id,
+                tool_call_id: None,
+                job_id: None,
+                device_id: thing_id.to_string(),
+                source_id: item.source.clone(),
+                source_seq: item.seq,
+                media_time: item.time,
+                mime: media.mime.clone(),
+                bytes: media.bytes.clone(),
+                max_age: std::time::Duration::from_secs(60),
+            })
+            .await
+            .ok()?;
+        let attachment = evidence.get_image(&reference.evidence_id).await.ok()??;
+        Some((
+            json!({
+                "source": item.source,
+                "seq": item.seq,
+                "time": item.time,
+                "evidence": reference,
+            }),
+            attachment,
+        ))
     }
 
     async fn submit_task_job(
@@ -333,8 +385,13 @@ impl Tool for InvokeActionTool {
             thing_id: Some(&input.thing_id),
             trigger: "chat",
             require_confirm,
-            // invoke_action 在工厂里声明为 Destructive（信任门依赖此分级）。
-            safety: ToolSafety::Destructive,
+            // Snapshot is a non-destructive camera read; every other action
+            // keeps the factory's Destructive classification.
+            safety: if input.action_name.eq_ignore_ascii_case("snapshot") {
+                ToolSafety::ReadOnly
+            } else {
+                ToolSafety::Destructive
+            },
         }) {
             ApprovalDecision::Pending { .. } => {
                 let token = store_pending_action(
@@ -432,12 +489,24 @@ impl Tool for InvokeActionTool {
                 };
                 // 租约移交给 worker：执行完成（成功/失败/取消）才释放。
                 match data_server.execute_command_with_lease(cmd, lease) {
-                    Ok(()) => tool_ok(json!({
-                        "thingId": input.thing_id,
-                        "actionName": input.action_name,
-                        "status": "executed",
-                        "message": "操作已下发执行"
-                    })),
+                    Ok(()) => {
+                        let mut payload = json!({
+                            "thingId": input.thing_id,
+                            "actionName": input.action_name,
+                            "status": "executed",
+                            "message": "操作已下发执行"
+                        });
+                        let mut attachments = Vec::new();
+                        if input.action_name.eq_ignore_ascii_case("snapshot")
+                            && let Some((snapshot, attachment)) = self.snapshot_attachment(&input.thing_id).await
+                        {
+                            payload["snapshot"] = snapshot;
+                            attachments.push(attachment);
+                        }
+                        let mut result = tool_ok(payload)?;
+                        result.attachments = attachments;
+                        Ok(result)
+                    }
                     Err(e) => tool_err(format!("操作执行失败: {}", e)),
                 }
             }
@@ -601,6 +670,7 @@ mod tests {
             pool: pool.clone(),
             workspace_id: ws.to_string(),
             data_server: None,
+            evidence: None,
             pending_actions: Arc::new(PendingActionStore::new()),
             arbitration,
             arbitration_holder: holder.to_string(),
@@ -859,5 +929,113 @@ mod tests {
             Some("stopped: operator stop"),
             "闸门文案必须是 stopped: <reason>"
         );
+    }
+
+    #[tokio::test]
+    async fn snapshot_action_returns_camera_image_attachment() {
+        use std::collections::HashMap;
+        use std::sync::Arc;
+
+        use tinyiothub_core::media::{MediaError, MediaEvidenceRecord};
+        use tinyiothub_runtime::EventBus;
+        use tinyiothub_runtime::driver::DriverWrapper;
+        use tinyiothub_runtime::driver::drivers::SimulatedDriver;
+        use tinyiothub_runtime::media::evidence::{EvidenceService, LocalMediaStore};
+        use tinyiothub_runtime::ports::{MediaEvidenceStore, ThingCacheSource};
+
+        #[derive(Default)]
+        struct MemoryEvidence {
+            rows: tokio::sync::Mutex<HashMap<String, MediaEvidenceRecord>>,
+        }
+
+        #[async_trait::async_trait]
+        impl MediaEvidenceStore for MemoryEvidence {
+            async fn insert_or_get(&self, row: &MediaEvidenceRecord) -> Result<MediaEvidenceRecord, MediaError> {
+                let mut rows = self.rows.lock().await;
+                if let Some(existing) = rows.values().find(|item| item.dedup_key == row.dedup_key) {
+                    return Ok(existing.clone());
+                }
+                rows.insert(row.id.clone(), row.clone());
+                Ok(row.clone())
+            }
+            async fn get(&self, evidence_id: &str) -> Result<Option<MediaEvidenceRecord>, MediaError> {
+                Ok(self.rows.lock().await.get(evidence_id).cloned())
+            }
+            async fn delete_expired(
+                &self,
+                now: chrono::DateTime<chrono::Utc>,
+            ) -> Result<Vec<MediaEvidenceRecord>, MediaError> {
+                let mut rows = self.rows.lock().await;
+                let expired: Vec<_> = rows.values().filter(|row| row.expires_at <= now).cloned().collect();
+                for row in &expired {
+                    rows.remove(&row.id);
+                }
+                Ok(expired)
+            }
+            async fn storage_is_referenced(&self, path: &str) -> Result<bool, MediaError> {
+                Ok(self.rows.lock().await.values().any(|row| row.storage_path == path))
+            }
+        }
+
+        let pool = test_pool().await;
+        seed_device(&pool, "ws-snap", "cam-1").await;
+        register_action(&pool, "cam-1", "snapshot").await;
+        sqlx::query("UPDATE things SET category = '网络摄像头' WHERE id = 'cam-1'")
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        let camera = tinyiothub_core::models::thing::Thing {
+            id: "cam-1".into(),
+            name: "camera_entrance".into(),
+            display_name: Some("入口摄像头".into()),
+            category: Some("网络摄像头".into()),
+            workspace_id: Some("ws-snap".into()),
+            status: tinyiothub_core::models::thing::ThingStatus::Online,
+            driver_name: Some("simulator".into()),
+            ..Default::default()
+        };
+        let cache = Arc::new(tinyiothub_storage::cache::ThingCache::new());
+        cache.insert(camera.clone());
+        let cache_source: Arc<dyn ThingCacheSource> = Arc::new(crate::shared::runtime_ports::ThingCacheAdapter(cache));
+        let server = Arc::new(tinyiothub_runtime::DataServer::new(
+            cache_source,
+            Arc::new(EventBus::new()),
+        ));
+        server.register_worker("cam-1", DriverWrapper::new(Box::new(SimulatedDriver::new(camera))));
+
+        let root = tempfile::tempdir().expect("media tempdir");
+        let store = Arc::new(LocalMediaStore::new(root.path()).await.expect("media store"));
+        let evidence = Arc::new(EvidenceService::new(store, Arc::new(MemoryEvidence::default())));
+
+        let mut tool = tool(&pool, "ws-snap", None, "chat");
+        tool.data_server = Some(server);
+        tool.evidence = Some(evidence);
+
+        let result = tool
+            .execute(json!({"thingId": "cam-1", "action": "snapshot"}))
+            .await
+            .expect("snapshot execute");
+        assert!(result.success, "{}", result.error.unwrap_or_default());
+        assert_eq!(result.attachments.len(), 1, "snapshot must return one image");
+        assert_eq!(&result.attachments[0].bytes[..2], &[0xFF, 0xD8]);
+        let payload: Value = serde_json::from_str(&result.output).expect("json output");
+        assert!(
+            payload["snapshot"]["evidence"]["evidenceId"]
+                .as_str()
+                .is_some_and(|id| !id.is_empty())
+        );
+
+        // Snapshot is a read: it must not fall into the action-confirmation gate.
+        sqlx::query("UPDATE workspaces SET require_action_confirm = 1 WHERE id = 'ws-snap'")
+            .execute(&pool)
+            .await
+            .unwrap();
+        let confirmed = tool
+            .execute(json!({"thingId": "cam-1", "action": "snapshot"}))
+            .await
+            .expect("snapshot execute with confirmation gate");
+        assert!(confirmed.success, "{}", confirmed.error.unwrap_or_default());
+        assert_eq!(confirmed.attachments.len(), 1);
     }
 }

@@ -10,20 +10,23 @@
 import { LitElement, html, nothing } from 'lit';
 import { customElement, state } from 'lit/decorators.js';
 import { unsafeHTML } from 'lit/directives/unsafe-html.js';
-import type { TodoItem } from '../../api/assistant.js';
 import {
   connectSessionEvents,
-  fetchAssistantHud,
   fetchSessionEvents,
-  fetchSessionTodos,
+  fetchSessionProjection,
   listChatSessions,
-  type HudSnapshot,
   type SessionEvent,
   type SessionSummary,
 } from '../../api/assistant.js';
+import {
+  SESSION_KIND_LABEL,
+  formatSessionTime,
+  pickDefaultSession,
+} from '../story/story-session.js';
 import { getWorkspaceId } from '../../api/client.js';
 import { brainEventApi, type BrainEvent, type BrainEventsSummary } from '../../api/brain-events.js';
 import { TimelineModel } from '../chat/timeline-model.js';
+import { StoryScrollFollow } from './story-scroll.js';
 import { md } from '../shared/markdown.js';
 import {
   buildStory,
@@ -41,21 +44,32 @@ import {
   type AchievementStats,
 } from '../story/story-achievements.js';
 import '../story/achievements-panel.js';
+import '../chat/task-plan-panel.js';
+import '../chat/approval-card.js';
+import '../chat/question-card.js';
+import '../tool-views/skill-view.js';
 import '../story/device-deck.js';
 import '../story/vision-deck.js';
+import '../story/evidence-image.js';
 import '../../styles/views/story.css';
 
-const KIND_LABEL: Record<string, string> = {
-  chat: '对话',
-  scheduled: '巡检',
-  event: '事件处置',
-};
+const MAX_HISTORY_STEPS = 1200;
+const MAX_HISTORY_SECTIONS = 80;
+const MAX_TIMELINE_BLOCKS = 2400;
+
+const STORY_SESSION_KEY = 'tinyiothub_story_last_session';
+const STORY_SESSION_MANUAL = 'tinyiothub_story_session_manual';
+
+const GENERIC_TITLES = new Set(['巡检', '对话', '事件处置', '本班', '日常巡检']);
+
+const KIND_LABEL = SESSION_KIND_LABEL;
 
 const SECTION_STATUS: Record<string, string> = {
   running: '进行中',
   done: '已完成',
   failed: '执行失败',
   cancelled: '已取消',
+  partial: '部分完成',
 };
 
 const STEP_STATUS: Record<StoryStep['status'], string> = {
@@ -64,15 +78,15 @@ const STEP_STATUS: Record<StoryStep['status'], string> = {
   failed: '失败',
 };
 
-const STEP_ICON: Record<StoryStep['tone'], string> = {
-  read: '◎',
-  write: '✎',
-  alarm: '⚠',
-  plan: '☑',
-  ask: '?',
-  analysis: '◌',
-  skill: '◆',
-  think: '✧',
+const STEP_ICON: Record<StoryStep['tone'], ReturnType<typeof html>> = {
+  read: html`<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12Z"/><circle cx="12" cy="12" r="3"/></svg>`,
+  write: html`<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>`,
+  alarm: html`<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z"/><path d="M12 9v4"/><path d="M12 17h.01"/></svg>`,
+  plan: html`<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>`,
+  ask: html`<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M9.1 9a3 3 0 1 1 5.8 1c0 2-3 2-3 4"/><path d="M12 17h.01"/></svg>`,
+  analysis: html`<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 12h4l3 8 4-16 3 8h4"/></svg>`,
+  skill: html`<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2 22 12 12 22 2 12Z"/></svg>`,
+  think: html`<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 18h6"/><path d="M10 22h4"/><path d="M12 2a7 7 0 0 0-4 12.7V17h8v-2.3A7 7 0 0 0 12 2Z"/></svg>`,
 };
 
 const ASSISTANT_STATUS: Record<string, string> = {
@@ -83,27 +97,11 @@ const ASSISTANT_STATUS: Record<string, string> = {
   error: '异常',
 };
 
-function formatSessionTime(ms: number): string {
-  const date = new Date(ms);
-  if (!Number.isFinite(date.getTime())) return '—';
-  const clock = date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false });
-  return `${date.getMonth() + 1}月${date.getDate()}日 ${clock}`;
-}
-
 function clampText(value: string, max: number): string {
   const text = value.replace(/\s+/g, ' ').trim();
   return text.length > max ? `${text.slice(0, max)}…` : text;
 }
 
-/** 默认记录：最近更新的会话；更新时间相同才优先 active。 */
-export function pickDefaultSession(sessions: SessionSummary[]): SessionSummary | null {
-  if (sessions.length === 0) return null;
-  return [...sessions].sort(
-    (left, right) =>
-      right.updatedAt - left.updatedAt ||
-      (right.status === 'active' ? 1 : 0) - (left.status === 'active' ? 1 : 0),
-  )[0];
-}
 
 @customElement('view-story')
 export class StoryView extends LitElement {
@@ -116,7 +114,6 @@ export class StoryView extends LitElement {
   @state() private story: StoryProjection = EMPTY_STORY;
   @state() private loading = true;
   @state() private error = '';
-  @state() private hud: HudSnapshot | null = null;
   @state() private achievements: AchievementStats = EMPTY_ACHIEVEMENTS;
   @state() private achievementsLoading = false;
   @state() private historyBefore: number | null = null;
@@ -131,10 +128,15 @@ export class StoryView extends LitElement {
   private brainSummary: BrainEventsSummary | null = null;
   private manualSelection = false;
   private historyLocked = false;
-  private stickToLatest = true;
+  private historyLimitReached = false;
+  @state() private stickToLatest = true;
+  @state() private unseenEvents = 0;
+  private scrollFollow = new StoryScrollFollow(true);
   private historyEpoch = 0;
   private pinPending = false;
   private suppressScroll = false;
+  private pinning = false;
+  private processOpen = new Map<string, boolean>();
   private feedObserver: ResizeObserver | null = null;
 
   connectedCallback(): void {
@@ -176,7 +178,13 @@ export class StoryView extends LitElement {
     try {
       const sessions = await listChatSessions();
       this.sessions = sessions;
-      const selected = pickDefaultSession(sessions);
+      const stored = localStorage.getItem(STORY_SESSION_KEY);
+      const manual = localStorage.getItem(STORY_SESSION_MANUAL) === '1';
+      const storedSession = manual && stored
+        ? sessions.find((item) => item.sessionKey === stored)
+        : undefined;
+      if (storedSession) this.manualSelection = true;
+      const selected = storedSession ?? pickDefaultSession(sessions);
       if (selected) await this.selectSession(selected.sessionKey);
       else this.loading = false;
     } catch (error) {
@@ -192,22 +200,25 @@ export class StoryView extends LitElement {
   private async loadDashboard(): Promise<void> {
     this.achievementsLoading = true;
     try {
-      const [summary, events, hud, sessions] = await Promise.all([
+      const [summary, events, sessions] = await Promise.all([
         brainEventApi.summary().catch(() => null),
         this.loadBrainEvents(),
-        fetchAssistantHud(this.workspaceId).catch(() => null),
         listChatSessions().catch(() => null),
       ]);
       this.brainSummary = summary;
       this.brainEvents = events;
-      this.hud = hud;
       if (sessions) {
         const previous = this.sessions;
         this.sessions = sessions;
         const preferred = pickDefaultSession(sessions);
         const current = previous.find((session) => session.sessionKey === this.sessionKey);
+        const waiting =
+          this.timeline.pendingQuestion !== null ||
+          this.timeline.pendingApprovals.length > 0 ||
+          this.story.sections.some((section) => section.status === 'running');
         if (
           !this.manualSelection &&
+          !waiting &&
           preferred &&
           preferred.sessionKey !== this.sessionKey &&
           current?.status !== 'active'
@@ -254,27 +265,47 @@ export class StoryView extends LitElement {
     this.closeEvents = null;
     const seq = ++this.loadSeq;
     this.sessionKey = key;
+    if (this.manualSelection) {
+      localStorage.setItem(STORY_SESSION_KEY, key);
+      localStorage.setItem(STORY_SESSION_MANUAL, '1');
+    }
     this.loading = true;
     this.error = '';
     this.timeline.reset();
     this.story = EMPTY_STORY;
     this.historyEpoch += 1;
+    this.processOpen.clear();
+    this.scrollFollow.reset(true);
     this.historyBefore = null;
     this.historyHasMore = false;
     this.loadingOlder = false;
     this.historyLocked = false;
+    this.historyLimitReached = false;
     this.stickToLatest = true;
+    this.unseenEvents = 0;
     this.pinPending = true;
     try {
-      const page = await fetchSessionEvents(key, 0, 200, { turns: 2 });
+      const [page, projection] = await Promise.all([
+        fetchSessionEvents(key, 0, 200, { turns: 2 }),
+        fetchSessionProjection(key).catch(() => null),
+      ]);
       if (seq !== this.loadSeq) return;
       this.timeline.ingest(page);
+      if (projection?.turn?.agenda?.length) {
+        this.timeline.agenda = projection.turn.agenda;
+      }
+      if (projection?.highWatermark && projection.highWatermark > page.highWatermark) {
+        const missing = await fetchSessionEvents(key, page.highWatermark, 200);
+        if (seq !== this.loadSeq) return;
+        this.timeline.ingest(missing);
+      }
       this.historyBefore = page.nextBefore ?? null;
       this.historyHasMore = Boolean(page.hasMore && this.historyBefore !== null);
-      const todos = await fetchSessionTodos(key);
-      if (seq !== this.loadSeq) return;
-      if (todos.length > 0) this.timeline.todos = todos;
+      if (projection?.turn?.todos) {
+        this.timeline.todos = projection.turn.todos;
+      }
       this.rebuild();
+      this.capHistory();
       this.loading = false;
       this.connect(key, this.timeline.highWatermark);
       await this.updateComplete;
@@ -303,20 +334,26 @@ export class StoryView extends LitElement {
     const key = this.sessionKey;
     const before = this.historyBefore;
     const epoch = this.historyEpoch;
+    this.scrollFollow.setFollowing(false);
     this.stickToLatest = false;
     const feed = this.feedScroller();
     const previousHeight = feed?.scrollHeight ?? 0;
     const previousTop = feed?.scrollTop ?? 0;
+    const previousBlocks = this.timeline.blocks.length;
     this.loadingOlder = true;
     try {
       const page = await fetchSessionEvents(key, 0, 200, { turns: 1, before });
       if (key !== this.sessionKey || epoch !== this.historyEpoch) return;
       this.timeline.ingest(page);
+      if (this.timeline.blocks.length === previousBlocks) {
+        this.historyHasMore = false;
+      }
       const nextBefore = page.nextBefore ?? null;
       this.historyBefore = nextBefore;
       this.historyHasMore = Boolean(page.hasMore && nextBefore !== null);
       if (nextBefore === before) this.historyHasMore = false;
       this.rebuild();
+      this.capHistory();
       await this.updateComplete;
       if (feed && feed.isConnected) {
         feed.scrollTop = previousTop + feed.scrollHeight - previousHeight;
@@ -337,12 +374,38 @@ export class StoryView extends LitElement {
     return this.querySelector('.story-body') as HTMLElement | null;
   }
 
+  private jumpToLatest(): void {
+    this.scrollFollow.setFollowing(true);
+    this.stickToLatest = true;
+    this.unseenEvents = 0;
+    this.pinToLatest();
+  }
+
+  private onFeedPointerDown(event: PointerEvent): void {
+    const feed = this.feedScroller();
+    if (!feed) return;
+    const rect = feed.getBoundingClientRect();
+    if (event.clientX >= rect.right - 18) {
+      this.scrollFollow.setFollowing(false);
+      this.stickToLatest = false;
+    }
+  }
+
+  private onFeedWheel(event: WheelEvent): void {
+    if (event.deltaY < 0) {
+      this.scrollFollow.wheelUp();
+      this.stickToLatest = false;
+    }
+  }
+
   private onFeedScroll(): void {
     if (this.suppressScroll || this.pinPending) return;
     const feed = this.feedScroller();
     if (!feed) return;
-    const distanceToBottom = feed.scrollHeight - feed.scrollTop - feed.clientHeight;
-    this.stickToLatest = distanceToBottom < 96;
+    const top = feed.scrollTop;
+    const following = this.scrollFollow.sample(top, feed.scrollHeight - feed.clientHeight);
+    this.stickToLatest = following;
+    if (following) this.unseenEvents = 0;
     // 一次上滑只放一轮：先离开顶部再回来，才允许继续自动加载。
     if (feed.scrollTop > 140) {
       this.historyLocked = false;
@@ -366,12 +429,27 @@ export class StoryView extends LitElement {
       after,
       onEvent: (event) => {
         if (this.sessionKey !== key) return;
-        if (event.eventType === 'turn.started') {
+        if (event.eventType === 'turn/start' && this.stickToLatest) {
           this.startStreamingTurn(key, event);
           return;
         }
-        this.timeline.ingestEvent(event);
-        this.rebuild();
+        try {
+          this.timeline.ingestEvent(event);
+          this.rebuild();
+          if (!this.stickToLatest) this.unseenEvents += 1;
+        } catch (error) {
+          console.error('story event ingest failed', error);
+          this.error = '这条工作记录暂时无法展示，请切换记录或打开工程师视图。';
+        }
+      },
+      onLive: (frame) => {
+        if (this.sessionKey !== key) return;
+        try {
+          this.timeline.applyLive(frame);
+          this.rebuild();
+        } catch (error) {
+          console.error('story live frame failed', error);
+        }
       },
       onError: (error) => {
         if (this.sessionKey !== key) return;
@@ -397,23 +475,48 @@ export class StoryView extends LitElement {
       return;
     }
     this.historyEpoch += 1;
+    // The reset shortens the feed and browsers clamp scrollTop to 0. Lock the
+    // history trigger until the new turn is actually rendered and pinned;
+    // otherwise that clamp is mistaken for a user request to load older turns.
+    this.pinPending = true;
+    this.suppressScroll = true;
+    this.historyLocked = true;
     this.timeline.reset();
     this.timeline.ingestEvent(trigger);
     this.historyBefore = trigger.seq > 0 ? trigger.seq : null;
     this.historyHasMore = this.historyBefore !== null;
-    this.historyLocked = false;
     this.loadingOlder = false;
+    this.historyLimitReached = false;
+    this.scrollFollow.reset(true);
     this.stickToLatest = true;
+    this.unseenEvents = 0;
     this.rebuild();
+    void this.updateComplete.then(() => {
+      if (key === this.sessionKey && this.stickToLatest) this.pinToLatest();
+    });
+  }
+
+  private capHistory(): void {
+    const steps = this.story.sections.reduce((total, section) => total + section.steps.length, 0);
+    if (steps >= MAX_HISTORY_STEPS || this.story.sections.length >= MAX_HISTORY_SECTIONS) {
+      this.historyHasMore = false;
+      this.historyLimitReached = true;
+    }
   }
 
   private rebuild(): void {
-    this.story = buildStory(
-      this.timeline.blocks,
-      this.timeline.todos,
-      this.timeline.pendingQuestion,
-    );
-    this.recomputeAchievements();
+    if (this.stickToLatest) this.timeline.trimToRecent(MAX_TIMELINE_BLOCKS);
+    try {
+      this.story = buildStory(
+        this.timeline.blocks,
+        this.timeline.todos,
+        this.timeline.pendingQuestion,
+      );
+      this.recomputeAchievements();
+    } catch (error) {
+      console.error('story rebuild failed', error);
+      this.error = '这一轮记录暂时无法展示，请切换记录或打开工程师视图。';
+    }
   }
 
   private recomputeAchievements(): void {
@@ -442,18 +545,47 @@ export class StoryView extends LitElement {
 
   private originLabel(): string {
     const origin = this.story.origin;
-    if (!origin) return '手动发起';
-    return STORY_ORIGIN_LABEL[origin] ?? origin;
+    if (origin) return STORY_ORIGIN_LABEL[origin] ?? origin;
+    // Trigger rows can sit just before the turn window. Fall back to the
+    // session kind instead of mislabeling an event wake as a manual run.
+    switch (this.currentSession()?.kind) {
+      case 'scheduled':
+        return '定时巡检';
+      case 'event':
+        return '事件触发';
+      case 'chat':
+        return '手动发起';
+      default:
+        return '事件触发';
+    }
   }
 
   private headline(): string {
+    const findings = this.story.latestFindings;
+    if (findings.length === 1) {
+      const finding = findings[0];
+      return clampText(
+        finding.label.includes(finding.deviceName)
+          ? finding.label
+          : `${finding.deviceName}：${finding.label}`,
+        34,
+      );
+    }
+    if (findings.length > 1) {
+      return `发现 ${findings.length} 项异常，优先处理 ${findings[0].deviceName}`;
+    }
+    const latest = this.story.sections[this.story.sections.length - 1];
+    if (latest?.status === 'failed') return '本轮工作未完成';
+    if (latest?.status === 'partial') return '本轮工作部分完成';
+    const stats = this.story.latestStats;
+    if (stats.actions > 0) return `已完成 ${stats.actions} 项设备处置`;
+    if (stats.devices > 0) return `${stats.devices} 台设备检查完成，未见异常`;
     const session = this.currentSession();
-    if (session?.label) return session.label;
+    const label = session?.label?.trim();
+    if (label && !GENERIC_TITLES.has(label)) return label;
     const prompt = this.story.prompts[this.story.prompts.length - 1]?.text;
     if (prompt) return clampText(prompt, 30);
-    const kind = KIND_LABEL[session?.kind ?? ''] ?? '本班';
-    const latest = this.story.sections[this.story.sections.length - 1];
-    return latest ? `${formatStoryClock(latest.startedAt)} 的${kind}` : `${kind}纪实`;
+    return '本班工作记录';
   }
 
   private isWorking(): boolean {
@@ -466,31 +598,19 @@ export class StoryView extends LitElement {
     ) {
       return true;
     }
-    // 还没有任何 turn 事件时，才用 HUD 兜底，避免 HUD 的 60s 缓存把“已完成”
-    // 误显示成“正在工作”。
-    return this.story.sections.length === 0 && this.hud?.assistant.status === 'working';
-  }
-
-  private workingDetail(): string {
-    if (this.story.running) return this.story.running.title;
-    if (this.story.sections.some((section) => section.status === 'running')) {
-      return '正在思考下一步';
-    }
-    return '正在处理新的任务';
+    return false;
   }
 
   private statusText(): string {
     if (this.isWorking()) return ASSISTANT_STATUS.working;
-    const hudStatus = this.hud?.assistant.status;
-    if (hudStatus === 'waiting_for_user' || hudStatus === 'paused' || hudStatus === 'error') {
-      return ASSISTANT_STATUS[hudStatus] ?? hudStatus;
+    if (this.timeline.pendingQuestion || this.timeline.pendingApprovals.length > 0) {
+      return ASSISTANT_STATUS.waiting_for_user;
     }
     return ASSISTANT_STATUS.idle;
   }
 
   private pendingCount(): number {
-    if (!this.hud) return 0;
-    return this.hud.pending.approvals + this.hud.pending.questions;
+    return (this.timeline.pendingQuestion ? 1 : 0) + this.timeline.pendingApprovals.length;
   }
 
   private openEngineer(event: Event): void {
@@ -506,17 +626,32 @@ export class StoryView extends LitElement {
 
   /** Pin after a load or while new content is appended. */
   private pinFeedToBottom(): void {
+    if (!this.scrollFollow.active || this.pinning) return;
+    this.pinning = true;
+    this.scrollFollow.beginProgrammatic();
     const pin = () => {
+      if (!this.scrollFollow.active) {
+        this.pinning = false;
+        return;
+      }
       const feed = this.feedScroller();
       if (feed) feed.scrollTop = feed.scrollHeight;
     };
     pin();
-    requestAnimationFrame(pin);
+    requestAnimationFrame(() => {
+      pin();
+      const feed = this.feedScroller();
+      this.scrollFollow.endProgrammatic(feed?.scrollTop ?? 0);
+      this.pinning = false;
+    });
   }
 
   /** One-shot initial pin: ignore the scroll events our own scroll causes. */
   private pinToLatest(): void {
+    this.pinning = false;
     this.suppressScroll = true;
+    this.scrollFollow.setFollowing(true);
+    this.scrollFollow.beginProgrammatic();
     const pin = () => {
       const feed = this.feedScroller();
       if (feed) feed.scrollTop = feed.scrollHeight;
@@ -526,6 +661,8 @@ export class StoryView extends LitElement {
       pin();
       requestAnimationFrame(() => {
         pin();
+        const feed = this.feedScroller();
+        this.scrollFollow.endProgrammatic(feed?.scrollTop ?? 0);
         this.suppressScroll = false;
         this.pinPending = false;
       });
@@ -537,7 +674,18 @@ export class StoryView extends LitElement {
     this.pinFeedToBottom();
   }
 
-  render() {
+  protected render() {
+    try {
+      return this.renderShell();
+    } catch (error) {
+      console.error('story render failed', error);
+      return html`<div class="story-shell">
+        <div class="story-error">页面暂时无法渲染。请刷新页面或切换到其他记录。</div>
+      </div>`;
+    }
+  }
+
+  private renderShell() {
     const session = this.currentSession();
     return html`
       <div class="story-shell">
@@ -549,65 +697,97 @@ export class StoryView extends LitElement {
               <div class="story-topbar__sub">看得懂的业务视角</div>
             </div>
           </div>
-          ${
-            this.isWorking()
-              ? html`<span class="story-topbar__working">
-                  <span class="story-topbar__working-dot" aria-hidden="true"></span>
-                  大脑工作中
-                </span>`
-              : nothing
-          }
           <span class="story-topbar__spacer"></span>
-          <label class="story-select">
-            <span class="story-select__label">切换记录</span>
-            <select
-              class="story-select__input"
-              .value=${this.sessionKey}
-              @change=${(event: Event) => {
-                this.manualSelection = true;
-                void this.selectSession((event.target as HTMLSelectElement).value);
-              }}
-            >
-              ${this.sessions
-                .slice(0, 20)
-                .map(
-                  (item) =>
-                    html`<option value=${item.sessionKey}>
-                      ${this.sessionOptionLabel(item)}
-                    </option>`,
-                )}
+          <details class="story-switcher">
+            <summary class="story-switcher__button" aria-label="切换工作记录">
+              <span class="story-switcher__label">切换记录</span>
+              <span class="story-switcher__value">${session?.label || '当前记录'}</span>
+              <span class="story-switcher__chevron" aria-hidden="true">⌄</span>
+            </summary>
+            <div class="story-switcher__menu" role="listbox" aria-label="工作记录">
+              ${this.sessions.slice(0, 20).map(
+                (item) => html`<button
+                  class="story-switcher__item"
+                  role="option"
+                  aria-selected=${item.sessionKey === this.sessionKey}
+                  @click=${(event: Event) => {
+                    event.preventDefault();
+                    this.manualSelection = true;
+                    void this.selectSession(item.sessionKey);
+                    (event.currentTarget as HTMLElement)
+                      .closest('details')
+                      ?.removeAttribute('open');
+                  }}
+                >
+                  <span class="story-switcher__item-label">${item.label || this.sessionOptionLabel(item)}</span>
+                  <span class="story-switcher__item-time">${formatSessionTime(item.updatedAt)}</span>
+                </button>`,
+              )}
               ${
                 session === undefined && this.sessionKey
-                  ? html`<option value=${this.sessionKey}>当前记录</option>`
+                  ? html`<button class="story-switcher__item" role="option" aria-selected="true">
+                      当前记录
+                    </button>`
                   : nothing
               }
-            </select>
-          </label>
+            </div>
+          </details>
           <button class="story-topbar__link" @click=${(event: Event) => this.openEngineer(event)}>
             工程师视图 →
           </button>
         </header>
 
-        <div class="story-body" @scroll=${() => this.onFeedScroll()}>
+        <div
+          class="story-body"
+          @scroll=${() => this.onFeedScroll()}
+          @wheel=${(event: WheelEvent) => this.onFeedWheel(event)}
+          @pointerdown=${(event: PointerEvent) => this.onFeedPointerDown(event)}
+        >
+          <div class="story-work">
+          <div class="story-head">
+            ${this.renderAgenda()}
+            ${this.renderHero()}
+            ${this.renderFailureNotice()}
+          </div>
           <main class="story-main" @scroll=${() => this.onFeedScroll()}>
             <div class="story-feed">
-              ${this.renderHistory()} ${this.renderHero()}
-              ${this.renderFailureNotice()} ${this.renderWaiting()}
-              ${this.isWorking() ? this.renderWorking() : nothing} ${this.renderPrompt()}
+              ${this.renderHistory()}
+              ${this.renderPrompt()}
               ${
                 this.loading && this.story.sections.length === 0
                   ? this.renderSkeleton()
                   : this.story.sections.length === 0
                     ? this.renderEmpty()
-                    : this.story.sections.map((section, index) =>
-                        this.renderSection(section, index),
-                      )
+                    : this.story.sections
+                        .slice(-MAX_HISTORY_SECTIONS)
+                        .map((section, index) => this.renderSection(section, index))
               }
-              ${this.renderFindings()} ${this.renderLive()}
+              ${this.renderLive()}
               ${this.error ? html`<div class="story-error">${this.error}</div>` : nothing}
-              ${this.renderFooter()}
             </div>
           </main>
+          ${this.renderWaitingDock()}
+          ${
+            this.story.plans.length > 0
+              ? html`<div class="story-task-dock">
+                  <task-plan-panel
+                    .todos=${this.story.plans}
+                    ?running=${this.isWorking()}
+                    ?startCollapsed=${true}
+                  ></task-plan-panel>
+                </div>`
+              : nothing
+          }
+          ${
+            !this.stickToLatest
+              ? html`<button class="story-jump" @click=${() => this.jumpToLatest()}>
+                  <span class="story-jump__dot" aria-hidden="true"></span>
+                  ${this.unseenEvents > 0 ? `${this.unseenEvents} 条新动态` : '回到最新'}
+                  <span class="story-jump__arrow" aria-hidden="true">↓</span>
+                </button>`
+              : nothing
+          }
+          </div>
           <aside class="story-rail" aria-label="工作成果">
             <story-achievements
               .stats=${this.achievements}
@@ -644,7 +824,7 @@ export class StoryView extends LitElement {
                     ↑ 加载更早记录
                   </button>
                   <span class="story-history__hint">向上滚动自动加载 · 每次 1 轮</span>`
-              : html`<span class="story-history__end">已到最早记录</span>`
+              : html`<span class="story-history__end">${this.historyLimitReached ? '已加载最近记录，更多请打开工程师视图' : '已到最早记录'}</span>`
         }
       </div>
     `;
@@ -680,7 +860,7 @@ export class StoryView extends LitElement {
           <div class="story-hero__stat"><strong>${stats.actions}</strong><span>次处置</span></div>
           ${
             needs > 0
-              ? html`<a class="story-hero__needs" href="/dispositions">${needs} 件等你确认</a>`
+              ? html`<a class="story-hero__needs" href="/chat">${needs} 件等你确认</a>`
               : nothing
           }
         </div>
@@ -688,39 +868,90 @@ export class StoryView extends LitElement {
     `;
   }
 
+  private renderAgenda() {
+    const agenda = this.timeline.agenda;
+    if (agenda.length === 0) return nothing;
+    return html`<div class="story-agenda" aria-label="本轮技能">
+      <span class="story-agenda__label">本轮技能</span>
+      ${agenda.map(
+        (item) => html`<span class="story-agenda__item" data-status=${item.status}>
+          <span class="story-agenda__dot" aria-hidden="true"></span>${item.label}
+        </span>`,
+      )}
+    </div>`;
+  }
+
+  private renderWaitingDock() {
+    if (!this.timeline.pendingQuestion && this.timeline.pendingApprovals.length === 0) {
+      return nothing;
+    }
+    return html`<div class="story-waiting-dock">${this.renderWaiting()}</div>`;
+  }
+
   private renderWaiting() {
-    const question = this.timeline.pendingQuestion;
-    const approval = this.timeline.pendingApprovals[0];
-    if (!question && !approval) return nothing;
-    const first = question?.questions[0];
-    const title = question
-      ? first?.header
-        ? `等待你确认：${first.header}`
-        : '等待你确认'
-      : `等待审批：${approval?.tool ?? '操作'}`;
-    const body = question
-      ? (first?.question ?? 'AI 需要你的回答才能继续。')
-      : (approval?.summary ?? '有一个操作需要你的批准。');
-    const options = first?.options.slice(0, 3) ?? [];
-    return html`<div class="story-waiting" role="status">
-      <div class="story-waiting__head">
-        <span class="story-waiting__mark" aria-hidden="true">?</span>
-        <div>
-          <strong>${title}</strong>
-          <p>${body}</p>
+    const approvals = this.timeline.pendingApprovals;
+    if (approvals.length > 0) {
+      return html`<div class="story-waiting story-waiting--approval" role="status">
+        <div class="story-waiting__head">
+          <span class="story-waiting__mark" aria-hidden="true">!</span>
+          <div>
+            <strong>等待你批准</strong>
+            <p>可以直接在这里处理，批准后 AI 会继续执行。</p>
+          </div>
         </div>
-      </div>
-      ${
-        options.length > 0
-          ? html`<ul class="story-waiting__options">
-              ${options.map((option) => html`<li>${option.label}</li>`)}
-            </ul>`
-          : nothing
-      }
+        <div class="story-waiting__approvals">
+          ${approvals.map(
+            (approval) => html`<approval-card
+              .sessionKey=${this.sessionKey}
+              .pending=${approval}
+              @answered=${(event: CustomEvent<string>) => this.onApprovalAnswered(event)}
+            ></approval-card>`,
+          )}
+        </div>
+        <button class="story-waiting__action" @click=${(event: Event) => this.openEngineer(event)}>
+          查看完整上下文
+        </button>
+      </div>`;
+    }
+    const question = this.timeline.pendingQuestion;
+    if (!question) return nothing;
+    return html`<div class="story-waiting story-waiting--question" role="status">
+      <question-card
+        .sessionKey=${this.sessionKey}
+        .pending=${question}
+        @answered=${() => this.onQuestionAnswered()}
+      ></question-card>
       <button class="story-waiting__action" @click=${(event: Event) => this.openEngineer(event)}>
-        去对话处理
+        查看完整上下文
       </button>
     </div>`;
+  }
+
+  private onQuestionAnswered(): void {
+    this.timeline.pendingQuestion = null;
+    this.rebuild();
+    void this.refreshAfterApproval();
+  }
+
+  private onApprovalAnswered(event: CustomEvent<string>): void {
+    this.timeline.pendingApprovals = this.timeline.pendingApprovals.filter(
+      (approval) => approval.approvalId !== event.detail,
+    );
+    this.rebuild();
+    void this.refreshAfterApproval();
+  }
+
+  private async refreshAfterApproval(): Promise<void> {
+    const key = this.sessionKey;
+    if (!key) return;
+    try {
+      const page = await fetchSessionEvents(key, this.timeline.highWatermark, 200);
+      if (key !== this.sessionKey) return;
+      this.timeline.ingest(page);
+      this.rebuild();
+    } catch {
+      // SSE will deliver the approval/resolved and turn continuation.
+    }
   }
 
   private renderFailureNotice() {
@@ -740,19 +971,6 @@ export class StoryView extends LitElement {
     </div>`;
   }
 
-  private renderWorking() {
-    return html`
-      <div class="story-working" role="status" aria-live="polite">
-        <span class="story-working__orb" aria-hidden="true"><span></span></span>
-        <div class="story-working__text">
-          <strong>AI 大脑正在工作</strong>
-          <span>${this.workingDetail()}</span>
-        </div>
-        <span class="story-working__bars" aria-hidden="true"> <i></i><i></i><i></i><i></i> </span>
-      </div>
-    `;
-  }
-
   private renderPrompt() {
     const prompt = this.story.prompts[this.story.prompts.length - 1];
     if (!prompt) return nothing;
@@ -770,7 +988,9 @@ export class StoryView extends LitElement {
   private renderSection(section: StorySection, index: number) {
     const isLast = index === this.story.sections.length - 1;
     const isLatest = section.id === this.story.latestSectionId;
-    const origin = STORY_ORIGIN_LABEL[section.origin ?? ''] ?? '手动发起';
+    const origin = section.origin
+      ? (STORY_ORIGIN_LABEL[section.origin] ?? section.origin)
+      : this.originLabel();
     return html`
       <article
         class="story-chapter story-chapter--${section.status} ${
@@ -797,14 +1017,7 @@ export class StoryView extends LitElement {
               : nothing
           }
         </header>
-        ${isLast ? this.renderPlan() : nothing}
-        ${
-          section.steps.length > 0
-            ? html`<div class="story-steps">
-                ${section.steps.map((step) => this.renderStep(step))}
-              </div>`
-            : nothing
-        }
+        ${this.renderProcess(section, isLast)}
         ${
           section.conclusion
             ? html`<div class="story-conclusion">
@@ -820,41 +1033,78 @@ export class StoryView extends LitElement {
     `;
   }
 
-  private renderPlan() {
-    const todos: TodoItem[] = this.story.plans;
-    if (todos.length === 0) return nothing;
-    const done = todos.filter((todo) => todo.status === 'completed').length;
-    const percent = Math.round((done / todos.length) * 100);
-    return html`
-      <details class="story-plan" open>
-        <summary class="story-plan__head">
-          <span>本轮计划</span>
-          <span class="story-plan__count">${done}/${todos.length}</span>
-        </summary>
-        <div class="story-plan__meter" aria-hidden="true">
-          <span style=${`width:${percent}%`}></span>
-        </div>
-        <ol class="story-plan__list">
-          ${todos.map(
-            (todo) =>
-              html`<li class="story-plan__item story-plan__item--${todo.status}">
-                <span class="story-plan__mark" aria-hidden="true">
-                  ${todo.status === 'completed' ? '✓' : todo.status === 'in_progress' ? '▸' : '·'}
-                </span>
-                <span>${todo.content}</span>
-              </li>`,
-          )}
-        </ol>
-      </details>
-    `;
+  private processCategory(step: StoryStep): { key: string; label: string; mark: string } {
+    switch (step.tone) {
+      case 'plan':
+        return { key: 'plan', label: '计划', mark: '☷' };
+      case 'write':
+        return { key: 'write', label: '处置', mark: '✎' };
+      case 'read':
+        return { key: 'read', label: '读取', mark: '◉' };
+      case 'alarm':
+        return { key: 'alarm', label: '告警', mark: '!' };
+      case 'ask':
+        return { key: 'ask', label: '确认', mark: '?' };
+      case 'skill':
+        return { key: 'skill', label: '技能', mark: '◇' };
+      case 'analysis':
+      case 'think':
+        return { key: 'analysis', label: '分析', mark: '∿' };
+      default:
+        return { key: 'other', label: '过程', mark: '·' };
+    }
+  }
+
+  private renderProcess(section: StorySection, latest: boolean) {
+    if (section.steps.length === 0) return nothing;
+    const counts = new Map<string, { label: string; mark: string; count: number }>();
+    for (const step of section.steps) {
+      const category = this.processCategory(step);
+      const existing = counts.get(category.key);
+      if (existing) existing.count += 1;
+      else counts.set(category.key, { label: category.label, mark: category.mark, count: 1 });
+    }
+    const summary = [...counts.values()]
+      .map((item) => `${item.label} ${item.count}`)
+      .join(' · ');
+    const open = this.processOpen.get(section.id) ?? latest;
+    return html`<details
+      class="story-process"
+      ?open=${open}
+      @toggle=${(event: Event) => {
+        if (!event.isTrusted) return;
+        const details = event.currentTarget as HTMLDetailsElement;
+        this.processOpen.set(section.id, details.open);
+      }}
+    >
+      <summary class="story-process__head">
+        <span class="story-process__mark" aria-hidden="true">☷</span>
+        <span class="story-process__label">过程</span>
+        <span class="story-process__count">${section.steps.length} 步</span>
+        <span class="story-process__summary">${summary}</span>
+        <span class="story-process__chevron" aria-hidden="true">⌄</span>
+      </summary>
+      <div class="story-process__body">
+        ${section.steps.map((step) => this.renderStep(step))}
+      </div>
+    </details>`;
   }
 
   private renderStep(step: StoryStep) {
+    const stepVisions = step.visionIds
+      .map((evidenceId) => this.story.vision.find((vision) => vision.evidenceId === evidenceId))
+      .filter((vision): vision is NonNullable<typeof vision> => Boolean(vision));
     return html`
       <details class="story-step story-step--${step.tone} story-step--${step.status}">
         <summary class="story-step__line">
-          <span class="story-step__mark" aria-hidden="true">${STEP_ICON[step.tone]}</span>
-          <span class="story-step__title">${step.title}</span>
+          <span class="story-step__mark" aria-hidden="true">
+            <span class="story-step__icon">${STEP_ICON[step.tone]}</span>
+          </span>
+          <span class="story-step__type">${this.processCategory(step).label}</span>
+          <span class="story-step__title">
+            <span class="story-step__title-closed">${step.title}</span>
+            <span class="story-step__title-open">${step.title} · 详情</span>
+          </span>
           ${
             step.detail
               ? html`<span class="story-step__brief">${clampText(step.detail, 72)}</span>`
@@ -862,10 +1112,93 @@ export class StoryView extends LitElement {
           }
           ${step.finding ? html`<span class="story-step__finding">${step.finding}</span>` : nothing}
           <time class="story-step__time">${formatStoryClock(step.at)}</time>
-          <span class="story-step__chevron" aria-hidden="true">⌄</span>
+          <span class="story-step__chevron" aria-hidden="true">
+            <svg viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"/></svg>
+          </span>
         </summary>
         <div class="story-step__expand">
           ${step.detail ? html`<p class="story-step__detail">${step.detail}</p>` : nothing}
+          ${
+            stepVisions.length > 0
+              ? html`<div class="story-step__images">
+                  ${stepVisions.slice(0, 3).map(
+                    (vision) => html`<figure class="story-step__image">
+                      <evidence-image
+                        .evidenceId=${vision.evidenceId}
+                        .workspaceId=${this.workspaceId}
+                        .alt=${`${vision.deviceName} ${vision.caption}`}
+                      ></evidence-image>
+                      <figcaption>${vision.caption}</figcaption>
+                    </figure>`,
+                  )}
+                </div>`
+              : nothing
+          }
+          ${
+            step.skill
+              ? html`<skill-view
+                  .name=${step.skill.name}
+                  .title=${step.skill.title}
+                  .description=${step.skill.description}
+                ></skill-view>`
+              : nothing
+          }
+          ${
+            step.metrics && step.metrics.length > 0
+              ? html`<dl class="story-step__metrics">
+                  ${step.metrics.map(
+                    (metric) => html`<div class="story-step__metric">
+                      <dt>${metric.name}</dt>
+                      <dd>${metric.value}</dd>
+                    </div>`,
+                  )}
+                </dl>`
+              : nothing
+          }
+          ${
+            step.rawResult
+              ? html`<div class="story-step__raw">
+                  <div class="story-step__raw-head">工具返回结果</div>
+                  <pre>${step.rawResult}</pre>
+                </div>`
+              : nothing
+          }
+          ${
+            step.details && step.details.length > 0
+              ? html`<dl class="story-step__details">
+                  ${step.details.map(
+                    (detail) => html`<div class="story-step__detail-row">
+                      <dt>${detail.label}</dt>
+                      <dd>${detail.value}</dd>
+                    </div>`,
+                  )}
+                </dl>`
+              : nothing
+          }
+          ${
+            step.planDiff && step.planDiff.items.length > 0
+              ? html`<div class="story-plan-diff">
+                  <div class="story-plan-diff__head">计划变更</div>
+                  <ul class="story-plan-diff__list">
+                    ${step.planDiff.items.map(
+                      (item) => html`<li class="story-plan-diff__item" data-change=${item.change}>
+                        <span class="story-plan-diff__mark">${
+                          item.change === 'added' ? '+' : item.change === 'removed' ? '−' : '~'
+                        }</span>
+                        <span class="story-plan-diff__content">${item.content}</span>
+                        <span class="story-plan-diff__status">${
+                          item.change === 'removed'
+                            ? '已移除'
+                            : item.previousStatus
+                              ? `${item.previousStatus} → ${item.status}`
+                              : item.status
+                        }</span>
+                      </li>`,
+                    )}
+                  </ul>
+                </div>`
+              : nothing
+          }
           <div class="story-step__meta">
             <time>${formatStoryClock(step.at)}</time>
             <span>${STEP_STATUS[step.status]}</span>
@@ -879,36 +1212,6 @@ export class StoryView extends LitElement {
         </div>
       </details>
     `;
-  }
-
-  private renderFindings() {
-    if (this.story.sections.length === 0 || this.story.latestStats.devices === 0) return nothing;
-    if (this.story.latestFindings.length === 0) {
-      if (this.isWorking()) return nothing;
-      return html`<section class="story-findings story-findings--clear" aria-label="本轮发现">
-        <div class="story-findings__head">
-          <span class="story-findings__eyebrow">本轮发现</span>
-          <span class="story-findings__count">0 项</span>
-        </div>
-        <p class="story-findings__clear">最近一轮没有发现异常，设备状态正常。</p>
-      </section>`;
-    }
-    return html`<section class="story-findings" aria-label="本轮发现">
-      <div class="story-findings__head">
-        <span class="story-findings__eyebrow">本轮发现</span>
-        <span class="story-findings__count">${this.story.latestFindings.length} 项</span>
-      </div>
-      <ul class="story-findings__list">
-        ${this.story.latestFindings.map(
-          (finding) =>
-            html`<li class="story-findings__item">
-              <span class="story-findings__device">${finding.deviceName}</span>
-              <span class="story-findings__label">${finding.label}</span>
-              <time>${formatStoryClock(finding.at)}</time>
-            </li>`,
-        )}
-      </ul>
-    </section>`;
   }
 
   private renderLive() {
@@ -940,15 +1243,7 @@ export class StoryView extends LitElement {
     </div>`;
   }
 
-  private renderFooter() {
-    if (!this.sessionKey) return nothing;
-    return html`<footer class="story-foot">
-      <span>这是 AI 的工作纪实，原始工具轨迹可在工程师视图中查看。</span>
-      <button class="story-foot__link" @click=${(event: Event) => this.openEngineer(event)}>
-        查看完整轨迹 →
-      </button>
-    </footer>`;
-  }
+
 }
 
 declare global {

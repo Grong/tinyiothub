@@ -45,27 +45,40 @@ pub trait ThingAgentHost: Send + Sync {
 
 /// 用户指令投递入口（T14）—— cloud 侧 HTTP 端点与 chat 工具经此向
 /// thing-agent loop 投递 [`WakeSignal`]。cloud 持有一个
-/// `Arc<dyn DirectiveSink>`：T15 的 ThingAgentManager（进程内
-/// per-workspace 注册表）实现本 trait 并按 workspace 路由到对应
-/// SchedulerHandle；[`crate::domains::agent::thing_agent::scheduler::SchedulerHandle`]
-/// 本身也实现它（单工作区直连，测试/桩用）。
+/// `Arc<dyn DirectiveSink>`。
 #[async_trait::async_trait]
 pub trait DirectiveSink: Send + Sync {
-    /// 投递唤醒信号。语义与
-    /// [`crate::domains::agent::thing_agent::scheduler::SchedulerHandle::enqueue`] 相同：
-    /// 队列满拒绝用户指令（Rejected）、60s 同文去重（Duplicate）等
-    /// 由实现方保证。
-    fn enqueue(
-        &self,
-        signal: crate::domains::agent::thing_agent::types::WakeSignal,
-    ) -> Result<(), crate::domains::agent::thing_agent::scheduler::EnqueueError>;
+    /// 投递唤醒信号。队列满拒绝用户指令（Rejected）、60s 同文去重
+    /// （Duplicate）等由实现方保证。
+    fn enqueue(&self, signal: crate::domains::agent::thing_agent::types::WakeSignal) -> Result<(), EnqueueError>;
 
-    /// O26 kill switch：清空该工作区调度器的待处理队列（ready queue + 未
-    /// flush 的合并窗口）。语义与
-    /// [`crate::domains::agent::thing_agent::scheduler::SchedulerHandle::drain`] 相同：不取消
-    /// 在跑的 run（返回时其已完成），drain 之后新入队的信号不受影响。
-    /// 未知工作区为 no-op。默认实现为 no-op（测试桩无需关心）。
+    /// O26 kill switch：清空该工作区待处理队列（ready queue + 未 flush 的
+    /// 合并窗口）。不取消在跑的 run（返回时其已完成），drain 之后新入队的
+    /// 信号不受影响。未知工作区为 no-op。默认实现为 no-op。
     async fn drain(&self, _workspace_id: &str) {}
+}
+
+/// 唤醒信号入队失败原因。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+pub enum EnqueueError {
+    /// 目标调度已关闭。
+    #[error("enqueue target shut down")]
+    Closed,
+    /// 用户指令且队列已满 —— 调用方必须告知用户，指令不得静默丢弃。
+    #[error("user directive rejected: queue full")]
+    Rejected,
+    /// 非用户指令且队列已满 —— 丢弃。
+    #[error("signal dropped: queue full")]
+    Dropped,
+    /// 每小时唤醒预算耗尽 —— 丢弃。
+    #[error("signal throttled: hourly wake budget exhausted")]
+    Throttled,
+    /// 60s 内重复的同文用户指令。
+    #[error("duplicate user directive within 60s")]
+    Duplicate,
+    /// 同键信号超过每分钟限速 —— 丢弃。
+    #[error("signal rate-limited: same-key per-minute limit exceeded")]
+    RateLimited,
 }
 
 #[cfg(test)]
@@ -266,66 +279,5 @@ mod tests {
         let host = NoopHost { tx };
         let events = host.replay_events_since(0, 1).await.expect("replay");
         assert!(events.is_empty());
-    }
-
-    // T14: SchedulerHandle must satisfy the DirectiveSink trait so cloud
-    // endpoints / chat tools can dispatch user directives through
-    // Arc<dyn DirectiveSink> (T15 swaps in the ThingAgentManager).
-    #[tokio::test]
-    async fn scheduler_handle_is_a_directive_sink() {
-        use crate::domains::agent::thing_agent::scheduler::Scheduler;
-        use crate::domains::agent::thing_agent::types::{Priority, TriggerSource, WakeSignal};
-
-        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
-        let handle = Scheduler::spawn(
-            "ws_01".to_string(),
-            move |sig| {
-                let tx = tx.clone();
-                Box::pin(async move {
-                    let _ = tx.send(sig);
-                })
-            },
-            std::sync::Arc::new(dashmap::DashMap::new()),
-        );
-
-        let sink: &dyn DirectiveSink = &handle;
-        sink.enqueue(WakeSignal {
-            workspace_id: "ws_01".to_string(),
-            priority: Priority::High,
-            source: TriggerSource::UserDirective {
-                user_id: "u1".to_string(),
-                text: "重启网关".to_string(),
-                session_key: None,
-                source: None,
-                problem_key: None,
-            },
-            dedup_key: None,
-        })
-        .expect("directive accepted");
-
-        let sig = rx.recv().await.expect("directive runs");
-        match &sig.source {
-            TriggerSource::UserDirective { text, .. } => assert_eq!(text, "重启网关"),
-            other => panic!("expected UserDirective, got {other:?}"),
-        }
-
-        // Error semantics pass through the trait object: a duplicate
-        // same-text directive within 60s is rejected as Duplicate.
-        let dup = sink.enqueue(WakeSignal {
-            workspace_id: "ws_01".to_string(),
-            priority: Priority::High,
-            source: TriggerSource::UserDirective {
-                user_id: "u1".to_string(),
-                text: "重启网关".to_string(),
-                session_key: None,
-                source: None,
-                problem_key: None,
-            },
-            dedup_key: None,
-        });
-        assert_eq!(
-            dup,
-            Err(crate::domains::agent::thing_agent::scheduler::EnqueueError::Duplicate)
-        );
     }
 }

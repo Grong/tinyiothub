@@ -185,14 +185,12 @@ use tinyiothub_core::agent_runs::{Outcome, RunReport};
 use tinyiothub_storage::Db;
 
 use crate::domains::agent::agent_runtime::AgentRuntime;
-use crate::domains::agent::heartbeat::types::HeartbeatConfig;
 use crate::domains::agent::snapshot::{ProblemMetaRow, RestoreSnapshot, WorkspaceHeartbeatState};
 use crate::domains::agent::thing_agent::registry::COMPLETED_CAPACITY;
 
 /// 启动顺序第 1 步：从 DB 装配 AgentRuntime 恢复快照。
 ///
-/// - heartbeat 段：每工作区 tasks + trust config + interval（缺省回退
-///   `HeartbeatConfig::default()`，与 runner 缺省一致）；
+/// - heartbeat 段：每工作区 tasks + trust config；
 /// - recent_runs 段：每工作区最近 [`COMPLETED_CAPACITY`] 条已完成 run，
 ///   **旧→新**（顺序契约见 `RestoreSnapshot::recent_runs` —— RunReport
 ///   无时间戳，registry 无法自排序）；
@@ -216,7 +214,6 @@ pub async fn build_agent_snapshot(db: &Db) -> Result<RestoreSnapshot, String> {
         .await
         .map_err(|e| format!("agent snapshot: list workspace ids failed: {e}"))?;
 
-    let default_interval = HeartbeatConfig::default().interval_minutes;
     let mut heartbeat = Vec::with_capacity(ws_ids.len());
     let mut recent_runs = Vec::new();
     for ws_id in &ws_ids {
@@ -229,23 +226,10 @@ pub async fn build_agent_snapshot(db: &Db) -> Result<RestoreSnapshot, String> {
             .await
             .map_err(|e| format!("agent snapshot: load trust config for {ws_id} failed: {e}"))?
             .unwrap_or_default();
-        let hb_config = db
-            .load_heartbeat_config(ws_id)
-            .await
-            .map_err(|e| format!("agent snapshot: load heartbeat config for {ws_id} failed: {e}"))?;
-        let interval_minutes = hb_config
-            .as_ref()
-            .map(|c| c.interval_minutes)
-            .unwrap_or(default_interval);
-        // 终审 I-1：enabled 随快照预热进统一循环共享表（trigger 判定集维度）；
-        // 无配置行缺省 true（对齐 HeartbeatConfig::default enabled:true）。
-        let enabled = hb_config.as_ref().map(|c| c.enabled).unwrap_or(true);
         heartbeat.push(WorkspaceHeartbeatState {
             workspace_id: ws_id.clone(),
             tasks,
             trust_config,
-            interval_minutes,
-            enabled,
         });
         recent_runs.extend(load_recent_runs(pool, ws_id).await?);
     }

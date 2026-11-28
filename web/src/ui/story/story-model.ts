@@ -14,7 +14,11 @@
  */
 
 import type { TodoItem } from '../../api/assistant.js';
-import { toolFailure, type PendingQuestion, type TimelineBlock } from '../chat/timeline-model.js';
+import type { PendingQuestion, TimelineBlock } from '../chat/timeline-model.js';
+import { approvalCopy } from '../chat/approval-copy.js';
+import { skillDisplay } from '../chat/skill-copy.js';
+import { presentTool, toolToneOf, toolVerbOf } from '../tool-views/registry.js';
+import type { ToolDetail } from '../tool-views/types.js';
 
 export type StoryTone =
   | 'read'
@@ -72,13 +76,41 @@ export interface StoryStep {
   tone: StoryTone;
   /** 原始工具名（展开时可看到，折叠行保持业务语言）。 */
   tool?: string;
+  /** 工具展示键；卡片视觉族由它决定，不在页面里按工具名分支。 */
+  viewKey?: string;
+  /** 调用参数（筛选条件/时间范围等），用于区分“结果一样但参数不同”的调用。 */
+  params?: ToolDetail[];
+  /** 参数指纹：判断连续调用是否完全一致。 */
+  argsKey?: string;
   deviceId?: string;
   visionIds: string[];
   /** 这一步发现的问题；无事发生则为空。 */
   finding?: string;
+  /** 设备步骤展开后的具体运行参数。 */
+  metrics?: StoryDeviceMetric[];
+  /** 工具 presentation 提供的结构化展开字段。 */
+  details?: ToolDetail[];
+  /** todo_write 相对上一次快照的差异，只在展开工具详情时显示。 */
+  planDiff?: StoryPlanDiff;
+  /** Loaded skill metadata; rendered by the skill tool-view component. */
+  skill?: { name: string; title: string; description: string };
+  /** Tool result as stored on the event, shown only when the step is expanded. */
+  rawResult?: string;
 }
 
-export type StorySectionStatus = 'running' | 'done' | 'failed' | 'cancelled';
+export interface StoryPlanDiff {
+  added: number;
+  updated: number;
+  removed: number;
+  items: {
+    content: string;
+    status: string;
+    previousStatus?: string;
+    change: 'added' | 'updated' | 'removed';
+  }[];
+}
+
+export type StorySectionStatus = 'running' | 'done' | 'failed' | 'cancelled' | 'partial';
 
 export interface StorySection {
   id: string;
@@ -151,43 +183,6 @@ export interface StoryView {
   origin?: string;
 }
 
-interface ActionCopy {
-  verb: string;
-  tone: StoryTone;
-  icon: string;
-}
-
-/** 工具名 → 业务动作。只做“翻译”，不改变任何执行语义。 */
-const STORY_ACTION_COPY: Record<string, ActionCopy> = {
-  list_things: { verb: '梳理设备清单', tone: 'read', icon: '☷' },
-  list_devices: { verb: '梳理设备清单', tone: 'read', icon: '☷' },
-  search_things: { verb: '查找设备', tone: 'read', icon: '⌕' },
-  get_thing: { verb: '查看设备档案', tone: 'read', icon: '◎' },
-  get_thing_profile: { verb: '查看设备档案', tone: 'read', icon: '◎' },
-  read_device: { verb: '查看设备状态', tone: 'read', icon: '◎' },
-  read_property: { verb: '读取运行参数', tone: 'read', icon: '◫' },
-  read_properties: { verb: '读取运行参数', tone: 'read', icon: '◫' },
-  query_events: { verb: '回看设备事件', tone: 'read', icon: '◷' },
-  get_device_history: { verb: '回看历史数据', tone: 'read', icon: '◷' },
-  query_data: { verb: '查询运行数据', tone: 'read', icon: '⌕' },
-  aggregate_data: { verb: '汇总运行数据', tone: 'read', icon: 'Σ' },
-  alarm_list: { verb: '检查告警', tone: 'alarm', icon: '⚠' },
-  list_alarms: { verb: '检查告警', tone: 'alarm', icon: '⚠' },
-  acknowledge_alarm: { verb: '确认告警', tone: 'write', icon: '✓' },
-  resolve_alarm: { verb: '解除告警', tone: 'write', icon: '✓' },
-  invoke_action: { verb: '执行设备操作', tone: 'write', icon: '▸' },
-  call_device: { verb: '执行设备操作', tone: 'write', icon: '▸' },
-  send_command: { verb: '下发设备命令', tone: 'write', icon: '▸' },
-  set_device: { verb: '调整设备设置', tone: 'write', icon: '✎' },
-  write_properties: { verb: '调整设备设置', tone: 'write', icon: '✎' },
-  todo_write: { verb: '更新工作计划', tone: 'plan', icon: '☑' },
-  update_todo: { verb: '更新工作计划', tone: 'plan', icon: '☑' },
-  ask_user: { verb: '请你决定', tone: 'ask', icon: '?' },
-  get_skill: { verb: '查阅作业规范', tone: 'skill', icon: '◆' },
-  read_document: { verb: '查阅运行手册', tone: 'skill', icon: '▤' },
-  search_knowledge: { verb: '查找知识资料', tone: 'skill', icon: '⌕' },
-  spawn_subagent: { verb: '安排专项分析', tone: 'analysis', icon: '⧉' },
-};
 
 /** 触发来源的业务文案。 */
 export const STORY_ORIGIN_LABEL: Record<string, string> = {
@@ -217,10 +212,6 @@ const TYPE_LABEL: Record<string, string> = {
 
 const DEVICE_TRIGGER_KEYS = ['thingId', 'thing_id', 'deviceId', 'device_id', 'id'];
 const DEVICE_NAME_KEYS = ['displayName', 'display_name', 'name', 'title'];
-
-function asString(value: unknown): string {
-  return typeof value === 'string' ? value : '';
-}
 
 function recordOf(value: unknown): Record<string, unknown> | null {
   return value !== null && typeof value === 'object' && !Array.isArray(value)
@@ -266,22 +257,19 @@ function deviceLabel(device: StoryDevice | null | undefined): string {
   return device ? quoteDevice(device.name) : '设备';
 }
 
-function actionName(part: Extract<TimelineBlock, { kind: 'tool' }>): string {
-  return firstString(recordOf(part.args), [
-    'actionName',
-    'action_name',
-    'action',
-    'command',
-    'name',
-  ]);
-}
-
 function metricEntries(record: Record<string, unknown>): StoryDeviceMetric[] {
-  const state = recordOf(record.state);
-  if (!state) return [];
-  return Object.entries(state)
+  const properties = Array.isArray(record.properties) ? record.properties : [];
+  return properties
+    .map(recordOf)
+    .filter((property): property is Record<string, unknown> => property !== null)
     .slice(0, 4)
-    .map(([name, value]) => ({ name, value: clampText(displayValue(value), 24) }));
+    .map((property) => ({
+      name: firstString(property, ['displayName', 'name']) || '属性',
+      value: clampText(
+        `${displayValue(property.currentValue)}${typeof property.unit === 'string' && property.unit ? ` ${property.unit}` : ''}`,
+        24,
+      ),
+    }));
 }
 
 function deviceFromRecord(record: Record<string, unknown>): StoryDevice | null {
@@ -315,6 +303,14 @@ function deviceRecordsFromValue(value: unknown): Record<string, unknown>[] {
     if (Array.isArray(items)) {
       return items.map(recordOf).filter((item): item is Record<string, unknown> => item !== null);
     }
+  }
+  const thing = recordOf(record.thing);
+  if (thing) {
+    return [{
+      ...thing,
+      properties: record.properties,
+      zone: record.zone ?? thing.zone,
+    }];
   }
   return [record];
 }
@@ -350,12 +346,36 @@ function upsertDevice(
   return existing;
 }
 
-/** 从工具结果里回收设备，并把它们记进设备卡牌。 */
+const DEVICE_TOOLS = new Set([
+  'list_devices',
+  'list_things',
+  'search_things',
+  'read_device',
+  'get_thing',
+  'get_thing_profile',
+  'read_property',
+  'read_properties',
+  'set_device',
+  'write_properties',
+  'call_device',
+  'invoke_action',
+  'send_command',
+  'stop',
+  'watch',
+  'unwatch',
+  'query_events',
+  'get_device_history',
+  'get_thing_tree',
+  'list_composites',
+  'run_composite',
+]);
+
 function collectDevices(
   devices: Map<string, StoryDevice>,
   part: Extract<TimelineBlock, { kind: 'tool' }>,
   order: number,
 ): StoryDevice | null {
+  if (!DEVICE_TOOLS.has(part.name)) return null;
   const parsed = parseJsonValue(part.result);
   const inspected = !['list_things', 'list_devices', 'search_things'].includes(part.name);
   let primary: StoryDevice | null = null;
@@ -394,7 +414,7 @@ function findingOf(
 
   const parsed = recordOf(parseJsonValue(part.result));
   if (parsed) {
-    const alarms = parsed.alarms ?? parsed.items;
+    const alarms = parsed.alarms ?? parsed.items ?? parsed.data;
     if (Array.isArray(alarms) && alarms.length > 0 && part.name.includes('alarm')) {
       return `发现 ${alarms.length} 条告警`;
     }
@@ -407,12 +427,8 @@ function findingOf(
         return `画面识别 ${detection.data.length} 个目标`;
       }
     }
-    const sourceErrors = parsed.sourceErrors;
-    if (Array.isArray(sourceErrors) && sourceErrors.length > 0) return '现场画面读取失败';
-    const success = parsed.success;
-    if (success === false) return '操作未成功';
   }
-  if (part.status === 'failed') return '操作未成功';
+  // A failed attempt is execution status, not a business finding.
   return undefined;
 }
 
@@ -424,7 +440,11 @@ function visionOf(
   if (refs.length === 0) return [];
   const parsed = recordOf(parseJsonValue(part.result));
   const sources = Array.isArray(parsed?.sources) ? parsed.sources : [];
-  const analysis = firstString(parsed, ['analysis', 'verdict', 'finding', 'description']) || '';
+  const snapshot = recordOf(parsed?.snapshot);
+  const analysis =
+    firstString(parsed, ['analysis', 'verdict', 'finding', 'description']) ||
+    firstString(snapshot, ['analysis', 'finding']) ||
+    '';
   return refs.flatMap((raw) => {
     const reference = recordOf(raw);
     if (!reference) return [];
@@ -435,14 +455,15 @@ function visionOf(
       .find((entry) => entry && recordOf(entry.evidence)?.evidenceId === evidenceId);
     const sourceName =
       firstString(recordOf(sourceEntry?.evidence), ['source']) ||
-      firstString(sourceEntry, ['source']);
+      firstString(sourceEntry, ['source']) ||
+      firstString(snapshot, ['source']);
     return [
       {
         evidenceId,
         deviceId: device?.id ?? '',
         deviceName: device?.name ?? '现场设备',
         at: firstString(reference, ['mediaTime', 'media_time']) || part.at,
-        caption: sourceName ? `现场画面 · ${sourceName}` : '现场画面',
+        caption: sourceName === 'snapshot' ? '抓拍画面' : sourceName ? `现场画面 · ${sourceName}` : '现场画面',
         finding: analysis ? clampText(analysis, 100) : '',
         mime: firstString(reference, ['mime']) || 'image/jpeg',
       },
@@ -450,171 +471,102 @@ function visionOf(
   });
 }
 
-function detailOf(
-  part: Extract<TimelineBlock, { kind: 'tool' }>,
-  device: StoryDevice | null,
-): string {
-  if (part.status === 'failed')
-    return clampText(part.error ?? toolFailure(part.result) ?? '执行未成功');
-  if (!part.result) return '执行中…';
-
-  const parsed = parseJsonValue(part.result);
-  const record = recordOf(parsed);
-  const name = part.name;
-
-  if (device && ['read_device', 'get_thing', 'get_thing_profile'].includes(name)) {
-    const facts = [
-      device.online === undefined ? '' : device.online ? '在线' : '离线',
-      HEALTH_LABEL[device.health ?? ''] ?? '',
-      device.metrics.length > 0 ? `${device.metrics.length} 项运行参数` : '',
-    ].filter(Boolean);
-    if (facts.length > 0) return facts.join(' · ');
-  }
-
-  if (!record) {
-    // 事件里的 result 被截断时，宁可说“已完成”，也不要编造“0 台/没有告警”。
-    const text = asString(part.result).replace(/\s+/g, ' ').trim();
-    if (text && !/^[[{]/.test(text)) return clampText(text, 90);
-    return '已完成';
-  }
-
-  if (name === 'read_property' || name === 'read_properties') {
-    const property = firstString(record, ['propertyName', 'property_name']) || '属性';
-    const value = displayValue(record?.currentValue);
-    const unit = asString(record?.unit);
-    return `${property}：${value}${unit ? ` ${unit}` : ''}`;
-  }
-
-  if (['list_things', 'list_devices', 'search_things'].includes(name)) {
-    const items = Array.isArray(record?.items) ? record.items.length : 0;
-    const total = typeof record?.total === 'number' ? record.total : items;
-    return total > items ? `共 ${total} 台，已载入 ${items} 台` : `共 ${total} 台`;
-  }
-
-  if (name === 'query_events') {
-    const total = typeof record?.total === 'number' ? record.total : 0;
-    return `回看 ${total} 条事件`;
-  }
-
-  if (name === 'alarm_list' || name === 'list_alarms') {
-    const alarms = record?.alarms ?? record?.items;
-    const count = Array.isArray(alarms)
-      ? alarms.length
-      : typeof record?.total === 'number'
-        ? record.total
-        : 0;
-    return count > 0 ? `${count} 条待关注` : '当前没有告警';
-  }
-
-  if (name === 'set_device' || name === 'write_properties') {
-    const updated = record?.updated;
-    return Array.isArray(updated) && updated.length > 0
-      ? `已调整 ${updated.length} 项设置`
-      : '设置已生效';
-  }
-
-  if (name === 'invoke_action' || name === 'call_device' || name === 'send_command') {
-    const status = firstString(record, ['status']);
-    if (status === 'ok' || status === 'accepted' || status === 'submitted') return '已提交执行';
-    return '已下发，等待设备回读';
-  }
-
-  if (name === 'todo_write' || name === 'update_todo') {
-    const todos = Array.isArray(record?.todos) ? record.todos : [];
-    const done = todos.filter((item) => recordOf(item)?.status === 'completed').length;
-    return `计划 ${done}/${todos.length} 项完成`;
-  }
-
-  if (name === 'get_skill') {
-    const skill = firstString(recordOf(part.args), ['skillId', 'skill', 'name']);
-    return skill ? `规范 ${skill}` : '已载入作业规范';
-  }
-
-  if (name === 'ask_user') return '等待你的回答';
-
-  const text = asString(part.result).replace(/\s+/g, ' ').trim();
-  if (!text) return '';
-  // 证据列只保留 2000 字符，长 JSON 可能被截断而无法解析；业务页不展示半截协议。
-  if (/^[[{]/.test(text)) return '已完成';
-  return clampText(text, 90);
+function todoItemsFromArgs(args: unknown): { content: string; status: string }[] {
+  const record = recordOf(args);
+  const items = Array.isArray(record?.todos) ? record.todos : [];
+  return items
+    .map((item) => {
+      const todo = recordOf(item);
+      const content = firstString(todo, ['content']);
+      const status = firstString(todo, ['status']);
+      return content && status ? { content, status } : null;
+    })
+    .filter((item): item is { content: string; status: string } => item !== null);
 }
 
-function titleOf(
-  part: Extract<TimelineBlock, { kind: 'tool' }>,
-  device: StoryDevice | null,
-): string {
-  const copy = STORY_ACTION_COPY[part.name] ?? {
-    verb: part.name,
-    tone: 'read' as StoryTone,
-    icon: '⚙',
-  };
-  const action = actionName(part);
-  switch (part.name) {
-    case 'read_device':
-      return `查看${deviceLabel(device)}的实时状态`;
-    case 'get_thing':
-    case 'get_thing_profile':
-      return `查看${deviceLabel(device)}的档案`;
-    case 'read_property':
-    case 'read_properties':
-      return `读取${deviceLabel(device)}的运行参数`;
-    case 'set_device':
-    case 'write_properties':
-      return `调整${deviceLabel(device)}的设置`;
-    case 'invoke_action':
-    case 'call_device':
-    case 'send_command':
-      return action ? `让${deviceLabel(device)}执行「${action}」` : `操作${deviceLabel(device)}`;
-    case 'query_events':
-    case 'get_device_history':
-      return `回看${deviceLabel(device)}最近的事件`;
-    case 'alarm_list':
-    case 'list_alarms':
-      return '检查当前告警';
-    case 'list_things':
-    case 'list_devices':
-      return '梳理需要关注的设备';
-    case 'ask_user':
-      return '需要你确认一件事';
-    case 'todo_write':
-    case 'update_todo':
-      return '更新工作计划';
-    case 'get_skill':
-      return '查阅作业规范';
-    case 'spawn_subagent':
-      return '安排专项分析';
-    default:
-      return device ? `${copy.verb}${deviceLabel(device)}` : copy.verb;
+function planDiff(
+  previous: { content: string; status: string }[],
+  current: { content: string; status: string }[],
+): StoryPlanDiff {
+  const before = new Map(previous.map((item) => [item.content, item.status]));
+  const items: StoryPlanDiff['items'] = [];
+  let added = 0;
+  let updated = 0;
+  for (const item of current) {
+    const previousStatus = before.get(item.content);
+    before.delete(item.content);
+    if (previousStatus === undefined) {
+      added += 1;
+      items.push({ content: item.content, status: item.status, change: 'added' });
+    } else if (previousStatus !== item.status) {
+      updated += 1;
+      items.push({
+        content: item.content,
+        status: item.status,
+        previousStatus,
+        change: 'updated',
+      });
+    }
   }
+  const removed = before.size;
+  for (const content of before.keys()) {
+    items.push({ content, status: '', change: 'removed' });
+  }
+  return { added, updated, removed, items };
+}
+
+/** 稳定的参数指纹：同样的筛选条件得到同样的 key。 */
+function stableArgs(value: unknown): string {
+  if (value === null || typeof value !== 'object') return JSON.stringify(value) ?? 'null';
+  if (Array.isArray(value)) return `[${value.map(stableArgs).join(',')}]`;
+  const record = value as Record<string, unknown>;
+  return `{${Object.keys(record)
+    .sort()
+    .map((key) => `${JSON.stringify(key)}:${stableArgs(record[key])}`)
+    .join(',')}}`;
 }
 
 function stepFromTool(
   part: Extract<TimelineBlock, { kind: 'tool' }>,
   device: StoryDevice | null,
 ): StoryStep {
-  const copy = STORY_ACTION_COPY[part.name] ?? {
-    verb: part.name,
-    tone: 'read' as StoryTone,
-    icon: '⚙',
-  };
+  const tone: StoryTone = toolToneOf(part.viewKey) ?? 'read';
+  const verb = toolVerbOf(part.viewKey) ?? part.name;
   const failed = part.status === 'failed';
   const status: StoryStepStatus = failed ? 'failed' : part.result ? 'done' : 'running';
+  const presentation = presentTool({
+    name: part.name,
+    viewKey: part.viewKey,
+    args: part.args,
+    result: part.result ?? null,
+    evidence: part.evidence,
+    status: failed ? 'failed' : part.result ? 'ok' : 'running',
+    error: part.error,
+  });
+  const dedicated = presentation.viewKey !== 'generic';
   return {
     id: part.id,
-    title: titleOf(part, device),
-    detail: detailOf(part, device),
+    title: dedicated ? presentation.title : device ? `${verb}${deviceLabel(device)}` : verb,
+    detail: presentation.summary,
     at: part.at,
     status,
-    tone: copy.tone,
+    tone,
     tool: part.name,
+    viewKey: part.viewKey,
+    params: presentation.params,
+    argsKey: stableArgs(part.args),
     deviceId: device?.id,
     visionIds: visionOf(part, device).map((item) => item.evidenceId),
     finding: findingOf(part, device),
+    metrics: presentation.metrics?.map((metric) => ({ name: metric.label, value: metric.value })) ?? device?.metrics,
+    details: presentation.details,
+    rawResult: part.result,
   };
 }
 
 function statusOf(status: string): StorySectionStatus {
   if (status === 'completed') return 'done';
+  if (status === 'partial') return 'partial';
   if (status === 'failed') return 'failed';
   if (status === 'cancelled') return 'cancelled';
   return 'running';
@@ -666,6 +618,7 @@ export function buildStory(
   let current: StorySection | null = null;
   let pendingOrigin: string | undefined;
   let order = 0;
+  let previousTodos: { content: string; status: string }[] = [];
 
   const ensureSection = (at: string): StorySection => {
     if (!current) {
@@ -692,6 +645,7 @@ export function buildStory(
         pendingOrigin = part.source;
         break;
       case 'turn':
+        previousTodos = [];
         current = {
           id: part.id,
           status: statusOf(part.status),
@@ -714,9 +668,9 @@ export function buildStory(
       case 'assistant': {
         if (!part.text.trim()) break;
         const section = current ?? ensureSection(part.at);
-        section.conclusion = section.conclusion
-          ? `${section.conclusion}\n\n${part.text}`
-          : part.text;
+        // Only the latest assistant settlement is the turn conclusion;
+        // intermediate step narration must not become a premature summary.
+        section.conclusion = part.text;
         break;
       }
       case 'reasoning': {
@@ -734,6 +688,49 @@ export function buildStory(
         });
         break;
       }
+      case 'question': {
+        const first = part.questions[0];
+        const pending = part.outcome === 'pending';
+        const answered = part.outcome === 'answered';
+        const section = current ?? ensureSection(part.at);
+        section.steps.push({
+          id: `question:${part.questionId}`,
+          title: pending
+            ? first?.header
+              ? `等待你确认：${first.header}`
+              : '等待你确认'
+            : answered
+              ? first?.header
+                ? `已确认：${first.header}`
+                : '已确认'
+              : first?.header
+                ? `确认未完成：${first.header}`
+                : '确认未完成',
+          detail: first?.question ?? '',
+          at: part.at,
+          status: pending ? 'running' : answered ? 'done' : 'failed',
+          tone: pending ? 'ask' : answered ? 'read' : 'alarm',
+          viewKey: 'interaction.ask',
+          visionIds: [],
+        });
+        break;
+      }
+      case 'approval': {
+        const pending = part.outcome === 'pending';
+        const section = current ?? ensureSection(part.at);
+        const copy = approvalCopy(part);
+        section.steps.push({
+          id: `approval:${part.approvalId}`,
+          title: pending ? `等待审批：${copy.title}` : `审批已处理：${copy.title}`,
+          detail: copy.description,
+          at: part.at,
+          status: pending ? 'running' : 'done',
+          tone: pending ? 'ask' : 'read',
+          viewKey: 'approval.request',
+          visionIds: [],
+        });
+        break;
+      }
       case 'retry': {
         const section = current ?? ensureSection(part.at);
         section.retries += 1;
@@ -743,6 +740,28 @@ export function buildStory(
       }
       case 'tool': {
         if (part.name === 'canvas') break;
+        if (part.name === 'todo_write') {
+          const items = todoItemsFromArgs(part.args);
+          if (items.length === 0) break;
+          const section = current ?? ensureSection(part.at);
+          const done = items.filter((item) => item.status === 'completed').length;
+          const active = items.find((item) => item.status === 'in_progress')?.content;
+          const diff = planDiff(previousTodos, items);
+          previousTodos = items;
+          section.steps.push({
+            id: part.id,
+            title: '更新计划',
+            detail: `${done}/${items.length} 项完成${active ? ` · ${active}` : ''}`,
+            at: part.at,
+            status: part.status === 'failed' ? 'failed' : part.result ? 'done' : 'running',
+            tone: 'plan',
+            tool: part.name,
+            viewKey: 'todo.write',
+            visionIds: [],
+            planDiff: diff,
+          });
+          break;
+        }
         const device = collectDevices(devices, part, order);
         order += 1;
         const step = stepFromTool(part, device);
@@ -757,15 +776,18 @@ export function buildStory(
       }
       case 'skill': {
         const section = current ?? ensureSection(part.at);
+        const copy = skillDisplay(part.name, part.title, part.description);
         section.steps.push({
           id: part.id,
-          title: part.name ? `按照《${part.name}》作业` : '查阅作业规范',
-          detail: part.version ? `版本 ${part.version}` : '已载入',
+          title: `应用「${copy.title}」作业规范`,
+          detail: copy.description || (part.version ? `版本 ${part.version}` : '已载入'),
           at: part.at,
           status: 'done',
           tone: 'skill',
           tool: 'get_skill',
+          viewKey: 'skill.load',
           visionIds: [],
+          skill: { name: part.name, title: copy.title, description: copy.description },
         });
         break;
       }
@@ -781,14 +803,15 @@ export function buildStory(
           status:
             part.status === 'failed' ? 'failed' : part.status === 'completed' ? 'done' : 'running',
           tone: 'analysis',
+          viewKey: 'subagent.spawn',
           visionIds: [],
         });
         break;
       }
       case 'notice': {
-        // A failed session is explained by the turn-level failure card; do not
-        // duplicate it as a generic "会话结束：failed" row.
-        if (part.text.includes('会话结束') && part.text.includes('failed')) break;
+        // The turn header/status and the failure card explain terminal state;
+        // a generic "会话结束：failed/cancelled" row is duplicate noise.
+        if (part.text.startsWith('会话结束：')) break;
         const section = current ?? ensureSection(part.at);
         section.steps.push({
           id: part.id,
@@ -806,7 +829,12 @@ export function buildStory(
     }
   }
 
-  if (pendingQuestion) {
+  if (
+    pendingQuestion &&
+    !blocks.some(
+      (block) => block.kind === 'question' && block.questionId === pendingQuestion.questionId,
+    )
+  ) {
     const section = sections[sections.length - 1];
     const first = pendingQuestion.questions[0];
     if (section) {
@@ -881,6 +909,17 @@ export function buildStory(
     }
   }
   findings.reverse();
+
+  // A terminal Turn owns no live work. Subagent completion events can be
+  // missing on abort/error paths; settle any orphaned running rows here so the
+  // bottom "正在..." banner cannot outlive the Turn.
+  for (const section of sections) {
+    if (section.status === 'running') continue;
+    const settled = section.status === 'failed' || section.status === 'cancelled' ? 'failed' : 'done';
+    for (const step of section.steps) {
+      if (step.status === 'running') step.status = settled;
+    }
+  }
 
   const sortedDevices = [...devices.values()]
     .filter((device) => device.touches > 0)
@@ -964,11 +1003,6 @@ export function buildStory(
 }
 
 export const EMPTY_STORY: StoryView = buildStory([], []);
-
-/** 业务译文对外暴露，测试与页面标题共用同一份。 */
-export function storyActionCopy(name: string): ActionCopy {
-  return STORY_ACTION_COPY[name] ?? { verb: name, tone: 'read', icon: '⚙' };
-}
 
 /** 设备类型/健康的短标签（卡片与测试共用）。 */
 export function deviceTypeLabel(type: string): string {

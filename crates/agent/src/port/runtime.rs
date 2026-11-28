@@ -38,6 +38,11 @@ pub struct AgentLoopConfig {
     /// before it executes a tool. Tools that need a durable call identity read
     /// it at execution time.
     pub tool_call_ids: Option<crate::port::tool::ToolCallIdSlot>,
+    /// Gate a tool body on a durable `tool/checkpoint` event.
+    pub checkpoint_before_tool: bool,
+    /// Per-turn tool-call budget. Large inspections can legitimately exceed
+    /// the old 128-call ceiling.
+    pub max_tool_calls: usize,
 }
 
 /// zeroclaw Agent::turn_streamed 的 port 形状（返回去掉 ConversationMessage，
@@ -149,6 +154,8 @@ mod tests {
             conversation_memory: false,
             available_capabilities: vec![],
             tool_call_ids: None,
+            checkpoint_before_tool: false,
+            max_tool_calls: 512,
         };
         assert_eq!(config.model_name, "test-model");
         assert_eq!(config.tools.len(), 1);

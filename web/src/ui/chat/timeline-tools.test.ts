@@ -28,6 +28,31 @@ describe('consecutive tool presentation', () => {
     expect(host.querySelectorAll('.turn-process .activity__meta--ok')).toHaveLength(3);
   });
 
+  it('renders snapshot evidence as an image inside the tool card', () => {
+    const host = document.createElement('div');
+    const snapshot: ContentPart = {
+      kind: 'tool',
+      id: 'c-snap',
+      name: 'call_device',
+      viewKey: 'device.action',
+      args: { thingId: 'device-cam-01', action: 'snapshot' },
+      result: JSON.stringify({
+        thingId: 'device-cam-01',
+        actionName: 'snapshot',
+        status: 'executed',
+        snapshot: { source: 'snapshot', evidence: { evidenceId: 'ev-snap' } },
+      }),
+      evidence: [{ evidenceId: 'ev-snap', mime: 'image/jpeg', sourceSeq: 1 }],
+      status: 'ok',
+      at: '2026-11-27T08:00:00Z',
+    };
+    render(renderTimeline([snapshot]), host);
+    expect(host.querySelector('.activity__images evidence-image')).not.toBeNull();
+    const image = host.querySelector('evidence-image') as HTMLElement & { evidenceId?: string };
+    expect(image.evidenceId).toBe('ev-snap');
+    expect(host.querySelector('.activity__label')?.textContent).toContain('1 张画面');
+  });
+
   it('preserves failure status without adding a tool grouping layer', () => {
     const host = document.createElement('div');
     const assistant: ContentPart = {

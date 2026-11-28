@@ -145,6 +145,7 @@ pub struct CommandOutcome {
     pub success: bool,
     pub error: Option<String>,
     pub cancelled: bool,
+    pub result: Option<serde_json::Value>,
 }
 
 /// worker 命令面（契约见 spec §2.3）。
@@ -591,6 +592,7 @@ async fn run_worker(
                                 success: false,
                                 error: None,
                                 cancelled: true,
+                                result: None,
                             }
                         } else {
                             execute_and_report(&mut driver, &cmd, job_id.as_deref(), &results, &cancel, lease)
@@ -790,17 +792,22 @@ fn execute_and_report(
     let _lease = lease;
     let thing_id = driver.thing().id.clone();
     let token = cancel.begin(job_id.map(str::to_owned));
-    let outcome = driver.execute_command_with(cmd, &token);
+    let outcome = driver.execute_command_with_result(cmd, &token);
     if report_if_cancelled(cancel, &token, &thing_id, job_id, CancelKind::Execute, results) {
         // 已取消：只上报 Cancelled，不再产生 Command 结果。
         return CommandOutcome {
             success: false,
             error: None,
             cancelled: true,
+            result: None,
         };
     }
-    let success = outcome.result.is_ok();
-    let error = outcome.result.as_ref().err().map(|err| err.to_string());
+    let execution = outcome.result.as_ref().ok();
+    let success = execution.is_some_and(|execution| execution.success);
+    let error = execution
+        .and_then(|execution| execution.error.clone())
+        .or_else(|| outcome.result.as_ref().err().map(|err| err.to_string()));
+    let result = execution.and_then(|execution| execution.result.clone());
     let elapsed_ms = outcome.elapsed.as_millis() as u64;
     if let Some(ref err) = error {
         tracing::warn!(
@@ -818,10 +825,12 @@ fn execute_and_report(
         elapsed_ms,
         error: error.clone(),
     });
+    let cancelled = execution.is_some_and(|execution| execution.cancelled);
     CommandOutcome {
         success,
         error,
-        cancelled: false,
+        cancelled,
+        result,
     }
 }
 

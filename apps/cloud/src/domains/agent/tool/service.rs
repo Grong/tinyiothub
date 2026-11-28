@@ -17,7 +17,7 @@ use tinyiothub_skills::trust::{ToolSafety, classify_tool_safety};
 use tinyiothub_storage::cache::ThingCache;
 
 use super::thing::{LiveSummarySource, ManagerSlot, PendingActionStore, ThingToolContext, create_thing_tools};
-use super::{canvas::CanvasTool, get_skill::GetSkillTool};
+use super::{canvas::CanvasTool, complete_skill::CompleteSkillTool, get_skill::GetSkillTool};
 use crate::domains::agent::session::config::service as config_service;
 
 /// chat agent 的内建工具 provider：canvas + get_skill + thing 工具（9）。
@@ -55,8 +55,19 @@ pub fn chat_builtin_tools_provider(
                 session_agent_id.clone(),
                 session.contexts.clone(),
                 session.events.clone(),
+                session.skills.clone(),
             )),
             classify_tool_safety("get_skill"),
+        ));
+        tools.push((
+            Box::new(CompleteSkillTool::new(
+                workspace_id.to_string(),
+                session_agent_id.clone(),
+                session.contexts.clone(),
+                session.events.clone(),
+                session.skills.clone(),
+            )),
+            classify_tool_safety("complete_skill"),
         ));
 
         // Thing Ontology tools (9) — always available, no denylist
@@ -133,6 +144,11 @@ pub fn chat_builtin_tools_provider(
             session.contexts.clone(),
             session.approvals.clone(),
             session.events.clone(),
+            Some(std::sync::Arc::new(
+                crate::domains::agent::session::ThingApprovalLabels::new(std::sync::Arc::new(
+                    crate::domains::thing::service::ThingService::new(db_pool.clone()),
+                )),
+            )),
         )
     })
 }
@@ -145,6 +161,7 @@ pub(crate) fn apply_permission_guard(
     contexts: std::sync::Arc<crate::domains::agent::session::TurnContextRegistry>,
     approvals: std::sync::Arc<crate::domains::agent::session::ApprovalBroker>,
     events: std::sync::Arc<dyn crate::domains::agent::session::SessionEventSink>,
+    labels: Option<std::sync::Arc<crate::domains::agent::session::ThingApprovalLabels>>,
 ) -> Vec<(Box<dyn Tool>, ToolSafety)> {
     let Some(agent_id) = agent_id else {
         return tools;
@@ -156,15 +173,18 @@ pub(crate) fn apply_permission_guard(
                 (tool, safety)
             } else {
                 (
-                    Box::new(crate::domains::agent::session::PermissionGuardTool::new(
-                        tool,
-                        agent_id.clone(),
-                        contexts.clone(),
-                        approvals.clone(),
-                        events.clone(),
-                        safety,
-                        crate::domains::agent::session::APPROVAL_TIMEOUT,
-                    )) as Box<dyn Tool>,
+                    Box::new(
+                        crate::domains::agent::session::PermissionGuardTool::new(
+                            tool,
+                            agent_id.clone(),
+                            contexts.clone(),
+                            approvals.clone(),
+                            events.clone(),
+                            safety,
+                            crate::domains::agent::session::APPROVAL_TIMEOUT,
+                        )
+                        .with_labels(labels.clone()),
+                    ) as Box<dyn Tool>,
                     safety,
                 )
             }
@@ -308,6 +328,7 @@ mod tests {
             contexts,
             Arc::new(ApprovalBroker::default()),
             Arc::new(RecordingSink::default()),
+            None,
         );
         assert_eq!(guarded.len(), 2);
 
@@ -333,6 +354,7 @@ mod tests {
             contexts,
             Arc::new(ApprovalBroker::default()),
             Arc::new(RecordingSink::default()),
+            None,
         );
         let result = guarded.pop().unwrap().0.execute(serde_json::json!({})).await.unwrap();
         assert!(!result.success);

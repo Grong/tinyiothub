@@ -167,6 +167,16 @@ export const thingApi = {
     return apiDelete<void>(`/things/${thingId}/resources/${resourceId}`);
   },
 
+  /** Create an inline Markdown document resource (A-scheme knowledge). */
+  async createDocument(workspaceId: string, name: string, content: string) {
+    return apiPost<{ id: string; name: string; content: string }>(`/workspaces/${workspaceId}/resources`, {
+      name,
+      resource_type: 'document',
+      content,
+      tags: [],
+    });
+  },
+
   /** Upload file to workspace, create resource, then attach to thing */
   async uploadFileToThing(thingId: string, workspaceId: string, file: File, fileName: string) {
     const token = localStorage.getItem('auth-token') || sessionStorage.getItem('auth-token') || '';

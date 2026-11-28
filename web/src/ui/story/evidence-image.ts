@@ -23,13 +23,16 @@ export class EvidenceImage extends LitElement {
 
   private controller: AbortController | null = null;
   private loadedKey = '';
+  private observer: IntersectionObserver | null = null;
 
   connectedCallback(): void {
     super.connectedCallback();
-    void this.load();
+    this.observe();
   }
 
   disconnectedCallback(): void {
+    this.observer?.disconnect();
+    this.observer = null;
     this.cancel();
     this.loadedKey = '';
     super.disconnectedCallback();
@@ -37,8 +40,29 @@ export class EvidenceImage extends LitElement {
 
   protected updated(changed: Map<string, unknown>): void {
     if (changed.has('evidenceId') || changed.has('workspaceId')) {
-      void this.load();
+      this.loadedKey = '';
+      this.observe();
     }
+  }
+
+  /** 进入视口附近才拉取证据，避免一次性请求所有历史画面。 */
+  private observe(): void {
+    if (!this.evidenceId) return;
+    if (typeof IntersectionObserver === 'undefined') {
+      void this.load();
+      return;
+    }
+    this.observer?.disconnect();
+    this.observer = new IntersectionObserver(
+      (entries) => {
+        if (!entries.some((entry) => entry.isIntersecting)) return;
+        this.observer?.disconnect();
+        this.observer = null;
+        void this.load();
+      },
+      { rootMargin: '200px' },
+    );
+    this.observer.observe(this);
   }
 
   private cancel(): void {

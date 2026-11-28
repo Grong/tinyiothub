@@ -74,10 +74,14 @@ pub async fn watch_engine_loop(
 ) {
     // 先订阅再重织：重织窗口内的事件经 broadcast 缓冲，不丢。
     let mut rx = deps.events.subscribe();
-    let live = match deps.zones.clone() {
+    let mut live = match deps.zones.clone() {
         Some(zones) => LiveState::with_zone_service(deps.cache.clone(), zones),
         None => LiveState::new(deps.cache.clone()),
     };
+    // Seed from the cache before consuming events: the first tool call may
+    // arrive before the next property-change event, and a lost startup event
+    // must not leave health/values unknown.
+    live.handle_lagged();
     let mut engine = WatchEngine::new(
         live,
         deps.ledger.clone(),

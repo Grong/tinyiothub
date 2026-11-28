@@ -168,7 +168,6 @@ async fn build_snapshot_prewarms_heartbeat_state_and_recent_runs_oldest_first() 
             interval_minutes: 45,
             ai_triage_enabled: true,
             triage_mode: "annotate".to_string(),
-            rate_limit_per_key_per_min: None,
         },
     )
     .await
@@ -199,7 +198,6 @@ async fn build_snapshot_prewarms_heartbeat_state_and_recent_runs_oldest_first() 
         .expect("ws1 heartbeat state");
     assert_eq!(state.tasks.len(), 1);
     assert_eq!(state.trust_config.max_auto_actions_per_tick, 7);
-    assert_eq!(state.interval_minutes, 45);
 
     // recent_runs 旧→新（prewarm 输入契约）。
     let ids: Vec<&str> = snapshot.recent_runs.iter().map(|r| r.run_id.as_str()).collect();
@@ -290,7 +288,6 @@ async fn restore_prewarms_unified_loop_heartbeat_deps() {
             interval_minutes: 45,
             ai_triage_enabled: true,
             triage_mode: "annotate".to_string(),
-            rate_limit_per_key_per_min: None,
         },
     )
     .await
@@ -307,18 +304,12 @@ async fn restore_prewarms_unified_loop_heartbeat_deps() {
         1,
         "统一循环任务表须自同一快照预热"
     );
-    assert_eq!(manager.heartbeat_interval_minutes("ws1"), Some(45));
-    // 终审 I-1：enabled 自同一快照预热（本用例 DB 配置 enabled=true；
-    // 禁用路径见 restore_prewarms_heartbeat_enabled_from_db_config）。
-    assert!(manager.heartbeat_enabled("ws1"));
     assert_eq!(
         manager
             .heartbeat_trust_config("ws1")
             .map(|t| t.max_auto_actions_per_tick),
         Some(7)
     );
-    // last_ticks 共享表句柄可注入 AppState（启动时尚无 tick，表为空）。
-    assert!(manager.heartbeat_last_ticks().is_empty());
 
     // reload_notify 每工作区独立且稳定（handler 写穿后 notify_one 的接线点）。
     let n1 = manager.heartbeat_reload_notify("ws1");
@@ -329,41 +320,6 @@ async fn restore_prewarms_unified_loop_heartbeat_deps() {
     assert!(
         !Arc::ptr_eq(&n1, &manager.heartbeat_reload_notify("ws2")),
         "不同工作区不得共享 Notify"
-    );
-}
-
-/// 终审 I-1：restore 预热把 DB `workspaces.heartbeat_config` 的 enabled 读进
-/// 统一循环共享表——禁用工作区重启后统一 trigger 不 tick（此前 enabled 只
-/// 停旧 runner，统一循环无视持久化开关，禁用的心跳在「执行历史」继续出 run）。
-/// 无配置行的工作区缺省 true（对齐 HeartbeatConfig::default enabled:true）。
-#[tokio::test]
-async fn restore_prewarms_heartbeat_enabled_from_db_config() {
-    let (db, pool) = test_db().await;
-    seed_test_workspace(&pool, "tenant1", "ws_off").await;
-    seed_test_workspace(&pool, "tenant1", "ws_default").await;
-
-    db.save_heartbeat_config(
-        "ws_off",
-        &WorkspaceHeartbeatConfig {
-            enabled: false,
-            interval_minutes: 30,
-            ai_triage_enabled: true,
-            triage_mode: "annotate".to_string(),
-            rate_limit_per_key_per_min: None,
-        },
-    )
-    .await
-    .expect("save disabled heartbeat config");
-
-    let runtime = bootstrap_test_runtime(&db).await;
-    let manager = runtime.thing_agents();
-    assert!(
-        !manager.heartbeat_enabled("ws_off"),
-        "DB enabled=false 必须预热进统一循环共享表"
-    );
-    assert!(
-        manager.heartbeat_enabled("ws_default"),
-        "无配置行缺省 true（HeartbeatConfig::default enabled:true）"
     );
 }
 

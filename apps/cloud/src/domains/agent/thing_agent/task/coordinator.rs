@@ -2108,10 +2108,7 @@ pub(crate) mod tests {
     }
 
     impl DirectiveSink for RecordingSink {
-        fn enqueue(
-            &self,
-            signal: WakeSignal,
-        ) -> Result<(), crate::domains::agent::thing_agent::scheduler::EnqueueError> {
+        fn enqueue(&self, signal: WakeSignal) -> Result<(), crate::domains::agent::thing_agent::EnqueueError> {
             self.signals.lock().expect("signals").push(signal);
             Ok(())
         }

@@ -1,8 +1,13 @@
 import { html, nothing, type TemplateResult } from 'lit';
 import { unsafeHTML } from 'lit/directives/unsafe-html.js';
 import { md } from '../shared/markdown.js';
+import '../tool-views/skill-view.js';
+import { skillDisplay } from './skill-copy.js';
 import type { ContentPart } from './timeline-model.js';
 import type { TodoItem } from '../../api/assistant.js';
+import { presentTool } from '../tool-views/registry.js';
+import { getWorkspaceId } from '../../api/client.js';
+import '../story/evidence-image.js';
 
 const TOOL_META: Record<string, { icon: string; verb: string }> = {
   get_thing: { icon: '◎', verb: '查看设备' },
@@ -35,6 +40,7 @@ const SUBAGENT_STATUS: Record<string, string> = {
 const TURN_STATE: Record<string, string> = {
   running: '处理中',
   completed: '完成',
+  partial: '部分完成',
   failed: '失败',
   cancelled: '已取消',
 };
@@ -107,7 +113,7 @@ function structuredToolResult(part: ToolPart): StructuredToolResult | null {
   if (['todo_write', 'update_todo', 'todo'].includes(part.name)) {
     const items = result.todos ?? result.tasks;
     if (!Array.isArray(items)) return null;
-    const todos = items.map((item) => {
+    const todos: Array<TodoItem | null> = items.map((item) => {
       const todo = record(item);
       const content = todo?.content ?? todo?.title ?? todo?.name;
       if (typeof content !== 'string') return null;
@@ -116,7 +122,7 @@ function structuredToolResult(part: ToolPart): StructuredToolResult | null {
         content,
         activeForm: typeof todo?.activeForm === 'string' ? todo.activeForm : content,
         status: status === 'completed' || status === 'in_progress' ? status : 'pending',
-      } satisfies TodoItem;
+      };
     });
     return todos.every((todo): todo is TodoItem => todo !== null) ? { kind: 'todos', todos } : null;
   }
@@ -134,7 +140,13 @@ function structuredToolResult(part: ToolPart): StructuredToolResult | null {
   }
 
   if (['read_device', 'get_thing', 'get_thing_profile'].includes(part.name)) {
-    return { kind: 'device', device: result };
+    const thing = record(result.thing);
+    return {
+      kind: 'device',
+      device: thing
+        ? { ...thing, properties: result.properties, zone: result.zone ?? thing.zone }
+        : result,
+    };
   }
   return null;
 }
@@ -179,10 +191,10 @@ function structuredSummary(result: StructuredToolResult): string {
   }
   if (result.kind === 'devices') return `共 ${result.total ?? result.devices.length} 台`;
   const online = deviceOnline(result.device);
-  const state = record(result.device.state);
+  const properties = Array.isArray(result.device.properties) ? result.device.properties : [];
   return [
     online === undefined ? '' : online ? '在线' : '离线',
-    state ? `${Object.keys(state).length} 项属性` : '',
+    properties.length > 0 ? `${properties.length} 项属性` : '',
   ]
     .filter(Boolean)
     .join('，');
@@ -310,7 +322,9 @@ function renderStructuredResult(result: StructuredToolResult): TemplateResult {
 
   const { device } = result;
   const online = deviceOnline(device);
-  const state = record(device.state);
+  const properties = (Array.isArray(device.properties) ? device.properties : [])
+    .map(record)
+    .filter((property): property is Record<string, unknown> => property !== null);
   const context = [thingTypeLabel(device.thingType), device.zone, healthLabel(device.health)]
     .filter((value) => typeof value === 'string' && value)
     .map((value) => String(value));
@@ -320,11 +334,12 @@ function renderStructuredResult(result: StructuredToolResult): TemplateResult {
       ${online === undefined ? nothing : html`<span class="structured-device__status ${online ? 'is-online' : 'is-offline'}">${online ? '在线' : '离线'}</span>`}
     </div>
     ${context.length > 0 ? html`<div class="structured-device__context">${context.map((value) => html`<span>${value}</span>`)}</div>` : nothing}
-    ${state && Object.keys(state).length > 0
+    ${properties.length > 0
       ? html`<dl class="structured-properties">
-          ${Object.entries(state).map(
-            ([name, value]) => html`<div class="structured-property"><dt>${name}</dt><dd>${displayValue(value)}</dd></div>`,
-          )}
+          ${properties.map((property) => html`<div class="structured-property">
+            <dt>${typeof property.displayName === 'string' ? property.displayName : property.name}</dt>
+            <dd>${displayValue(property.currentValue)}${typeof property.unit === 'string' && property.unit ? ` ${property.unit}` : ''}</dd>
+          </div>`)}
         </dl>`
       : nothing}
   </section>`;
@@ -340,17 +355,74 @@ function renderTool(part: ToolPart): TemplateResult {
     : part.result
       ? 'activity__meta--ok'
       : 'activity__meta--pending';
+  const presentation = presentTool({
+    name: part.name,
+    viewKey: part.viewKey,
+    args: part.args,
+    result: part.result ?? null,
+    evidence: part.evidence,
+    status: failed ? 'failed' : part.result ? 'ok' : 'running',
+    error: part.error,
+  });
+  const label =
+    presentation.viewKey !== 'generic'
+      ? `${presentation.title}${presentation.summary ? ` · ${presentation.summary}` : ''}`
+      : toolSummary(part);
   return html`<details
     class="activity activity--tool log-entry ${failed ? 'activity--failed' : ''}"
   >
     <summary class="activity__summary">
       <span class="activity__icon" aria-hidden="true">${icon}</span>
-      <span class="activity__label">${toolSummary(part)}</span>
+      ${
+        presentation.images?.length
+          ? html`<evidence-image
+              class="activity__thumb"
+              .evidenceId=${presentation.images[0].evidenceId}
+              .workspaceId=${getWorkspaceId() ?? ''}
+              .alt=${presentation.images[0].alt}
+            ></evidence-image>`
+          : nothing
+      }
+      <span class="activity__label">${label}</span>
       <span class="activity__meta ${stateClass}"
         >${failed ? '失败' : part.result ? '完成' : '执行中'}</span
       >
     </summary>
     <div class="activity__detail process-detail">
+      ${
+        presentation.images?.length
+          ? html`<div class="activity__images">
+              ${presentation.images.slice(0, 3).map(
+                (image) => html`<figure class="activity__image">
+                  <evidence-image
+                    .evidenceId=${image.evidenceId}
+                    .workspaceId=${getWorkspaceId() ?? ''}
+                    .alt=${image.alt}
+                  ></evidence-image>
+                  ${image.caption ? html`<figcaption>${image.caption}</figcaption>` : nothing}
+                </figure>`,
+              )}
+            </div>`
+          : nothing
+      }
+      ${
+        presentation.metrics?.length
+          ? html`<dl class="activity__metrics">
+              ${presentation.metrics.map(
+                (metric) => html`<div><dt>${metric.label}</dt><dd>${metric.value}</dd></div>`,
+              )}
+            </dl>`
+          : nothing
+      }
+      ${
+        presentation.details?.length
+          ? html`<dl class="activity__details">
+              ${presentation.details.slice(0, 8).map(
+                (detail) => html`<div><dt>${detail.label}</dt><dd>${detail.value}</dd></div>`,
+              )}
+            </dl>`
+          : nothing
+      }
       <div class="activity__detail-label">参数</div>
       <pre>${JSON.stringify(part.args ?? {}, null, 2)}</pre>
       ${
@@ -385,11 +457,16 @@ function renderSubagent(part: Extract<ContentPart, { kind: 'subagent' }>): Templ
 }
 
 function renderSkill(part: Extract<ContentPart, { kind: 'skill' }>): TemplateResult {
+  const copy = skillDisplay(part.name, part.title, part.description);
   return activity(html`
     <span class="activity__icon" aria-hidden="true">◆</span>
-    <span class="activity__label"
-      >技能 · ${part.name}${part.version ? ` ${part.version}` : ''}</span
-    >
+    <span class="activity__label">技能 ·</span>
+    <skill-view
+      .name=${part.name}
+      .title=${copy.title}
+      .description=${copy.description}
+    ></skill-view>
+    ${part.version ? html`<span class="activity__meta">${part.version}</span>` : nothing}
   `);
 }
 

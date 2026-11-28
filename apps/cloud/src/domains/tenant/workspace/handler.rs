@@ -453,9 +453,15 @@ async fn create_resource(
         .name
         .replace(|c: char| !c.is_alphanumeric() && c != '-' && c != '_', "_");
 
-    let file_path = payload
-        .file_path
-        .unwrap_or_else(|| format!("{}/{}.bin", payload.resource_type, sanitized_name));
+    let file_path = payload.file_path.unwrap_or_else(|| {
+        // Inline Markdown documents (A-scheme) have no on-disk file; fabricating
+        // a path would make the resource file endpoint advertise a 404 URL.
+        if payload.content.is_some() {
+            String::new()
+        } else {
+            format!("{}/{}.bin", payload.resource_type, sanitized_name)
+        }
+    });
 
     match state
         .workspace_service
@@ -464,6 +470,7 @@ async fn create_resource(
             payload.resource_type,
             &payload.name,
             payload.description.as_deref(),
+            payload.content.as_deref(),
             &file_path,
             &payload.tags,
             payload.metadata.as_deref(),
@@ -505,6 +512,7 @@ async fn update_resource(
             &resource_id,
             payload.name.as_deref(),
             payload.description.as_deref(),
+            payload.content.as_deref(),
             payload.tags.as_deref(),
             payload.metadata.as_deref(),
         )
